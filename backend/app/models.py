@@ -99,6 +99,7 @@ class Message(Base):
         Integer, ForeignKey("conversations.id"), index=True
     )
     direction: Mapped[str] = mapped_column(String(20))  # inbound, outbound
+    twilio_sid: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
     body: Mapped[str] = mapped_column(Text, default="")
     media_urls_json: Mapped[str] = mapped_column(Text, default="[]")
     processed_context: Mapped[str] = mapped_column(Text, default="")

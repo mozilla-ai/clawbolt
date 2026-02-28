@@ -86,8 +86,16 @@ async def twilio_inbound(
 
     phone = form_data.get("From", "")
     body = form_data.get("Body", "")
+    message_sid = form_data.get("MessageSid", "")
     media = _extract_media(form_data)
     media_urls: list[tuple[str, str]] = [(m["url"], m["content_type"]) for m in media]
+
+    # Idempotency: skip duplicate messages from Twilio retries
+    if message_sid:
+        existing = db.query(Message).filter(Message.twilio_sid == message_sid).first()
+        if existing:
+            logger.info("Duplicate webhook for MessageSid=%s, skipping", message_sid)
+            return Response(content=TWIML_EMPTY, media_type="application/xml")
 
     contractor = _get_or_create_contractor(db, phone)
     conversation = _get_or_create_conversation(db, contractor)
@@ -95,6 +103,7 @@ async def twilio_inbound(
     message = Message(
         conversation_id=conversation.id,
         direction="inbound",
+        twilio_sid=message_sid or None,
         body=body,
         media_urls_json=json.dumps([url for url, _ct in media_urls]),
     )
