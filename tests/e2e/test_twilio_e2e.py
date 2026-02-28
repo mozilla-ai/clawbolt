@@ -52,6 +52,23 @@ def _wait_for_status(
     return msg.status
 
 
+def _wait_for_media(
+    settings: Settings,
+    sid: str,
+    timeout_seconds: int = 15,
+    poll_interval: float = 2.0,
+) -> int:
+    """Poll Twilio until num_media is populated (media processing is async)."""
+    deadline = time.monotonic() + timeout_seconds
+    while time.monotonic() < deadline:
+        msg = _fetch_message(settings, sid)
+        if msg.num_media and int(msg.num_media) >= 1:
+            return int(msg.num_media)
+        time.sleep(poll_interval)
+    msg = _fetch_message(settings, sid)
+    return int(msg.num_media) if msg.num_media else 0
+
+
 # -- Tests ---------------------------------------------------------------------
 
 
@@ -123,12 +140,9 @@ async def test_send_message_mms_path(
     )
     assert sid.startswith("MM") or sid.startswith("SM"), f"Unexpected SID prefix: {sid}"
 
-    # Verify the message has media
-    msg = _fetch_message(twilio_settings, sid)
-    # num_media is a string in the Twilio API
-    assert msg.num_media and int(msg.num_media) >= 1, (
-        f"Expected at least 1 media attachment, got: {msg.num_media}"
-    )
+    # Twilio processes media asynchronously -- poll until num_media is populated
+    num_media = _wait_for_media(twilio_settings, sid, timeout_seconds=15)
+    assert num_media >= 1, f"Expected at least 1 media attachment, got: {num_media}"
 
 
 @pytest.mark.asyncio()
