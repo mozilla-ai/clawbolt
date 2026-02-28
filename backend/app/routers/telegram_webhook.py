@@ -13,6 +13,7 @@ from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService, get_messaging_service
+from backend.app.services.rate_limiter import check_webhook_rate_limit
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +124,7 @@ def _extract_telegram_media(
 @router.post("/webhooks/telegram")
 async def telegram_inbound(
     request: Request,
+    _rate_limit: None = Depends(check_webhook_rate_limit),
     db: Session = Depends(get_db),
     messaging_service: MessagingService = Depends(get_messaging_service),
 ) -> JSONResponse:
