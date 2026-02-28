@@ -1,8 +1,8 @@
-"""End-to-end tests against real Twilio API.
+"""End-to-end test against real Twilio API.
 
-These tests send real SMS messages and verify delivery status via the Twilio
-REST API. They require valid Twilio credentials set as environment variables
-(or GitHub Actions secrets).
+Sends a single real SMS and verifies delivery. Kept minimal to conserve
+trial account balance. Signature validation and error handling tests
+don't send messages and cost nothing.
 
 Run with:
     uv run pytest -m e2e -v
@@ -14,6 +14,7 @@ Skip with:
 import time
 
 import pytest
+from twilio.base.exceptions import TwilioRestException
 from twilio.request_validator import RequestValidator
 from twilio.rest import Client as TwilioClient
 
@@ -34,136 +35,39 @@ def _fetch_message(settings: Settings, sid: str) -> object:
     return client.messages(sid).fetch()
 
 
-def _wait_for_status(
-    settings: Settings,
-    sid: str,
-    target_statuses: set[str],
-    timeout_seconds: int = 30,
-    poll_interval: float = 2.0,
-) -> str:
-    """Poll Twilio until the message reaches one of the target statuses."""
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        msg = _fetch_message(settings, sid)
-        if msg.status in target_statuses:
-            return msg.status
-        time.sleep(poll_interval)
-    msg = _fetch_message(settings, sid)
-    return msg.status
-
-
-def _wait_for_media(
-    settings: Settings,
-    sid: str,
-    timeout_seconds: int = 15,
-    poll_interval: float = 2.0,
-) -> int:
-    """Poll Twilio until num_media is populated (media processing is async)."""
-    deadline = time.monotonic() + timeout_seconds
-    while time.monotonic() < deadline:
-        msg = _fetch_message(settings, sid)
-        if msg.num_media and int(msg.num_media) >= 1:
-            return int(msg.num_media)
-        time.sleep(poll_interval)
-    msg = _fetch_message(settings, sid)
-    return int(msg.num_media) if msg.num_media else 0
-
-
 # -- Tests ---------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_send_sms_returns_valid_sid(
+async def test_send_sms_and_verify_delivery(
     twilio_service: TwilioService,
+    twilio_settings: Settings,
     test_to_number: str,
 ) -> None:
-    """Sending a real SMS returns a message SID starting with 'SM'."""
+    """Send a real SMS, verify SID format and delivery status progression."""
     sid = await twilio_service.send_sms(
         to=test_to_number,
-        body="[backshop e2e] send_sms test",
+        body="[backshop e2e] SMS delivery test",
     )
     assert sid.startswith("SM"), f"Expected SID starting with SM, got: {sid}"
 
+    # Poll until Twilio reports a terminal status
+    deadline = time.monotonic() + 30
+    status = "queued"
+    while time.monotonic() < deadline:
+        msg = _fetch_message(twilio_settings, sid)
+        status = msg.status
+        if status in {"sent", "delivered", "undelivered", "failed"}:
+            break
+        time.sleep(2)
 
-@pytest.mark.asyncio()
-async def test_send_sms_status_progresses(
-    twilio_service: TwilioService,
-    twilio_settings: Settings,
-    test_to_number: str,
-) -> None:
-    """After sending, the message status should progress past 'queued'."""
-    sid = await twilio_service.send_sms(
-        to=test_to_number,
-        body="[backshop e2e] status progression test",
-    )
-    final_status = _wait_for_status(
-        twilio_settings,
-        sid,
-        target_statuses={"sent", "delivered", "undelivered", "failed"},
-        timeout_seconds=30,
-    )
-    # On trial accounts, 'sent' or 'delivered' are both success.
-    # 'queued' means it hasn't left Twilio yet (timeout -- still acceptable).
-    assert final_status in {
-        "queued",
-        "sent",
-        "delivered",
-    }, f"Unexpected terminal status: {final_status}"
+    assert status in {"queued", "sent", "delivered"}, f"Unexpected terminal status: {status}"
 
 
-@pytest.mark.asyncio()
-async def test_send_message_sms_path(
-    twilio_service: TwilioService,
-    test_to_number: str,
-) -> None:
-    """send_message() without media_urls should send a plain SMS."""
-    sid = await twilio_service.send_message(
-        to=test_to_number,
-        body="[backshop e2e] send_message SMS path",
-    )
-    assert sid.startswith("SM")
-
-
-@pytest.mark.asyncio()
-async def test_send_message_mms_path(
-    twilio_service: TwilioService,
-    twilio_settings: Settings,
-    test_to_number: str,
-) -> None:
-    """send_message() with media_urls should send an MMS."""
-    # Use a publicly accessible test image
-    test_image_url = "https://www.twilio.com/docs/static/company/mark-red.png"
-    sid = await twilio_service.send_message(
-        to=test_to_number,
-        body="[backshop e2e] send_message MMS path",
-        media_urls=[test_image_url],
-    )
-    assert sid.startswith("MM") or sid.startswith("SM"), f"Unexpected SID prefix: {sid}"
-
-    # Twilio processes media asynchronously -- poll until num_media is populated
-    num_media = _wait_for_media(twilio_settings, sid, timeout_seconds=15)
-    assert num_media >= 1, f"Expected at least 1 media attachment, got: {num_media}"
-
-
-@pytest.mark.asyncio()
-async def test_send_mms_returns_valid_sid(
-    twilio_service: TwilioService,
-    test_to_number: str,
-) -> None:
-    """send_mms() with a media URL returns a valid SID."""
-    test_image_url = "https://www.twilio.com/docs/static/company/mark-red.png"
-    sid = await twilio_service.send_mms(
-        to=test_to_number,
-        body="[backshop e2e] send_mms test",
-        media_url=test_image_url,
-    )
-    assert sid.startswith("SM") or sid.startswith("MM"), f"Unexpected SID prefix: {sid}"
-
-
-def test_request_validator_accepts_valid_signature(
+def test_request_validator_round_trip(
     twilio_settings: Settings,
 ) -> None:
-    """RequestValidator should accept a signature we generate ourselves."""
+    """Signature computed with real auth token validates correctly; tampered one is rejected."""
     validator = RequestValidator(twilio_settings.twilio_auth_token)
     url = "https://backshop.example.com/api/webhooks/twilio/inbound"
     params = {
@@ -171,35 +75,20 @@ def test_request_validator_accepts_valid_signature(
         "To": twilio_settings.twilio_phone_number,
         "Body": "test message",
     }
-    # Generate a valid signature
     signature = validator.compute_signature(url, params)
-    # Validate it
     assert validator.validate(url, params, signature), "Valid signature was rejected"
-
-
-def test_request_validator_rejects_invalid_signature(
-    twilio_settings: Settings,
-) -> None:
-    """RequestValidator should reject a tampered signature."""
-    validator = RequestValidator(twilio_settings.twilio_auth_token)
-    url = "https://backshop.example.com/api/webhooks/twilio/inbound"
-    params = {
-        "From": "+15551234567",
-        "To": twilio_settings.twilio_phone_number,
-        "Body": "test message",
-    }
-    assert not validator.validate(url, params, "invalid_signature_abc123")
+    assert not validator.validate(url, params, "tampered_signature"), (
+        "Invalid signature was accepted"
+    )
 
 
 @pytest.mark.asyncio()
 async def test_send_to_invalid_number_raises(
     twilio_service: TwilioService,
 ) -> None:
-    """Sending to an invalid number should raise a Twilio exception."""
-    from twilio.base.exceptions import TwilioRestException
-
+    """Sending to Twilio's magic failure number raises TwilioRestException."""
     with pytest.raises(TwilioRestException):
         await twilio_service.send_sms(
-            to="+15005550001",  # Twilio test number that always fails
+            to="+15005550001",
             body="[backshop e2e] should fail",
         )
