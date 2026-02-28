@@ -30,6 +30,7 @@ def upgrade() -> None:
         sa.Column("hourly_rate", sa.Float(), nullable=True),
         sa.Column("soul_text", sa.Text(), server_default="", nullable=False),
         sa.Column("business_hours", sa.String(255), server_default="", nullable=False),
+        sa.Column("onboarding_complete", sa.Boolean(), server_default="0", nullable=False),
         sa.Column("preferences_json", sa.Text(), server_default="{}", nullable=False),
         sa.Column(
             "created_at",
@@ -134,6 +135,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("direction", sa.String(20), nullable=False),
+        sa.Column("twilio_sid", sa.String(50), nullable=True, unique=True),
         sa.Column("body", sa.Text(), server_default="", nullable=False),
         sa.Column("media_urls_json", sa.Text(), server_default="[]", nullable=False),
         sa.Column("processed_context", sa.Text(), server_default="", nullable=False),
