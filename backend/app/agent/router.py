@@ -21,7 +21,6 @@ from backend.app.services.twilio_service import TwilioService
 logger = logging.getLogger(__name__)
 
 
-
 async def handle_inbound_message(
     db: Session,
     contractor: Contractor,
