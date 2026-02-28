@@ -12,6 +12,7 @@ from backend.app.database import Base, get_db
 from backend.app.main import app
 from backend.app.models import Contractor
 from backend.app.services.messaging import MessagingService, get_messaging_service
+from backend.app.services.rate_limiter import webhook_rate_limiter
 
 
 @pytest.fixture()
@@ -71,6 +72,7 @@ def client(
     def _override_get_messaging_service() -> Generator[MessagingService]:
         yield mock_messaging_service
 
+    webhook_rate_limiter.reset()
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_get_current_user
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
