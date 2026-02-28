@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-extras
+      - run: uv run ruff check backend/ tests/ alembic/
+      - run: uv run ruff format --check backend/ tests/ alembic/
+
+  test:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "sqlite:///:memory:"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-extras
+      - run: uv run pytest -v
+
+  migration-check:
+    runs-on: ubuntu-latest
+    env:
+      DATABASE_URL: "sqlite:///test_migrations.db"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-extras
+      - run: uv run alembic upgrade head
+      - run: uv run alembic check
