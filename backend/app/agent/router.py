@@ -96,9 +96,17 @@ async def handle_inbound_message(
     tools.extend(create_estimate_tools(db, contractor))
 
     # Wire file tools if storage is configured
+    # TODO(multi-tenant): pass contractor to get_storage_service()
     try:
-        storage_token = settings.dropbox_access_token or settings.google_drive_credentials_json
-        if storage_token:
+        has_storage = (
+            settings.storage_provider == "local"
+            or (settings.storage_provider == "dropbox" and settings.dropbox_access_token)
+            or (
+                settings.storage_provider == "google_drive"
+                and settings.google_drive_credentials_json
+            )
+        )
+        if has_storage:
             storage = get_storage_service()
             pending_media = {m.original_url: m.content for m in downloaded_media if m.content}
             tools.extend(create_file_tools(db, contractor, storage, pending_media))
