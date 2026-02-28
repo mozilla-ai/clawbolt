@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Generator
 
 from twilio.rest import Client as TwilioClient
 
@@ -52,6 +53,6 @@ class TwilioService:
         return message.sid
 
 
-def get_twilio_service() -> TwilioService:
-    """FastAPI dependency for TwilioService."""
-    return TwilioService()
+def get_twilio_service() -> Generator[TwilioService]:
+    """FastAPI dependency for TwilioService (overridable in tests)."""
+    yield TwilioService()

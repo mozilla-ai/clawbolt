@@ -1,4 +1,5 @@
 from collections.abc import Generator
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi.testclient import TestClient
@@ -9,6 +10,7 @@ from sqlalchemy.pool import StaticPool
 from backend.app.database import Base, get_db
 from backend.app.main import app
 from backend.app.models import Contractor
+from backend.app.services.twilio_service import TwilioService, get_twilio_service
 
 
 @pytest.fixture()
@@ -42,13 +44,29 @@ def test_contractor(db_session: Session) -> Contractor:
 
 
 @pytest.fixture()
-def client(db_session: Session, test_contractor: Contractor) -> Generator[TestClient]:
-    """FastAPI test client with overridden DB and auth."""
+def mock_twilio_service() -> TwilioService:
+    """Mock TwilioService that doesn't hit real Twilio."""
+    service = MagicMock(spec=TwilioService)
+    service.send_sms = AsyncMock(return_value="SM_mock_sid")
+    service.send_mms = AsyncMock(return_value="SM_mock_sid")
+    service.send_message = AsyncMock(return_value="SM_mock_sid")
+    return service
+
+
+@pytest.fixture()
+def client(
+    db_session: Session, test_contractor: Contractor, mock_twilio_service: TwilioService
+) -> Generator[TestClient]:
+    """FastAPI test client with overridden DB, auth, and Twilio."""
 
     def _override_get_db() -> Generator[Session]:
         yield db_session
 
+    def _override_get_twilio_service() -> Generator[TwilioService]:
+        yield mock_twilio_service
+
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_twilio_service] = _override_get_twilio_service
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

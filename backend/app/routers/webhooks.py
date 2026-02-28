@@ -8,6 +8,7 @@ from twilio.request_validator import RequestValidator
 from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models import Contractor, Conversation, Message
+from backend.app.services.twilio_service import TwilioService, get_twilio_service
 
 router = APIRouter()
 
@@ -67,7 +68,11 @@ def _get_or_create_conversation(db: Session, contractor: Contractor) -> Conversa
 
 
 @router.post("/webhooks/twilio/inbound")
-async def twilio_inbound(request: Request, db: Session = Depends(get_db)) -> Response:
+async def twilio_inbound(
+    request: Request,
+    db: Session = Depends(get_db),
+    twilio_service: TwilioService = Depends(get_twilio_service),
+) -> Response:
     """Receive inbound SMS/MMS from Twilio."""
     form_data = dict(await request.form())
     # Ensure all values are strings
