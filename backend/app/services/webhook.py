@@ -53,7 +53,6 @@ async def register_telegram_webhook(
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.post(url, json=payload, timeout=10.0)
-            resp.raise_for_status()
             data = resp.json()
             if data.get("ok"):
                 logger.info("Telegram webhook registered: %s", webhook_url)
