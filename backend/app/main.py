@@ -61,6 +61,16 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             "Set TELEGRAM_WEBHOOK_SECRET to enable request validation."
         )
 
+    if (
+        settings.telegram_bot_token
+        and not settings.telegram_allowed_chat_ids
+        and not settings.telegram_allowed_usernames
+    ):
+        logger.warning(
+            "No Telegram allowlist configured (TELEGRAM_ALLOWED_CHAT_IDS / "
+            "TELEGRAM_ALLOWED_USERNAMES) — bot will respond to all users."
+        )
+
     # Fire-and-forget: register webhook after the server is ready.
     webhook_task: asyncio.Task[None] | None = None
     if settings.telegram_bot_token:
