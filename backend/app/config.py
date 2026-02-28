@@ -12,6 +12,7 @@ class Settings(BaseSettings):
     twilio_account_sid: str = ""
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
+    twilio_validate_signatures: bool = True
 
     # LLM
     llm_provider: str = "openai"
