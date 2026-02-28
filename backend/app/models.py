@@ -1,6 +1,6 @@
 import datetime
 
-from sqlalchemy import DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Text, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.database import Base
@@ -18,6 +18,7 @@ class Contractor(Base):
     hourly_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     soul_text: Mapped[str] = mapped_column(Text, default="")
     business_hours: Mapped[str] = mapped_column(String(255), default="")
+    onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     preferences_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
