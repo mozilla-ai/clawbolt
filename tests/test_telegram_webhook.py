@@ -225,3 +225,59 @@ def test_webhook_non_message_update_returns_200(client: TestClient) -> None:
     response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
     assert response.json() == {"ok": True}
+
+
+# -- Allowlist gating tests --
+
+
+def test_allowlist_rejects_unlisted_chat_id(client: TestClient, db_session: Session) -> None:
+    """Messages from a chat_id not in the allowlist should be silently ignored."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "111,222",
+        ),
+    ):
+        payload = make_telegram_update_payload(chat_id=999, text="Hi")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_not_called()
+    assert db_session.query(Message).count() == 0
+
+
+def test_allowlist_accepts_listed_chat_id(
+    client: TestClient, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Messages from a chat_id on the allowlist should be processed normally."""
+    chat_id = test_contractor.channel_identifier
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            f"111,{chat_id},333",
+        ),
+    ):
+        payload = make_telegram_update_payload(chat_id=int(chat_id), text="Hello")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_called_once()
+    assert db_session.query(Message).count() == 1
+
+
+def test_allowlist_empty_allows_all(client: TestClient, db_session: Session) -> None:
+    """Empty allowlist (default) should allow all chat IDs."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "",
+        ),
+    ):
+        payload = make_telegram_update_payload(chat_id=777777, text="Hi")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_called_once()

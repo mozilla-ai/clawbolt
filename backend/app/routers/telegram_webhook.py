@@ -140,6 +140,13 @@ async def telegram_inbound(
     text = msg.get("text", "")
     update_id = str(update.get("update_id", ""))
 
+    # Allowlist gate: reject unknown chat IDs when allowlist is configured
+    if settings.telegram_allowed_chat_ids:
+        allowed = {cid.strip() for cid in settings.telegram_allowed_chat_ids.split(",")}
+        if chat_id not in allowed:
+            logger.info("Chat %s not in allowlist, ignoring", chat_id)
+            return JSONResponse(content={"ok": True})
+
     # Extract media
     media_items = _extract_telegram_media(update)
     media_urls: list[tuple[str, str]] = media_items
