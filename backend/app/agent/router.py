@@ -49,9 +49,31 @@ async def handle_inbound_message(
             logger.exception("Failed to download media: %s", url)
 
     # Step 2: Run media pipeline
-    pipeline_result = await process_message_media(message.body, downloaded_media)
+    media_notes: list[str] = []
+    if media_urls and not downloaded_media:
+        media_notes.append(
+            "I couldn't download your attachment(s). The rest of your message came through fine."
+        )
 
-    # Step 3: Combined context is ready in pipeline_result.combined_context
+    try:
+        pipeline_result = await process_message_media(message.body, downloaded_media)
+    except Exception:
+        logger.exception(
+            "Media pipeline failed for message %d, contractor %d",
+            message.id,
+            contractor.id,
+        )
+        pipeline_result = await process_message_media(message.body, [])
+        if downloaded_media:
+            media_notes.append(
+                "I received your media but couldn't process it right now. "
+                "I can still help with your text message."
+            )
+
+    # Step 3: Combined context (with any media failure notes)
+    combined_context = pipeline_result.combined_context
+    if media_notes:
+        combined_context += "\n\n[System note: " + " ".join(media_notes) + "]"
 
     # Step 4: Load conversation history
     conversation_history = _load_conversation_history(db, message.conversation_id)
@@ -66,12 +88,22 @@ async def handle_inbound_message(
     tools.extend(create_estimate_tools(db, contractor))
     agent.register_tools(tools)
 
-    # Step 6: Process message
-    response = await agent.process_message(
-        message_context=pipeline_result.combined_context,
-        conversation_history=conversation_history,
-        system_prompt_override=system_prompt_override,
-    )
+    # Step 6: Process message through agent (with LLM failure fallback)
+    try:
+        response = await agent.process_message(
+            message_context=combined_context,
+            conversation_history=conversation_history,
+            system_prompt_override=system_prompt_override,
+        )
+    except Exception:
+        logger.exception(
+            "Agent processing failed for message %d, contractor %d",
+            message.id,
+            contractor.id,
+        )
+        response = AgentResponse(
+            reply_text="I'm having trouble thinking right now. Can you try again in a moment?"
+        )
 
     # Step 6b: If onboarding, extract profile updates from tool calls
     if onboarding:
@@ -85,7 +117,11 @@ async def handle_inbound_message(
         try:
             await twilio_service.send_sms(to=contractor.phone, body=response.reply_text)
         except Exception:
-            logger.exception("Failed to send reply SMS")
+            logger.exception(
+                "Failed to send reply SMS to %s for message %d",
+                contractor.phone,
+                message.id,
+            )
 
     # Store outbound message
     if response.reply_text:
