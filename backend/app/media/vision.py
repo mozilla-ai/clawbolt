@@ -1,8 +1,11 @@
 import base64
+import logging
 
 from any_llm import acompletion
 
 from backend.app.config import settings
+
+logger = logging.getLogger(__name__)
 
 VISION_SYSTEM_PROMPT = (
     "You are analyzing an image sent by a contractor. "
@@ -14,6 +17,9 @@ VISION_SYSTEM_PROMPT = (
 
 async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -> str:
     """Send an image to a vision LLM and get a text description."""
+    logger.info(
+        "Sending image to vision LLM: mime_type=%s, size=%d bytes", mime_type, len(image_bytes)
+    )
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     data_url = f"data:{mime_type};base64,{b64_image}"
 
@@ -33,4 +39,5 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
         ],
         max_tokens=1000,
     )
+    logger.debug("Vision LLM response received for mime_type=%s", mime_type)
     return response.choices[0].message.content
