@@ -299,3 +299,312 @@ async def test_pipeline_failure_note_mentions_vision(
     # The system note should be specific about vision analysis
     db_session.refresh(inbound_message)
     assert "Vision analysis was unavailable" in inbound_message.processed_context
+
+
+# ---------------------------------------------------------------------------
+# Error handling path tests (issue #138)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
+async def test_media_download_failure_adds_system_note_to_context(
+    mock_download: AsyncMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When all media downloads fail, the persisted context includes the download-failure note."""
+    mock_download.side_effect = Exception("Network timeout")
+    mock_acompletion.return_value = make_text_response("Got your text!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[("file_id_1", "image/jpeg")],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(inbound_message)
+    assert "couldn't download" in inbound_message.processed_context.lower()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
+async def test_multiple_media_partial_download_failure_no_download_note(
+    mock_download: AsyncMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When some media downloads succeed and others fail, no download-failure note is added."""
+    from backend.app.media.download import DownloadedMedia
+
+    mock_download.side_effect = [
+        DownloadedMedia(
+            content=b"image-bytes",
+            mime_type="image/jpeg",
+            original_url="file_ok",
+            filename="photo.jpg",
+        ),
+        Exception("Download failed for second file"),
+    ]
+    mock_acompletion.return_value = make_text_response("Got one photo!")  # type: ignore[union-attr]
+
+    with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
+        mock_vision.return_value = "A photo of a deck."
+        response = await handle_inbound_message(
+            db=db_session,
+            contractor=test_contractor,
+            message=inbound_message,
+            media_urls=[("file_ok", "image/jpeg"), ("file_bad", "image/png")],
+            messaging_service=mock_messaging,
+        )
+
+    assert response.reply_text == "Got one photo!"
+    # downloaded_media is not empty, so the "couldn't download" note is NOT added
+    db_session.refresh(inbound_message)
+    assert "couldn't download" not in inbound_message.processed_context.lower()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
+async def test_media_pipeline_failure_retries_with_empty_media(
+    mock_download: AsyncMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When process_message_media raises, it retries with an empty media list."""
+    from backend.app.media.download import DownloadedMedia
+    from backend.app.media.pipeline import PipelineResult
+
+    mock_download.return_value = DownloadedMedia(
+        content=b"image-bytes",
+        mime_type="image/jpeg",
+        original_url="AgACAgIAAxkBAAI",
+        filename="photo.jpg",
+    )
+    mock_acompletion.return_value = make_text_response("Text only fallback!")  # type: ignore[union-attr]
+
+    with patch(
+        "backend.app.agent.router.process_message_media",
+        new_callable=AsyncMock,
+    ) as mock_pipeline:
+        fallback_result = PipelineResult(
+            text_body=inbound_message.body,
+            media_results=[],
+            combined_context=f"[Text message]: '{inbound_message.body}'",
+        )
+        mock_pipeline.side_effect = [
+            RuntimeError("Pipeline exploded"),
+            fallback_result,
+        ]
+
+        response = await handle_inbound_message(
+            db=db_session,
+            contractor=test_contractor,
+            message=inbound_message,
+            media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
+            messaging_service=mock_messaging,
+        )
+
+    assert response.reply_text == "Text only fallback!"
+    # The fallback call should have been made with empty media list
+    assert mock_pipeline.call_count == 2
+    second_call_args = mock_pipeline.call_args_list[1]
+    assert second_call_args[0][1] == []  # second positional arg is empty media list
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.get_storage_service")
+@patch("backend.app.agent.router.settings")
+async def test_storage_exception_skips_file_tools(
+    mock_settings: MagicMock,
+    mock_get_storage: MagicMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When get_storage_service() raises, file tools are skipped and processing continues."""
+    mock_settings.storage_provider = "dropbox"
+    mock_settings.dropbox_access_token = "some-token"
+    mock_settings.google_drive_credentials_json = ""
+    mock_settings.llm_model = "gpt-4o"
+    mock_settings.llm_provider = "openai"
+    mock_get_storage.side_effect = RuntimeError("Storage backend init failed")
+    mock_acompletion.return_value = make_text_response("No file tools due to error!")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    # Processing should succeed even though storage raised
+    assert response.reply_text == "No file tools due to error!"
+    mock_get_storage.assert_called_once()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_processing_failure_returns_fallback_reply(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When agent.process_message raises, a fallback reply is returned."""
+    mock_acompletion.side_effect = RuntimeError("LLM service down")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    assert "trouble" in response.reply_text.lower()
+    assert "try again" in response.reply_text.lower()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_processing_failure_stores_fallback_outbound(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When agent fails, fallback reply is still stored as an outbound message."""
+    mock_acompletion.side_effect = RuntimeError("LLM down")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
+    assert outbound is not None
+    assert "trouble" in outbound.body.lower()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_processing_failure_still_sends_reply(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When agent fails, the fallback reply is sent via messaging service."""
+    mock_acompletion.side_effect = RuntimeError("LLM unavailable")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    mock_messaging.send_text.assert_called_once()  # type: ignore[union-attr]
+    sent_body = mock_messaging.send_text.call_args.kwargs["body"]  # type: ignore[union-attr]
+    assert "trouble" in sent_body.lower()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_send_reply_failure_still_stores_outbound(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When send_text raises, outbound message is still persisted in DB."""
+    mock_acompletion.return_value = make_text_response("Here is your reply!")  # type: ignore[union-attr]
+    mock_messaging.send_text.side_effect = RuntimeError("Telegram API down")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    # The response is still produced
+    assert response.reply_text == "Here is your reply!"
+    # The outbound message is still stored despite send failure
+    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
+    assert outbound is not None
+    assert outbound.body == "Here is your reply!"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
+async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
+    mock_download: AsyncMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Pipeline failure with no downloaded media should NOT add vision note."""
+    from backend.app.media.pipeline import PipelineResult
+
+    # All downloads fail
+    mock_download.side_effect = Exception("Download failed")
+    mock_acompletion.return_value = make_text_response("Fallback!")  # type: ignore[union-attr]
+
+    with patch(
+        "backend.app.agent.router.process_message_media",
+        new_callable=AsyncMock,
+    ) as mock_pipeline:
+        mock_pipeline.side_effect = [
+            RuntimeError("Pipeline crashed"),
+            PipelineResult(
+                text_body=inbound_message.body,
+                media_results=[],
+                combined_context=f"[Text message]: '{inbound_message.body}'",
+            ),
+        ]
+
+        await handle_inbound_message(
+            db=db_session,
+            contractor=test_contractor,
+            message=inbound_message,
+            media_urls=[("file_id_1", "image/jpeg")],
+            messaging_service=mock_messaging,
+        )
+
+    db_session.refresh(inbound_message)
+    # When downloaded_media is empty, we get the "couldn't download" note
+    # but NOT the "Vision analysis was unavailable" note (that requires downloaded_media)
+    assert "couldn't download" in inbound_message.processed_context.lower()
+    assert "Vision analysis was unavailable" not in inbound_message.processed_context
