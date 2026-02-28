@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from backend.app.database import Base, get_db
 from backend.app.main import app
 from backend.app.models import Contractor
-from backend.app.services.twilio_service import TwilioService, get_twilio_service
+from backend.app.services.messaging import MessagingService, get_messaging_service
 
 
 @pytest.fixture()
@@ -36,6 +36,8 @@ def test_contractor(db_session: Session) -> Contractor:
         phone="+15551234567",
         trade="General Contractor",
         location="Portland, OR",
+        channel_identifier="123456789",
+        preferred_channel="telegram",
     )
     db_session.add(contractor)
     db_session.commit()
@@ -44,29 +46,29 @@ def test_contractor(db_session: Session) -> Contractor:
 
 
 @pytest.fixture()
-def mock_twilio_service() -> TwilioService:
-    """Mock TwilioService that doesn't hit real Twilio."""
-    service = MagicMock(spec=TwilioService)
-    service.send_sms = AsyncMock(return_value="SM_mock_sid")
-    service.send_mms = AsyncMock(return_value="SM_mock_sid")
-    service.send_message = AsyncMock(return_value="SM_mock_sid")
+def mock_messaging_service() -> MessagingService:
+    """Mock MessagingService that doesn't hit real APIs."""
+    service = MagicMock(spec=MessagingService)
+    service.send_text = AsyncMock(return_value="mock_msg_id")
+    service.send_media = AsyncMock(return_value="mock_msg_id")
+    service.send_message = AsyncMock(return_value="mock_msg_id")
     return service
 
 
 @pytest.fixture()
 def client(
-    db_session: Session, test_contractor: Contractor, mock_twilio_service: TwilioService
+    db_session: Session, test_contractor: Contractor, mock_messaging_service: MessagingService
 ) -> Generator[TestClient]:
-    """FastAPI test client with overridden DB, auth, and Twilio."""
+    """FastAPI test client with overridden DB, auth, and messaging."""
 
     def _override_get_db() -> Generator[Session]:
         yield db_session
 
-    def _override_get_twilio_service() -> Generator[TwilioService]:
-        yield mock_twilio_service
+    def _override_get_messaging_service() -> Generator[MessagingService]:
+        yield mock_messaging_service
 
     app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_twilio_service] = _override_get_twilio_service
+    app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
     with TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()

@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from backend.app.agent.memory import save_memory
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Memory, Message
-from backend.app.services.twilio_service import TwilioService
+from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
 
 
@@ -20,13 +20,11 @@ def conversation(db_session: Session, test_contractor: Contractor) -> Conversati
 
 
 @pytest.fixture()
-def mock_twilio() -> TwilioService:
-    service = TwilioService.__new__(TwilioService)
-    service.client = MagicMock()
-    service.from_number = "+15559876543"
-    mock_msg = MagicMock()
-    mock_msg.sid = "SM_test"
-    service.client.messages.create.return_value = mock_msg
+def mock_messaging() -> MessagingService:
+    service = MagicMock(spec=MessagingService)
+    service.send_text = AsyncMock(return_value="msg_42")
+    service.send_media = AsyncMock(return_value="msg_43")
+    service.send_message = AsyncMock(return_value="msg_42")
     return service
 
 
@@ -124,7 +122,7 @@ async def test_recall_end_to_end_save_then_query(
     db_session: Session,
     test_contractor: Contractor,
     conversation: Conversation,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """End-to-end: save a memory, then verify it's in context for next message."""
     # Step 1: Save a memory directly (simulating a previous conversation)
@@ -159,7 +157,7 @@ async def test_recall_end_to_end_save_then_query(
         contractor=test_contractor,
         message=recall_msg,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     assert "4,500" in response.reply_text
@@ -173,7 +171,7 @@ async def test_system_prompt_includes_recall_guidance(
     db_session: Session,
     test_contractor: Contractor,
     conversation: Conversation,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """System prompt should include recall behavior guidance."""
     msg = Message(
@@ -192,7 +190,7 @@ async def test_system_prompt_includes_recall_guidance(
         contractor=test_contractor,
         message=msg,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]

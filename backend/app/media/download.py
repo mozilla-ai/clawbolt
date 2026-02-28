@@ -47,23 +47,34 @@ def _generate_filename(mime_type: str) -> str:
     return f"media_{timestamp}{ext}"
 
 
-async def download_twilio_media(
-    url: str,
-    twilio_auth: tuple[str, str] | None = None,
+async def download_telegram_media(
+    file_id: str,
+    bot_token: str | None = None,
 ) -> DownloadedMedia:
-    """Download media from a Twilio URL with authentication."""
-    auth = twilio_auth or (settings.twilio_account_sid, settings.twilio_auth_token)
+    """Download media from Telegram via the Bot API.
+
+    Flow: file_id -> GET /bot{token}/getFile -> file_path -> download bytes.
+    """
+    token = bot_token or settings.telegram_bot_token
+    api_base = f"https://api.telegram.org/bot{token}"
 
     async with httpx.AsyncClient() as client:
-        response = await client.get(url, auth=auth, follow_redirects=True, timeout=30.0)
-        response.raise_for_status()
+        # Step 1: get file path
+        resp = await client.get(f"{api_base}/getFile", params={"file_id": file_id}, timeout=30.0)
+        resp.raise_for_status()
+        file_path = resp.json()["result"]["file_path"]
 
-    mime_type = response.headers.get("content-type", "application/octet-stream").split(";")[0]
+        # Step 2: download the file
+        file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        download = await client.get(file_url, follow_redirects=True, timeout=30.0)
+        download.raise_for_status()
+
+    mime_type = download.headers.get("content-type", "application/octet-stream").split(";")[0]
     filename = _generate_filename(mime_type)
 
     return DownloadedMedia(
-        content=response.content,
+        content=download.content,
         mime_type=mime_type,
-        original_url=url,
+        original_url=file_id,
         filename=filename,
     )

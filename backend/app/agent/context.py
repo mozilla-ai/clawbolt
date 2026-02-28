@@ -46,7 +46,7 @@ async def load_conversation_history(
 async def get_or_create_conversation(
     db: Session,
     contractor_id: int,
-    twilio_sid: str | None = None,
+    external_session_id: str | None = None,
     timeout_hours: int = CONVERSATION_TIMEOUT_HOURS,
 ) -> tuple[Conversation, bool]:
     """Get active conversation or create new one.
@@ -78,7 +78,7 @@ async def get_or_create_conversation(
     # Create a new conversation
     conversation = Conversation(
         contractor_id=contractor_id,
-        twilio_sid=twilio_sid or "",
+        external_session_id=external_session_id or "",
         is_active=True,
     )
     db.add(conversation)

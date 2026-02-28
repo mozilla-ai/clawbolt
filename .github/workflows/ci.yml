@@ -21,23 +21,19 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: "sqlite:///:memory:"
-      TWILIO_VALIDATE_SIGNATURES: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - run: uv sync --all-extras
       - run: uv run pytest -v
 
-  e2e-twilio:
+  e2e-telegram:
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     env:
       DATABASE_URL: "sqlite:///:memory:"
-      TWILIO_VALIDATE_SIGNATURES: "false"
-      TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
-      TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
-      TWILIO_PHONE_NUMBER: ${{ secrets.TWILIO_PHONE_NUMBER }}
-      TWILIO_TEST_TO_NUMBER: ${{ secrets.TWILIO_TEST_TO_NUMBER }}
+      TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
+      TELEGRAM_TEST_CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4

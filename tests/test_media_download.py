@@ -6,7 +6,7 @@ import pytest
 from backend.app.media.download import (
     DownloadedMedia,
     classify_media,
-    download_twilio_media,
+    download_telegram_media,
 )
 
 
@@ -37,53 +37,50 @@ def test_classify_unknown() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_download_twilio_media() -> None:
-    """download_twilio_media should fetch bytes with auth."""
-    mock_response = httpx.Response(
+async def test_download_telegram_media() -> None:
+    """download_telegram_media should call getFile API then download bytes."""
+    get_file_response = httpx.Response(
+        200,
+        json={"ok": True, "result": {"file_id": "abc123", "file_path": "photos/file_0.jpg"}},
+        request=httpx.Request("GET", "https://api.telegram.org/botTOKEN/getFile"),
+    )
+    download_response = httpx.Response(
         200,
         content=b"fake-image-bytes",
         headers={"content-type": "image/jpeg"},
-        request=httpx.Request("GET", "https://api.twilio.com/media/test.jpg"),
+        request=httpx.Request("GET", "https://api.telegram.org/file/botTOKEN/photos/file_0.jpg"),
     )
 
     with patch("backend.app.media.download.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client.get.side_effect = [get_file_response, download_response]
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_cls.return_value = mock_client
 
-        result = await download_twilio_media(
-            "https://api.twilio.com/media/test.jpg",
-            twilio_auth=("AC123", "authtoken"),
-        )
+        result = await download_telegram_media("abc123", bot_token="TOKEN")
 
     assert isinstance(result, DownloadedMedia)
     assert result.content == b"fake-image-bytes"
     assert result.mime_type == "image/jpeg"
     assert result.filename.endswith(".jpg")
-    mock_client.get.assert_called_once()
-    call_kwargs = mock_client.get.call_args
-    assert call_kwargs[1]["auth"] == ("AC123", "authtoken")
+    assert mock_client.get.call_count == 2
 
 
 @pytest.mark.asyncio()
-async def test_download_twilio_media_error() -> None:
-    """download_twilio_media should raise on HTTP error."""
-    mock_response = httpx.Response(
+async def test_download_telegram_media_error() -> None:
+    """download_telegram_media should raise on HTTP error."""
+    error_response = httpx.Response(
         404,
-        request=httpx.Request("GET", "https://api.twilio.com/media/missing.jpg"),
+        request=httpx.Request("GET", "https://api.telegram.org/botTOKEN/getFile"),
     )
 
     with patch("backend.app.media.download.httpx.AsyncClient") as mock_client_cls:
         mock_client = AsyncMock()
-        mock_client.get.return_value = mock_response
+        mock_client.get.return_value = error_response
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=None)
         mock_client_cls.return_value = mock_client
 
         with pytest.raises(httpx.HTTPStatusError):
-            await download_twilio_media(
-                "https://api.twilio.com/media/missing.jpg",
-                twilio_auth=("AC123", "authtoken"),
-            )
+            await download_telegram_media("abc123", bot_token="TOKEN")

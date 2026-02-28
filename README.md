@@ -2,7 +2,7 @@
 
 AI assistant for solo blue-collar contractors. Built by Mozilla.ai.
 
-Backshop is an SMS-first AI assistant that helps contractors manage their business — estimates, client records, job photos, voice memos, and more — all through text messages.
+Backshop is a messaging-first AI assistant that helps contractors manage their business — estimates, client records, job photos, voice memos, and more — all through Telegram.
 
 ## Quick Start (Docker)
 
@@ -19,9 +19,7 @@ Edit `.env` and fill in the required credentials:
 | Variable | Required | Description |
 |----------|----------|-------------|
 | `OPENAI_API_KEY` | Yes* | OpenAI API key (or set the key for your chosen provider) |
-| `TWILIO_ACCOUNT_SID` | Yes | Twilio account SID |
-| `TWILIO_AUTH_TOKEN` | Yes | Twilio auth token |
-| `TWILIO_PHONE_NUMBER` | Yes | Your Twilio phone number (e.g. `+15551234567`) |
+| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
 | `LLM_PROVIDER` | No | LLM provider name (default: `openai`) |
 | `LLM_MODEL` | No | Model to use (default: `gpt-4o`) |
 | `STORAGE_PROVIDER` | No | `dropbox` or `google_drive` for file cataloging |
@@ -51,29 +49,25 @@ curl http://localhost:8000/api/health
 # {"status":"ok"}
 ```
 
-### 4. Expose to Twilio (for SMS)
+### 4. Set up Telegram webhook
 
-Twilio needs a public URL to send webhooks. Use a tunnel service:
+Create a bot via [@BotFather](https://t.me/BotFather) on Telegram. Then expose your server and set the webhook:
 
 ```bash
 # Using ngrok
 ngrok http 8000
 
-# Or using Cloudflare Tunnel
-cloudflared tunnel --url http://localhost:8000
+# Set the webhook URL (replace with your tunnel URL and bot token)
+curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://<your-tunnel-url>/api/webhooks/telegram", "secret_token": "<optional-secret>"}'
 ```
 
-Then configure your Twilio phone number's webhook URL to:
-
-```
-https://<your-tunnel-url>/api/webhooks/twilio/inbound
-```
-
-Set the HTTP method to **POST**.
+If you set a `secret_token`, also set `TELEGRAM_WEBHOOK_SECRET` in your `.env`.
 
 ### 5. Test it
 
-Send a text message to your Twilio number. Backshop will respond as an AI assistant ready to help with estimates, job tracking, and more.
+Send a message to your bot on Telegram. Backshop will respond as an AI assistant ready to help with estimates, job tracking, and more.
 
 ## Local Development (without Docker)
 
@@ -120,12 +114,12 @@ docker compose logs db
 docker compose logs app
 ```
 
-### Twilio webhooks not arriving
+### Telegram webhook not receiving messages
 
 1. Verify your tunnel is running and the URL is accessible
-2. Check that `TWILIO_ACCOUNT_SID` and `TWILIO_AUTH_TOKEN` are set correctly in `.env`
-3. Set `TWILIO_VALIDATE_SIGNATURES=false` in `.env` during local development if signature validation is failing (the tunnel URL must match exactly)
-4. Check the Twilio console for webhook delivery errors
+2. Check that `TELEGRAM_BOT_TOKEN` is set correctly in `.env`
+3. Verify the webhook is set: `curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo`
+4. Check the Telegram Bot API response for errors
 
 ### Port 8000 already in use
 

@@ -13,13 +13,13 @@ from backend.app.agent.profile import update_contractor_profile
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.agent.tools.file_tools import create_file_tools
 from backend.app.agent.tools.memory_tools import create_memory_tools
-from backend.app.agent.tools.twilio_tools import create_twilio_tools
+from backend.app.agent.tools.messaging_tools import create_messaging_tools
 from backend.app.config import settings
-from backend.app.media.download import DownloadedMedia, download_twilio_media
+from backend.app.media.download import DownloadedMedia, download_telegram_media
 from backend.app.media.pipeline import process_message_media
 from backend.app.models import Contractor, Message
+from backend.app.services.messaging import MessagingService
 from backend.app.services.storage_service import get_storage_service
-from backend.app.services.twilio_service import TwilioService
 
 logger = logging.getLogger(__name__)
 
@@ -29,11 +29,11 @@ async def handle_inbound_message(
     contractor: Contractor,
     message: Message,
     media_urls: list[tuple[str, str]],
-    twilio_service: TwilioService,
+    messaging_service: MessagingService,
 ) -> AgentResponse:
     """Full message processing pipeline.
 
-    1. Download media from Twilio URLs (if any)
+    1. Download media (if any)
     2. Run media pipeline (vision, audio, PDF extraction)
     3. Build combined context (text + processed media)
     4. Load conversation history
@@ -41,14 +41,16 @@ async def handle_inbound_message(
     6. Process message through agent
     7. Agent sends reply via tools or returns reply text
     """
+    to_address = contractor.channel_identifier or contractor.phone
+
     # Step 1: Download media
     downloaded_media: list[DownloadedMedia] = []
-    for url, _mime_type in media_urls:
+    for file_id, _mime_type in media_urls:
         try:
-            media = await download_twilio_media(url)
+            media = await download_telegram_media(file_id)
             downloaded_media.append(media)
         except Exception:
-            logger.exception("Failed to download media: %s", url)
+            logger.exception("Failed to download media: %s", file_id)
 
     # Step 2: Run media pipeline
     media_notes: list[str] = []
@@ -90,7 +92,7 @@ async def handle_inbound_message(
 
     agent = BackshopAgent(db=db, contractor=contractor)
     tools = create_memory_tools(db, contractor.id)
-    tools.extend(create_twilio_tools(twilio_service, to_number=contractor.phone))
+    tools.extend(create_messaging_tools(messaging_service, to_address=to_address))
     tools.extend(create_estimate_tools(db, contractor))
 
     # Wire file tools if storage is configured
@@ -137,11 +139,11 @@ async def handle_inbound_message(
     sent_reply = any(tc.get("name") == "send_reply" for tc in response.tool_calls)
     if not sent_reply and response.reply_text:
         try:
-            await twilio_service.send_sms(to=contractor.phone, body=response.reply_text)
+            await messaging_service.send_text(to=to_address, body=response.reply_text)
         except Exception:
             logger.exception(
-                "Failed to send reply SMS to %s for message %d",
-                contractor.phone,
+                "Failed to send reply to %s for message %d",
+                to_address,
                 message.id,
             )
 
