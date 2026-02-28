@@ -29,6 +29,7 @@ whisper = [
 dev = [
     "pytest>=8.0",
     "pytest-asyncio>=0.23",
+    "pytest-timeout>=2.3",
     "ruff>=0.5",
     "pre-commit>=3.0",
 ]
@@ -51,3 +52,7 @@ ignore = ["E501", "B008", "ANN401"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 asyncio_mode = "auto"
+markers = [
+    "e2e: end-to-end tests that hit real external services (Twilio, etc.)",
+]
+addopts = "-m 'not e2e'"
