@@ -2,12 +2,15 @@
 
 import datetime
 import logging
+from pathlib import Path
 
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool
 from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
+
+PDF_DIR = Path("data/estimates")
 
 logger = logging.getLogger(__name__)
 
@@ -95,15 +98,20 @@ def create_estimate_tools(
 
         pdf_bytes = await generate_estimate_pdf(pdf_data)
 
-        # Store PDF reference (in Phase 0, just record that it was generated)
-        estimate.pdf_url = f"estimate://{estimate_number}.pdf"
+        # Save PDF to local storage
+        PDF_DIR.mkdir(parents=True, exist_ok=True)
+        pdf_path = PDF_DIR / f"{estimate.id}.pdf"
+        pdf_path.write_bytes(pdf_bytes)
+
+        # Update estimate with PDF URL (served by /api/estimates/{id}/pdf)
+        estimate.pdf_url = f"/api/estimates/{estimate.id}/pdf"
         estimate.status = "sent"
         db.commit()
 
         return (
             f"Estimate {estimate_number} generated for ${total_amount:,.2f}. "
             f"{len(processed_items)} line item(s). "
-            f"PDF is {len(pdf_bytes)} bytes."
+            f"PDF available at {estimate.pdf_url}"
         )
 
     return [

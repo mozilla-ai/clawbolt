@@ -1,4 +1,7 @@
+from pathlib import Path
+
 import pytest
+from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.estimate_tools import _next_estimate_number, create_estimate_tools
@@ -73,12 +76,19 @@ async def test_generate_estimate_pdf_generated(
         line_items=[{"description": "Service call", "quantity": 1, "unit_price": 150.00}],
     )
 
-    # Result mentions PDF size
-    assert "PDF is" in result
-    # Extract bytes count from "PDF is N bytes"
-    parts = result.split("PDF is ")[1].split(" bytes")[0]
-    pdf_size = int(parts)
-    assert pdf_size > 0
+    # Result mentions PDF URL
+    assert "/api/estimates/" in result
+    assert "/pdf" in result
+
+    # Verify PDF file was actually written
+    from pathlib import Path
+
+    estimate = db_session.query(Estimate).first()
+    pdf_path = Path(f"data/estimates/{estimate.id}.pdf")
+    assert pdf_path.exists()
+    assert pdf_path.stat().st_size > 0
+    # Clean up
+    pdf_path.unlink()
 
 
 @pytest.mark.asyncio()
@@ -161,3 +171,26 @@ def test_next_estimate_number_increments(
     )
     db_session.commit()
     assert _next_estimate_number(db_session, test_contractor.id) == "EST-0002"
+
+
+def test_serve_estimate_pdf_endpoint(client: TestClient) -> None:
+    """GET /api/estimates/{id}/pdf should serve existing PDF."""
+    # Create a test PDF file
+    pdf_dir = Path("data/estimates")
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    test_pdf = pdf_dir / "999.pdf"
+    test_pdf.write_bytes(b"%PDF-1.4 test content")
+
+    try:
+        response = client.get("/api/estimates/999/pdf")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/pdf"
+        assert b"%PDF-1.4" in response.content
+    finally:
+        test_pdf.unlink()
+
+
+def test_serve_estimate_pdf_not_found(client: TestClient) -> None:
+    """GET /api/estimates/{id}/pdf should return 404 for missing PDF."""
+    response = client.get("/api/estimates/99999/pdf")
+    assert response.status_code == 404
