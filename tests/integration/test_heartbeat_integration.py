@@ -3,9 +3,8 @@
 Verifies that evaluate_heartbeat_need() returns valid JSON from a real
 model and that the full heartbeat pipeline handles real LLM responses.
 
-Requires LM Studio running locally:
-    1. Start LM Studio and load a model
-    2. uv run pytest -m integration -v --timeout=120
+Requires ANTHROPIC_API_KEY set in environment:
+    ANTHROPIC_API_KEY=sk-... uv run pytest -m integration -v --timeout=120
 """
 
 from unittest.mock import patch
@@ -16,21 +15,20 @@ from sqlalchemy.orm import Session
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
 from backend.app.models import Contractor, Conversation, Estimate, Message
 
-from .conftest import _LMSTUDIO_URL, skip_without_lmstudio
+from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
 
 @pytest.mark.integration()
-@skip_without_lmstudio
+@skip_without_anthropic_key
 async def test_heartbeat_evaluate_returns_valid_action(
     integration_db: Session,
     onboarded_contractor: Contractor,
-    lmstudio_model: str,
 ) -> None:
     """evaluate_heartbeat_need() should return a valid HeartbeatAction from a real LLM."""
     with patch("backend.app.agent.heartbeat.settings") as mock_settings:
-        mock_settings.llm_provider = "lmstudio"
-        mock_settings.llm_model = lmstudio_model
-        mock_settings.llm_api_base = _LMSTUDIO_URL
+        mock_settings.llm_provider = "anthropic"
+        mock_settings.llm_model = _ANTHROPIC_MODEL
+        mock_settings.llm_api_base = None
 
         action = await evaluate_heartbeat_need(integration_db, onboarded_contractor)
 
@@ -41,11 +39,10 @@ async def test_heartbeat_evaluate_returns_valid_action(
 
 
 @pytest.mark.integration()
-@skip_without_lmstudio
+@skip_without_anthropic_key
 async def test_heartbeat_evaluate_with_context(
     integration_db: Session,
     onboarded_contractor: Contractor,
-    lmstudio_model: str,
 ) -> None:
     """Heartbeat should handle a contractor with real conversation history and pending estimates."""
     # Set up conversation with messages
@@ -77,9 +74,9 @@ async def test_heartbeat_evaluate_with_context(
     integration_db.commit()
 
     with patch("backend.app.agent.heartbeat.settings") as mock_settings:
-        mock_settings.llm_provider = "lmstudio"
-        mock_settings.llm_model = lmstudio_model
-        mock_settings.llm_api_base = _LMSTUDIO_URL
+        mock_settings.llm_provider = "anthropic"
+        mock_settings.llm_model = _ANTHROPIC_MODEL
+        mock_settings.llm_api_base = None
 
         action = await evaluate_heartbeat_need(integration_db, onboarded_contractor)
 
