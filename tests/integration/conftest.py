@@ -60,6 +60,24 @@ def integration_contractor(integration_db: Session) -> Contractor:
 
 
 @pytest.fixture()
+def onboarded_contractor(integration_db: Session) -> Contractor:
+    """Onboarded contractor with business hours for heartbeat tests."""
+    contractor = Contractor(
+        user_id="heartbeat-integration-user",
+        name="Mike the Plumber",
+        phone="+15559990000",
+        trade="Plumber",
+        location="Portland, OR",
+        business_hours="7am-5pm",
+        onboarding_complete=True,
+    )
+    integration_db.add(contractor)
+    integration_db.commit()
+    integration_db.refresh(contractor)
+    return contractor
+
+
+@pytest.fixture()
 def lmstudio_model() -> str:
     """The model loaded in LM Studio (override via LLM_MODEL env var)."""
     return os.environ.get("LLM_MODEL", "google/gemma-3-4b")
