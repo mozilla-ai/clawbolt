@@ -34,11 +34,22 @@ async def _process_single_media(
     if category == "image":
         extracted_text = await analyze_image(media.content, media.mime_type, context=context)
     elif category == "audio":
-        extracted_text = await transcribe_audio(media.content, media.mime_type)
+        try:
+            extracted_text = await transcribe_audio(media.content, media.mime_type)
+        except ImportError:
+            logger.warning("faster-whisper not installed, skipping audio transcription")
+            extracted_text = (
+                "[Audio file - transcription not available (faster-whisper not installed)]"
+            )
     elif category == "video":
         # Future: extract audio track. For now, try audio transcription.
         try:
             extracted_text = await transcribe_audio(media.content, media.mime_type)
+        except ImportError:
+            logger.warning("faster-whisper not installed, skipping video transcription")
+            extracted_text = (
+                "[Video file - transcription not available (faster-whisper not installed)]"
+            )
         except Exception:
             logger.warning("Could not process video file: %s", media.original_url)
             extracted_text = "[Video file - transcription not available]"
