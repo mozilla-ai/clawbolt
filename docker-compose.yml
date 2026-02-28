@@ -31,5 +31,11 @@ services:
       sh -c "uv run alembic upgrade head &&
              uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"
 
+  tunnel:
+    image: cloudflare/cloudflared:latest
+    command: tunnel --no-autoupdate --url http://app:8000 --metrics 0.0.0.0:2000
+    depends_on:
+      - app
+
 volumes:
   pgdata:

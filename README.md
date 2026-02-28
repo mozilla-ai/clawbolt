@@ -95,25 +95,18 @@ curl http://localhost:8000/api/health
 # {"status":"ok"}
 ```
 
-### 4. Set up Telegram webhook
+### 4. Test it
 
-Create a bot via [@BotFather](https://t.me/BotFather) on Telegram. Then expose your server and set the webhook:
+The Telegram webhook is registered automatically — Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app and calls `setWebhook` on startup. No account or auth token required. Just send a message to your bot on Telegram and Backshop will respond.
 
-```bash
-# Using ngrok
-ngrok http 8000
-
-# Set the webhook URL (replace with your tunnel URL and bot token)
-curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
-  -H "Content-Type: application/json" \
-  -d '{"url": "https://<your-tunnel-url>/api/webhooks/telegram", "secret_token": "<optional-secret>"}'
-```
-
-If you set a `secret_token`, also set `TELEGRAM_WEBHOOK_SECRET` in your `.env`.
-
-### 5. Test it
-
-Send a message to your bot on Telegram. Backshop will respond as an AI assistant ready to help with estimates, job tracking, and more.
+> **Manual fallback**: If you need to register the webhook manually (e.g. when running without Docker), start a tunnel yourself and call `setWebhook`:
+> ```bash
+> cloudflared tunnel --url http://localhost:8000
+> # Copy the https://*.trycloudflare.com URL from the output, then:
+> curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
+>   -H "Content-Type: application/json" \
+>   -d '{"url": "https://<your-tunnel-url>/api/webhooks/telegram"}'
+> ```
 
 ## File Storage Setup
 

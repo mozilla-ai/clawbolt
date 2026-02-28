@@ -34,6 +34,15 @@ To test with Dropbox or Google Drive, set `STORAGE_PROVIDER` and the correspondi
 
 In tests, all storage is mocked via `MockStorageBackend` in `tests/mocks/storage.py` — no real filesystem or cloud calls are made.
 
+## Telegram Webhook (Auto-Registration)
+
+When using Docker Compose, the Telegram webhook is registered automatically on startup. The compose stack includes a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) service that creates a public HTTPS tunnel to the app. The app discovers the tunnel URL via cloudflared's metrics API and calls Telegram's `setWebhook`.
+
+- **No account required** — Cloudflare quick tunnels work without signup or auth tokens
+- **Tunnel URL** — A random `*.trycloudflare.com` URL is assigned on each start; check `docker compose logs tunnel` to see it
+
+If cloudflared is not running (e.g. running the app directly without Docker), webhook auto-registration is silently skipped.
+
 ## Troubleshooting
 
 ### Docker build fails with dependency errors
