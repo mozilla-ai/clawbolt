@@ -20,6 +20,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DATABASE_URL: "sqlite:///:memory:"
+      TWILIO_VALIDATE_SIGNATURES: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
