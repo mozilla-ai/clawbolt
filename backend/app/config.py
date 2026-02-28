@@ -17,7 +17,6 @@ class Settings(BaseSettings):
     # LLM
     llm_provider: str = "openai"
     llm_model: str = "gpt-4o"
-    llm_api_key: str = ""
     vision_model: str = "gpt-4o"
 
     # Storage

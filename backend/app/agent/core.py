@@ -91,7 +91,6 @@ class BackshopAgent:
         response = await acompletion(
             model=settings.llm_model,
             provider=settings.llm_provider,
-            api_key=settings.llm_api_key,
             messages=messages,
             tools=tool_schemas,
             max_tokens=500,
@@ -148,7 +147,6 @@ class BackshopAgent:
             followup = await acompletion(
                 model=settings.llm_model,
                 provider=settings.llm_provider,
-                api_key=settings.llm_api_key,
                 messages=messages,
                 max_tokens=500,
             )

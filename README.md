@@ -18,7 +18,7 @@ Edit `.env` and fill in the required credentials:
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `LLM_API_KEY` | Yes | API key for your LLM provider (OpenAI, Anthropic, etc.) |
+| `OPENAI_API_KEY` | Yes* | OpenAI API key (or set the key for your chosen provider) |
 | `TWILIO_ACCOUNT_SID` | Yes | Twilio account SID |
 | `TWILIO_AUTH_TOKEN` | Yes | Twilio auth token |
 | `TWILIO_PHONE_NUMBER` | Yes | Your Twilio phone number (e.g. `+15551234567`) |
@@ -26,6 +26,9 @@ Edit `.env` and fill in the required credentials:
 | `LLM_MODEL` | No | Model to use (default: `gpt-4o`) |
 | `STORAGE_PROVIDER` | No | `dropbox` or `google_drive` for file cataloging |
 | `DROPBOX_ACCESS_TOKEN` | No | Dropbox token (if using Dropbox storage) |
+| `ANY_LLM_KEY` | No | any-llm.ai managed platform key (replaces individual provider keys) |
+
+*Set the API key env var for your chosen provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) — or set `ANY_LLM_KEY` to use the [any-llm.ai](https://any-llm.ai) managed platform as a key vault for all providers.
 
 The `DATABASE_URL` is set automatically by Docker Compose — you don't need to change it.
 
