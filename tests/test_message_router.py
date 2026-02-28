@@ -241,3 +241,61 @@ async def test_file_tools_skipped_when_no_storage(
     )
 
     assert response.reply_text == "No file tools!"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch(
+    "backend.app.media.pipeline.analyze_image",
+    new_callable=AsyncMock,
+    side_effect=RuntimeError("Vision API down"),
+)
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
+async def test_pipeline_failure_note_mentions_vision(
+    mock_download: AsyncMock,
+    mock_vision: AsyncMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When media pipeline fails, the system note should mention vision analysis."""
+    from backend.app.media.download import DownloadedMedia
+
+    mock_download.return_value = DownloadedMedia(
+        content=b"fake-image",
+        mime_type="image/jpeg",
+        original_url="AgACAgIAAxkBAAI",
+        filename="photo.jpg",
+    )
+
+    # Make process_message_media raise to trigger the fallback path
+    with patch(
+        "backend.app.agent.router.process_message_media",
+        new_callable=AsyncMock,
+    ) as mock_pipeline:
+        # First call raises, second call (fallback) succeeds
+        from backend.app.media.pipeline import PipelineResult
+
+        mock_pipeline.side_effect = [
+            RuntimeError("Pipeline crashed"),
+            PipelineResult(
+                text_body="Check this",
+                media_results=[],
+                combined_context="[Text message]: 'Check this'",
+            ),
+        ]
+        mock_acompletion.return_value = make_text_response("I see you sent something!")  # type: ignore[union-attr]
+
+        await handle_inbound_message(
+            db=db_session,
+            contractor=test_contractor,
+            message=inbound_message,
+            media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
+            messaging_service=mock_messaging,
+        )
+
+    # The system note should be specific about vision analysis
+    db_session.refresh(inbound_message)
+    assert "Vision analysis was unavailable" in inbound_message.processed_context

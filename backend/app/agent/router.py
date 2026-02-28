@@ -71,8 +71,10 @@ async def handle_inbound_message(
         pipeline_result = await process_message_media(message.body, [])
         if downloaded_media:
             media_notes.append(
-                "I received your media but couldn't process it right now. "
-                "I can still help with your text message."
+                "Vision analysis was unavailable for the attached media. "
+                "The contractor may have sent a photo or document that could "
+                "not be analyzed. You can still help with their text message "
+                "and ask them to describe what the attachment shows."
             )
 
     # Step 3: Combined context (with any media failure notes)

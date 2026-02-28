@@ -32,7 +32,11 @@ async def _process_single_media(
     extracted_text = ""
 
     if category == "image":
-        extracted_text = await analyze_image(media.content, media.mime_type, context=context)
+        try:
+            extracted_text = await analyze_image(media.content, media.mime_type, context=context)
+        except Exception:
+            logger.warning("Vision analysis failed for media: %s", media.original_url)
+            extracted_text = "[Photo — vision analysis not available]"
     elif category == "audio":
         try:
             extracted_text = await transcribe_audio(media.content, media.mime_type)
