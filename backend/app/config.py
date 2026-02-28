@@ -22,7 +22,7 @@ class Settings(BaseSettings):
     vision_model: str = "gpt-4o"
 
     # Storage
-    storage_provider: str = "dropbox"  # "dropbox" or "google_drive"
+    storage_provider: str = "local"  # "local", "dropbox", or "google_drive"
     dropbox_access_token: str = ""
     google_drive_credentials_json: str = ""
 

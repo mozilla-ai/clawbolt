@@ -1,8 +1,11 @@
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import io
 import json
 from abc import ABC, abstractmethod
+from pathlib import Path
 
 import dropbox
 
@@ -10,7 +13,16 @@ from backend.app.config import Settings, settings
 
 
 class StorageBackend(ABC):
-    """Abstract base for file storage providers."""
+    """Abstract base for file storage providers.
+
+    Each implementation handles a single storage destination (Dropbox, Google
+    Drive, local filesystem, etc.).  The interface is intentionally minimal so
+    that adding new backends is straightforward.
+
+    Multi-tenant note: today one backend instance is shared across all
+    contractors.  A future iteration will allow per-contractor credentials so
+    each contractor's files go to their own cloud account.
+    """
 
     @abstractmethod
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
@@ -110,10 +122,47 @@ class GoogleDriveStorage(StorageBackend):
         return files
 
 
-def get_storage_service(svc_settings: Settings | None = None) -> StorageBackend:
-    """Factory: return the configured storage backend."""
+class LocalFileStorage(StorageBackend):
+    """Local filesystem storage for development and demos."""
+
+    def __init__(self, base_dir: str = "data/storage") -> None:
+        self.base_dir = Path(base_dir)
+        self.base_dir.mkdir(parents=True, exist_ok=True)
+
+    async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
+        folder = self.base_dir / path.lstrip("/")
+        folder.mkdir(parents=True, exist_ok=True)
+        file_path = folder / filename
+        await asyncio.to_thread(file_path.write_bytes, file_bytes)
+        return f"file://{file_path.resolve()}"
+
+    async def create_folder(self, path: str) -> str:
+        folder = self.base_dir / path.lstrip("/")
+        folder.mkdir(parents=True, exist_ok=True)
+        return str(folder)
+
+    async def list_folder(self, path: str) -> list[dict[str, str]]:
+        folder = self.base_dir / path.lstrip("/")
+        if not folder.exists():
+            return []
+        return [{"name": f.name, "path": str(f)} for f in folder.iterdir() if f.is_file()]
+
+
+def get_storage_service(
+    svc_settings: Settings | None = None,
+    contractor: object | None = None,
+) -> StorageBackend:
+    """Factory: return the configured storage backend.
+
+    Args:
+        svc_settings: Override the global settings (useful in tests).
+        contractor: Reserved for future multi-tenant support where each
+            contractor may have their own storage credentials.
+    """
     s = svc_settings or settings
-    if s.storage_provider == "dropbox":
+    if s.storage_provider == "local":
+        return LocalFileStorage()
+    elif s.storage_provider == "dropbox":
         return DropboxStorage(s.dropbox_access_token)
     elif s.storage_provider == "google_drive":
         return GoogleDriveStorage(s.google_drive_credentials_json)

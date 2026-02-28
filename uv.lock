@@ -40,6 +40,25 @@ wheels = [
 ]
 
 [[package]]
+name = "anthropic"
+version = "0.84.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "anyio" },
+    { name = "distro" },
+    { name = "docstring-parser" },
+    { name = "httpx" },
+    { name = "jiter" },
+    { name = "pydantic" },
+    { name = "sniffio" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/04/ea/0869d6df9ef83dcf393aeefc12dd81677d091c6ffc86f783e51cf44062f2/anthropic-0.84.0.tar.gz", hash = "sha256:72f5f90e5aebe62dca316cb013629cfa24996b0f5a4593b8c3d712bc03c43c37", size = 539457, upload-time = "2026-02-25T05:22:38.54Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/64/ca/218fa25002a332c0aa149ba18ffc0543175998b1f65de63f6d106689a345/anthropic-0.84.0-py3-none-any.whl", hash = "sha256:861c4c50f91ca45f942e091d83b60530ad6d4f98733bfe648065364da05d29e7", size = 455156, upload-time = "2026-02-25T05:22:40.468Z" },
+]
+
+[[package]]
 name = "any-agent"
 version = "1.18.0"
 source = { registry = "https://pypi.org/simple" }
@@ -72,6 +91,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/b2/9f/e3ae51bd4724b7a4019e935b19a877f31c040095f0f745aad7b17f904811/any_llm_sdk-1.8.6.tar.gz", hash = "sha256:ef6fd798bde3f39e85170a909fd86931399f95bd8efb8316235a2c58d47816a8", size = 133852, upload-time = "2026-02-25T15:37:36.207Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/68/14b09d305eef4c302a751c5fd45e8668c1fd8bccc8156d373c2a6cd3c4aa/any_llm_sdk-1.8.6-py3-none-any.whl", hash = "sha256:0f6cf178f9b736c9bb3d5d618709065361f3a0fb1094f2c71281c50631050aed", size = 189023, upload-time = "2026-02-25T15:37:34.528Z" },
+]
+
+[package.optional-dependencies]
+anthropic = [
+    { name = "anthropic" },
 ]
 
 [[package]]
@@ -153,7 +177,7 @@ source = { editable = "." }
 dependencies = [
     { name = "alembic" },
     { name = "any-agent" },
-    { name = "any-llm-sdk" },
+    { name = "any-llm-sdk", extra = ["anthropic"] },
     { name = "dropbox" },
     { name = "fastapi" },
     { name = "google-api-python-client" },
@@ -185,7 +209,7 @@ whisper = [
 requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
     { name = "any-agent", specifier = ">=1.18" },
-    { name = "any-llm-sdk", specifier = ">=1.8" },
+    { name = "any-llm-sdk", extras = ["anthropic"], specifier = ">=1.8" },
     { name = "dropbox", specifier = ">=12.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
     { name = "faster-whisper", marker = "extra == 'whisper'", specifier = ">=1.0" },
@@ -502,6 +526,15 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/fc/f8/98eea607f65de6527f8a2e8885fc8015d3e6f5775df186e443e0964a11c3/distro-1.9.0.tar.gz", hash = "sha256:2fa77c6fd8940f116ee1d6b94a2f90b13b5ea8d019b98bc8bafdcabcdd9bdbed", size = 60722, upload-time = "2023-12-24T09:54:32.31Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/12/b3/231ffd4ab1fc9d679809f356cebee130ac7daa00d6d6f3206dd4fd137e9e/distro-1.9.0-py3-none-any.whl", hash = "sha256:7bffd925d65168f85027d8da9af6bddab658135b840670a223589bc0c8ef02b2", size = 20277, upload-time = "2023-12-24T09:54:30.421Z" },
+]
+
+[[package]]
+name = "docstring-parser"
+version = "0.17.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/b2/9d/c3b43da9515bd270df0f80548d9944e389870713cc1fe2b8fb35fe2bcefd/docstring_parser-0.17.0.tar.gz", hash = "sha256:583de4a309722b3315439bb31d64ba3eebada841f2e2cee23b99df001434c912", size = 27442, upload-time = "2025-07-21T07:35:01.868Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/55/e2/2537ebcff11c1ee1ff17d8d0b6f4db75873e3b0fb32c2d4a2ee31ecb310a/docstring_parser-0.17.0-py3-none-any.whl", hash = "sha256:cf2569abd23dce8099b300f9b4fa8191e9582dda731fd533daf54c4551658708", size = 36896, upload-time = "2025-07-21T07:35:00.684Z" },
 ]
 
 [[package]]

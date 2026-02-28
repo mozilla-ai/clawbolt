@@ -193,6 +193,7 @@ async def test_file_tools_wired_when_storage_configured(
     mock_messaging: MessagingService,
 ) -> None:
     """File tools should be registered when storage credentials are set."""
+    mock_settings.storage_provider = "dropbox"
     mock_settings.dropbox_access_token = "test-token"
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "gpt-4o"
@@ -224,6 +225,7 @@ async def test_file_tools_skipped_when_no_storage(
     mock_messaging: MessagingService,
 ) -> None:
     """File tools should be skipped gracefully when storage not configured."""
+    mock_settings.storage_provider = "dropbox"
     mock_settings.dropbox_access_token = ""
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "gpt-4o"
