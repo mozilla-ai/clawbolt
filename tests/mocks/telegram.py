@@ -9,15 +9,20 @@ def make_telegram_update_payload(
     document_file_id: str | None = None,
     document_mime_type: str = "application/pdf",
     first_name: str = "Test",
+    username: str | None = None,
 ) -> dict:
     """Build a realistic Telegram webhook Update JSON payload."""
+    from_obj: dict = {
+        "id": chat_id,
+        "is_bot": False,
+        "first_name": first_name,
+    }
+    if username is not None:
+        from_obj["username"] = username
+
     msg: dict = {
         "message_id": message_id,
-        "from": {
-            "id": chat_id,
-            "is_bot": False,
-            "first_name": first_name,
-        },
+        "from": from_obj,
         "chat": {
             "id": chat_id,
             "first_name": first_name,

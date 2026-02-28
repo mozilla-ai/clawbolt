@@ -69,6 +69,7 @@ Edit `.env` and fill in the required credentials:
 | `STORAGE_PROVIDER` | No | `dropbox` or `google_drive` for file cataloging |
 | `DROPBOX_ACCESS_TOKEN` | No | Dropbox token (if using Dropbox storage) |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | No | Comma-separated allowlist of Telegram chat IDs (empty = allow all) |
+| `TELEGRAM_ALLOWED_USERNAMES` | No | Comma-separated allowlist of Telegram usernames (empty = allow all) |
 | `ANY_LLM_KEY` | No | any-llm.ai managed platform key (replaces individual provider keys) |
 
 *Set the API key env var for your chosen provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) — or set `ANY_LLM_KEY` to use the [any-llm.ai](https://any-llm.ai) managed platform as a key vault for all providers.
