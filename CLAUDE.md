@@ -1,11 +1,11 @@
 # Backshop
 
-Backshop is an AI assistant for solo blue-collar contractors. FastAPI backend with a Telegram messaging interface and an any-agent TinyAgent agent loop. Built by Mozilla.ai using the open-core model.
+Backshop is an AI assistant for solo blue-collar contractors. FastAPI backend with a Telegram messaging interface and a custom tool-calling agent loop built on any-llm. Built by Mozilla.ai using the open-core model.
 
 ## Tech Stack
 
 - Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2
-- any-llm-sdk (LLM provider abstraction), any-agent (TinyAgent for agent loop)
+- any-llm-sdk (LLM provider abstraction via `acompletion`)
 - Telegram Bot API for messaging (via python-telegram-bot), faster-whisper for audio transcription
 - ReportLab for PDF generation, Dropbox/Google Drive for file storage
 - PostgreSQL (production), in-memory SQLite + StaticPool (tests)
@@ -38,7 +38,7 @@ Backshop is an AI assistant for solo blue-collar contractors. FastAPI backend wi
 - **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth)
 - **`user_id` scoping** on every model and endpoint from day one
 - **MessagingService protocol**: channel-agnostic interface in `services/messaging.py` with Telegram implementation in `services/telegram_service.py`
-- **Agent loop**: Telegram webhook -> media pipeline -> TinyAgent -> tool execution -> reply
+- **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `acompletion`) -> tool execution -> reply
 - **Memory**: PostgreSQL key-value facts + client records
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
 
