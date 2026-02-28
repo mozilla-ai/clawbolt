@@ -15,6 +15,13 @@ from backend.app.services.webhook import (
     wait_for_dns,
 )
 
+logging.basicConfig(
+    level=logging.WARNING,
+    format="%(asctime)s %(levelname)-8s [%(name)s] %(message)s",
+)
+# Only the app's own loggers get the configured level; third-party libraries
+# (httpcore, httpx, telegram, etc.) stay at WARNING to avoid noise.
+logging.getLogger("backend").setLevel(settings.log_level.upper())
 logger = logging.getLogger(__name__)
 
 

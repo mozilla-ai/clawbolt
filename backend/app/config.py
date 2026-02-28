@@ -2,6 +2,7 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
+    log_level: str = "INFO"
     database_url: str = "postgresql://backshop:backshop@localhost:5432/backshop"
     cors_origins: str = "http://localhost:3000,http://localhost:8000"
     jwt_secret: str = "change-me-in-production"
