@@ -7,6 +7,7 @@ import re
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool
+from backend.app.media.download import MIME_EXTENSIONS
 from backend.app.models import Contractor, MediaFile
 from backend.app.services.storage_service import StorageBackend
 
@@ -61,6 +62,12 @@ def _build_filename(
         base = _slugify(description, max_length=30)
 
     return f"{base}_{index:03d}.{extension}"
+
+
+def _extension_from_mime(mime_type: str) -> str:
+    """Get file extension from MIME type."""
+    dotted = MIME_EXTENSIONS.get(mime_type, ".bin")
+    return dotted.lstrip(".")
 
 
 def create_file_tools(
@@ -174,19 +181,3 @@ def create_file_tools(
             },
         ),
     ]
-
-
-def _extension_from_mime(mime_type: str) -> str:
-    """Get file extension from MIME type."""
-    mime_map: dict[str, str] = {
-        "image/jpeg": "jpg",
-        "image/png": "png",
-        "image/gif": "gif",
-        "image/webp": "webp",
-        "audio/mpeg": "mp3",
-        "audio/ogg": "ogg",
-        "audio/wav": "wav",
-        "application/pdf": "pdf",
-        "video/mp4": "mp4",
-    }
-    return mime_map.get(mime_type, "bin")
