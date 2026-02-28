@@ -185,7 +185,7 @@ class TestEvaluateHeartbeatNeed:
     ) -> None:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_key = ""
+        mock_settings.llm_api_base = None
         mock_llm.return_value = _make_llm_response(
             json.dumps(
                 {
@@ -212,7 +212,7 @@ class TestEvaluateHeartbeatNeed:
     ) -> None:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_key = ""
+        mock_settings.llm_api_base = None
         mock_llm.return_value = _make_llm_response(
             json.dumps(
                 {
@@ -239,7 +239,7 @@ class TestEvaluateHeartbeatNeed:
     ) -> None:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_key = ""
+        mock_settings.llm_api_base = None
         mock_llm.return_value = _make_llm_response("I'm not sure what to do {broken json")
         action = await evaluate_heartbeat_need(db, contractor)
         assert action.action_type == "no_action"
