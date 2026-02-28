@@ -123,18 +123,21 @@ async def test_pipeline_processes_real_image() -> None:
 
 @pytest.mark.integration()
 @skip_without_anthropic_key
-async def test_analyze_jpeg_mime_type() -> None:
-    """analyze_image() should work with image/jpeg MIME type (most common from Telegram)."""
-    # PNG bytes but declared as JPEG — tests that the LLM handles the content
-    # regardless of declared MIME type. In production, Telegram sends real JPEGs.
+async def test_mime_mismatch_raises_error() -> None:
+    """Claude rejects images where declared MIME type doesn't match actual content.
+
+    This is a real production concern: if Telegram declares a file as image/jpeg
+    but the content is actually PNG (or vice versa), the vision API will reject it.
+    """
     png_bytes = _make_png(width=8, height=8, color=(0, 255, 0))
 
-    with patch("backend.app.media.vision.settings") as mock_settings:
+    with (
+        patch("backend.app.media.vision.settings") as mock_settings,
+        pytest.raises(Exception, match=r"image/jpeg.*image/png|invalid_request_error"),
+    ):
         mock_settings.vision_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
 
-        result = await analyze_image(png_bytes, "image/jpeg")
-
-    assert isinstance(result, str)
-    assert len(result) > 0
+        # PNG bytes declared as JPEG — Claude validates and rejects this
+        await analyze_image(png_bytes, "image/jpeg")
