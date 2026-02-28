@@ -17,6 +17,7 @@ from backend.app.agent.heartbeat import (
     HeartbeatScheduler,
     _is_checklist_item_due,
     _parse_business_hours,
+    _strip_code_fences,
     build_heartbeat_context,
     evaluate_heartbeat_need,
     is_within_business_hours,
@@ -133,27 +134,27 @@ class TestParseBusinessHours:
 
 class TestIsWithinBusinessHours:
     def test_within_hours(self, contractor: Contractor) -> None:
-        # 10 AM — within 7am-5pm
+        # 10 AM -- within 7am-5pm
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor, now) is True
 
     def test_before_hours(self, contractor: Contractor) -> None:
-        # 5 AM — before 7am-5pm
+        # 5 AM -- before 7am-5pm
         now = datetime.datetime(2025, 6, 15, 5, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor, now) is False
 
     def test_after_hours(self, contractor: Contractor) -> None:
-        # 8 PM — after 7am-5pm
+        # 8 PM -- after 7am-5pm
         now = datetime.datetime(2025, 6, 15, 20, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor, now) is False
 
     def test_at_boundary_start(self, contractor: Contractor) -> None:
-        # Exactly 7 AM — should be within
+        # Exactly 7 AM -- should be within
         now = datetime.datetime(2025, 6, 15, 7, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor, now) is True
 
     def test_at_boundary_end(self, contractor: Contractor) -> None:
-        # Exactly 5 PM (17:00) — should be outside (end is exclusive)
+        # Exactly 5 PM (17:00) -- should be outside (end is exclusive)
         now = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor, now) is False
 
@@ -164,15 +165,15 @@ class TestIsWithinBusinessHours:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
-        # 10 AM — outside quiet hours, should be True
+        # 10 AM -- outside quiet hours, should be True
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor_no_hours, now) is True
 
-        # 22:00 — inside quiet hours, should be False
+        # 22:00 -- inside quiet hours, should be False
         now = datetime.datetime(2025, 6, 15, 22, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor_no_hours, now) is False
 
-        # 3 AM — inside quiet hours, should be False
+        # 3 AM -- inside quiet hours, should be False
         now = datetime.datetime(2025, 6, 15, 3, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor_no_hours, now) is False
 
@@ -403,6 +404,44 @@ class TestIsChecklistItemDue:
 
 
 # ---------------------------------------------------------------------------
+# _strip_code_fences
+# ---------------------------------------------------------------------------
+
+
+class TestStripCodeFences:
+    def test_plain_json_unchanged(self) -> None:
+        """Plain JSON without fences is returned as-is."""
+        raw = '{"action": "no_action", "message": "", "reasoning": "", "priority": 1}'
+        assert _strip_code_fences(raw) == raw
+
+    def test_json_code_fence(self) -> None:
+        """JSON wrapped in ```json fences should be stripped."""
+        raw = (
+            "```json\n"
+            '{"action": "send_message", "message": "Hi", "reasoning": "test", "priority": 3}\n'
+            "```"
+        )
+        expected = '{"action": "send_message", "message": "Hi", "reasoning": "test", "priority": 3}'
+        assert _strip_code_fences(raw) == expected
+
+    def test_plain_code_fence(self) -> None:
+        """JSON wrapped in ``` fences (no language tag) should be stripped."""
+        raw = '```\n{"action": "no_action", "message": "", "reasoning": "", "priority": 1}\n```'
+        expected = '{"action": "no_action", "message": "", "reasoning": "", "priority": 1}'
+        assert _strip_code_fences(raw) == expected
+
+    def test_code_fence_with_surrounding_whitespace(self) -> None:
+        """Surrounding whitespace around fences should be handled."""
+        raw = '  \n```json\n{"action": "no_action"}\n```\n  '
+        assert _strip_code_fences(raw) == '{"action": "no_action"}'
+
+    def test_malformed_text_returned_as_is(self) -> None:
+        """Non-JSON, non-fenced text is returned stripped."""
+        raw = "I'm not sure what to do"
+        assert _strip_code_fences(raw) == raw
+
+
+# ---------------------------------------------------------------------------
 # evaluate_heartbeat_need
 # ---------------------------------------------------------------------------
 
@@ -535,6 +574,72 @@ class TestEvaluateHeartbeatNeed:
         action = await evaluate_heartbeat_need(db, contractor, ["test flag"])
         assert action.action_type == "no_action"
         assert action.priority == 0
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.acompletion")
+    async def test_json_code_fence_parsed(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        db: Session,
+        contractor: Contractor,
+    ) -> None:
+        """Regression: LLM response wrapped in ```json fences should parse correctly."""
+        mock_settings.llm_model = "gpt-4o"
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_api_base = None
+        mock_settings.heartbeat_model = ""
+        mock_settings.heartbeat_provider = ""
+        fenced = (
+            "```json\n"
+            + json.dumps(
+                {
+                    "action": "send_message",
+                    "message": "Don't forget your estimate!",
+                    "reasoning": "Stale draft",
+                    "priority": 4,
+                }
+            )
+            + "\n```"
+        )
+        mock_llm.return_value = _make_llm_response(fenced)
+        action = await evaluate_heartbeat_need(db, contractor, ["Stale draft estimate"])
+        assert action.action_type == "send_message"
+        assert "estimate" in action.message
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.acompletion")
+    async def test_plain_code_fence_parsed(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        db: Session,
+        contractor: Contractor,
+    ) -> None:
+        """Regression: LLM response wrapped in ``` fences (no lang tag) should parse."""
+        mock_settings.llm_model = "gpt-4o"
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_api_base = None
+        mock_settings.heartbeat_model = ""
+        mock_settings.heartbeat_provider = ""
+        fenced = (
+            "```\n"
+            + json.dumps(
+                {
+                    "action": "no_action",
+                    "message": "",
+                    "reasoning": "Nothing to do",
+                    "priority": 1,
+                }
+            )
+            + "\n```"
+        )
+        mock_llm.return_value = _make_llm_response(fenced)
+        action = await evaluate_heartbeat_need(db, contractor, ["test flag"])
+        assert action.action_type == "no_action"
+        assert action.reasoning == "Nothing to do"
 
 
 # ---------------------------------------------------------------------------
