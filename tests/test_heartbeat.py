@@ -230,6 +230,29 @@ class TestEvaluateHeartbeatNeed:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
     @patch("backend.app.agent.heartbeat.acompletion")
+    async def test_passes_api_base_not_api_key(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        db: Session,
+        contractor: Contractor,
+    ) -> None:
+        """Regression test: acompletion must receive api_base, not api_key."""
+        mock_settings.llm_model = "gpt-4o"
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_api_base = "http://localhost:1234/v1"
+        mock_llm.return_value = _make_llm_response(
+            json.dumps({"action": "no_action", "message": "", "reasoning": "test", "priority": 1})
+        )
+        await evaluate_heartbeat_need(db, contractor)
+        _, kwargs = mock_llm.call_args
+        assert "api_base" in kwargs
+        assert kwargs["api_base"] == "http://localhost:1234/v1"
+        assert "api_key" not in kwargs
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.acompletion")
     async def test_malformed_response(
         self,
         mock_llm: AsyncMock,
