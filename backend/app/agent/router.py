@@ -2,6 +2,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, BackshopAgent
 from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
@@ -19,7 +20,6 @@ from backend.app.services.twilio_service import TwilioService
 
 logger = logging.getLogger(__name__)
 
-HISTORY_LIMIT = 20
 
 
 async def handle_inbound_message(
@@ -76,7 +76,7 @@ async def handle_inbound_message(
         combined_context += "\n\n[System note: " + " ".join(media_notes) + "]"
 
     # Step 4: Load conversation history
-    conversation_history = _load_conversation_history(db, message.conversation_id)
+    conversation_history = await load_conversation_history(db, message.conversation_id)
 
     # Step 5: Initialize agent with tools
     onboarding = is_onboarding_needed(contractor)
@@ -134,22 +134,3 @@ async def handle_inbound_message(
         db.commit()
 
     return response
-
-
-def _load_conversation_history(db: Session, conversation_id: int) -> list[dict[str, str]]:
-    """Load recent messages from the conversation for context."""
-    messages = (
-        db.query(Message)
-        .filter(Message.conversation_id == conversation_id)
-        .order_by(Message.created_at.desc())
-        .limit(HISTORY_LIMIT)
-        .all()
-    )
-    # Reverse to chronological order, skip the current (most recent) message
-    messages = list(reversed(messages))[:-1] if len(messages) > 1 else []
-
-    history: list[dict[str, str]] = []
-    for msg in messages:
-        role = "user" if msg.direction == "inbound" else "assistant"
-        history.append({"role": role, "content": msg.body})
-    return history
