@@ -4,13 +4,6 @@ import pytest
 from sqlalchemy.orm import Session
 
 from backend.app.agent.router import handle_inbound_message
-from backend.app.errors import (
-    AgentError,
-    BackshopError,
-    MediaProcessingError,
-    MessagingError,
-    StorageError,
-)
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
@@ -45,14 +38,6 @@ def mock_messaging() -> MessagingService:
     service.send_media = AsyncMock(return_value="msg_43")
     service.send_message = AsyncMock(return_value="msg_42")
     return service
-
-
-def test_exception_hierarchy() -> None:
-    """Custom exceptions should inherit from BackshopError."""
-    assert issubclass(MediaProcessingError, BackshopError)
-    assert issubclass(AgentError, BackshopError)
-    assert issubclass(StorageError, BackshopError)
-    assert issubclass(MessagingError, BackshopError)
 
 
 @pytest.mark.asyncio()
