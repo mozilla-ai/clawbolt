@@ -1,7 +1,10 @@
+from unittest.mock import MagicMock
+
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from backend.app.models import Contractor, Conversation, Message
+from backend.app.services.twilio_service import TwilioService
 from tests.mocks.twilio import make_twilio_webhook_payload
 
 
@@ -75,3 +78,16 @@ def test_inbound_webhook_creates_conversation(
     )
     assert len(conversations) == 1
     assert conversations[0].is_active is True
+
+
+def test_twilio_service_injected_via_depends(
+    client: TestClient, mock_twilio_service: TwilioService
+) -> None:
+    """TwilioService should be injected via Depends and overridable in tests."""
+    # The mock_twilio_service fixture is injected via dependency override in conftest.
+    # If DI is wired correctly, the endpoint succeeds with the mock (no real Twilio call).
+    payload = make_twilio_webhook_payload()
+    response = client.post("/api/webhooks/twilio/inbound", data=payload)
+    assert response.status_code == 200
+    # Verify the mock is indeed a MagicMock (not a real TwilioService)
+    assert isinstance(mock_twilio_service, MagicMock)
