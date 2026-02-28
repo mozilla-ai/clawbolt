@@ -202,3 +202,27 @@ def test_webhook_survives_handler_failure(
     assert response.status_code == 200
     messages = db_session.query(Message).all()
     assert len(messages) == 1
+
+
+def test_webhook_idempotency_skips_duplicate(
+    client: TestClient, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Duplicate webhook calls with same MessageSid should not create duplicate messages."""
+    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+        payload = make_twilio_webhook_payload(
+            from_number=test_contractor.phone,
+            body="First message",
+            message_sid="SM_unique_123",
+        )
+        # First call
+        response1 = client.post("/api/webhooks/twilio/inbound", data=payload)
+        # Second call (retry from Twilio)
+        response2 = client.post("/api/webhooks/twilio/inbound", data=payload)
+
+    assert response1.status_code == 200
+    assert response2.status_code == 200
+
+    # Only one message should exist
+    messages = db_session.query(Message).filter(Message.direction == "inbound").all()
+    assert len(messages) == 1
+    assert messages[0].twilio_sid == "SM_unique_123"
