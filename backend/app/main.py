@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -13,28 +14,43 @@ from backend.app.services.webhook import discover_tunnel_url, register_telegram_
 logger = logging.getLogger(__name__)
 
 
+async def _auto_register_webhook() -> None:
+    """Discover Cloudflare Tunnel URL and register Telegram webhook.
+
+    Runs as a background task after the server is listening so that Telegram
+    can reach the webhook URL during its validation check.
+    """
+    # Small delay to ensure Uvicorn is accepting connections.
+    await asyncio.sleep(3)
+    tunnel_url = await discover_tunnel_url()
+    if tunnel_url:
+        webhook_url = f"{tunnel_url}/api/webhooks/telegram"
+        secret = settings.telegram_webhook_secret or None
+        ok = await register_telegram_webhook(
+            settings.telegram_bot_token, webhook_url, secret=secret
+        )
+        if ok:
+            logger.info("Telegram webhook auto-registered: %s", webhook_url)
+        else:
+            logger.warning("Failed to auto-register Telegram webhook")
+    else:
+        logger.debug("Cloudflare tunnel not detected — skipping webhook auto-registration")
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
     heartbeat_scheduler.start()
 
-    # Auto-register Telegram webhook via Cloudflare Tunnel (local dev convenience).
+    # Fire-and-forget: register webhook after the server is ready.
+    webhook_task: asyncio.Task[None] | None = None
     if settings.telegram_bot_token:
-        tunnel_url = await discover_tunnel_url()
-        if tunnel_url:
-            webhook_url = f"{tunnel_url}/api/webhooks/telegram"
-            secret = settings.telegram_webhook_secret or None
-            ok = await register_telegram_webhook(
-                settings.telegram_bot_token, webhook_url, secret=secret
-            )
-            if ok:
-                logger.info("Telegram webhook auto-registered: %s", webhook_url)
-            else:
-                logger.warning("Failed to auto-register Telegram webhook")
-        else:
-            logger.debug("Cloudflare tunnel not detected — skipping webhook auto-registration")
+        webhook_task = asyncio.create_task(_auto_register_webhook())
 
     yield
+
+    if webhook_task and not webhook_task.done():
+        webhook_task.cancel()
     heartbeat_scheduler.stop()
 
 
