@@ -33,6 +33,7 @@ jobs:
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     env:
       DATABASE_URL: "sqlite:///:memory:"
+      TWILIO_VALIDATE_SIGNATURES: "false"
       TWILIO_ACCOUNT_SID: ${{ secrets.TWILIO_ACCOUNT_SID }}
       TWILIO_AUTH_TOKEN: ${{ secrets.TWILIO_AUTH_TOKEN }}
       TWILIO_PHONE_NUMBER: ${{ secrets.TWILIO_PHONE_NUMBER }}
