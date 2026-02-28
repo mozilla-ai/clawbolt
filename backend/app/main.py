@@ -18,23 +18,40 @@ async def _auto_register_webhook() -> None:
     """Discover Cloudflare Tunnel URL and register Telegram webhook.
 
     Runs as a background task after the server is listening so that Telegram
-    can reach the webhook URL during its validation check.
+    can reach the webhook URL during its validation check.  Registration is
+    retried several times because quick-tunnel hostnames are brand-new and
+    Telegram's DNS may not resolve them immediately.
     """
     # Small delay to ensure Uvicorn is accepting connections.
     await asyncio.sleep(3)
     tunnel_url = await discover_tunnel_url()
-    if tunnel_url:
-        webhook_url = f"{tunnel_url}/api/webhooks/telegram"
-        secret = settings.telegram_webhook_secret or None
+    if not tunnel_url:
+        logger.debug("Cloudflare tunnel not detected — skipping webhook auto-registration")
+        return
+
+    webhook_url = f"{tunnel_url}/api/webhooks/telegram"
+    secret = settings.telegram_webhook_secret or None
+
+    # Retry registration — Telegram often can't resolve the hostname right away.
+    max_attempts = 6
+    delay = 5.0
+    for attempt in range(1, max_attempts + 1):
         ok = await register_telegram_webhook(
             settings.telegram_bot_token, webhook_url, secret=secret
         )
         if ok:
             logger.info("Telegram webhook auto-registered: %s", webhook_url)
-        else:
-            logger.warning("Failed to auto-register Telegram webhook")
-    else:
-        logger.debug("Cloudflare tunnel not detected — skipping webhook auto-registration")
+            return
+        if attempt < max_attempts:
+            logger.info(
+                "Webhook registration attempt %d/%d failed, retrying in %.0fs…",
+                attempt,
+                max_attempts,
+                delay,
+            )
+            await asyncio.sleep(delay)
+
+    logger.warning("Failed to auto-register Telegram webhook after %d attempts", max_attempts)
 
 
 @asynccontextmanager
