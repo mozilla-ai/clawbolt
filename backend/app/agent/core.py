@@ -75,6 +75,7 @@ class BackshopAgent:
         message_context: str,
         conversation_history: list[dict[str, str]] | None = None,
         system_prompt_override: str | None = None,
+        temperature: float | None = None,
     ) -> AgentResponse:
         """Process a message through the agent loop."""
         system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
@@ -88,6 +89,10 @@ class BackshopAgent:
 
         tool_schemas = [tool_to_openai_schema(t) for t in self.tools] if self.tools else None
 
+        llm_kwargs: dict[str, object] = {}
+        if temperature is not None:
+            llm_kwargs["temperature"] = temperature
+
         response = await acompletion(
             model=settings.llm_model,
             provider=settings.llm_provider,
@@ -95,6 +100,7 @@ class BackshopAgent:
             messages=messages,
             tools=tool_schemas,
             max_tokens=500,
+            **llm_kwargs,
         )
 
         choice = response.choices[0]
