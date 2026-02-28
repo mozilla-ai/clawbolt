@@ -1,8 +1,7 @@
-"""Shared fixtures for integration tests that hit a local LLM server."""
+"""Shared fixtures for integration tests that hit a real LLM API."""
 
 import os
 
-import httpx
 import pytest
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -11,21 +10,11 @@ from sqlalchemy.pool import StaticPool
 from backend.app.database import Base
 from backend.app.models import Contractor
 
-_LMSTUDIO_URL = "http://localhost:1234/v1"
+_ANTHROPIC_MODEL = "claude-haiku-4-5-latest"
 
-
-def _lmstudio_available() -> bool:
-    """Check if LM Studio is reachable."""
-    try:
-        resp = httpx.get(f"{_LMSTUDIO_URL}/models", timeout=2)
-        return resp.status_code == 200
-    except httpx.ConnectError:
-        return False
-
-
-skip_without_lmstudio = pytest.mark.skipif(
-    not _lmstudio_available(),
-    reason="LM Studio not available at localhost:1234",
+skip_without_anthropic_key = pytest.mark.skipif(
+    not os.environ.get("ANTHROPIC_API_KEY"),
+    reason="ANTHROPIC_API_KEY not set",
 )
 
 
@@ -75,9 +64,3 @@ def onboarded_contractor(integration_db: Session) -> Contractor:
     integration_db.commit()
     integration_db.refresh(contractor)
     return contractor
-
-
-@pytest.fixture()
-def lmstudio_model() -> str:
-    """The model loaded in LM Studio (override via LLM_MODEL env var)."""
-    return os.environ.get("LLM_MODEL", "google/gemma-3-4b")
