@@ -44,3 +44,14 @@ async def test_analyze_image_encodes_base64(mock_acompletion: object) -> None:
     image_parts = [p for p in user_content if p.get("type") == "image_url"]
     assert len(image_parts) == 1
     assert image_parts[0]["image_url"]["url"].startswith("data:image/png;base64,")
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.media.vision.acompletion")
+async def test_analyze_image_does_not_pass_api_key(mock_acompletion: object) -> None:
+    """acompletion should be called without api_key so the SDK resolves keys from env."""
+    mock_acompletion.return_value = make_vision_response("Test.")  # type: ignore[union-attr]
+    await analyze_image(b"fake-jpeg-bytes", "image/jpeg")
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    assert "api_key" not in call_args.kwargs
