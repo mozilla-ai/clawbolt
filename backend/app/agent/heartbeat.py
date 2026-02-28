@@ -77,6 +77,22 @@ _TIME_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
+_CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", re.DOTALL)
+
+
+def _strip_code_fences(text: str) -> str:
+    """Remove markdown code fences wrapping a JSON response.
+
+    Handles both triple-backtick-json and plain triple-backtick wrappers.
+    Plain text without fences is returned unchanged.
+    """
+    stripped = text.strip()
+    m = _CODE_FENCE_RE.match(stripped)
+    if m:
+        return m.group(1).strip()
+    return stripped
+
+
 STALE_ESTIMATE_HOURS = 24
 
 
@@ -245,14 +261,14 @@ def _is_checklist_item_due(
     if item.schedule == "weekdays" and now.weekday() > 4:
         return False
 
-    # Never triggered → due (for daily/weekdays/once)
+    # Never triggered -> due (for daily/weekdays/once)
     if item.last_triggered_at is None:
         return True
 
     elapsed = now - item.last_triggered_at
 
     if item.schedule == "once":
-        # Already triggered once → not due again
+        # Already triggered once -> not due again
         return False
     # Default: "daily" or "weekdays" (weekday gate already passed above)
     return elapsed >= datetime.timedelta(hours=20)
@@ -323,6 +339,7 @@ async def evaluate_heartbeat_need(
         max_tokens=300,
     )
     raw = response.choices[0].message.content or ""
+    raw = _strip_code_fences(raw)
 
     try:
         data = json.loads(raw)
