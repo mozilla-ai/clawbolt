@@ -55,6 +55,12 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
     heartbeat_scheduler.start()
 
+    if settings.telegram_bot_token and not settings.telegram_webhook_secret:
+        logger.warning(
+            "TELEGRAM_WEBHOOK_SECRET is not set — webhook endpoint is unprotected. "
+            "Set TELEGRAM_WEBHOOK_SECRET to enable request validation."
+        )
+
     # Fire-and-forget: register webhook after the server is ready.
     webhook_task: asyncio.Task[None] | None = None
     if settings.telegram_bot_token:
