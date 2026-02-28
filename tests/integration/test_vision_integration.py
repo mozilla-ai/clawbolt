@@ -60,6 +60,7 @@ async def test_analyze_image_returns_description() -> None:
 
     with patch("backend.app.media.vision.settings") as mock_settings:
         mock_settings.vision_model = _VISION_MODEL
+        mock_settings.llm_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
 
@@ -77,6 +78,7 @@ async def test_analyze_image_with_context() -> None:
 
     with patch("backend.app.media.vision.settings") as mock_settings:
         mock_settings.vision_model = _VISION_MODEL
+        mock_settings.llm_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
 
@@ -105,6 +107,7 @@ async def test_pipeline_processes_real_image() -> None:
 
     with patch("backend.app.media.vision.settings") as mock_settings:
         mock_settings.vision_model = _VISION_MODEL
+        mock_settings.llm_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
 
@@ -136,6 +139,7 @@ async def test_mime_mismatch_raises_error() -> None:
         pytest.raises(Exception, match=r"image/jpeg.*image/png|invalid_request_error"),
     ):
         mock_settings.vision_model = _VISION_MODEL
+        mock_settings.llm_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
 

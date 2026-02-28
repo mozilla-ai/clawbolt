@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     llm_model: str = "gpt-4o"
     llm_api_base: str | None = None
-    vision_model: str = "gpt-4o"
+    vision_model: str = ""  # empty = fall back to llm_model
 
     # Storage
     storage_provider: str = "local"  # "local", "dropbox", or "google_drive"

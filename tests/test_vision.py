@@ -55,3 +55,22 @@ async def test_analyze_image_does_not_pass_api_key(mock_acompletion: object) -> 
 
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
     assert "api_key" not in call_args.kwargs
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.media.vision.acompletion")
+@patch("backend.app.media.vision.settings")
+async def test_analyze_image_falls_back_to_llm_model(
+    mock_settings: object, mock_acompletion: object
+) -> None:
+    """When vision_model is empty, should fall back to llm_model."""
+    mock_settings.vision_model = ""  # type: ignore[attr-defined]
+    mock_settings.llm_model = "claude-haiku-4-5-20251001"  # type: ignore[attr-defined]
+    mock_settings.llm_provider = "anthropic"  # type: ignore[attr-defined]
+    mock_settings.llm_api_base = None  # type: ignore[attr-defined]
+    mock_acompletion.return_value = make_vision_response("Test.")  # type: ignore[union-attr]
+
+    await analyze_image(b"fake-jpeg-bytes", "image/jpeg")
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    assert call_args.kwargs["model"] == "claude-haiku-4-5-20251001"
