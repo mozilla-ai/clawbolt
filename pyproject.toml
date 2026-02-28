@@ -1,0 +1,53 @@
+[project]
+name = "backshop"
+version = "0.1.0"
+description = "AI assistant for solo blue-collar contractors"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.30.0",
+    "sqlalchemy>=2.0",
+    "pydantic>=2.0",
+    "pydantic-settings>=2.0",
+    "alembic>=1.13",
+    "psycopg2-binary>=2.9",
+    "python-multipart>=0.0.9",
+    "httpx>=0.27",
+    "any-llm-sdk>=1.8",
+    "any-agent>=1.18",
+    "twilio>=9.0",
+    "reportlab>=4.0",
+    "dropbox>=12.0",
+    "google-api-python-client>=2.0",
+    "google-auth-oauthlib>=1.0",
+]
+
+[project.optional-dependencies]
+whisper = [
+    "faster-whisper>=1.0",
+]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.5",
+    "pre-commit>=3.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ANN", "RUF"]
+ignore = ["E501", "B008", "ANN401"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
