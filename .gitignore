@@ -30,6 +30,11 @@ ENV/
 htmlcov/
 .coverage
 
+# Nested repos and local data
+backshop-premium/
+backshop-infra/
+data/
+
 # OS
 .DS_Store
 Thumbs.db
