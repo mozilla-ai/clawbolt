@@ -103,31 +103,56 @@ class BackshopAgent:
         tool_call_records: list[dict[str, object]] = []
 
         # Handle tool calls
-        if hasattr(choice.message, "tool_calls") and choice.message.tool_calls:
+        if getattr(choice.message, "tool_calls", None):
+            # Append the assistant message (with tool_calls) to conversation
+            messages.append(choice.message.model_dump())
+
+            tool_results: list[dict[str, str]] = []
             for tool_call in choice.message.tool_calls:
                 tool_name = tool_call.function.name
                 tool_args = json.loads(tool_call.function.arguments)
 
                 tool_func = self._find_tool(tool_name)
+                result_str = ""
                 if tool_func:
                     try:
                         result = await tool_func(**tool_args)
+                        result_str = str(result)
                         actions_taken.append(f"Called {tool_name}")
                         tool_call_records.append(
                             {
                                 "name": tool_name,
                                 "args": tool_args,
-                                "result": str(result),
+                                "result": result_str,
                             }
                         )
                         if tool_name == "save_fact":
                             memories_saved.append(tool_args)
                     except Exception:
                         logger.exception("Tool call failed: %s", tool_name)
+                        result_str = f"Error: tool {tool_name} failed"
                         actions_taken.append(f"Failed: {tool_name}")
+                else:
+                    result_str = f"Error: unknown tool {tool_name}"
 
-            # Get final response after tool calls
-            reply_text = choice.message.content or "Done."
+                tool_results.append(
+                    {
+                        "role": "tool",
+                        "tool_call_id": tool_call.id,
+                        "content": result_str,
+                    }
+                )
+
+            # Append tool results and make follow-up LLM call
+            messages.extend(tool_results)
+            followup = await acompletion(
+                model=settings.llm_model,
+                provider=settings.llm_provider,
+                api_key=settings.llm_api_key,
+                messages=messages,
+                max_tokens=500,
+            )
+            reply_text = followup.choices[0].message.content or ""
         else:
             reply_text = choice.message.content or ""
 
