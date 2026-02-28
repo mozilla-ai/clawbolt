@@ -173,16 +173,28 @@ def test_next_estimate_number_increments(
     assert _next_estimate_number(db_session, test_contractor.id) == "EST-0002"
 
 
-def test_serve_estimate_pdf_endpoint(client: TestClient) -> None:
-    """GET /api/estimates/{id}/pdf should serve existing PDF."""
-    # Create a test PDF file
+def test_serve_estimate_pdf_endpoint(
+    client: TestClient, db_session: Session, test_contractor: Contractor
+) -> None:
+    """GET /api/estimates/{id}/pdf should serve existing PDF for authenticated owner."""
+    # Create an estimate record owned by the test contractor
+    estimate = Estimate(
+        contractor_id=test_contractor.id,
+        description="Test estimate",
+        total_amount=500.0,
+    )
+    db_session.add(estimate)
+    db_session.commit()
+    db_session.refresh(estimate)
+
+    # Create a test PDF file matching the estimate ID
     pdf_dir = Path("data/estimates")
     pdf_dir.mkdir(parents=True, exist_ok=True)
-    test_pdf = pdf_dir / "999.pdf"
+    test_pdf = pdf_dir / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 test content")
 
     try:
-        response = client.get("/api/estimates/999/pdf")
+        response = client.get(f"/api/estimates/{estimate.id}/pdf")
         assert response.status_code == 200
         assert response.headers["content-type"] == "application/pdf"
         assert b"%PDF-1.4" in response.content
@@ -191,6 +203,57 @@ def test_serve_estimate_pdf_endpoint(client: TestClient) -> None:
 
 
 def test_serve_estimate_pdf_not_found(client: TestClient) -> None:
-    """GET /api/estimates/{id}/pdf should return 404 for missing PDF."""
+    """GET /api/estimates/{id}/pdf should return 404 for missing estimate."""
     response = client.get("/api/estimates/99999/pdf")
     assert response.status_code == 404
+
+
+def test_serve_estimate_pdf_other_user_rejected(client: TestClient, db_session: Session) -> None:
+    """GET /api/estimates/{id}/pdf should return 404 for another user's estimate."""
+    # Create a different contractor
+    other_contractor = Contractor(
+        user_id="other-user-999",
+        name="Other Contractor",
+        phone="+15559999999",
+        trade="Electrician",
+    )
+    db_session.add(other_contractor)
+    db_session.commit()
+    db_session.refresh(other_contractor)
+
+    # Create an estimate owned by the other contractor
+    estimate = Estimate(
+        contractor_id=other_contractor.id,
+        description="Other user's estimate",
+        total_amount=1000.0,
+    )
+    db_session.add(estimate)
+    db_session.commit()
+    db_session.refresh(estimate)
+
+    # Create the PDF file so we can verify auth blocks access, not file absence
+    pdf_dir = Path("data/estimates")
+    pdf_dir.mkdir(parents=True, exist_ok=True)
+    test_pdf = pdf_dir / f"{estimate.id}.pdf"
+    test_pdf.write_bytes(b"%PDF-1.4 secret content")
+
+    try:
+        response = client.get(f"/api/estimates/{estimate.id}/pdf")
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Estimate not found"
+    finally:
+        test_pdf.unlink()
+
+
+def test_serve_estimate_pdf_requires_auth_dependency() -> None:
+    """The PDF endpoint must declare get_current_user as a dependency."""
+    import inspect
+
+    from backend.app.auth.dependencies import get_current_user
+    from backend.app.routers.estimates import serve_estimate_pdf
+
+    sig = inspect.signature(serve_estimate_pdf)
+    dependencies = {
+        p.default.dependency for p in sig.parameters.values() if hasattr(p.default, "dependency")
+    }
+    assert get_current_user in dependencies, "serve_estimate_pdf must use Depends(get_current_user)"

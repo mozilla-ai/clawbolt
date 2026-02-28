@@ -3,8 +3,14 @@
 import logging
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
+from sqlalchemy.orm import Session
+
+from backend.app.auth.dependencies import get_current_user
+from backend.app.auth.scoping import get_user_estimate
+from backend.app.database import get_db
+from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
 
@@ -14,8 +20,15 @@ PDF_DIR = Path("data/estimates")
 
 
 @router.get("/estimates/{estimate_id}/pdf")
-async def serve_estimate_pdf(estimate_id: int) -> Response:
+async def serve_estimate_pdf(
+    estimate_id: int,
+    db: Session = Depends(get_db),
+    current_user: Contractor = Depends(get_current_user),
+) -> Response:
     """Serve a generated estimate PDF by estimate ID."""
+    # Verify the estimate exists and belongs to the current user
+    get_user_estimate(db, current_user, estimate_id)
+
     pdf_path = PDF_DIR / f"{estimate_id}.pdf"
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="Estimate PDF not found")

@@ -7,6 +7,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.app.auth.dependencies import get_current_user
 from backend.app.database import Base, get_db
 from backend.app.main import app
 from backend.app.models import Contractor
@@ -64,10 +65,14 @@ def client(
     def _override_get_db() -> Generator[Session]:
         yield db_session
 
+    def _override_get_current_user() -> Contractor:
+        return test_contractor
+
     def _override_get_messaging_service() -> Generator[MessagingService]:
         yield mock_messaging_service
 
     app.dependency_overrides[get_db] = _override_get_db
+    app.dependency_overrides[get_current_user] = _override_get_current_user
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
     with patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"), TestClient(app) as c:
         yield c
