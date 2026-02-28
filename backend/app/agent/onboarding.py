@@ -12,7 +12,13 @@ REQUIRED_PROFILE_FIELDS = {"name", "trade"}
 
 
 def is_onboarding_needed(contractor: Contractor) -> bool:
-    """Check if contractor needs onboarding (missing critical profile fields)."""
+    """Check if contractor needs onboarding.
+
+    Returns False once onboarding_complete is set, or if all required
+    profile fields are already populated.
+    """
+    if contractor.onboarding_complete:
+        return False
     for field in REQUIRED_PROFILE_FIELDS:
         value = getattr(contractor, field, None)
         if not value or not str(value).strip():
@@ -40,10 +46,17 @@ def build_onboarding_system_prompt(contractor: Contractor) -> str:
     if contractor.business_hours and contractor.business_hours.strip():
         known.append(f"- Business hours: {contractor.business_hours}")
 
+    parts = [base]
     if known:
-        return base + "\n\nYou already know:\n" + "\n".join(known) + "\n\nDon't re-ask these."
+        parts.append("\n\nYou already know:\n" + "\n".join(known) + "\n\nDon't re-ask these.")
 
-    return base
+    parts.append(
+        "\n\nIMPORTANT: If the contractor asks about something specific (a quote, a question, "
+        "a photo), help them with that request FIRST, then naturally weave in any remaining "
+        "onboarding questions. Never ignore their request just to collect profile info."
+    )
+
+    return "".join(parts)
 
 
 def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:

@@ -40,6 +40,22 @@ def test_is_onboarding_needed_complete_profile(test_contractor: Contractor) -> N
     assert is_onboarding_needed(test_contractor) is False
 
 
+def test_is_onboarding_needed_respects_flag(db_session: Session) -> None:
+    """Contractor with onboarding_complete=True should not need onboarding."""
+    contractor = Contractor(
+        user_id="flagged-user",
+        phone="+15550007777",
+        name="",
+        trade="",
+        onboarding_complete=True,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    assert is_onboarding_needed(contractor) is False
+
+
 def test_is_onboarding_needed_empty_strings(db_session: Session) -> None:
     """Empty strings should still trigger onboarding."""
     contractor = Contractor(user_id="empty-user", phone="+15550003333", name="", trade="")
@@ -61,6 +77,8 @@ def test_build_onboarding_system_prompt_new_contractor(db_session: Session) -> N
     assert "Backshop" in prompt
     assert "new contractor" in prompt
     assert "You already know" not in prompt
+    # Should include instruction to handle requests alongside onboarding
+    assert "help them with that request FIRST" in prompt
 
 
 def test_build_onboarding_system_prompt_partial_profile(db_session: Session) -> None:

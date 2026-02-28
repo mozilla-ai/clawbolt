@@ -127,6 +127,11 @@ async def handle_inbound_message(
         profile_updates = extract_profile_updates(response)
         if profile_updates:
             await update_contractor_profile(db, contractor, profile_updates)
+            # Check if onboarding is now complete (required fields filled)
+            db.refresh(contractor)
+            if not is_onboarding_needed(contractor):
+                contractor.onboarding_complete = True
+                db.commit()
 
     # Step 7: If agent didn't explicitly call send_reply, send the reply text
     sent_reply = any(tc.get("name") == "send_reply" for tc in response.tool_calls)
