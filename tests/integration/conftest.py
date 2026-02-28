@@ -10,7 +10,7 @@ from sqlalchemy.pool import StaticPool
 from backend.app.database import Base
 from backend.app.models import Contractor
 
-_ANTHROPIC_MODEL = "claude-haiku-4-5-latest"
+_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
 skip_without_anthropic_key = pytest.mark.skipif(
     not os.environ.get("ANTHROPIC_API_KEY"),
