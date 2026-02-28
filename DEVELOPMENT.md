@@ -21,6 +21,19 @@ uv run ruff format --check backend/ tests/
 
 Tests use in-memory SQLite — no database setup needed.
 
+## File Storage
+
+The default storage provider is `local`, which saves uploaded files to `data/storage/` on disk. No cloud credentials are needed — file cataloging works out of the box in development.
+
+```bash
+# Uploaded files appear here:
+ls data/storage/
+```
+
+To test with Dropbox or Google Drive, set `STORAGE_PROVIDER` and the corresponding credentials in `.env`. See the [README](README.md#file-storage-setup) for setup instructions.
+
+In tests, all storage is mocked via `MockStorageBackend` in `tests/mocks/storage.py` — no real filesystem or cloud calls are made.
+
 ## Troubleshooting
 
 ### Docker build fails with dependency errors
