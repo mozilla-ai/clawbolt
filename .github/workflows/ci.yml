@@ -44,6 +44,42 @@ jobs:
       - run: uv sync --all-extras
       - run: uv run pytest -m e2e -v --timeout=60
 
+  integration-lmstudio:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    env:
+      DATABASE_URL: "sqlite:///:memory:"
+      LLM_PROVIDER: lmstudio
+      LLM_MODEL: google/gemma-3-4b
+      LLM_API_BASE: "http://localhost:1234/v1"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - run: uv sync --all-extras
+
+      - name: Install LM Studio CLI
+        run: curl -fsSL https://lmstudio.ai/install.sh | bash
+
+      - name: Cache LM Studio models
+        uses: actions/cache@v4
+        with:
+          path: ~/.lmstudio
+          key: lmstudio-gemma-3-4b-${{ hashFiles('pyproject.toml') }}
+
+      - name: Download model
+        run: lms get google/gemma-3-4b --yes
+
+      - name: Start LM Studio server
+        run: |
+          lms load google/gemma-3-4b --yes &
+          lms server start
+
+      - name: Wait for LM Studio
+        run: timeout 120 bash -c 'until curl -s http://localhost:1234/v1/models >/dev/null; do sleep 1; done'
+
+      - name: Run integration tests
+        run: uv run pytest -m integration -v --timeout=120
+
   migration-check:
     runs-on: ubuntu-latest
     env:

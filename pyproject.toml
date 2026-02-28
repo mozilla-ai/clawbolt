@@ -54,5 +54,6 @@ testpaths = ["tests"]
 asyncio_mode = "auto"
 markers = [
     "e2e: end-to-end tests that hit real external services (Twilio, etc.)",
+    "integration: integration tests that require a local LLM server (LM Studio)",
 ]
-addopts = "-m 'not e2e'"
+addopts = "-m 'not e2e and not integration'"
