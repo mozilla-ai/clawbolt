@@ -83,7 +83,7 @@ async def twilio_inbound(
     phone = form_data.get("From", "")
     body = form_data.get("Body", "")
     media = _extract_media(form_data)
-    media_urls = [m["url"] for m in media]
+    media_urls: list[tuple[str, str]] = [(m["url"], m["content_type"]) for m in media]
 
     contractor = _get_or_create_contractor(db, phone)
     conversation = _get_or_create_conversation(db, contractor)
@@ -92,7 +92,7 @@ async def twilio_inbound(
         conversation_id=conversation.id,
         direction="inbound",
         body=body,
-        media_urls_json=json.dumps(media_urls),
+        media_urls_json=json.dumps([url for url, _ct in media_urls]),
     )
     db.add(message)
     db.commit()
