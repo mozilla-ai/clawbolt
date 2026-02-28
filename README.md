@@ -66,7 +66,7 @@ Edit `.env` and fill in the required credentials:
 | `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
 | `LLM_PROVIDER` | No | LLM provider name (default: `openai`) |
 | `LLM_MODEL` | No | Model to use (default: `gpt-4o`) |
-| `STORAGE_PROVIDER` | No | `dropbox` or `google_drive` for file cataloging |
+| `STORAGE_PROVIDER` | No | `local` (default), `dropbox`, or `google_drive` for file cataloging |
 | `DROPBOX_ACCESS_TOKEN` | No | Dropbox token (if using Dropbox storage) |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | No | Comma-separated allowlist of Telegram chat IDs (empty = allow all) |
 | `TELEGRAM_ALLOWED_USERNAMES` | No | Comma-separated allowlist of Telegram usernames (empty = allow all) |
@@ -114,6 +114,54 @@ If you set a `secret_token`, also set `TELEGRAM_WEBHOOK_SECRET` in your `.env`.
 ### 5. Test it
 
 Send a message to your bot on Telegram. Backshop will respond as an AI assistant ready to help with estimates, job tracking, and more.
+
+## File Storage Setup
+
+Backshop can catalog job photos, estimates, and documents to a storage backend. Three providers are supported:
+
+### Local (default)
+
+Works out of the box — no configuration needed. Files are saved to `data/storage/` on disk.
+
+```
+data/storage/
+├── Job Photos/
+│   └── 2026-02-28/
+│       ├── site-front.jpg
+│       └── site-back.jpg
+└── Estimates/
+    └── EST-001.pdf
+```
+
+This is ideal for development and demos. Set `STORAGE_PROVIDER=local` (or leave it unset — it's the default).
+
+### Dropbox
+
+1. Go to the [Dropbox App Console](https://www.dropbox.com/developers/apps) and create a new app
+2. Choose **Scoped access** and **Full Dropbox** (or **App folder** for sandboxed access)
+3. Under **Permissions**, enable: `files.content.write`, `files.content.read`, `sharing.write`, `sharing.read`
+4. Generate an **access token** on the app's settings page
+5. Set environment variables:
+
+```bash
+STORAGE_PROVIDER=dropbox
+DROPBOX_ACCESS_TOKEN=sl.xxxxx...
+```
+
+### Google Drive
+
+1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a project
+2. Enable the **Google Drive API**
+3. Create **OAuth 2.0 credentials** (Desktop app type)
+4. Complete the OAuth flow to get a credentials JSON
+5. Set environment variables:
+
+```bash
+STORAGE_PROVIDER=google_drive
+GOOGLE_DRIVE_CREDENTIALS_JSON='{"token": "...", "refresh_token": "...", ...}'
+```
+
+> **Multi-tenant note**: Storage is currently global — one storage account per deployment. Future versions will support per-contractor storage credentials so each contractor's files go to their own cloud account.
 
 ## Contributing
 
