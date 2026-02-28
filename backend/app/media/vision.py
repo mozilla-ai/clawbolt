@@ -29,8 +29,11 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
     if context:
         user_content.insert(0, {"type": "text", "text": context})
 
+    model = settings.vision_model or settings.llm_model
+    logger.info("Using vision model: %s (provider=%s)", model, settings.llm_provider)
+
     response = await acompletion(
-        model=settings.vision_model,
+        model=model,
         provider=settings.llm_provider,
         api_base=settings.llm_api_base,
         messages=[
