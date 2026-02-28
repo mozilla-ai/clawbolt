@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     heartbeat_max_daily_messages: int = 5
     heartbeat_quiet_hours_start: int = 20  # 8 PM — fallback when no business_hours
     heartbeat_quiet_hours_end: int = 7  # 7 AM
+    heartbeat_model: str = ""  # empty = fall back to llm_model
+    heartbeat_provider: str = ""  # empty = fall back to llm_provider
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

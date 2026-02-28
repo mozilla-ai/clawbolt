@@ -34,6 +34,9 @@ class Contractor(Base):
     conversations: Mapped[list["Conversation"]] = relationship(back_populates="contractor")
     estimates: Mapped[list["Estimate"]] = relationship(back_populates="contractor")
     media_files: Mapped[list["MediaFile"]] = relationship(back_populates="contractor")
+    checklist_items: Mapped[list["HeartbeatChecklistItem"]] = relationship(
+        back_populates="contractor"
+    )
 
 
 class Client(Base):
@@ -166,3 +169,22 @@ class MediaFile(Base):
 
     message: Mapped["Message | None"] = relationship(back_populates="media_files")
     contractor: Mapped["Contractor"] = relationship(back_populates="media_files")
+
+
+class HeartbeatChecklistItem(Base):
+    __tablename__ = "heartbeat_checklist_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contractor_id: Mapped[int] = mapped_column(Integer, ForeignKey("contractors.id"), index=True)
+    description: Mapped[str] = mapped_column(Text)
+    schedule: Mapped[str] = mapped_column(String(50), default="daily")  # daily, weekdays, once
+    active_hours: Mapped[str] = mapped_column(String(255), default="")  # e.g. "7am-5pm"
+    last_triggered_at: Mapped[datetime.datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active, paused, completed
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    contractor: Mapped["Contractor"] = relationship(back_populates="checklist_items")
