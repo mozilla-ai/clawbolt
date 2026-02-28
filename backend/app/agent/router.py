@@ -11,11 +11,14 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.profile import update_contractor_profile
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
+from backend.app.agent.tools.file_tools import create_file_tools
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.twilio_tools import create_twilio_tools
+from backend.app.config import settings
 from backend.app.media.download import DownloadedMedia, download_twilio_media
 from backend.app.media.pipeline import process_message_media
 from backend.app.models import Contractor, Message
+from backend.app.services.storage_service import get_storage_service
 from backend.app.services.twilio_service import TwilioService
 
 logger = logging.getLogger(__name__)
@@ -89,6 +92,17 @@ async def handle_inbound_message(
     tools = create_memory_tools(db, contractor.id)
     tools.extend(create_twilio_tools(twilio_service, to_number=contractor.phone))
     tools.extend(create_estimate_tools(db, contractor))
+
+    # Wire file tools if storage is configured
+    try:
+        storage_token = settings.dropbox_access_token or settings.google_drive_credentials_json
+        if storage_token:
+            storage = get_storage_service()
+            pending_media = {m.original_url: m.content for m in downloaded_media if m.content}
+            tools.extend(create_file_tools(db, contractor, storage, pending_media))
+    except Exception:
+        logger.debug("Storage not configured, skipping file tools")
+
     agent.register_tools(tools)
 
     # Step 6: Process message through agent (with LLM failure fallback)

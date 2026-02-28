@@ -7,6 +7,7 @@ from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.twilio_service import TwilioService
 from tests.mocks.llm import make_text_response
+from tests.mocks.storage import MockStorageBackend
 
 
 @pytest.fixture()
@@ -179,3 +180,67 @@ async def test_processed_context_saved_to_message(
     db_session.refresh(inbound_message)
     assert inbound_message.processed_context is not None
     assert inbound_message.body in inbound_message.processed_context
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.get_storage_service")
+@patch("backend.app.agent.router.settings")
+async def test_file_tools_wired_when_storage_configured(
+    mock_settings: MagicMock,
+    mock_get_storage: MagicMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_twilio: TwilioService,
+) -> None:
+    """File tools should be registered when storage credentials are set."""
+    mock_settings.dropbox_access_token = "test-token"
+    mock_settings.google_drive_credentials_json = ""
+    mock_settings.llm_model = "gpt-4o"
+    mock_settings.llm_provider = "openai"
+    mock_settings.llm_api_key = "test-key"
+    mock_get_storage.return_value = MockStorageBackend()
+    mock_acompletion.return_value = make_text_response("File saved!")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        twilio_service=mock_twilio,
+    )
+
+    assert response.reply_text == "File saved!"
+    mock_get_storage.assert_called_once()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.settings")
+async def test_file_tools_skipped_when_no_storage(
+    mock_settings: MagicMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_twilio: TwilioService,
+) -> None:
+    """File tools should be skipped gracefully when storage not configured."""
+    mock_settings.dropbox_access_token = ""
+    mock_settings.google_drive_credentials_json = ""
+    mock_settings.llm_model = "gpt-4o"
+    mock_settings.llm_provider = "openai"
+    mock_settings.llm_api_key = "test-key"
+    mock_acompletion.return_value = make_text_response("No file tools!")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        twilio_service=mock_twilio,
+    )
+
+    assert response.reply_text == "No file tools!"
