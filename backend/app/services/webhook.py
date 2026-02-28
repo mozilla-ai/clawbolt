@@ -2,6 +2,8 @@
 
 import asyncio
 import logging
+import socket
+from urllib.parse import urlparse
 
 import httpx
 
@@ -37,6 +39,36 @@ async def discover_tunnel_url(
 
     logger.debug("Cloudflare tunnel not found after %d attempts", max_retries)
     return None
+
+
+async def wait_for_dns(
+    url: str,
+    max_retries: int = 30,
+    delay: float = 2.0,
+) -> bool:
+    """Wait until the hostname in *url* is DNS-resolvable.
+
+    This prevents Telegram from caching a negative DNS response when we call
+    ``setWebhook`` before the quick-tunnel hostname has propagated.
+    """
+    hostname = urlparse(url).hostname
+    if not hostname:
+        return False
+
+    loop = asyncio.get_running_loop()
+    for attempt in range(1, max_retries + 1):
+        try:
+            await loop.run_in_executor(None, socket.getaddrinfo, hostname, None)
+            logger.info("DNS resolved %s (attempt %d)", hostname, attempt)
+            return True
+        except socket.gaierror:
+            pass
+        if attempt < max_retries:
+            logger.debug("DNS not ready for %s (attempt %d/%d)", hostname, attempt, max_retries)
+            await asyncio.sleep(delay)
+
+    logger.warning("DNS resolution failed for %s after %d attempts", hostname, max_retries)
+    return False
 
 
 async def register_telegram_webhook(

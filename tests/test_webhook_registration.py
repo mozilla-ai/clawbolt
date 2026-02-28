@@ -1,11 +1,16 @@
 """Tests for Cloudflare Tunnel discovery and Telegram webhook registration."""
 
+import socket
 from unittest.mock import AsyncMock, Mock, patch
 
 import httpx
 import pytest
 
-from backend.app.services.webhook import discover_tunnel_url, register_telegram_webhook
+from backend.app.services.webhook import (
+    discover_tunnel_url,
+    register_telegram_webhook,
+    wait_for_dns,
+)
 
 CLOUDFLARED_QUICKTUNNEL_RESPONSE = {
     "hostname": "random-words.trycloudflare.com",
@@ -120,3 +125,39 @@ async def test_register_webhook_failure() -> None:
         )
 
     assert result is False
+
+
+@pytest.mark.asyncio
+async def test_wait_for_dns_success() -> None:
+    """Returns True once hostname resolves."""
+    with patch("backend.app.services.webhook.socket.getaddrinfo") as mock_dns:
+        mock_dns.return_value = [("AF_INET", None, None, None, ("1.2.3.4", 0))]
+        result = await wait_for_dns("https://example.trycloudflare.com", max_retries=1, delay=0.0)
+
+    assert result is True
+
+
+@pytest.mark.asyncio
+async def test_wait_for_dns_retries_then_succeeds() -> None:
+    """Retries on gaierror, then succeeds."""
+    with patch("backend.app.services.webhook.socket.getaddrinfo") as mock_dns:
+        mock_dns.side_effect = [
+            socket.gaierror("not found"),
+            socket.gaierror("not found"),
+            [("AF_INET", None, None, None, ("1.2.3.4", 0))],
+        ]
+        result = await wait_for_dns("https://example.trycloudflare.com", max_retries=3, delay=0.0)
+
+    assert result is True
+    assert mock_dns.call_count == 3
+
+
+@pytest.mark.asyncio
+async def test_wait_for_dns_exhausts_retries() -> None:
+    """Returns False after max retries."""
+    with patch("backend.app.services.webhook.socket.getaddrinfo") as mock_dns:
+        mock_dns.side_effect = socket.gaierror("not found")
+        result = await wait_for_dns("https://example.trycloudflare.com", max_retries=2, delay=0.0)
+
+    assert result is False
+    assert mock_dns.call_count == 2

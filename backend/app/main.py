@@ -9,7 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.config import settings
 from backend.app.routers import auth, estimates, health, telegram_webhook
-from backend.app.services.webhook import discover_tunnel_url, register_telegram_webhook
+from backend.app.services.webhook import (
+    discover_tunnel_url,
+    register_telegram_webhook,
+    wait_for_dns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,27 +36,18 @@ async def _auto_register_webhook() -> None:
     webhook_url = f"{tunnel_url}/api/webhooks/telegram"
     secret = settings.telegram_webhook_secret or None
 
-    # Retry registration — quick-tunnel hostnames are brand-new and Telegram's
-    # DNS may need up to ~2 minutes to resolve them.
-    max_attempts = 12
-    delay = 10.0
-    for attempt in range(1, max_attempts + 1):
-        ok = await register_telegram_webhook(
-            settings.telegram_bot_token, webhook_url, secret=secret
-        )
-        if ok:
-            logger.info("Telegram webhook auto-registered: %s", webhook_url)
-            return
-        if attempt < max_attempts:
-            logger.info(
-                "Webhook registration attempt %d/%d failed, retrying in %.0fs…",
-                attempt,
-                max_attempts,
-                delay,
-            )
-            await asyncio.sleep(delay)
+    # Wait for the quick-tunnel hostname to be DNS-resolvable before calling
+    # setWebhook.  If we call too early, Telegram caches the negative DNS
+    # response and all subsequent retries fail.
+    if not await wait_for_dns(tunnel_url):
+        logger.warning("Tunnel hostname never became resolvable — skipping webhook registration")
+        return
 
-    logger.warning("Failed to auto-register Telegram webhook after %d attempts", max_attempts)
+    ok = await register_telegram_webhook(settings.telegram_bot_token, webhook_url, secret=secret)
+    if ok:
+        logger.info("Telegram webhook auto-registered: %s", webhook_url)
+    else:
+        logger.warning("Failed to auto-register Telegram webhook")
 
 
 @asynccontextmanager
