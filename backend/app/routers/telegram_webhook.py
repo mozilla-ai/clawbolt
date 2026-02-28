@@ -118,6 +118,12 @@ def _extract_telegram_media(
         doc_mime = doc.get("mime_type", "application/octet-stream")
         media.append((doc["file_id"], doc_mime))
 
+    if media:
+        logger.debug(
+            "Extracted %d media item(s): %s",
+            len(media),
+            [(file_id, mime_type) for file_id, mime_type in media],
+        )
     return media
 
 
