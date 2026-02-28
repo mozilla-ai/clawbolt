@@ -68,6 +68,61 @@ async def test_download_telegram_media() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_download_infers_mime_from_file_path_when_octet_stream() -> None:
+    """When Telegram returns application/octet-stream, infer MIME from file path extension."""
+    get_file_response = httpx.Response(
+        200,
+        json={"ok": True, "result": {"file_id": "abc123", "file_path": "photos/file_1.jpg"}},
+        request=httpx.Request("GET", "https://api.telegram.org/botTOKEN/getFile"),
+    )
+    download_response = httpx.Response(
+        200,
+        content=b"fake-image-bytes",
+        headers={"content-type": "application/octet-stream"},
+        request=httpx.Request("GET", "https://api.telegram.org/file/botTOKEN/photos/file_1.jpg"),
+    )
+
+    with patch("backend.app.media.download.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [get_file_response, download_response]
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        result = await download_telegram_media("abc123", bot_token="TOKEN")
+
+    assert result.mime_type == "image/jpeg"
+    assert result.filename.endswith(".jpg")
+
+
+@pytest.mark.asyncio()
+async def test_download_keeps_octet_stream_for_unknown_extension() -> None:
+    """When extension is unrecognised, keep application/octet-stream as-is."""
+    get_file_response = httpx.Response(
+        200,
+        json={"ok": True, "result": {"file_id": "abc123", "file_path": "documents/file_0.xyz"}},
+        request=httpx.Request("GET", "https://api.telegram.org/botTOKEN/getFile"),
+    )
+    download_response = httpx.Response(
+        200,
+        content=b"some-bytes",
+        headers={"content-type": "application/octet-stream"},
+        request=httpx.Request("GET", "https://api.telegram.org/file/botTOKEN/documents/file_0.xyz"),
+    )
+
+    with patch("backend.app.media.download.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [get_file_response, download_response]
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        result = await download_telegram_media("abc123", bot_token="TOKEN")
+
+    assert result.mime_type == "application/octet-stream"
+
+
+@pytest.mark.asyncio()
 async def test_download_telegram_media_error() -> None:
     """download_telegram_media should raise on HTTP error."""
     error_response = httpx.Response(

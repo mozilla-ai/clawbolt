@@ -1,5 +1,6 @@
 import datetime
 import logging
+import os
 from dataclasses import dataclass
 
 import httpx
@@ -22,6 +23,9 @@ MIME_EXTENSIONS: dict[str, str] = {
     "video/3gpp": ".3gp",
     "application/pdf": ".pdf",
 }
+
+# Reverse lookup: extension -> MIME type (e.g. ".jpg" -> "image/jpeg")
+_EXTENSION_TO_MIME: dict[str, str] = {ext: mime for mime, ext in MIME_EXTENSIONS.items()}
 
 
 @dataclass
@@ -77,6 +81,16 @@ async def download_telegram_media(
         download.raise_for_status()
 
     mime_type = download.headers.get("content-type", "application/octet-stream").split(";")[0]
+
+    # Telegram's file download endpoint often returns application/octet-stream
+    # regardless of the actual file type.  Infer from the file path extension.
+    if mime_type == "application/octet-stream":
+        ext = os.path.splitext(file_path)[1].lower()
+        inferred = _EXTENSION_TO_MIME.get(ext)
+        if inferred:
+            logger.debug("Inferred MIME type %s from file path extension %s", inferred, ext)
+            mime_type = inferred
+
     size_bytes = len(download.content)
     logger.info(
         "Download complete: file_id=%s, mime_type=%s, size=%d bytes",
