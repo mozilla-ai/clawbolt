@@ -1,4 +1,4 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -11,7 +11,7 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Message
-from backend.app.services.twilio_service import TwilioService
+from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
 
 
@@ -177,7 +177,11 @@ def test_extract_profile_updates_invalid_rate() -> None:
 @pytest.fixture()
 def new_contractor(db_session: Session) -> Contractor:
     """Contractor with no profile — needs onboarding."""
-    contractor = Contractor(user_id="new-user-onboard", phone="+15559999999")
+    contractor = Contractor(
+        user_id="new-user-onboard",
+        phone="+15559999999",
+        channel_identifier="999999999",
+    )
     db_session.add(contractor)
     db_session.commit()
     db_session.refresh(contractor)
@@ -207,13 +211,11 @@ def onboarding_message(db_session: Session, onboarding_conversation: Conversatio
 
 
 @pytest.fixture()
-def mock_twilio() -> TwilioService:
-    service = TwilioService.__new__(TwilioService)
-    service.client = MagicMock()
-    service.from_number = "+15559876543"
-    mock_msg = MagicMock()
-    mock_msg.sid = "SM_test"
-    service.client.messages.create.return_value = mock_msg
+def mock_messaging() -> MessagingService:
+    service = MagicMock(spec=MessagingService)
+    service.send_text = AsyncMock(return_value="msg_42")
+    service.send_media = AsyncMock(return_value="msg_43")
+    service.send_message = AsyncMock(return_value="msg_42")
     return service
 
 
@@ -224,7 +226,7 @@ async def test_onboarding_uses_onboarding_prompt(
     db_session: Session,
     new_contractor: Contractor,
     onboarding_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """Router should use onboarding prompt for new contractors."""
     mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
@@ -236,7 +238,7 @@ async def test_onboarding_uses_onboarding_prompt(
         contractor=new_contractor,
         message=onboarding_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     assert response.reply_text == "Welcome to Backshop! What's your name?"
@@ -253,7 +255,7 @@ async def test_onboarding_extracts_profile_updates(
     db_session: Session,
     new_contractor: Contractor,
     onboarding_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """Profile updates from onboarding should be saved to contractor record."""
     # Simulate agent calling save_fact with name and trade
@@ -269,7 +271,7 @@ async def test_onboarding_extracts_profile_updates(
         contractor=new_contractor,
         message=onboarding_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     db_session.refresh(new_contractor)
@@ -282,7 +284,7 @@ async def test_complete_profile_uses_normal_prompt(
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """Contractor with complete profile should use normal agent prompt."""
     conv = Conversation(contractor_id=test_contractor.id)
@@ -301,7 +303,7 @@ async def test_complete_profile_uses_normal_prompt(
         contractor=test_contractor,
         message=msg,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     assert response.reply_text == "Let me help with that estimate!"

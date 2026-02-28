@@ -24,7 +24,7 @@ from backend.app.agent.profile import build_soul_prompt
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.models import Contractor, Estimate, Message
-from backend.app.services.twilio_service import TwilioService
+from backend.app.services.messaging import MessagingService, _build_messaging_service
 
 logger = logging.getLogger(__name__)
 
@@ -240,7 +240,7 @@ async def evaluate_heartbeat_need(db: Session, contractor: Contractor) -> Heartb
 async def run_heartbeat_for_contractor(
     db: Session,
     contractor: Contractor,
-    twilio_service: TwilioService,
+    messaging_service: MessagingService,
     daily_counts: dict[int, int],
     max_daily: int,
 ) -> HeartbeatAction | None:
@@ -265,11 +265,12 @@ async def run_heartbeat_for_contractor(
     if action.action_type != "send_message" or not action.message:
         return action
 
-    # Send SMS
+    # Send message
+    to_address = contractor.channel_identifier or contractor.phone
     try:
-        await twilio_service.send_sms(to=contractor.phone, body=action.message)
+        await messaging_service.send_text(to=to_address, body=action.message)
     except Exception:
-        logger.exception("Heartbeat SMS failed for contractor %d", contractor.id)
+        logger.exception("Heartbeat message failed for contractor %d", contractor.id)
         return action
 
     # Record outbound message
@@ -347,14 +348,14 @@ class HeartbeatScheduler:
             contractors = (
                 db.query(Contractor).filter(Contractor.onboarding_complete.is_(True)).all()
             )
-            twilio_service = TwilioService()
+            messaging_service = _build_messaging_service()
 
             for contractor in contractors:
                 try:
                     await run_heartbeat_for_contractor(
                         db=db,
                         contractor=contractor,
-                        twilio_service=twilio_service,
+                        messaging_service=messaging_service,
                         daily_counts=self._daily_counts,
                         max_daily=settings.heartbeat_max_daily_messages,
                     )

@@ -17,5 +17,5 @@ class StorageError(BackshopError):
     """Error during cloud storage operations."""
 
 
-class TwilioError(BackshopError):
-    """Error communicating with Twilio."""
+class MessagingError(BackshopError):
+    """Error communicating with the messaging service."""

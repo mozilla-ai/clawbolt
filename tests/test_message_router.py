@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Message
-from backend.app.services.twilio_service import TwilioService
+from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
 from tests.mocks.storage import MockStorageBackend
 
@@ -33,13 +33,11 @@ def inbound_message(db_session: Session, conversation: Conversation) -> Message:
 
 
 @pytest.fixture()
-def mock_twilio() -> TwilioService:
-    service = TwilioService.__new__(TwilioService)
-    service.client = MagicMock()
-    service.from_number = "+15559876543"
-    mock_msg = MagicMock()
-    mock_msg.sid = "SM_test"
-    service.client.messages.create.return_value = mock_msg
+def mock_messaging() -> MessagingService:
+    service = MagicMock(spec=MessagingService)
+    service.send_text = AsyncMock(return_value="msg_42")
+    service.send_media = AsyncMock(return_value="msg_43")
+    service.send_message = AsyncMock(return_value="msg_42")
     return service
 
 
@@ -50,7 +48,7 @@ async def test_text_only_message(
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """Text-only message should go through agent and produce reply."""
     mock_acompletion.return_value = make_text_response("I can help with that deck estimate!")  # type: ignore[union-attr]
@@ -60,34 +58,33 @@ async def test_text_only_message(
         contractor=test_contractor,
         message=inbound_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     assert response.reply_text == "I can help with that deck estimate!"
-    # Should have sent reply SMS
-    mock_twilio.client.messages.create.assert_called_once()
+    mock_messaging.send_text.assert_called_once()  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
-@patch("backend.app.agent.router.download_twilio_media", new_callable=AsyncMock)
-async def test_mms_with_photo(
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
+async def test_message_with_photo(
     mock_download: AsyncMock,
     mock_vision: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
-    """MMS with photo should download, process via vision, then agent."""
+    """Message with photo should download, process via vision, then agent."""
     from backend.app.media.download import DownloadedMedia
 
     mock_download.return_value = DownloadedMedia(
         content=b"fake-image",
         mime_type="image/jpeg",
-        original_url="https://api.twilio.com/media/test.jpg",
+        original_url="AgACAgIAAxkBAAI",
         filename="photo.jpg",
     )
     mock_vision.return_value = "A 12x12 composite deck area."
@@ -97,8 +94,8 @@ async def test_mms_with_photo(
         db=db_session,
         contractor=test_contractor,
         message=inbound_message,
-        media_urls=[("https://api.twilio.com/media/test.jpg", "image/jpeg")],
-        twilio_service=mock_twilio,
+        media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
+        messaging_service=mock_messaging,
     )
 
     assert response.reply_text == "Looks like a great deck project!"
@@ -113,7 +110,7 @@ async def test_stores_outbound_message(
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """Agent reply should be stored as outbound message."""
     mock_acompletion.return_value = make_text_response("Reply stored!")  # type: ignore[union-attr]
@@ -123,7 +120,7 @@ async def test_stores_outbound_message(
         contractor=test_contractor,
         message=inbound_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
@@ -133,14 +130,14 @@ async def test_stores_outbound_message(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-@patch("backend.app.agent.router.download_twilio_media", new_callable=AsyncMock)
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_media_download_failure_still_processes_text(
     mock_download: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """If media download fails, agent should still process text."""
     mock_download.side_effect = Exception("Download failed")
@@ -150,8 +147,8 @@ async def test_media_download_failure_still_processes_text(
         db=db_session,
         contractor=test_contractor,
         message=inbound_message,
-        media_urls=[("https://api.twilio.com/media/fail.jpg", "image/jpeg")],
-        twilio_service=mock_twilio,
+        media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
+        messaging_service=mock_messaging,
     )
 
     assert response.reply_text == "Got your text!"
@@ -164,7 +161,7 @@ async def test_processed_context_saved_to_message(
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """processed_context should be saved to the Message after media pipeline."""
     mock_acompletion.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
@@ -174,7 +171,7 @@ async def test_processed_context_saved_to_message(
         contractor=test_contractor,
         message=inbound_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     db_session.refresh(inbound_message)
@@ -193,7 +190,7 @@ async def test_file_tools_wired_when_storage_configured(
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """File tools should be registered when storage credentials are set."""
     mock_settings.dropbox_access_token = "test-token"
@@ -208,7 +205,7 @@ async def test_file_tools_wired_when_storage_configured(
         contractor=test_contractor,
         message=inbound_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     assert response.reply_text == "File saved!"
@@ -224,7 +221,7 @@ async def test_file_tools_skipped_when_no_storage(
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """File tools should be skipped gracefully when storage not configured."""
     mock_settings.dropbox_access_token = ""
@@ -238,7 +235,7 @@ async def test_file_tools_skipped_when_no_storage(
         contractor=test_contractor,
         message=inbound_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     assert response.reply_text == "No file tools!"

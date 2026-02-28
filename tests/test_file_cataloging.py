@@ -66,7 +66,7 @@ async def test_upload_creates_media_file_record(
         db_session,
         test_contractor,
         storage,
-        pending_media={"https://twilio.com/media/photo.jpg": b"fake-image-bytes"},
+        pending_media={"https://example.com/media/photo.jpg": b"fake-image-bytes"},
     )
     upload = tools[0].function
 
@@ -74,7 +74,7 @@ async def test_upload_creates_media_file_record(
         file_category="job_photo",
         description="Damaged deck railing",
         job_name="Johnson Deck",
-        original_url="https://twilio.com/media/photo.jpg",
+        original_url="https://example.com/media/photo.jpg",
     )
 
     assert "Uploaded" in result
@@ -140,7 +140,7 @@ async def test_upload_uses_first_media_if_no_url(
         db_session,
         test_contractor,
         storage,
-        pending_media={"https://twilio.com/media/auto.jpg": b"auto-bytes"},
+        pending_media={"https://example.com/media/auto.jpg": b"auto-bytes"},
     )
     upload = tools[0].function
 
@@ -161,20 +161,20 @@ async def test_upload_sequential_indexing(
         test_contractor,
         storage,
         pending_media={
-            "https://twilio.com/1.jpg": b"img1",
-            "https://twilio.com/2.jpg": b"img2",
+            "https://example.com/1.jpg": b"img1",
+            "https://example.com/2.jpg": b"img2",
         },
     )
     upload = tools[0].function
 
     result1 = await upload(
         file_category="job_photo",
-        original_url="https://twilio.com/1.jpg",
+        original_url="https://example.com/1.jpg",
         job_name="Test Job",
     )
     result2 = await upload(
         file_category="job_photo",
-        original_url="https://twilio.com/2.jpg",
+        original_url="https://example.com/2.jpg",
         job_name="Test Job",
     )
 
@@ -193,7 +193,7 @@ async def test_upload_creates_folder(
         db_session,
         test_contractor,
         storage,
-        pending_media={"https://twilio.com/f.jpg": b"bytes"},
+        pending_media={"https://example.com/f.jpg": b"bytes"},
     )
     upload = tools[0].function
 

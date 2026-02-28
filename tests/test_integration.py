@@ -1,6 +1,6 @@
-"""Integration test: full SMS round-trip through the system.
+"""Integration test: full message round-trip through the system.
 
-Webhook → media pipeline → agent → SMS reply
+Webhook -> media pipeline -> agent -> reply
 """
 
 from unittest.mock import AsyncMock, patch
@@ -9,31 +9,31 @@ from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
 from backend.app.models import Contractor, Message
-from backend.app.services.twilio_service import TwilioService
+from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
-from tests.mocks.twilio import make_twilio_webhook_payload
+from tests.mocks.telegram import make_telegram_update_payload
 
 
-def test_full_sms_round_trip(
+def test_full_message_round_trip(
     client: TestClient,
     db_session: Session,
     test_contractor: Contractor,
-    mock_twilio_service: TwilioService,
+    mock_messaging_service: MessagingService,
 ) -> None:
-    """End-to-end: inbound SMS → agent processes → outbound SMS reply."""
+    """End-to-end: inbound message -> agent processes -> outbound reply."""
     with patch(
         "backend.app.agent.core.acompletion",
         new_callable=AsyncMock,
         return_value=make_text_response("I can help with that deck estimate!"),
     ):
-        payload = make_twilio_webhook_payload(
-            from_number=test_contractor.phone,
-            body="I need a quote for a 12x12 composite deck",
+        payload = make_telegram_update_payload(
+            chat_id=int(test_contractor.channel_identifier),
+            text="I need a quote for a 12x12 composite deck",
         )
-        response = client.post("/api/webhooks/twilio/inbound", data=payload)
+        response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    assert "<Response/>" in response.text
+    assert response.json() == {"ok": True}
 
     # Verify inbound message stored
     inbound = db_session.query(Message).filter(Message.direction == "inbound").first()
@@ -48,36 +48,36 @@ def test_full_sms_round_trip(
     assert outbound is not None
     assert outbound.body == "I can help with that deck estimate!"
 
-    # Verify reply SMS was sent via TwilioService
-    mock_twilio_service.send_sms.assert_called_once_with(  # type: ignore[union-attr]
-        to=test_contractor.phone,
+    # Verify reply was sent via MessagingService
+    mock_messaging_service.send_text.assert_called_once_with(  # type: ignore[union-attr]
+        to=test_contractor.channel_identifier,
         body="I can help with that deck estimate!",
     )
 
 
-def test_full_sms_round_trip_new_contractor(
+def test_full_message_round_trip_new_contractor(
     client: TestClient,
     db_session: Session,
-    mock_twilio_service: TwilioService,
+    mock_messaging_service: MessagingService,
 ) -> None:
-    """New contractor sends SMS → auto-created → agent replies."""
+    """New contractor sends message -> auto-created -> agent replies."""
     with patch(
         "backend.app.agent.core.acompletion",
         new_callable=AsyncMock,
         return_value=make_text_response("Welcome to Backshop! What's your name?"),
     ):
-        payload = make_twilio_webhook_payload(
-            from_number="+15559998888",
-            body="Hi, I'm a plumber",
+        payload = make_telegram_update_payload(
+            chat_id=777888999,
+            text="Hi, I'm a plumber",
         )
-        response = client.post("/api/webhooks/twilio/inbound", data=payload)
+        response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
 
     # Contractor was auto-created
-    from backend.app.models import Contractor as C
-
-    contractor = db_session.query(C).filter(C.phone == "+15559998888").first()
+    contractor = (
+        db_session.query(Contractor).filter(Contractor.channel_identifier == "777888999").first()
+    )
     assert contractor is not None
 
     # Messages stored
@@ -87,14 +87,14 @@ def test_full_sms_round_trip_new_contractor(
     assert directions == {"inbound", "outbound"}
 
     # Reply sent
-    mock_twilio_service.send_sms.assert_called_once()  # type: ignore[union-attr]
+    mock_messaging_service.send_text.assert_called_once()  # type: ignore[union-attr]
 
 
-def test_full_sms_agent_failure_still_returns_200(
+def test_full_message_agent_failure_still_returns_200(
     client: TestClient,
     db_session: Session,
     test_contractor: Contractor,
-    mock_twilio_service: TwilioService,
+    mock_messaging_service: MessagingService,
 ) -> None:
     """If the entire agent pipeline fails, webhook still returns 200."""
     with patch(
@@ -102,13 +102,13 @@ def test_full_sms_agent_failure_still_returns_200(
         new_callable=AsyncMock,
         side_effect=RuntimeError("LLM service down"),
     ):
-        payload = make_twilio_webhook_payload(
-            from_number=test_contractor.phone,
-            body="Hello",
+        payload = make_telegram_update_payload(
+            chat_id=int(test_contractor.channel_identifier),
+            text="Hello",
         )
-        response = client.post("/api/webhooks/twilio/inbound", data=payload)
+        response = client.post("/api/webhooks/telegram", json=payload)
 
-    # Webhook returns 200 even on agent failure (Twilio needs 200)
+    # Webhook returns 200 even on agent failure
     assert response.status_code == 200
 
     # Inbound message still stored

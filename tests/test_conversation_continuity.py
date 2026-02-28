@@ -181,16 +181,16 @@ async def test_get_or_create_conversation_expired(
 
 
 @pytest.mark.asyncio()
-async def test_get_or_create_conversation_with_twilio_sid(
+async def test_get_or_create_conversation_with_external_session_id(
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
-    """New conversation should store Twilio SID."""
+    """New conversation should store external session ID."""
     conv, is_new = await get_or_create_conversation(
-        db_session, test_contractor.id, twilio_sid="SM_abc123"
+        db_session, test_contractor.id, external_session_id="session_abc123"
     )
     assert is_new is True
-    assert conv.twilio_sid == "SM_abc123"
+    assert conv.external_session_id == "session_abc123"
 
 
 @pytest.mark.asyncio()

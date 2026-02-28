@@ -75,9 +75,9 @@ def contractor_no_hours(db: Session) -> Contractor:
 
 
 @pytest.fixture()
-def mock_twilio() -> MagicMock:
+def mock_messaging() -> MagicMock:
     svc = MagicMock()
-    svc.send_sms = AsyncMock(return_value="SM_heartbeat_sid")
+    svc.send_text = AsyncMock(return_value="mock_heartbeat_msg_id")
     return svc
 
 
@@ -253,13 +253,13 @@ class TestEvaluateHeartbeatNeed:
 
 class TestRunHeartbeatForContractor:
     @pytest.mark.asyncio
-    async def test_skip_not_onboarded(self, db: Session, mock_twilio: MagicMock) -> None:
+    async def test_skip_not_onboarded(self, db: Session, mock_messaging: MagicMock) -> None:
         c = Contractor(user_id="hb-new", phone="+15550000000", onboarding_complete=False)
         db.add(c)
         db.commit()
-        result = await run_heartbeat_for_contractor(db, c, mock_twilio, {}, 5)
+        result = await run_heartbeat_for_contractor(db, c, mock_messaging, {}, 5)
         assert result is None
-        mock_twilio.send_sms.assert_not_called()
+        mock_messaging.send_text.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=False)
@@ -268,9 +268,9 @@ class TestRunHeartbeatForContractor:
         _mock_hours: MagicMock,
         db: Session,
         contractor: Contractor,
-        mock_twilio: MagicMock,
+        mock_messaging: MagicMock,
     ) -> None:
-        result = await run_heartbeat_for_contractor(db, contractor, mock_twilio, {}, 5)
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, {}, 5)
         assert result is None
 
     @pytest.mark.asyncio
@@ -280,10 +280,10 @@ class TestRunHeartbeatForContractor:
         _mock_hours: MagicMock,
         db: Session,
         contractor: Contractor,
-        mock_twilio: MagicMock,
+        mock_messaging: MagicMock,
     ) -> None:
         counts = {contractor.id: 5}
-        result = await run_heartbeat_for_contractor(db, contractor, mock_twilio, counts, 5)
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, counts, 5)
         assert result is None
 
     @pytest.mark.asyncio
@@ -295,7 +295,7 @@ class TestRunHeartbeatForContractor:
         mock_eval: AsyncMock,
         db: Session,
         contractor: Contractor,
-        mock_twilio: MagicMock,
+        mock_messaging: MagicMock,
     ) -> None:
         mock_eval.return_value = HeartbeatAction(
             action_type="send_message",
@@ -304,11 +304,11 @@ class TestRunHeartbeatForContractor:
             priority=4,
         )
         counts: dict[int, int] = {}
-        result = await run_heartbeat_for_contractor(db, contractor, mock_twilio, counts, 5)
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, counts, 5)
 
         assert result is not None
         assert result.action_type == "send_message"
-        mock_twilio.send_sms.assert_awaited_once_with(
+        mock_messaging.send_text.assert_awaited_once_with(
             to=contractor.phone, body="Reminder: draft estimate pending!"
         )
         # Message should be recorded in DB
@@ -327,7 +327,7 @@ class TestRunHeartbeatForContractor:
         mock_eval: AsyncMock,
         db: Session,
         contractor: Contractor,
-        mock_twilio: MagicMock,
+        mock_messaging: MagicMock,
     ) -> None:
         mock_eval.return_value = HeartbeatAction(
             action_type="send_message",
@@ -335,9 +335,9 @@ class TestRunHeartbeatForContractor:
             reasoning="test",
             priority=3,
         )
-        mock_twilio.send_sms = AsyncMock(side_effect=Exception("Twilio down"))
+        mock_messaging.send_text = AsyncMock(side_effect=Exception("Messaging service down"))
         counts: dict[int, int] = {}
-        result = await run_heartbeat_for_contractor(db, contractor, mock_twilio, counts, 5)
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, counts, 5)
         # Should still return the action, just not record a message
         assert result is not None
         assert result.action_type == "send_message"
@@ -416,9 +416,9 @@ class TestHeartbeatScheduler:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.SessionLocal")
-    @patch("backend.app.agent.heartbeat.TwilioService")
+    @patch("backend.app.agent.heartbeat._build_messaging_service")
     async def test_tick_queries_onboarded(
-        self, mock_twilio_cls: MagicMock, mock_session_local: MagicMock
+        self, mock_messaging_cls: MagicMock, mock_session_local: MagicMock
     ) -> None:
         """Tick should query only onboarded contractors and close the session."""
         mock_db = MagicMock()

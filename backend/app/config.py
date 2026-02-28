@@ -8,11 +8,10 @@ class Settings(BaseSettings):
     jwt_expiry_minutes: int = 15
     premium_plugin: str | None = None
 
-    # Twilio
-    twilio_account_sid: str = ""
-    twilio_auth_token: str = ""
-    twilio_phone_number: str = ""
-    twilio_validate_signatures: bool = True
+    # Messaging
+    messaging_provider: str = "telegram"
+    telegram_bot_token: str = ""
+    telegram_webhook_secret: str = ""
 
     # LLM
     llm_provider: str = "openai"

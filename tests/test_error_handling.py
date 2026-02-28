@@ -8,11 +8,11 @@ from backend.app.errors import (
     AgentError,
     BackshopError,
     MediaProcessingError,
+    MessagingError,
     StorageError,
-    TwilioError,
 )
 from backend.app.models import Contractor, Conversation, Message
-from backend.app.services.twilio_service import TwilioService
+from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
 
 
@@ -39,13 +39,11 @@ def inbound_message(db_session: Session, conversation: Conversation) -> Message:
 
 
 @pytest.fixture()
-def mock_twilio() -> TwilioService:
-    service = TwilioService.__new__(TwilioService)
-    service.client = MagicMock()
-    service.from_number = "+15559876543"
-    mock_msg = MagicMock()
-    mock_msg.sid = "SM_test"
-    service.client.messages.create.return_value = mock_msg
+def mock_messaging() -> MessagingService:
+    service = MagicMock(spec=MessagingService)
+    service.send_text = AsyncMock(return_value="msg_42")
+    service.send_media = AsyncMock(return_value="msg_43")
+    service.send_message = AsyncMock(return_value="msg_42")
     return service
 
 
@@ -54,7 +52,7 @@ def test_exception_hierarchy() -> None:
     assert issubclass(MediaProcessingError, BackshopError)
     assert issubclass(AgentError, BackshopError)
     assert issubclass(StorageError, BackshopError)
-    assert issubclass(TwilioError, BackshopError)
+    assert issubclass(MessagingError, BackshopError)
 
 
 @pytest.mark.asyncio()
@@ -64,7 +62,7 @@ async def test_agent_llm_failure_returns_friendly_message(
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """When agent LLM fails, should return a friendly error message."""
     mock_acompletion.side_effect = Exception("LLM API timeout")  # type: ignore[union-attr]
@@ -74,7 +72,7 @@ async def test_agent_llm_failure_returns_friendly_message(
         contractor=test_contractor,
         message=inbound_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     assert "trouble thinking" in response.reply_text
@@ -83,14 +81,14 @@ async def test_agent_llm_failure_returns_friendly_message(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-@patch("backend.app.agent.router.download_twilio_media", new_callable=AsyncMock)
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_all_media_download_failure_adds_note(
     mock_download: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """When all media downloads fail, context should include a note."""
     mock_download.side_effect = Exception("Download failed")
@@ -100,8 +98,8 @@ async def test_all_media_download_failure_adds_note(
         db=db_session,
         contractor=test_contractor,
         message=inbound_message,
-        media_urls=[("https://twilio.com/media/1.jpg", "image/jpeg")],
-        twilio_service=mock_twilio,
+        media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
+        messaging_service=mock_messaging,
     )
 
     # Agent should still process (text-only fallback)
@@ -115,7 +113,7 @@ async def test_all_media_download_failure_adds_note(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
-@patch("backend.app.agent.router.download_twilio_media", new_callable=AsyncMock)
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_partial_media_success(
     mock_download: AsyncMock,
     mock_vision: AsyncMock,
@@ -123,7 +121,7 @@ async def test_partial_media_success(
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """When some media succeeds and some fails, process what we can."""
     from backend.app.media.download import DownloadedMedia
@@ -133,7 +131,7 @@ async def test_partial_media_success(
         DownloadedMedia(
             content=b"good-image",
             mime_type="image/jpeg",
-            original_url="https://twilio.com/1.jpg",
+            original_url="AgACAgIAAxkBAAI_1",
             filename="photo1.jpg",
         ),
         Exception("Download failed"),
@@ -146,10 +144,10 @@ async def test_partial_media_success(
         contractor=test_contractor,
         message=inbound_message,
         media_urls=[
-            ("https://twilio.com/1.jpg", "image/jpeg"),
-            ("https://twilio.com/2.jpg", "image/jpeg"),
+            ("AgACAgIAAxkBAAI_1", "image/jpeg"),
+            ("AgACAgIAAxkBAAI_2", "image/jpeg"),
         ],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     # Agent should still work with the one successful download
@@ -159,29 +157,29 @@ async def test_partial_media_success(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-async def test_twilio_send_failure_still_stores_message(
+async def test_messaging_send_failure_still_stores_message(
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
-    """When Twilio send fails, outbound message should still be stored."""
+    """When messaging send fails, outbound message should still be stored."""
     mock_acompletion.return_value = make_text_response("Here's your answer!")  # type: ignore[union-attr]
-    mock_twilio.client.messages.create.side_effect = Exception("Twilio outage")
+    mock_messaging.send_text.side_effect = Exception("Messaging service outage")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
         db=db_session,
         contractor=test_contractor,
         message=inbound_message,
         media_urls=[],
-        twilio_service=mock_twilio,
+        messaging_service=mock_messaging,
     )
 
     # Response should still be returned
     assert response.reply_text == "Here's your answer!"
 
-    # Outbound message should be stored even though SMS failed
+    # Outbound message should be stored even though send failed
     outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
     assert outbound is not None
     assert outbound.body == "Here's your answer!"
@@ -190,7 +188,7 @@ async def test_twilio_send_failure_still_stores_message(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
 @patch("backend.app.agent.router.process_message_media", new_callable=AsyncMock)
-@patch("backend.app.agent.router.download_twilio_media", new_callable=AsyncMock)
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_media_pipeline_failure_falls_back_to_text(
     mock_download: AsyncMock,
     mock_pipeline: AsyncMock,
@@ -198,7 +196,7 @@ async def test_media_pipeline_failure_falls_back_to_text(
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
-    mock_twilio: TwilioService,
+    mock_messaging: MessagingService,
 ) -> None:
     """When media pipeline crashes, should fall back to text-only processing."""
     from backend.app.media.download import DownloadedMedia
@@ -207,7 +205,7 @@ async def test_media_pipeline_failure_falls_back_to_text(
     mock_download.return_value = DownloadedMedia(
         content=b"image",
         mime_type="image/jpeg",
-        original_url="https://twilio.com/1.jpg",
+        original_url="AgACAgIAAxkBAAI",
         filename="photo.jpg",
     )
     # First call raises, second call (text-only fallback) succeeds
@@ -225,8 +223,8 @@ async def test_media_pipeline_failure_falls_back_to_text(
         db=db_session,
         contractor=test_contractor,
         message=inbound_message,
-        media_urls=[("https://twilio.com/1.jpg", "image/jpeg")],
-        twilio_service=mock_twilio,
+        media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
+        messaging_service=mock_messaging,
     )
 
     assert response.reply_text == "I can help!"

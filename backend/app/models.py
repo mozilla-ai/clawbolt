@@ -18,6 +18,8 @@ class Contractor(Base):
     hourly_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     soul_text: Mapped[str] = mapped_column(Text, default="")
     business_hours: Mapped[str] = mapped_column(String(255), default="")
+    preferred_channel: Mapped[str] = mapped_column(String(20), default="telegram")
+    channel_identifier: Mapped[str] = mapped_column(String(255), default="")
     onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     preferences_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -78,7 +80,7 @@ class Conversation(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     contractor_id: Mapped[int] = mapped_column(Integer, ForeignKey("contractors.id"), index=True)
-    twilio_sid: Mapped[str] = mapped_column(String(255), default="")
+    external_session_id: Mapped[str] = mapped_column(String(255), default="")
     started_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
@@ -99,7 +101,7 @@ class Message(Base):
         Integer, ForeignKey("conversations.id"), index=True
     )
     direction: Mapped[str] = mapped_column(String(20))  # inbound, outbound
-    twilio_sid: Mapped[str | None] = mapped_column(String(50), nullable=True, unique=True)
+    external_message_id: Mapped[str | None] = mapped_column(String(255), nullable=True, unique=True)
     body: Mapped[str] = mapped_column(Text, default="")
     media_urls_json: Mapped[str] = mapped_column(Text, default="[]")
     processed_context: Mapped[str] = mapped_column(Text, default="")
