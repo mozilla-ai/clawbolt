@@ -1,12 +1,56 @@
-# Backshop
+<p align="center">
+  <img src="assets/logo.svg" alt="backshop.ai" width="360">
+</p>
 
-AI assistant for solo blue-collar contractors. Built by Mozilla.ai.
+<p align="center">
+  <strong>AI assistant for solo blue-collar contractors</strong><br>
+  Built by <a href="https://mozilla.ai">Mozilla.ai</a>
+</p>
 
-Backshop is a messaging-first AI assistant that helps contractors manage their business — estimates, client records, job photos, voice memos, and more — all through Telegram.
+<p align="center">
+  <a href="https://github.com/njbrake/backshop/actions/workflows/ci.yml"><img src="https://github.com/njbrake/backshop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT">
+  <img src="https://img.shields.io/badge/messaging-Telegram-26A5E4?logo=telegram&logoColor=white" alt="Telegram">
+</p>
+
+---
+
+Backshop is a messaging-first AI assistant that helps contractors manage their business — estimates, client records, job photos, voice memos, and more — all through Telegram. No app to install, no dashboard to learn. Just text.
+
+## Features
+
+- **Estimates** — Describe a job, get a professional PDF estimate generated and sent back instantly
+- **Memory** — Backshop remembers your rates, clients, preferences, and past conversations
+- **Photo analysis** — Send a job site photo and get an AI description for documentation
+- **Voice memos** — Send a voice note, get it transcribed and processed as a message
+- **File cataloging** — Photos and documents auto-organized in Dropbox or Google Drive
+- **Proactive heartbeat** — Backshop checks in periodically with reminders about stale drafts and follow-ups
+- **Onboarding** — First-time contractors get a friendly conversation to set up their profile
+
+## How It Works
+
+```
+Contractor sends a Telegram message
+        |
+        v
+  Telegram webhook  -->  Media pipeline (photos, voice, docs)
+        |                        |
+        v                        v
+  Agent loop (any-llm)  <--  Processed context
+        |
+        v
+  Tool execution (memory, estimates, file upload)
+        |
+        v
+  Reply sent via Telegram
+```
+
+The agent uses an LLM (configurable via [any-llm](https://github.com/mozilla-ai/any-llm)) to understand messages, call tools, and generate replies. A background heartbeat evaluates each contractor periodically and sends proactive messages when genuinely useful.
 
 ## Quick Start (Docker)
 
-The fastest way to run the demo is with Docker Compose. This starts PostgreSQL and the app together.
+The fastest way to run Backshop is with Docker Compose. This starts PostgreSQL and the app together.
 
 ### 1. Configure environment
 
@@ -69,71 +113,6 @@ If you set a `secret_token`, also set `TELEGRAM_WEBHOOK_SECRET` in your `.env`.
 
 Send a message to your bot on Telegram. Backshop will respond as an AI assistant ready to help with estimates, job tracking, and more.
 
-## Local Development (without Docker)
+## Contributing
 
-```bash
-pip install uv
-uv sync
-uv run uvicorn backend.app.main:app --reload
-```
-
-You'll need a PostgreSQL instance running locally, or set `DATABASE_URL` accordingly.
-
-## Running Tests
-
-```bash
-uv sync --all-extras
-uv run pytest -v
-uv run ruff check backend/ tests/
-uv run ruff format --check backend/ tests/
-```
-
-Tests use in-memory SQLite — no database setup needed.
-
-## Troubleshooting
-
-### Docker build fails with dependency errors
-
-Some optional dependencies (e.g. `faster-whisper`) require specific system libraries. The Dockerfile includes `ffmpeg` for audio processing. If you see build failures:
-
-```bash
-# Rebuild without cache
-docker compose build --no-cache
-```
-
-### Database connection refused
-
-Make sure PostgreSQL is healthy before the app starts. Docker Compose handles this via the `service_healthy` condition, but if you see connection errors:
-
-```bash
-# Check service status
-docker compose ps
-
-# View logs
-docker compose logs db
-docker compose logs app
-```
-
-### Telegram webhook not receiving messages
-
-1. Verify your tunnel is running and the URL is accessible
-2. Check that `TELEGRAM_BOT_TOKEN` is set correctly in `.env`
-3. Verify the webhook is set: `curl https://api.telegram.org/bot<TOKEN>/getWebhookInfo`
-4. Check the Telegram Bot API response for errors
-
-### Port 8000 already in use
-
-```bash
-# Stop existing containers
-docker compose down
-
-# Or use a different port
-docker compose up --build -e APP_PORT=8080
-```
-
-### Reset the database
-
-```bash
-docker compose down -v   # removes the pgdata volume
-docker compose up --build
-```
+See [DEVELOPMENT.md](DEVELOPMENT.md) for local setup, running tests, and troubleshooting.
