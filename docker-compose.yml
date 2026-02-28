@@ -19,6 +19,9 @@ services:
     build: .
     ports:
       - "8000:8000"
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
     environment:
       DATABASE_URL: postgresql://backshop:backshop@db:5432/backshop
     env_file:
