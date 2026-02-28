@@ -146,7 +146,7 @@ def test_twilio_service_injected_via_depends(
 def test_webhook_calls_handle_inbound_message(
     client: TestClient, db_session: Session, test_contractor: Contractor
 ) -> None:
-    """Webhook should call handle_inbound_message after storing the message."""
+    """Webhook should call handle_inbound_message via background task after storing the message."""
     with patch(
         _PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE
     ) as mock_handle:

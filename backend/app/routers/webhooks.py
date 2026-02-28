@@ -4,6 +4,7 @@ import logging
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
+from starlette.background import BackgroundTask
 from twilio.request_validator import RequestValidator
 
 from backend.app.agent.router import handle_inbound_message
@@ -71,6 +72,34 @@ def _get_or_create_conversation(db: Session, contractor: Contractor) -> Conversa
     return conversation
 
 
+async def _process_message_background(
+    db: Session,
+    contractor: Contractor,
+    message: Message,
+    media_urls: list[tuple[str, str]],
+    twilio_service: TwilioService,
+) -> None:
+    """Run the agent pipeline as a background task.
+
+    Starlette runs this after the HTTP response body is sent but before
+    the dependency cleanup (db.close()), so the db session is still valid.
+    """
+    try:
+        await handle_inbound_message(
+            db=db,
+            contractor=contractor,
+            message=message,
+            media_urls=media_urls,
+            twilio_service=twilio_service,
+        )
+    except Exception:
+        logger.exception(
+            "Agent pipeline failed for message %d from %s",
+            message.id,
+            contractor.phone,
+        )
+
+
 @router.post("/webhooks/twilio/inbound")
 async def twilio_inbound(
     request: Request,
@@ -111,20 +140,16 @@ async def twilio_inbound(
     db.commit()
     db.refresh(message)
 
-    # Process through agent pipeline (media → LLM → reply SMS)
-    try:
-        await handle_inbound_message(
-            db=db,
-            contractor=contractor,
-            message=message,
-            media_urls=media_urls,
-            twilio_service=twilio_service,
-        )
-    except Exception:
-        logger.exception(
-            "Agent pipeline failed for message %d from %s",
-            message.id,
-            phone,
-        )
-
-    return Response(content=TWIML_EMPTY, media_type="application/xml")
+    # Return 200 immediately; process through agent pipeline in background.
+    # Twilio expects a response within 15 seconds. Starlette's BackgroundTask
+    # runs after the response body is sent but within the ASGI lifecycle,
+    # so the db session (from Depends) is still open.
+    task = BackgroundTask(
+        _process_message_background,
+        db=db,
+        contractor=contractor,
+        message=message,
+        media_urls=media_urls,
+        twilio_service=twilio_service,
+    )
+    return Response(content=TWIML_EMPTY, media_type="application/xml", background=task)
