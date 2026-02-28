@@ -3,6 +3,12 @@ import logging
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import AgentResponse, BackshopAgent
+from backend.app.agent.onboarding import (
+    build_onboarding_system_prompt,
+    extract_profile_updates,
+    is_onboarding_needed,
+)
+from backend.app.agent.profile import update_contractor_profile
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.twilio_tools import create_twilio_tools
 from backend.app.media.download import DownloadedMedia, download_twilio_media
@@ -50,6 +56,9 @@ async def handle_inbound_message(
     conversation_history = _load_conversation_history(db, message.conversation_id)
 
     # Step 5: Initialize agent with tools
+    onboarding = is_onboarding_needed(contractor)
+    system_prompt_override = build_onboarding_system_prompt(contractor) if onboarding else None
+
     agent = BackshopAgent(db=db, contractor=contractor)
     tools = create_memory_tools(db, contractor.id)
     tools.extend(create_twilio_tools(twilio_service, to_number=contractor.phone))
@@ -59,7 +68,14 @@ async def handle_inbound_message(
     response = await agent.process_message(
         message_context=pipeline_result.combined_context,
         conversation_history=conversation_history,
+        system_prompt_override=system_prompt_override,
     )
+
+    # Step 6b: If onboarding, extract profile updates from tool calls
+    if onboarding:
+        profile_updates = extract_profile_updates(response)
+        if profile_updates:
+            await update_contractor_profile(db, contractor, profile_updates)
 
     # Step 7: If agent didn't explicitly call send_reply, send the reply text
     sent_reply = any(tc.get("name") == "send_reply" for tc in response.tool_calls)

@@ -67,9 +67,10 @@ class BackshopAgent:
         self,
         message_context: str,
         conversation_history: list[dict[str, str]] | None = None,
+        system_prompt_override: str | None = None,
     ) -> AgentResponse:
         """Process a message through the agent loop."""
-        system_prompt = await self._build_system_prompt(message_context)
+        system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
 
         messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
 
