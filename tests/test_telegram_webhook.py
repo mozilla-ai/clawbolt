@@ -238,6 +238,10 @@ def test_allowlist_rejects_unlisted_chat_id(client: TestClient, db_session: Sess
             "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
             "111,222",
         ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "",
+        ),
     ):
         payload = make_telegram_update_payload(chat_id=999, text="Hi")
         response = client.post("/api/webhooks/telegram", json=payload)
@@ -258,6 +262,10 @@ def test_allowlist_accepts_listed_chat_id(
             "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
             f"111,{chat_id},333",
         ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "",
+        ),
     ):
         payload = make_telegram_update_payload(chat_id=int(chat_id), text="Hello")
         response = client.post("/api/webhooks/telegram", json=payload)
@@ -275,9 +283,120 @@ def test_allowlist_empty_allows_all(client: TestClient, db_session: Session) -> 
             "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
             "",
         ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "",
+        ),
     ):
         payload = make_telegram_update_payload(chat_id=777777, text="Hi")
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
     mock_h.assert_called_once()
+
+
+# -- Username allowlist tests --
+
+
+def test_username_allowlist_accepts_listed_user(client: TestClient, db_session: Session) -> None:
+    """Messages from a username on the allowlist should be processed."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "",
+        ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "alice,bob",
+        ),
+    ):
+        payload = make_telegram_update_payload(chat_id=555, text="Hi", username="alice")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_called_once()
+
+
+def test_username_allowlist_rejects_unlisted_user(client: TestClient, db_session: Session) -> None:
+    """Messages from a username NOT on the allowlist should be ignored."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "",
+        ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "alice,bob",
+        ),
+    ):
+        payload = make_telegram_update_payload(chat_id=555, text="Hi", username="eve")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_not_called()
+    assert db_session.query(Message).count() == 0
+
+
+def test_username_allowlist_strips_at_prefix(client: TestClient, db_session: Session) -> None:
+    """Usernames with @ prefix in config should still match."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "",
+        ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "@Alice, @Bob",
+        ),
+    ):
+        payload = make_telegram_update_payload(chat_id=555, text="Hi", username="alice")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_called_once()
+
+
+def test_username_or_chat_id_either_passes(client: TestClient, db_session: Session) -> None:
+    """If either chat_id OR username matches, the message should be allowed."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "999",
+        ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "alice",
+        ),
+    ):
+        # chat_id doesn't match (555 != 999), but username matches
+        payload = make_telegram_update_payload(chat_id=555, text="Hi", username="alice")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_called_once()
+
+
+def test_username_allowlist_no_username_in_payload(client: TestClient, db_session: Session) -> None:
+    """Messages without a username should be rejected when only username allowlist is set."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "",
+        ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "alice",
+        ),
+    ):
+        # No username in payload
+        payload = make_telegram_update_payload(chat_id=555, text="Hi")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_not_called()
+    assert db_session.query(Message).count() == 0

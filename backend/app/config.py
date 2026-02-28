@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
     telegram_allowed_chat_ids: str = ""  # Comma-separated allowlist; empty = allow all
+    telegram_allowed_usernames: str = ""  # Comma-separated @usernames; empty = allow all
 
     # LLM
     llm_provider: str = "openai"

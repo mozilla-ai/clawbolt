@@ -140,12 +140,28 @@ async def telegram_inbound(
     text = msg.get("text", "")
     update_id = str(update.get("update_id", ""))
 
-    # Allowlist gate: reject unknown chat IDs when allowlist is configured
+    # Allowlist gate: reject messages when allowlists are configured and neither matches
+    username = msg.get("from", {}).get("username", "")
+    chat_id_match = False
+    username_match = False
+
     if settings.telegram_allowed_chat_ids:
-        allowed = {cid.strip() for cid in settings.telegram_allowed_chat_ids.split(",")}
-        if chat_id not in allowed:
-            logger.info("Chat %s not in allowlist, ignoring", chat_id)
-            return JSONResponse(content={"ok": True})
+        allowed_ids = {cid.strip() for cid in settings.telegram_allowed_chat_ids.split(",")}
+        chat_id_match = chat_id in allowed_ids
+
+    if settings.telegram_allowed_usernames:
+        allowed_users = {
+            u.strip().lstrip("@").lower() for u in settings.telegram_allowed_usernames.split(",")
+        }
+        username_match = username.lower() in allowed_users if username else False
+
+    # If any allowlist is configured, at least one must match (OR logic)
+    any_allowlist_configured = bool(
+        settings.telegram_allowed_chat_ids or settings.telegram_allowed_usernames
+    )
+    if any_allowlist_configured and not (chat_id_match or username_match):
+        logger.info("Chat %s / @%s not in allowlist, ignoring", chat_id, username)
+        return JSONResponse(content={"ok": True})
 
     # Extract media
     media_items = _extract_telegram_media(update)
