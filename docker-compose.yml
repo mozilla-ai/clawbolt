@@ -22,13 +22,14 @@ services:
     environment:
       DATABASE_URL: postgresql://backshop:backshop@db:5432/backshop
     env_file:
-      - .env
+      - path: .env
+        required: false
     depends_on:
       db:
         condition: service_healthy
     command: >
       sh -c "uv run alembic upgrade head &&
-             uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --reload"
+             uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000"
 
 volumes:
   pgdata:
