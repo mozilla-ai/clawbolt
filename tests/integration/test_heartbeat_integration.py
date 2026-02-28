@@ -30,7 +30,9 @@ async def test_heartbeat_evaluate_returns_valid_action(
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
 
-        action = await evaluate_heartbeat_need(integration_db, onboarded_contractor)
+        action = await evaluate_heartbeat_need(
+            integration_db, onboarded_contractor, ["Test flag: check-in needed"]
+        )
 
     assert action.action_type in ("send_message", "no_action")
     assert isinstance(action.reasoning, str)
@@ -78,7 +80,11 @@ async def test_heartbeat_evaluate_with_context(
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
 
-        action = await evaluate_heartbeat_need(integration_db, onboarded_contractor)
+        action = await evaluate_heartbeat_need(
+            integration_db,
+            onboarded_contractor,
+            ["Stale draft estimate: 12x12 composite deck build"],
+        )
 
     assert action.action_type in ("send_message", "no_action")
     # If LLM decides to send, the message should be non-empty
