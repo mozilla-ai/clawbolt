@@ -9,6 +9,7 @@ from backend.app.agent.onboarding import (
     is_onboarding_needed,
 )
 from backend.app.agent.profile import update_contractor_profile
+from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.twilio_tools import create_twilio_tools
 from backend.app.media.download import DownloadedMedia, download_twilio_media
@@ -62,6 +63,7 @@ async def handle_inbound_message(
     agent = BackshopAgent(db=db, contractor=contractor)
     tools = create_memory_tools(db, contractor.id)
     tools.extend(create_twilio_tools(twilio_service, to_number=contractor.phone))
+    tools.extend(create_estimate_tools(db, contractor))
     agent.register_tools(tools)
 
     # Step 6: Process message
