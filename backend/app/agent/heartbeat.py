@@ -3,7 +3,7 @@
 Every ``heartbeat_interval_minutes`` the scheduler wakes up, iterates over
 onboarded contractors, and asks the LLM whether any proactive outreach is
 warranted.  Most ticks produce **no** outbound messages — only genuinely
-useful reminders or follow-ups trigger SMS.
+useful reminders or follow-ups trigger a message.
 """
 
 from __future__ import annotations
@@ -58,7 +58,7 @@ contractor needs a proactive check-in message RIGHT NOW.
   * Follow-up questions the contractor asked you to remind them about
   * Useful daily summary if there is something worth summarising
 - NEVER reach out just to say hi or ask how the day is going.
-- Keep the message under 160 characters (single SMS segment).
+- Keep the message under 160 characters.
 
 Respond with ONLY a JSON object (no markdown fences):
 {{"action": "send_message" | "no_action", "message": "...", "reasoning": "...", "priority": 1-5}}
@@ -205,7 +205,7 @@ async def evaluate_heartbeat_need(db: Session, contractor: Contractor) -> Heartb
     response = await acompletion(
         model=settings.llm_model,
         provider=settings.llm_provider,
-        api_key=settings.llm_api_key,
+        api_base=settings.llm_api_base,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": "Evaluate whether to send a proactive message now."},
