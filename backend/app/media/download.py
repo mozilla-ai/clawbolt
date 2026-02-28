@@ -1,9 +1,12 @@
 import datetime
+import logging
 from dataclasses import dataclass
 
 import httpx
 
 from backend.app.config import settings
+
+logger = logging.getLogger(__name__)
 
 MIME_EXTENSIONS: dict[str, str] = {
     "image/jpeg": ".jpg",
@@ -60,6 +63,8 @@ async def download_telegram_media(
     token = bot_token or settings.telegram_bot_token
     api_base = f"https://api.telegram.org/bot{token}"
 
+    logger.info("Downloading Telegram media: file_id=%s", file_id)
+
     async with httpx.AsyncClient() as client:
         # Step 1: get file path
         resp = await client.get(f"{api_base}/getFile", params={"file_id": file_id}, timeout=30.0)
@@ -72,6 +77,13 @@ async def download_telegram_media(
         download.raise_for_status()
 
     mime_type = download.headers.get("content-type", "application/octet-stream").split(";")[0]
+    size_bytes = len(download.content)
+    logger.info(
+        "Download complete: file_id=%s, mime_type=%s, size=%d bytes",
+        file_id,
+        mime_type,
+        size_bytes,
+    )
     filename = _generate_filename(mime_type)
 
     return DownloadedMedia(

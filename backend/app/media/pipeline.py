@@ -29,13 +29,16 @@ async def _process_single_media(
 ) -> ProcessedMedia:
     """Process a single media item based on its type."""
     category = classify_media(media.mime_type)
+    logger.debug("Media classified: %s → %s", media.mime_type, category)
     extracted_text = ""
 
     if category == "image":
         try:
             extracted_text = await analyze_image(media.content, media.mime_type, context=context)
         except Exception:
-            logger.warning("Vision analysis failed for media: %s", media.original_url)
+            logger.exception(
+                "Vision analysis failed for %s (mime_type=%s)", media.original_url, media.mime_type
+            )
             extracted_text = "[Photo — vision analysis not available]"
     elif category == "audio":
         try:
