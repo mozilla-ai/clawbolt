@@ -1,9 +1,10 @@
 """Proactive heartbeat engine.
 
 Every ``heartbeat_interval_minutes`` the scheduler wakes up, iterates over
-onboarded contractors, and asks the LLM whether any proactive outreach is
-warranted.  Most ticks produce **no** outbound messages — only genuinely
-useful reminders or follow-ups trigger a message.
+onboarded contractors, and runs **cheap deterministic checks** first.  Only when
+a cheap check flags something actionable does the engine escalate to an LLM call
+to compose a natural-language message.  Most ticks produce **no** outbound
+messages and **no** LLM calls — saving cost and avoiding noise.
 """
 
 from __future__ import annotations
@@ -13,7 +14,7 @@ import datetime
 import json
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from any_llm import acompletion
 from sqlalchemy.orm import Session
@@ -23,7 +24,13 @@ from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt
 from backend.app.config import settings
 from backend.app.database import SessionLocal
-from backend.app.models import Contractor, Estimate, Message
+from backend.app.models import (
+    Contractor,
+    Estimate,
+    HeartbeatChecklistItem,
+    Memory,
+    Message,
+)
 from backend.app.services.messaging import MessagingService, _build_messaging_service
 
 logger = logging.getLogger(__name__)
@@ -33,8 +40,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 HEARTBEAT_SYSTEM_PROMPT = """\
-You are Backshop's heartbeat evaluator. Your job is to decide whether the \
-contractor needs a proactive check-in message RIGHT NOW.
+You are Backshop's heartbeat evaluator. Your job is to compose a short, \
+actionable message for the contractor based on the flags below.
 
 ## About the contractor
 {soul_prompt}
@@ -45,24 +52,46 @@ contractor needs a proactive check-in message RIGHT NOW.
 ## Recent conversation (last 5 messages)
 {recent_messages}
 
-## Pending estimates
-{pending_estimates}
+## Flags raised by pre-checks
+{flags}
 
 ## Current time
 {current_time}
 
 ## Rules
-- Most of the time you should answer NO — do not nag.
-- Only reach out for genuinely actionable items:
-  * Estimate drafts older than 24 h that haven't been sent
-  * Follow-up questions the contractor asked you to remind them about
-  * Useful daily summary if there is something worth summarising
-- NEVER reach out just to say hi or ask how the day is going.
+- The pre-checks already decided something needs attention. Your job is to \
+compose one concise, helpful message.
+- Combine multiple flags into a single message when possible.
 - Keep the message under 160 characters.
+- Be direct and actionable — no fluff.
+- If after reviewing the flags you believe none actually warrant a message \
+right now, you may still return "no_action".
 
 Respond with ONLY a JSON object (no markdown fences):
 {{"action": "send_message" | "no_action", "message": "...", "reasoning": "...", "priority": 1-5}}
 """
+
+# Keywords that suggest a memory fact is time-sensitive
+_TIME_KEYWORDS = re.compile(
+    r"\b(remind|follow.?up|tomorrow|callback|check.?in|deadline|due|urgent)\b",
+    re.IGNORECASE,
+)
+
+STALE_ESTIMATE_HOURS = 24
+
+
+@dataclass
+class CheapCheckResult:
+    """Result of deterministic pre-checks for a single contractor."""
+
+    flags: list[str] = field(default_factory=list)
+    stale_estimates: list[Estimate] = field(default_factory=list)
+    due_checklist_items: list[HeartbeatChecklistItem] = field(default_factory=list)
+    time_sensitive_memories: list[Memory] = field(default_factory=list)
+
+    @property
+    def has_flags(self) -> bool:
+        return len(self.flags) > 0
 
 
 @dataclass
@@ -149,11 +178,96 @@ def is_within_business_hours(
 
 
 # ---------------------------------------------------------------------------
+# Cheap checks — deterministic, no LLM call
+# ---------------------------------------------------------------------------
+
+
+def run_cheap_checks(
+    db: Session,
+    contractor: Contractor,
+    now: datetime.datetime | None = None,
+) -> CheapCheckResult:
+    """Run fast, deterministic checks that don't require an LLM call.
+
+    Returns a ``CheapCheckResult`` with flags describing what needs attention.
+    If ``flags`` is empty, everything is clean and the LLM can be skipped.
+    """
+    now = now or datetime.datetime.now(datetime.UTC)
+    result = CheapCheckResult()
+
+    # 1. Stale draft estimates (older than STALE_ESTIMATE_HOURS)
+    cutoff = now - datetime.timedelta(hours=STALE_ESTIMATE_HOURS)
+    stale = (
+        db.query(Estimate)
+        .filter(
+            Estimate.contractor_id == contractor.id,
+            Estimate.status == "draft",
+            Estimate.created_at <= cutoff,
+        )
+        .all()
+    )
+    if stale:
+        result.stale_estimates = list(stale)
+        descs = ", ".join(e.description[:40] for e in stale)
+        result.flags.append(f"Stale draft estimate(s) older than 24h: {descs}")
+
+    # 2. Due checklist items
+    active_items = (
+        db.query(HeartbeatChecklistItem)
+        .filter(
+            HeartbeatChecklistItem.contractor_id == contractor.id,
+            HeartbeatChecklistItem.status == "active",
+        )
+        .all()
+    )
+    for item in active_items:
+        if _is_checklist_item_due(item, now):
+            result.due_checklist_items.append(item)
+            result.flags.append(f"Checklist item due: {item.description}")
+
+    # 3. Time-sensitive memory facts
+    memories = db.query(Memory).filter(Memory.contractor_id == contractor.id).all()
+    for mem in memories:
+        text = f"{mem.key} {mem.value}"
+        if _TIME_KEYWORDS.search(text):
+            result.time_sensitive_memories.append(mem)
+            result.flags.append(f"Time-sensitive memory: {mem.key} = {mem.value}")
+
+    return result
+
+
+def _is_checklist_item_due(
+    item: HeartbeatChecklistItem,
+    now: datetime.datetime,
+) -> bool:
+    """Determine whether a checklist item should fire on this tick."""
+    # Weekday gate applies regardless of trigger history
+    if item.schedule == "weekdays" and now.weekday() > 4:
+        return False
+
+    # Never triggered → due (for daily/weekdays/once)
+    if item.last_triggered_at is None:
+        return True
+
+    elapsed = now - item.last_triggered_at
+
+    if item.schedule == "once":
+        # Already triggered once → not due again
+        return False
+    # Default: "daily" or "weekdays" (weekday gate already passed above)
+    return elapsed >= datetime.timedelta(hours=20)
+
+
+# ---------------------------------------------------------------------------
 # Context builder
 # ---------------------------------------------------------------------------
 
 
-async def build_heartbeat_context(db: Session, contractor: Contractor) -> dict[str, str]:
+async def build_heartbeat_context(
+    db: Session,
+    contractor: Contractor,
+    flags: list[str],
+) -> dict[str, str]:
     """Gather all context needed for the heartbeat LLM evaluation."""
     soul_prompt = build_soul_prompt(contractor)
     memory_context = await build_memory_context(db, contractor.id)
@@ -172,43 +286,39 @@ async def build_heartbeat_context(db: Session, contractor: Contractor) -> dict[s
         direction = "Contractor" if msg.direction == "inbound" else "Backshop"
         recent_lines.append(f"[{direction}] {msg.body}")
 
-    # Pending estimates
-    pending = (
-        db.query(Estimate)
-        .filter(Estimate.contractor_id == contractor.id, Estimate.status == "draft")
-        .all()
-    )
-    estimate_lines = [
-        f"- #{e.id}: {e.description[:80]} (${e.total_amount:.0f}, created {e.created_at})"
-        for e in pending
-    ]
-
     return {
         "soul_prompt": soul_prompt,
         "memory_context": memory_context or "(none)",
         "recent_messages": "\n".join(recent_lines) or "(no recent messages)",
-        "pending_estimates": "\n".join(estimate_lines) or "(none)",
+        "flags": "\n".join(f"- {f}" for f in flags),
         "current_time": datetime.datetime.now(datetime.UTC).isoformat(),
     }
 
 
 # ---------------------------------------------------------------------------
-# LLM evaluation
+# LLM evaluation (only called when cheap checks flag something)
 # ---------------------------------------------------------------------------
 
 
-async def evaluate_heartbeat_need(db: Session, contractor: Contractor) -> HeartbeatAction:
-    """Ask the LLM whether a proactive message is warranted."""
-    ctx = await build_heartbeat_context(db, contractor)
+async def evaluate_heartbeat_need(
+    db: Session,
+    contractor: Contractor,
+    flags: list[str],
+) -> HeartbeatAction:
+    """Ask the LLM to compose a message based on flagged items."""
+    ctx = await build_heartbeat_context(db, contractor, flags)
     prompt = HEARTBEAT_SYSTEM_PROMPT.format(**ctx)
 
+    model = settings.heartbeat_model or settings.llm_model
+    provider = settings.heartbeat_provider or settings.llm_provider
+
     response = await acompletion(
-        model=settings.llm_model,
-        provider=settings.llm_provider,
+        model=model,
+        provider=provider,
         api_base=settings.llm_api_base,
         messages=[
             {"role": "system", "content": prompt},
-            {"role": "user", "content": "Evaluate whether to send a proactive message now."},
+            {"role": "user", "content": "Compose a proactive message based on the flags above."},
         ],
         max_tokens=300,
     )
@@ -260,7 +370,18 @@ async def run_heartbeat_for_contractor(
     if daily_counts.get(contractor.id, 0) >= max_daily:
         return None
 
-    action = await evaluate_heartbeat_need(db, contractor)
+    # Cheap checks — skip LLM entirely if nothing is flagged
+    check_result = run_cheap_checks(db, contractor)
+    if not check_result.has_flags:
+        return HeartbeatAction(
+            action_type="no_action",
+            message="",
+            reasoning="All cheap checks clean — skipped LLM",
+            priority=0,
+        )
+
+    # Something was flagged — escalate to LLM for message composition
+    action = await evaluate_heartbeat_need(db, contractor, check_result.flags)
 
     if action.action_type != "send_message" or not action.message:
         return action
@@ -282,6 +403,15 @@ async def run_heartbeat_for_contractor(
     )
     db.add(outbound)
     db.commit()
+
+    # Mark checklist items as triggered
+    now = datetime.datetime.now(datetime.UTC)
+    for item in check_result.due_checklist_items:
+        item.last_triggered_at = now
+        if item.schedule == "once":
+            item.status = "completed"
+    if check_result.due_checklist_items:
+        db.commit()
 
     daily_counts[contractor.id] = daily_counts.get(contractor.id, 0) + 1
     return action

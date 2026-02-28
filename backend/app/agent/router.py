@@ -10,6 +10,7 @@ from backend.app.agent.onboarding import (
     is_onboarding_needed,
 )
 from backend.app.agent.profile import update_contractor_profile
+from backend.app.agent.tools.checklist_tools import create_checklist_tools
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.agent.tools.file_tools import create_file_tools
 from backend.app.agent.tools.memory_tools import create_memory_tools
@@ -94,6 +95,7 @@ async def handle_inbound_message(
     tools = create_memory_tools(db, contractor.id)
     tools.extend(create_messaging_tools(messaging_service, to_address=to_address))
     tools.extend(create_estimate_tools(db, contractor))
+    tools.extend(create_checklist_tools(db, contractor.id))
 
     # Wire file tools if storage is configured
     # TODO(multi-tenant): pass contractor to get_storage_service()
