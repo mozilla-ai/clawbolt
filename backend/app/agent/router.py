@@ -74,6 +74,10 @@ async def handle_inbound_message(
     if media_notes:
         combined_context += "\n\n[System note: " + " ".join(media_notes) + "]"
 
+    # Persist processed context for conversation history
+    message.processed_context = combined_context
+    db.commit()
+
     # Step 4: Load conversation history
     conversation_history = await load_conversation_history(db, message.conversation_id)
 

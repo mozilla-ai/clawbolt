@@ -154,3 +154,28 @@ async def test_media_download_failure_still_processes_text(
     )
 
     assert response.reply_text == "Got your text!"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_processed_context_saved_to_message(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_twilio: TwilioService,
+) -> None:
+    """processed_context should be saved to the Message after media pipeline."""
+    mock_acompletion.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        twilio_service=mock_twilio,
+    )
+
+    db_session.refresh(inbound_message)
+    assert inbound_message.processed_context is not None
+    assert inbound_message.body in inbound_message.processed_context
