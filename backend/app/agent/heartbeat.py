@@ -205,7 +205,7 @@ async def evaluate_heartbeat_need(db: Session, contractor: Contractor) -> Heartb
     response = await acompletion(
         model=settings.llm_model,
         provider=settings.llm_provider,
-        api_key=settings.llm_api_key,
+        api_base=settings.llm_api_base,
         messages=[
             {"role": "system", "content": prompt},
             {"role": "user", "content": "Evaluate whether to send a proactive message now."},
