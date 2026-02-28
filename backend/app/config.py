@@ -27,6 +27,13 @@ class Settings(BaseSettings):
     # Whisper
     whisper_model_size: str = "base"
 
+    # Heartbeat
+    heartbeat_enabled: bool = True
+    heartbeat_interval_minutes: int = 30
+    heartbeat_max_daily_messages: int = 5
+    heartbeat_quiet_hours_start: int = 20  # 8 PM — fallback when no business_hours
+    heartbeat_quiet_hours_end: int = 7  # 7 AM
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

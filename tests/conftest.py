@@ -1,5 +1,5 @@
 from collections.abc import Generator
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -69,6 +69,6 @@ def client(
 
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
-    with TestClient(app) as c:
+    with patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"), TestClient(app) as c:
         yield c
     app.dependency_overrides.clear()
