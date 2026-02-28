@@ -400,3 +400,47 @@ def test_username_allowlist_no_username_in_payload(client: TestClient, db_sessio
     assert response.status_code == 200
     mock_h.assert_not_called()
     assert db_session.query(Message).count() == 0
+
+
+# -- Regression tests for document MIME classification --
+
+
+def test_extract_telegram_media_image_document_preserves_mime() -> None:
+    """Images sent as documents should preserve their image/* MIME type."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {
+        "message": {
+            "message_id": 1,
+            "chat": {"id": 123},
+            "document": {
+                "file_id": "BQACAgIAAxkBAAI",
+                "file_unique_id": "doc1",
+                "file_name": "screenshot.png",
+                "mime_type": "image/png",
+            },
+        }
+    }
+    media = _extract_telegram_media(update)
+    assert len(media) == 1
+    assert media[0] == ("BQACAgIAAxkBAAI", "image/png")
+
+
+def test_extract_telegram_media_document_without_mime_defaults() -> None:
+    """Documents without mime_type should default to application/octet-stream."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {
+        "message": {
+            "message_id": 1,
+            "chat": {"id": 123},
+            "document": {
+                "file_id": "BQACAgIAAxkBAAI",
+                "file_unique_id": "doc1",
+                "file_name": "unknown_file",
+            },
+        }
+    }
+    media = _extract_telegram_media(update)
+    assert len(media) == 1
+    assert media[0] == ("BQACAgIAAxkBAAI", "application/octet-stream")

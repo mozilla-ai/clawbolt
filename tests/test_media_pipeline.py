@@ -93,3 +93,44 @@ async def test_audio_graceful_when_whisper_missing(mock_audio: AsyncMock) -> Non
     assert len(result.media_results) == 1
     assert "not available" in result.media_results[0].extracted_text
     assert "faster-whisper" in result.media_results[0].extracted_text
+
+
+@pytest.mark.asyncio()
+@patch(
+    "backend.app.media.pipeline.analyze_image",
+    new_callable=AsyncMock,
+    side_effect=RuntimeError("Vision API rate limit exceeded"),
+)
+async def test_image_vision_failure_produces_fallback(mock_vision: AsyncMock) -> None:
+    """Vision API failures should produce a descriptive fallback instead of crashing."""
+    result = await process_message_media("Check this roof", [_make_media("image/jpeg")])
+    assert len(result.media_results) == 1
+    assert result.media_results[0].category == "image"
+    assert "vision analysis not available" in result.media_results[0].extracted_text
+    assert "Photo 1" in result.combined_context
+
+
+@pytest.mark.asyncio()
+@patch(
+    "backend.app.media.pipeline.analyze_image",
+    new_callable=AsyncMock,
+    side_effect=TimeoutError("Connection timed out"),
+)
+async def test_image_timeout_produces_fallback(mock_vision: AsyncMock) -> None:
+    """Vision API timeout should produce a fallback, not crash the pipeline."""
+    result = await process_message_media("", [_make_media("image/png")])
+    assert len(result.media_results) == 1
+    assert result.media_results[0].category == "image"
+    assert "vision analysis not available" in result.media_results[0].extracted_text
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
+async def test_image_document_classified_as_image(mock_vision: AsyncMock) -> None:
+    """Images sent as documents with image/* MIME type should be classified as images."""
+    mock_vision.return_value = "A photo of a damaged gutter."
+    result = await process_message_media("", [_make_media("image/png")])
+    assert len(result.media_results) == 1
+    assert result.media_results[0].category == "image"
+    assert result.media_results[0].extracted_text == "A photo of a damaged gutter."
+    mock_vision.assert_called_once()

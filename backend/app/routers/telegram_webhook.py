@@ -110,10 +110,12 @@ def _extract_telegram_media(
     if voice:
         media.append((voice["file_id"], voice.get("mime_type", "audio/ogg")))
 
-    # Document
+    # Document — preserve Telegram-provided MIME type so images sent as
+    # documents (e.g. image/png) are correctly classified downstream
     doc = msg.get("document")
     if doc:
-        media.append((doc["file_id"], doc.get("mime_type", "application/octet-stream")))
+        doc_mime = doc.get("mime_type", "application/octet-stream")
+        media.append((doc["file_id"], doc_mime))
 
     return media
 
