@@ -1,14 +1,18 @@
 import json
+import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
 from sqlalchemy.orm import Session
 from twilio.request_validator import RequestValidator
 
+from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.twilio_service import TwilioService, get_twilio_service
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
@@ -96,5 +100,22 @@ async def twilio_inbound(
     )
     db.add(message)
     db.commit()
+    db.refresh(message)
+
+    # Process through agent pipeline (media → LLM → reply SMS)
+    try:
+        await handle_inbound_message(
+            db=db,
+            contractor=contractor,
+            message=message,
+            media_urls=media_urls,
+            twilio_service=twilio_service,
+        )
+    except Exception:
+        logger.exception(
+            "Agent pipeline failed for message %d from %s",
+            message.id,
+            phone,
+        )
 
     return Response(content=TWIML_EMPTY, media_type="application/xml")
