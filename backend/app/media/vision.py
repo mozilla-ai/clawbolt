@@ -26,7 +26,6 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
     response = await acompletion(
         model=settings.vision_model,
         provider=settings.llm_provider,
-        api_key=settings.llm_api_key,
         messages=[
             {"role": "system", "content": VISION_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},

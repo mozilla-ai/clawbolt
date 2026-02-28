@@ -200,7 +200,6 @@ async def test_file_tools_wired_when_storage_configured(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "gpt-4o"
     mock_settings.llm_provider = "openai"
-    mock_settings.llm_api_key = "test-key"
     mock_get_storage.return_value = MockStorageBackend()
     mock_acompletion.return_value = make_text_response("File saved!")  # type: ignore[union-attr]
 
@@ -232,7 +231,6 @@ async def test_file_tools_skipped_when_no_storage(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "gpt-4o"
     mock_settings.llm_provider = "openai"
-    mock_settings.llm_api_key = "test-key"
     mock_acompletion.return_value = make_text_response("No file tools!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
