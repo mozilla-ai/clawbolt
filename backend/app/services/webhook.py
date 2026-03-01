@@ -7,10 +7,11 @@ from urllib.parse import urlparse
 
 import httpx
 
+from backend.app.config import TELEGRAM_API_BASE
+
 logger = logging.getLogger(__name__)
 
 CLOUDFLARED_METRICS_URL = "http://tunnel:2000/quicktunnel"
-TELEGRAM_API_BASE = "https://api.telegram.org"
 
 
 async def discover_tunnel_url(
