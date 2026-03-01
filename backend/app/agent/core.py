@@ -14,6 +14,7 @@ from backend.app.models import Contractor
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 5
+CONTEXT_QUERY_MAX_LENGTH = 100
 
 SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contractors.
 
@@ -64,7 +65,9 @@ class BackshopAgent:
         """Build the full system prompt with soul + memory."""
         soul_prompt = build_soul_prompt(self.contractor)
         memory_context = await build_memory_context(
-            self.db, self.contractor.id, query=message_context[:100] if message_context else None
+            self.db,
+            self.contractor.id,
+            query=message_context[:CONTEXT_QUERY_MAX_LENGTH] if message_context else None,
         )
         return SYSTEM_PROMPT_TEMPLATE.format(
             contractor_name=self.contractor.name or "Contractor",

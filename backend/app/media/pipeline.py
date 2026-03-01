@@ -14,6 +14,14 @@ AUDIO_FALLBACK = "[Audio file - transcription not available (faster-whisper not 
 VIDEO_FALLBACK = "[Video file - transcription not available (faster-whisper not installed)]"
 VIDEO_ERROR_FALLBACK = "[Video file - transcription not available]"
 
+# Media type display labels used in combined context output
+MEDIA_TYPE_LABELS: dict[str, str] = {
+    "image": "Photo",
+    "audio": "Voice note",
+    "video": "Video",
+    "pdf": "Document",
+}
+
 
 @dataclass
 class ProcessedMedia:
@@ -103,10 +111,7 @@ async def process_message_media(
 
 def _format_label(category: str, index: int) -> str:
     """Format a label for a media item in the combined context."""
-    labels = {
-        "image": f"Photo {index}",
-        "audio": "Voice note",
-        "video": f"Video {index}",
-        "pdf": f"Document {index}",
-    }
-    return labels.get(category, f"Attachment {index}")
+    label = MEDIA_TYPE_LABELS.get(category, "Attachment")
+    if label == "Voice note":
+        return label
+    return f"{label} {index}"
