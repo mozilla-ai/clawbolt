@@ -43,3 +43,5 @@ class Settings(BaseSettings):
 
 
 settings = Settings()
+
+TELEGRAM_API_BASE = "https://api.telegram.org"

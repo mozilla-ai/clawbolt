@@ -5,7 +5,7 @@ from dataclasses import dataclass
 
 import httpx
 
-from backend.app.config import settings
+from backend.app.config import TELEGRAM_API_BASE, settings
 
 logger = logging.getLogger(__name__)
 
@@ -65,7 +65,7 @@ async def download_telegram_media(
     Flow: file_id -> GET /bot{token}/getFile -> file_path -> download bytes.
     """
     token = bot_token or settings.telegram_bot_token
-    api_base = f"https://api.telegram.org/bot{token}"
+    api_base = f"{TELEGRAM_API_BASE}/bot{token}"
 
     logger.info("Downloading Telegram media: file_id=%s", file_id)
 
@@ -76,7 +76,7 @@ async def download_telegram_media(
         file_path = resp.json()["result"]["file_path"]
 
         # Step 2: download the file
-        file_url = f"https://api.telegram.org/file/bot{token}/{file_path}"
+        file_url = f"{TELEGRAM_API_BASE}/file/bot{token}/{file_path}"
         download = await client.get(file_url, follow_redirects=True, timeout=30.0)
         download.raise_for_status()
 
