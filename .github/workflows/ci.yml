@@ -29,7 +29,6 @@ jobs:
 
   e2e-telegram:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     env:
       DATABASE_URL: "sqlite:///:memory:"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
@@ -42,7 +41,6 @@ jobs:
 
   integration:
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     env:
       DATABASE_URL: "sqlite:///:memory:"
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
