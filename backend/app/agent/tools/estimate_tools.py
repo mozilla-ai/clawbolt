@@ -42,8 +42,15 @@ def create_estimate_tools(
         processed_items: list[dict[str, object]] = []
         subtotal = 0.0
         for item in line_items:
-            qty = float(item.get("quantity", 1))
-            price = float(item.get("unit_price", 0))
+            try:
+                qty = float(item.get("quantity", 1))
+                price = float(item.get("unit_price", 0))
+            except (ValueError, TypeError) as exc:
+                return f"Error: invalid line item values — {exc}"
+
+            if qty < 0 or price < 0:
+                return "Error: quantity and unit_price must not be negative."
+
             total = qty * price
             subtotal += total
             processed_items.append(

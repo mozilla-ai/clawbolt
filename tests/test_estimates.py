@@ -158,6 +158,62 @@ async def test_generate_estimate_custom_terms(
     assert "EST-0001" in result
 
 
+@pytest.mark.asyncio()
+async def test_generate_estimate_rejects_negative_quantity(
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Negative quantity should return an error instead of creating a record."""
+    tools = create_estimate_tools(db_session, test_contractor)
+    generate = tools[0].function
+
+    result = await generate(
+        description="Bad estimate",
+        line_items=[{"description": "Work", "quantity": -5, "unit_price": 100.00}],
+    )
+
+    assert "Error" in result
+    assert "negative" in result.lower()
+    assert db_session.query(Estimate).count() == 0
+
+
+@pytest.mark.asyncio()
+async def test_generate_estimate_rejects_negative_price(
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Negative unit_price should return an error."""
+    tools = create_estimate_tools(db_session, test_contractor)
+    generate = tools[0].function
+
+    result = await generate(
+        description="Bad estimate",
+        line_items=[{"description": "Work", "quantity": 1, "unit_price": -50.00}],
+    )
+
+    assert "Error" in result
+    assert "negative" in result.lower()
+    assert db_session.query(Estimate).count() == 0
+
+
+@pytest.mark.asyncio()
+async def test_generate_estimate_rejects_non_numeric_values(
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Non-numeric quantity/price should return an error."""
+    tools = create_estimate_tools(db_session, test_contractor)
+    generate = tools[0].function
+
+    result = await generate(
+        description="Bad estimate",
+        line_items=[{"description": "Work", "quantity": "abc", "unit_price": 100.00}],
+    )
+
+    assert "Error" in result
+    assert db_session.query(Estimate).count() == 0
+
+
 def test_serve_estimate_pdf_endpoint(
     client: TestClient, db_session: Session, test_contractor: Contractor, tmp_path: Path
 ) -> None:
