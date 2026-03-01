@@ -94,7 +94,7 @@ def _strip_code_fences(text: str) -> str:
     return stripped
 
 
-STALE_ESTIMATE_HOURS = 24
+STALE_ESTIMATE_HOURS = settings.heartbeat_stale_estimate_hours
 CHECKLIST_DAILY_INTERVAL_HOURS = 20
 HEARTBEAT_RECENT_MESSAGES_COUNT = 5
 WEEKDAY_FRIDAY = 4  # Monday=0 … Friday=4
