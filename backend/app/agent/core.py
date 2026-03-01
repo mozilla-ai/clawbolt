@@ -13,6 +13,8 @@ from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
 
+MAX_TOOL_ROUNDS = 5
+
 SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contractors.
 
 ## About {contractor_name}
@@ -93,23 +95,28 @@ class BackshopAgent:
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
 
-        response = await acompletion(
-            model=settings.llm_model,
-            provider=settings.llm_provider,
-            api_base=settings.llm_api_base,
-            messages=messages,
-            tools=tool_schemas,
-            max_tokens=500,
-            **llm_kwargs,
-        )
-
-        choice = response.choices[0]
         actions_taken: list[str] = []
         memories_saved: list[dict[str, str]] = []
         tool_call_records: list[dict[str, object]] = []
+        reply_text = ""
 
-        # Handle tool calls
-        if getattr(choice.message, "tool_calls", None):
+        for _round in range(MAX_TOOL_ROUNDS):
+            response = await acompletion(
+                model=settings.llm_model,
+                provider=settings.llm_provider,
+                api_base=settings.llm_api_base,
+                messages=messages,
+                tools=tool_schemas,
+                max_tokens=500,
+                **llm_kwargs,
+            )
+
+            choice = response.choices[0]
+
+            if not getattr(choice.message, "tool_calls", None):
+                reply_text = choice.message.content or ""
+                break
+
             # Append the assistant message (with tool_calls) to conversation
             messages.append(choice.message.model_dump())
 
@@ -149,17 +156,9 @@ class BackshopAgent:
                     }
                 )
 
-            # Append tool results and make follow-up LLM call
             messages.extend(tool_results)
-            followup = await acompletion(
-                model=settings.llm_model,
-                provider=settings.llm_provider,
-                api_base=settings.llm_api_base,
-                messages=messages,
-                max_tokens=500,
-            )
-            reply_text = followup.choices[0].message.content or ""
         else:
+            # Max rounds reached — use last response content
             reply_text = choice.message.content or ""
 
         return AgentResponse(

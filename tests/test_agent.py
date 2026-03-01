@@ -165,3 +165,120 @@ async def test_agent_tool_loop_includes_tool_results_in_followup(
     assert len(tool_messages) == 1
     assert tool_messages[0]["tool_call_id"] == "call_abc"
     assert "hourly_rate: $75/hr" in tool_messages[0]["content"]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_multi_round_tool_calls(
+    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Agent should support multiple rounds of tool calls, not just one."""
+    # Round 1: LLM calls recall_facts
+    round1_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_1",
+                "name": "recall_facts",
+                "arguments": json.dumps({"query": "deck pricing"}),
+            }
+        ]
+    )
+    # Round 2: LLM calls generate_estimate
+    round2_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_2",
+                "name": "generate_estimate",
+                "arguments": json.dumps({"description": "deck build"}),
+            }
+        ]
+    )
+    # Round 3: LLM produces final text reply
+    final_response = make_text_response("Here's your estimate for the deck build!")
+
+    mock_acompletion.side_effect = [round1_response, round2_response, final_response]  # type: ignore[union-attr]
+
+    mock_recall = AsyncMock(return_value="deck: $45/sqft")
+    mock_estimate = AsyncMock(return_value="Estimate PDF generated")
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools(
+        [
+            Tool(
+                name="recall_facts",
+                description="Recall facts",
+                function=mock_recall,
+                parameters={"type": "object", "properties": {"query": {}}},
+            ),
+            Tool(
+                name="generate_estimate",
+                description="Generate estimate",
+                function=mock_estimate,
+                parameters={"type": "object", "properties": {"description": {}}},
+            ),
+        ]
+    )
+
+    response = await agent.process_message("Look up deck pricing and generate an estimate")
+
+    # Both tools should have been called
+    mock_recall.assert_called_once()
+    mock_estimate.assert_called_once()
+
+    # 3 LLM calls total (round 1 + round 2 + final)
+    assert mock_acompletion.call_count == 3  # type: ignore[union-attr]
+
+    # Final reply comes from the text response
+    assert response.reply_text == "Here's your estimate for the deck build!"
+
+    # Both tool calls should be recorded
+    assert len(response.tool_calls) == 2
+    assert response.tool_calls[0]["name"] == "recall_facts"
+    assert response.tool_calls[1]["name"] == "generate_estimate"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_tool_loop_respects_max_rounds(
+    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Agent should stop after MAX_TOOL_ROUNDS even if LLM keeps requesting tools."""
+    from backend.app.agent.core import MAX_TOOL_ROUNDS
+
+    # Create MAX_TOOL_ROUNDS responses that all request tool calls
+    tool_responses = [
+        make_tool_call_response(
+            tool_calls=[
+                {
+                    "id": f"call_{i}",
+                    "name": "recall_facts",
+                    "arguments": json.dumps({"query": f"round {i}"}),
+                }
+            ],
+            content="Still thinking...",
+        )
+        for i in range(MAX_TOOL_ROUNDS)
+    ]
+
+    mock_acompletion.side_effect = tool_responses  # type: ignore[union-attr]
+
+    mock_recall = AsyncMock(return_value="some result")
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools(
+        [
+            Tool(
+                name="recall_facts",
+                description="Recall facts",
+                function=mock_recall,
+                parameters={"type": "object", "properties": {"query": {}}},
+            ),
+        ]
+    )
+
+    response = await agent.process_message("Keep going forever")
+
+    # Should have made exactly MAX_TOOL_ROUNDS calls, not more
+    assert mock_acompletion.call_count == MAX_TOOL_ROUNDS  # type: ignore[union-attr]
+
+    # Should still return a reply (from the last response's content)
+    assert response.reply_text == "Still thinking..."
