@@ -217,3 +217,11 @@ async def test_get_or_create_conversation_custom_timeout(
     # With 3-hour timeout, should reuse
     conv, is_new = await get_or_create_conversation(db_session, test_contractor.id, timeout_hours=3)
     assert is_new is False
+
+
+def test_webhook_uses_canonical_get_or_create_conversation() -> None:
+    """Webhook should use context.get_or_create_conversation, not a local duplicate."""
+    from backend.app.routers import telegram_webhook
+
+    # The local _get_or_create_conversation should no longer exist
+    assert not hasattr(telegram_webhook, "_get_or_create_conversation")
