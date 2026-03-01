@@ -50,4 +50,4 @@ async def analyze_image(
         **llm_kwargs,
     )
     logger.debug("Vision LLM response received for mime_type=%s", mime_type)
-    return response.choices[0].message.content
+    return response.choices[0].message.content or ""
