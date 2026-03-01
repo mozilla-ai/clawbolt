@@ -4,12 +4,15 @@ import asyncio
 import contextlib
 import io
 import json
+import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
 
 import dropbox
 
 from backend.app.config import Settings, settings
+
+logger = logging.getLogger(__name__)
 
 
 class StorageBackend(ABC):
@@ -43,6 +46,7 @@ class DropboxStorage(StorageBackend):
 
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
         full_path = f"{path}/{filename}"
+        logger.info("Uploading to Dropbox: %s (%d bytes)", full_path, len(file_bytes))
         await asyncio.to_thread(
             self.dbx.files_upload, file_bytes, full_path, mode=dropbox.files.WriteMode.overwrite
         )
@@ -51,12 +55,15 @@ class DropboxStorage(StorageBackend):
             shared = await asyncio.to_thread(
                 self.dbx.sharing_create_shared_link_with_settings, full_path
             )
+            logger.info("Dropbox upload complete: %s -> %s", full_path, shared.url)
             return shared.url
         except dropbox.exceptions.ApiError:
             # Link may already exist
             links = await asyncio.to_thread(self.dbx.sharing_list_shared_links, path=full_path)
             if links.links:
+                logger.info("Dropbox upload complete: %s -> %s", full_path, links.links[0].url)
                 return links.links[0].url
+            logger.info("Dropbox upload complete: %s (no shared link)", full_path)
             return full_path
 
     async def create_folder(self, path: str) -> str:
@@ -89,6 +96,7 @@ class GoogleDriveStorage(StorageBackend):
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
         from googleapiclient.http import MediaIoBaseUpload
 
+        logger.info("Uploading to Google Drive: %s/%s (%d bytes)", path, filename, len(file_bytes))
         service = self._get_service()
         media = MediaIoBaseUpload(io.BytesIO(file_bytes), mimetype="application/octet-stream")
         file_metadata = {"name": filename, "parents": [path] if path else []}
@@ -97,7 +105,9 @@ class GoogleDriveStorage(StorageBackend):
             .create(body=file_metadata, media_body=media, fields="id,webViewLink")
             .execute  # type: ignore[union-attr]
         )
-        return result.get("webViewLink", result.get("id", ""))
+        url = result.get("webViewLink", result.get("id", ""))
+        logger.info("Google Drive upload complete: %s/%s -> %s", path, filename, url)
+        return url
 
     async def create_folder(self, path: str) -> str:
         service = self._get_service()
@@ -133,6 +143,7 @@ class LocalFileStorage(StorageBackend):
         folder = self.base_dir / path.lstrip("/")
         folder.mkdir(parents=True, exist_ok=True)
         file_path = folder / filename
+        logger.info("Saving to local storage: %s (%d bytes)", file_path, len(file_bytes))
         await asyncio.to_thread(file_path.write_bytes, file_bytes)
         return f"file://{file_path.resolve()}"
 

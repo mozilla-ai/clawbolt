@@ -87,9 +87,14 @@ async def process_message_media(
     media_items: list[DownloadedMedia],
 ) -> PipelineResult:
     """Process all media in a message and combine into unified context."""
+    logger.info("Processing %d media item(s)", len(media_items))
     tasks = [_process_single_media(m, i, context=text_body) for i, m in enumerate(media_items)]
     media_results = await asyncio.gather(*tasks)
     media_results = list(media_results)
+    logger.info(
+        "Media processing complete: %s",
+        ", ".join(f"{r.category} ({len(r.extracted_text)} chars)" for r in media_results),
+    )
 
     # Build combined context
     parts: list[str] = []
