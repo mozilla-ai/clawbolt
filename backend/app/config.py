@@ -48,6 +48,9 @@ class Settings(BaseSettings):
     webhook_rate_limit_max_requests: int = 30
     webhook_rate_limit_window_seconds: int = 60
 
+    # Media
+    max_media_size_bytes: int = 20_971_520  # 20 MB
+
     # HTTP timeouts
     http_timeout_seconds: float = 30.0
     cloudflared_metrics_timeout_seconds: float = 5.0

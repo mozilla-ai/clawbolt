@@ -123,6 +123,38 @@ async def test_download_keeps_octet_stream_for_unknown_extension() -> None:
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.media.download.settings")
+async def test_download_rejects_oversized_media(mock_settings: object) -> None:
+    """Files exceeding max_media_size_bytes should raise ValueError."""
+    mock_settings.telegram_bot_token = "TOKEN"  # type: ignore[attr-defined]
+    mock_settings.http_timeout_seconds = 30.0  # type: ignore[attr-defined]
+    mock_settings.max_media_size_bytes = 100  # type: ignore[attr-defined]
+
+    get_file_response = httpx.Response(
+        200,
+        json={"ok": True, "result": {"file_id": "abc123", "file_path": "photos/big.jpg"}},
+        request=httpx.Request("GET", "https://api.telegram.org/botTOKEN/getFile"),
+    )
+    # 200 bytes > 100 byte limit
+    download_response = httpx.Response(
+        200,
+        content=b"x" * 200,
+        headers={"content-type": "image/jpeg"},
+        request=httpx.Request("GET", "https://api.telegram.org/file/botTOKEN/photos/big.jpg"),
+    )
+
+    with patch("backend.app.media.download.httpx.AsyncClient") as mock_client_cls:
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = [get_file_response, download_response]
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=None)
+        mock_client_cls.return_value = mock_client
+
+        with pytest.raises(ValueError, match="Media file too large"):
+            await download_telegram_media("abc123", bot_token="TOKEN")
+
+
+@pytest.mark.asyncio()
 async def test_download_telegram_media_error() -> None:
     """download_telegram_media should raise on HTTP error."""
     error_response = httpx.Response(
