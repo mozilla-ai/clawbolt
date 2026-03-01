@@ -5,7 +5,7 @@ import mimetypes
 import httpx
 from telegram import Bot
 
-from backend.app.config import Settings
+from backend.app.config import Settings, settings
 
 
 class TelegramMessagingService:
@@ -25,7 +25,9 @@ class TelegramMessagingService:
         """Download *media_url* and send it as a document or photo."""
         chat_id = int(to)
         async with httpx.AsyncClient() as client:
-            resp = await client.get(media_url, follow_redirects=True, timeout=30.0)
+            resp = await client.get(
+                media_url, follow_redirects=True, timeout=settings.http_timeout_seconds
+            )
             resp.raise_for_status()
 
         content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]

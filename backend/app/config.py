@@ -33,6 +33,11 @@ class Settings(BaseSettings):
     # Whisper
     whisper_model_size: str = "base"
 
+    # HTTP timeouts
+    http_timeout_seconds: float = 30.0
+    cloudflared_metrics_timeout_seconds: float = 5.0
+    telegram_webhook_timeout_seconds: float = 10.0
+
     # Heartbeat
     heartbeat_enabled: bool = True
     heartbeat_interval_minutes: int = 30
