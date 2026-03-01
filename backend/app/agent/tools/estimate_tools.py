@@ -100,7 +100,7 @@ def create_estimate_tools(
             estimate_number=estimate_number,
             client_name=client_name,
             client_address=client_address,
-            terms=terms or "Payment due within 30 days of project completion.",
+            terms=terms or settings.default_estimate_terms,
         )
 
         pdf_bytes = await generate_estimate_pdf(pdf_data)
