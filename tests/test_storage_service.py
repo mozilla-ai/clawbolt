@@ -138,6 +138,47 @@ async def test_local_list_folder_empty(local_storage: LocalFileStorage) -> None:
 
 
 # ---------------------------------------------------------------------------
+# LocalFileStorage path-traversal tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_local_upload_rejects_path_traversal(local_storage: LocalFileStorage) -> None:
+    """upload_file should reject path containing '..' that escapes base_dir."""
+    with pytest.raises(ValueError, match="Path escapes storage directory"):
+        await local_storage.upload_file(b"evil", "../../etc", "passwd")
+
+
+@pytest.mark.asyncio()
+async def test_local_upload_rejects_filename_traversal(local_storage: LocalFileStorage) -> None:
+    """upload_file should reject filename containing '..' that escapes base_dir."""
+    with pytest.raises(ValueError, match="Path escapes storage directory"):
+        await local_storage.upload_file(b"evil", "/safe", "../../etc/passwd")
+
+
+@pytest.mark.asyncio()
+async def test_local_create_folder_rejects_traversal(local_storage: LocalFileStorage) -> None:
+    """create_folder should reject paths that escape base_dir."""
+    with pytest.raises(ValueError, match="Path escapes storage directory"):
+        await local_storage.create_folder("../../tmp/evil")
+
+
+@pytest.mark.asyncio()
+async def test_local_list_folder_rejects_traversal(local_storage: LocalFileStorage) -> None:
+    """list_folder should reject paths that escape base_dir."""
+    with pytest.raises(ValueError, match="Path escapes storage directory"):
+        await local_storage.list_folder("../../../etc")
+
+
+@pytest.mark.asyncio()
+async def test_local_safe_relative_path_allowed(local_storage: LocalFileStorage) -> None:
+    """Paths that resolve inside base_dir (e.g. 'a/../b') should be allowed."""
+    url = await local_storage.upload_file(b"ok", "a/../b", "file.txt")
+    assert "file.txt" in url
+    assert (local_storage.base_dir / "b" / "file.txt").exists()
+
+
+# ---------------------------------------------------------------------------
 # DropboxStorage tests
 # ---------------------------------------------------------------------------
 
