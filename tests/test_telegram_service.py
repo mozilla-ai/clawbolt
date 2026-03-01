@@ -4,6 +4,26 @@ import pytest
 
 from backend.app.services.telegram_service import TelegramMessagingService
 
+# ---------------------------------------------------------------------------
+# _parse_chat_id
+# ---------------------------------------------------------------------------
+
+
+class TestParseChatId:
+    def test_plain_numeric(self) -> None:
+        assert TelegramMessagingService._parse_chat_id("123456789") == 123456789
+
+    def test_strips_plus_prefix(self) -> None:
+        assert TelegramMessagingService._parse_chat_id("+15551234567") == 15551234567
+
+    def test_empty_string_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid Telegram chat_id"):
+            TelegramMessagingService._parse_chat_id("")
+
+    def test_non_numeric_raises(self) -> None:
+        with pytest.raises(ValueError, match="Invalid Telegram chat_id"):
+            TelegramMessagingService._parse_chat_id("not-a-number")
+
 
 @pytest.fixture()
 def mock_bot() -> MagicMock:
@@ -98,3 +118,34 @@ async def test_send_message_text_only(
     msg_id = await telegram_service.send_message(to="123456789", body="Hello")
     assert msg_id == "42"
     mock_bot.send_message.assert_called_once_with(chat_id=123456789, text="Hello")
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.services.telegram_service.httpx.AsyncClient")
+async def test_send_message_multi_media_caption_once(
+    mock_client_class: MagicMock,
+    telegram_service: TelegramMessagingService,
+    mock_bot: MagicMock,
+) -> None:
+    """send_message with multiple media URLs should only caption the first."""
+    mock_response = MagicMock()
+    mock_response.headers = {"content-type": "image/jpeg"}
+    mock_response.content = b"fake-image-data"
+    mock_response.raise_for_status = MagicMock()
+
+    mock_client = MagicMock()
+    mock_client.get = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+    mock_client_class.return_value = mock_client
+
+    await telegram_service.send_message(
+        to="123456789",
+        body="Here are the photos",
+        media_urls=["https://example.com/a.jpg", "https://example.com/b.jpg"],
+    )
+
+    calls = mock_bot.send_photo.call_args_list
+    assert len(calls) == 2
+    assert calls[0].kwargs["caption"] == "Here are the photos"
+    assert calls[1].kwargs["caption"] == ""
