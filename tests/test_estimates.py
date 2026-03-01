@@ -1,4 +1,6 @@
+from collections.abc import Generator
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -6,6 +8,18 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.models import Contractor, Estimate, EstimateLineItem
+
+
+@pytest.fixture(autouse=True)
+def _use_tmp_pdf_dir(tmp_path: Path) -> Generator[None]:
+    """Redirect PDF output to a temp directory so tests don't touch the real filesystem."""
+    pdf_dir = tmp_path / "estimates"
+    pdf_dir.mkdir()
+    with (
+        patch("backend.app.agent.tools.estimate_tools.PDF_DIR", pdf_dir),
+        patch("backend.app.routers.estimates.PDF_DIR", pdf_dir),
+    ):
+        yield
 
 
 @pytest.mark.asyncio()
@@ -66,6 +80,7 @@ async def test_generate_estimate_with_client_info(
 async def test_generate_estimate_pdf_generated(
     db_session: Session,
     test_contractor: Contractor,
+    tmp_path: Path,
 ) -> None:
     """generate_estimate should generate a PDF (nonzero bytes)."""
     tools = create_estimate_tools(db_session, test_contractor)
@@ -76,19 +91,13 @@ async def test_generate_estimate_pdf_generated(
         line_items=[{"description": "Service call", "quantity": 1, "unit_price": 150.00}],
     )
 
-    # Result mentions PDF path
-    assert "data/estimates/" in result
     assert ".pdf" in result
 
-    # Verify PDF file was actually written
-    from pathlib import Path
-
+    # Verify PDF file was actually written in the temp directory
     estimate = db_session.query(Estimate).first()
-    pdf_path = Path(f"data/estimates/{estimate.id}.pdf")
+    pdf_path = tmp_path / "estimates" / f"{estimate.id}.pdf"
     assert pdf_path.exists()
     assert pdf_path.stat().st_size > 0
-    # Clean up
-    pdf_path.unlink()
 
 
 @pytest.mark.asyncio()
@@ -150,7 +159,7 @@ async def test_generate_estimate_custom_terms(
 
 
 def test_serve_estimate_pdf_endpoint(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, db_session: Session, test_contractor: Contractor, tmp_path: Path
 ) -> None:
     """GET /api/estimates/{id}/pdf should serve existing PDF for authenticated owner."""
     # Create an estimate record owned by the test contractor
@@ -163,19 +172,14 @@ def test_serve_estimate_pdf_endpoint(
     db_session.commit()
     db_session.refresh(estimate)
 
-    # Create a test PDF file matching the estimate ID
-    pdf_dir = Path("data/estimates")
-    pdf_dir.mkdir(parents=True, exist_ok=True)
-    test_pdf = pdf_dir / f"{estimate.id}.pdf"
+    # Create a test PDF file in the temp directory (patched via _use_tmp_pdf_dir)
+    test_pdf = tmp_path / "estimates" / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 test content")
 
-    try:
-        response = client.get(f"/api/estimates/{estimate.id}/pdf")
-        assert response.status_code == 200
-        assert response.headers["content-type"] == "application/pdf"
-        assert b"%PDF-1.4" in response.content
-    finally:
-        test_pdf.unlink()
+    response = client.get(f"/api/estimates/{estimate.id}/pdf")
+    assert response.status_code == 200
+    assert response.headers["content-type"] == "application/pdf"
+    assert b"%PDF-1.4" in response.content
 
 
 def test_serve_estimate_pdf_not_found(client: TestClient) -> None:
@@ -184,7 +188,9 @@ def test_serve_estimate_pdf_not_found(client: TestClient) -> None:
     assert response.status_code == 404
 
 
-def test_serve_estimate_pdf_other_user_rejected(client: TestClient, db_session: Session) -> None:
+def test_serve_estimate_pdf_other_user_rejected(
+    client: TestClient, db_session: Session, tmp_path: Path
+) -> None:
     """GET /api/estimates/{id}/pdf should return 404 for another user's estimate."""
     # Create a different contractor
     other_contractor = Contractor(
@@ -208,17 +214,12 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, db_session: 
     db_session.refresh(estimate)
 
     # Create the PDF file so we can verify auth blocks access, not file absence
-    pdf_dir = Path("data/estimates")
-    pdf_dir.mkdir(parents=True, exist_ok=True)
-    test_pdf = pdf_dir / f"{estimate.id}.pdf"
+    test_pdf = tmp_path / "estimates" / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 secret content")
 
-    try:
-        response = client.get(f"/api/estimates/{estimate.id}/pdf")
-        assert response.status_code == 404
-        assert response.json()["detail"] == "Estimate not found"
-    finally:
-        test_pdf.unlink()
+    response = client.get(f"/api/estimates/{estimate.id}/pdf")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Estimate not found"
 
 
 def test_serve_estimate_pdf_requires_auth_dependency() -> None:
