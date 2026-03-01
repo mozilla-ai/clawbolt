@@ -47,7 +47,7 @@ async def test_generate_estimate_creates_records(
     )
     assert estimate is not None
     assert estimate.total_amount == 4200.00
-    assert estimate.status == "sent"
+    assert estimate.status == "draft"
     assert estimate.description == "12x12 composite deck build"
 
     items = (
