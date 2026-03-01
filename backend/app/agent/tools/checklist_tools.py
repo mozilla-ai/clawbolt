@@ -5,6 +5,8 @@ from sqlalchemy.orm import Session
 from backend.app.agent.tools.base import Tool
 from backend.app.models import HeartbeatChecklistItem
 
+VALID_CHECKLIST_SCHEDULES = ("daily", "weekdays", "once")
+
 
 def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
     """Create checklist-related tools for the agent."""
@@ -14,7 +16,7 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
         schedule: str = "daily",
     ) -> str:
         """Add an item to the contractor's heartbeat checklist."""
-        if schedule not in ("daily", "weekdays", "once"):
+        if schedule not in VALID_CHECKLIST_SCHEDULES:
             return f"Invalid schedule '{schedule}'. Use: daily, weekdays, or once."
         item = HeartbeatChecklistItem(
             contractor_id=contractor_id,
@@ -76,7 +78,7 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
                     },
                     "schedule": {
                         "type": "string",
-                        "enum": ["daily", "weekdays", "once"],
+                        "enum": list(VALID_CHECKLIST_SCHEDULES),
                         "description": "How often to check (default: daily)",
                     },
                 },

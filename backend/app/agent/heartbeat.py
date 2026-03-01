@@ -22,6 +22,7 @@ from sqlalchemy.orm import Session
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt
+from backend.app.agent.tools.estimate_tools import EstimateStatus
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.models import (
@@ -220,7 +221,7 @@ def run_cheap_checks(
         db.query(Estimate)
         .filter(
             Estimate.contractor_id == contractor.id,
-            Estimate.status == "draft",
+            Estimate.status == EstimateStatus.DRAFT,
             Estimate.created_at <= cutoff,
         )
         .all()
