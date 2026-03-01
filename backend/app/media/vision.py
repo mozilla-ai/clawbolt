@@ -15,7 +15,9 @@ VISION_SYSTEM_PROMPT = (
 )
 
 
-async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -> str:
+async def analyze_image(
+    image_bytes: bytes, mime_type: str, context: str = "", user: str | None = None
+) -> str:
     """Send an image to a vision LLM and get a text description."""
     logger.info(
         "Sending image to vision LLM: mime_type=%s, size=%d bytes", mime_type, len(image_bytes)
@@ -32,6 +34,10 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
     model = settings.vision_model or settings.llm_model
     logger.info("Using vision model: %s (provider=%s)", model, settings.llm_provider)
 
+    llm_kwargs: dict[str, object] = {}
+    if user is not None:
+        llm_kwargs["user"] = user
+
     response = await acompletion(
         model=model,
         provider=settings.llm_provider,
@@ -41,6 +47,7 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
             {"role": "user", "content": user_content},
         ],
         max_tokens=1000,
+        **llm_kwargs,
     )
     logger.debug("Vision LLM response received for mime_type=%s", mime_type)
     return response.choices[0].message.content
