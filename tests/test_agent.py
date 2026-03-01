@@ -82,6 +82,21 @@ async def test_agent_does_not_pass_api_key(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
+async def test_agent_passes_user_parameter(
+    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+) -> None:
+    """acompletion should be called with user=contractor.id for per-user tracking."""
+    mock_acompletion.return_value = make_text_response("Hi!")  # type: ignore[union-attr]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    await agent.process_message("Hello")
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    assert call_args.kwargs["user"] == str(test_contractor.id)
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
 async def test_agent_tool_loop_sends_results_back(
     mock_acompletion: object, db_session: Session, test_contractor: Contractor
 ) -> None:
