@@ -337,6 +337,7 @@ async def evaluate_heartbeat_need(
             {"role": "user", "content": "Compose a proactive message based on the flags above."},
         ],
         max_tokens=300,
+        user=str(contractor.id),
     )
     raw = response.choices[0].message.content or ""
     raw = _strip_code_fences(raw)
