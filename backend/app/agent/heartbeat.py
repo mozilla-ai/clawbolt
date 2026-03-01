@@ -332,6 +332,10 @@ async def evaluate_heartbeat_need(
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
 
+    llm_kwargs: dict[str, object] = {}
+    if provider == "openai":
+        llm_kwargs["user"] = str(contractor.id)
+
     response = await acompletion(
         model=model,
         provider=provider,
@@ -341,7 +345,7 @@ async def evaluate_heartbeat_need(
             {"role": "user", "content": "Compose a proactive message based on the flags above."},
         ],
         max_tokens=settings.llm_max_tokens_heartbeat,
-        user=str(contractor.id),
+        **llm_kwargs,
     )
     raw = response.choices[0].message.content or ""
     raw = _strip_code_fences(raw)
