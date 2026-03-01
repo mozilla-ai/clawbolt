@@ -76,9 +76,9 @@ async def test_generate_estimate_pdf_generated(
         line_items=[{"description": "Service call", "quantity": 1, "unit_price": 150.00}],
     )
 
-    # Result mentions PDF URL
-    assert "/api/estimates/" in result
-    assert "/pdf" in result
+    # Result mentions PDF path
+    assert "data/estimates/" in result
+    assert ".pdf" in result
 
     # Verify PDF file was actually written
     from pathlib import Path

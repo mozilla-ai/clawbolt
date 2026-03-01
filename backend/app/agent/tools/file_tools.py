@@ -108,7 +108,15 @@ def create_file_tools(
             original_url = original_url or first_url
 
         if not file_bytes:
+            logger.warning("upload_to_storage called but no file content available")
             return "No file content available to upload."
+
+        logger.info(
+            "Cataloging file: category=%s, mime=%s, size=%d bytes",
+            file_category,
+            mime_type,
+            len(file_bytes),
+        )
 
         # Build path and filename
         folder_path = _build_folder_path(file_category, job_name)
@@ -144,6 +152,7 @@ def create_file_tools(
         db.add(media_file)
         db.commit()
 
+        logger.info("File cataloged: %s/%s -> %s", folder_path, filename, storage_url)
         return f"Uploaded {filename} to {folder_path}/ ({storage_url})"
 
     return [
