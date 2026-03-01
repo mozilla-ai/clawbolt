@@ -105,9 +105,8 @@ def create_estimate_tools(
         pdf_path = PDF_DIR / f"{estimate.id}.pdf"
         pdf_path.write_bytes(pdf_bytes)
 
-        # Update estimate with PDF path
+        # Update estimate with PDF path — stays as DRAFT until actually sent
         estimate.pdf_url = str(pdf_path)
-        estimate.status = EstimateStatus.SENT
         db.commit()
 
         return (
