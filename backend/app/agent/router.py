@@ -147,8 +147,9 @@ async def handle_inbound_message(
                 contractor.onboarding_complete = True
                 db.commit()
 
-    # Step 7: If agent didn't explicitly call send_reply, send the reply text
-    sent_reply = any(tc.get("name") == "send_reply" for tc in response.tool_calls)
+    # Step 7: If agent didn't explicitly call send_reply/send_media_reply, send the reply text
+    REPLY_TOOL_NAMES = {"send_reply", "send_media_reply"}
+    sent_reply = any(tc.get("name") in REPLY_TOOL_NAMES for tc in response.tool_calls)
     if not sent_reply and response.reply_text:
         try:
             await messaging_service.send_text(to=to_address, body=response.reply_text)
