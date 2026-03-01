@@ -107,7 +107,7 @@ class BackshopAgent:
                 api_base=settings.llm_api_base,
                 messages=messages,
                 tools=tool_schemas,
-                max_tokens=500,
+                max_tokens=settings.llm_max_tokens_agent,
                 **llm_kwargs,
             )
 
