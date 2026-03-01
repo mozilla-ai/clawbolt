@@ -30,6 +30,8 @@ class Settings(BaseSettings):
     dropbox_access_token: str = ""
     google_drive_credentials_json: str = ""
     pdf_storage_dir: str = "data/estimates"
+    file_storage_base_dir: str = "data/storage"
+    default_estimate_terms: str = "Payment due within 30 days of project completion."
 
     # Whisper
     whisper_model_size: str = "base"
