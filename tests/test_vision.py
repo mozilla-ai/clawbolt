@@ -48,6 +48,20 @@ async def test_analyze_image_encodes_base64(mock_acompletion: object) -> None:
 
 @pytest.mark.asyncio()
 @patch("backend.app.media.vision.acompletion")
+async def test_analyze_image_returns_empty_string_on_none_content(
+    mock_acompletion: object,
+) -> None:
+    """analyze_image should return '' when LLM content is None, not None."""
+    mock_acompletion.return_value = make_vision_response("")  # type: ignore[union-attr]
+    # Manually set content to None to simulate LLM returning null content
+    mock_acompletion.return_value.choices[0].message.content = None  # type: ignore[union-attr]
+    result = await analyze_image(b"fake-jpeg-bytes", "image/jpeg")
+    assert result == ""
+    assert isinstance(result, str)
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.media.vision.acompletion")
 async def test_analyze_image_does_not_pass_api_key(mock_acompletion: object) -> None:
     """acompletion should be called without api_key so the SDK resolves keys from env."""
     mock_acompletion.return_value = make_vision_response("Test.")  # type: ignore[union-attr]
