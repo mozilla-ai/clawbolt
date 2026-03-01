@@ -125,7 +125,7 @@ class GoogleDriveStorage(StorageBackend):
 class LocalFileStorage(StorageBackend):
     """Local filesystem storage for development and demos."""
 
-    def __init__(self, base_dir: str = "data/storage") -> None:
+    def __init__(self, base_dir: str = settings.file_storage_base_dir) -> None:
         self.base_dir = Path(base_dir)
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
