@@ -110,15 +110,16 @@ def create_estimate_tools(
         pdf_path = PDF_DIR / f"{estimate.id}.pdf"
         pdf_path.write_bytes(pdf_bytes)
 
-        # Update estimate with PDF URL (served by /api/estimates/{id}/pdf)
-        estimate.pdf_url = f"/api/estimates/{estimate.id}/pdf"
+        # Update estimate with PDF path
+        estimate.pdf_url = str(pdf_path)
         estimate.status = EstimateStatus.SENT
         db.commit()
 
         return (
             f"Estimate {estimate_number} generated for ${total_amount:,.2f}. "
             f"{len(processed_items)} line item(s). "
-            f"PDF available at {estimate.pdf_url}"
+            f"PDF saved at {pdf_path}. "
+            f"Use send_media_reply to send it to the contractor."
         )
 
     return [

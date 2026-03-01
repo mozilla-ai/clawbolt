@@ -1,6 +1,7 @@
 """Telegram implementation of the MessagingService protocol."""
 
 import mimetypes
+from pathlib import Path
 
 import httpx
 from telegram import Bot
@@ -22,18 +23,29 @@ class TelegramMessagingService:
         return str(msg.message_id)
 
     async def send_media(self, to: str, body: str, media_url: str) -> str:
-        """Download *media_url* and send it as a document or photo."""
-        chat_id = int(to)
-        async with httpx.AsyncClient() as client:
-            resp = await client.get(
-                media_url, follow_redirects=True, timeout=settings.http_timeout_seconds
-            )
-            resp.raise_for_status()
+        """Download *media_url* and send it as a document or photo.
 
-        content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-        ext = mimetypes.guess_extension(content_type) or ".bin"
-        filename = f"file{ext}"
-        data = resp.content
+        Supports both HTTP(S) URLs and local file paths.
+        """
+        chat_id = int(to)
+
+        local_path = Path(media_url)
+        if local_path.is_file():
+            data = local_path.read_bytes()
+            content_type = mimetypes.guess_type(str(local_path))[0] or "application/octet-stream"
+            filename = local_path.name
+        else:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    media_url, follow_redirects=True, timeout=settings.http_timeout_seconds
+                )
+                resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[
+                0
+            ]
+            ext = mimetypes.guess_extension(content_type) or ".bin"
+            filename = f"file{ext}"
+            data = resp.content
 
         if content_type.startswith("image/"):
             msg = await self.bot.send_photo(
