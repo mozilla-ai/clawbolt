@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -6,7 +7,7 @@ from sqlalchemy.orm import Session
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService
-from tests.mocks.llm import make_text_response
+from tests.mocks.llm import make_text_response, make_tool_call_response
 from tests.mocks.storage import MockStorageBackend
 
 
@@ -608,3 +609,43 @@ async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
     # but NOT the "Vision analysis was unavailable" note (that requires downloaded_media)
     assert "couldn't download" in inbound_message.processed_context.lower()
     assert "Vision analysis was unavailable" not in inbound_message.processed_context
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_send_media_reply_suppresses_duplicate_text(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """When agent calls send_media_reply, the router should NOT also send_text."""
+    # LLM calls send_media_reply tool
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_media",
+                "name": "send_media_reply",
+                "arguments": json.dumps(
+                    {"message": "Here's your file!", "media_url": "https://example.com/file.pdf"}
+                ),
+            }
+        ]
+    )
+    # Follow-up LLM produces text that would duplicate the media reply
+    followup_response = make_text_response("I've uploaded your photo!")
+
+    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    # The router should detect send_media_reply and suppress the extra send_text
+    mock_messaging.send_text.assert_not_called()  # type: ignore[union-attr]
+    assert response.reply_text == "I've uploaded your photo!"
