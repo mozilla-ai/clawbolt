@@ -35,7 +35,7 @@ async def analyze_image(
     logger.info("Using vision model: %s (provider=%s)", model, settings.llm_provider)
 
     llm_kwargs: dict[str, object] = {}
-    if user is not None:
+    if user is not None and settings.llm_provider == "openai":
         llm_kwargs["user"] = user
 
     response = await acompletion(
