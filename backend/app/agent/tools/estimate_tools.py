@@ -22,12 +22,6 @@ class EstimateStatus:
     SENT = "sent"
 
 
-def _next_estimate_number(db: Session, contractor_id: int) -> str:
-    """Generate the next sequential estimate number for a contractor."""
-    count = db.query(Estimate).filter(Estimate.contractor_id == contractor_id).count()
-    return ESTIMATE_NUMBER_FORMAT.format(count + 1)
-
-
 def create_estimate_tools(
     db: Session,
     contractor: Contractor,
@@ -42,7 +36,6 @@ def create_estimate_tools(
         terms: str | None = None,
     ) -> str:
         """Generate a professional estimate PDF and return summary."""
-        estimate_number = _next_estimate_number(db, contractor.id)
         today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
 
         # Calculate totals
@@ -73,6 +66,8 @@ def create_estimate_tools(
         )
         db.add(estimate)
         db.flush()  # Get the ID before adding line items
+
+        estimate_number = ESTIMATE_NUMBER_FORMAT.format(estimate.id)
 
         for item in processed_items:
             line_item = EstimateLineItem(

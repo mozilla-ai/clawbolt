@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.estimate_tools import _next_estimate_number, create_estimate_tools
+from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.models import Contractor, Estimate, EstimateLineItem
 
 
@@ -147,30 +147,6 @@ async def test_generate_estimate_custom_terms(
     )
 
     assert "EST-0001" in result
-
-
-def test_next_estimate_number_empty(
-    db_session: Session,
-    test_contractor: Contractor,
-) -> None:
-    """First estimate should be EST-0001."""
-    assert _next_estimate_number(db_session, test_contractor.id) == "EST-0001"
-
-
-def test_next_estimate_number_increments(
-    db_session: Session,
-    test_contractor: Contractor,
-) -> None:
-    """Estimate number should increment."""
-    db_session.add(
-        Estimate(
-            contractor_id=test_contractor.id,
-            description="Test",
-            total_amount=100.0,
-        )
-    )
-    db_session.commit()
-    assert _next_estimate_number(db_session, test_contractor.id) == "EST-0002"
 
 
 def test_serve_estimate_pdf_endpoint(
