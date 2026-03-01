@@ -77,7 +77,9 @@ async def handle_inbound_message(
         media_notes.append(MEDIA_DOWNLOAD_ERROR)
 
     try:
-        pipeline_result = await process_message_media(message.body, downloaded_media)
+        pipeline_result = await process_message_media(
+            message.body, downloaded_media, user=str(contractor.id)
+        )
     except Exception:
         logger.exception(
             "Media pipeline failed for message %d, contractor %d",
