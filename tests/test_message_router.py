@@ -613,6 +613,42 @@ async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
+async def test_empty_to_address_logs_error(
+    mock_acompletion: object,
+    db_session: Session,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Contractor with no channel_identifier or phone should log an error."""
+    # Create contractor with empty delivery fields
+    no_addr = Contractor(
+        user_id="no-addr",
+        channel_identifier="",
+        phone="",
+    )
+    db_session.add(no_addr)
+    db_session.commit()
+    db_session.refresh(no_addr)
+
+    mock_acompletion.return_value = make_text_response("Hi!")  # type: ignore[union-attr]
+
+    with patch("backend.app.agent.router.logger") as mock_logger:
+        await handle_inbound_message(
+            db=db_session,
+            contractor=no_addr,
+            message=inbound_message,
+            media_urls=[],
+            messaging_service=mock_messaging,
+        )
+
+    mock_logger.error.assert_any_call(
+        "Contractor %d has no channel_identifier or phone — cannot send replies",
+        no_addr.id,
+    )
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
 async def test_send_media_reply_suppresses_duplicate_text(
     mock_acompletion: object,
     db_session: Session,
