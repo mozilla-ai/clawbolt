@@ -5,23 +5,6 @@ from sqlalchemy.orm import Session
 from backend.app.models import Contractor
 
 
-async def get_or_create_contractor(
-    db: Session,
-    user_id: str,
-    phone: str,
-) -> tuple[Contractor, bool]:
-    """Get existing contractor or create new one. Returns (contractor, is_new)."""
-    contractor = db.query(Contractor).filter(Contractor.phone == phone).first()
-    if contractor:
-        return contractor, False
-
-    contractor = Contractor(user_id=user_id, phone=phone)
-    db.add(contractor)
-    db.commit()
-    db.refresh(contractor)
-    return contractor, True
-
-
 async def update_contractor_profile(
     db: Session,
     contractor: Contractor,
