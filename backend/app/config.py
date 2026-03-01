@@ -34,6 +34,12 @@ class Settings(BaseSettings):
     # Whisper
     whisper_model_size: str = "base"
 
+    # Conversation & memory
+    conversation_timeout_hours: int = 4
+    conversation_history_limit: int = 20
+    memory_recall_limit: int = 20
+    heartbeat_stale_estimate_hours: int = 24
+
     # Rate limiting
     webhook_rate_limit_max_requests: int = 30
     webhook_rate_limit_window_seconds: int = 60

@@ -5,12 +5,13 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.models import Conversation, Message
 
 logger = logging.getLogger(__name__)
 
-CONVERSATION_TIMEOUT_HOURS = 4
-DEFAULT_HISTORY_LIMIT = 20
+CONVERSATION_TIMEOUT_HOURS = settings.conversation_timeout_hours
+DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 
 
 async def load_conversation_history(
