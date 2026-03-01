@@ -1004,20 +1004,25 @@ class TestBuildHeartbeatContext:
 
 
 class TestHeartbeatScheduler:
-    def test_daily_count_reset(self) -> None:
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.SessionLocal")
+    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    async def test_daily_count_reset(
+        self, mock_messaging_cls: MagicMock, mock_session_local: MagicMock
+    ) -> None:
+        """tick() on a new day should reset daily counts."""
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.all.return_value = []
+        mock_session_local.return_value = mock_db
+
         scheduler = HeartbeatScheduler()
         scheduler._daily_counts = {1: 3, 2: 5}
         scheduler._last_reset_date = datetime.date(2025, 1, 1)
 
-        # Simulate a new day by calling tick logic indirectly
-        today = datetime.date.today()
-        assert scheduler._last_reset_date != today
-        # After a tick on a new day, counts should be empty
-        # We'll verify the reset logic directly
-        if scheduler._last_reset_date != today:
-            scheduler._daily_counts = {}
-            scheduler._last_reset_date = today
+        await scheduler.tick()
+
         assert scheduler._daily_counts == {}
+        assert scheduler._last_reset_date == datetime.date.today()
 
     @patch("backend.app.agent.heartbeat.settings")
     def test_start_when_disabled(self, mock_settings: MagicMock) -> None:
