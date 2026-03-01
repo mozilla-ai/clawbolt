@@ -60,6 +60,7 @@ async def handle_inbound_message(
             "Contractor %d has no channel_identifier or phone — cannot send replies",
             contractor.id,
         )
+        return AgentResponse(reply_text="")
 
     # Step 1: Download media
     downloaded_media: list[DownloadedMedia] = []
