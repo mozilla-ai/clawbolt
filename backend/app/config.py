@@ -33,6 +33,8 @@ class Settings(BaseSettings):
 
     # Whisper
     whisper_model_size: str = "base"
+    whisper_device: str = "cpu"
+    whisper_compute_type: str = "int8"
 
     # Conversation & memory
     conversation_timeout_hours: int = 4

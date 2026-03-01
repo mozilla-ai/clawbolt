@@ -31,7 +31,11 @@ def _transcribe_sync(audio_bytes: bytes) -> str:
         )
         raise ImportError(msg) from None
 
-    model = WhisperModel(settings.whisper_model_size, device="cpu", compute_type="int8")
+    model = WhisperModel(
+        settings.whisper_model_size,
+        device=settings.whisper_device,
+        compute_type=settings.whisper_compute_type,
+    )
 
     with tempfile.NamedTemporaryFile(suffix=".ogg", delete=True) as tmp:
         tmp.write(audio_bytes)
