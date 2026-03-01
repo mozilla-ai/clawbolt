@@ -8,10 +8,11 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
+from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
 from backend.app.database import get_db
-from backend.app.models import Contractor, Conversation, Message
+from backend.app.models import Contractor, Message
 from backend.app.services.messaging import MessagingService, get_messaging_service
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 
@@ -49,21 +50,6 @@ def _get_or_create_contractor(db: Session, chat_id: str) -> Contractor:
         db.commit()
         db.refresh(contractor)
     return contractor
-
-
-def _get_or_create_conversation(db: Session, contractor: Contractor) -> Conversation:
-    """Get the active conversation or create a new one."""
-    conversation = (
-        db.query(Conversation)
-        .filter(Conversation.contractor_id == contractor.id, Conversation.is_active.is_(True))
-        .first()
-    )
-    if conversation is None:
-        conversation = Conversation(contractor_id=contractor.id)
-        db.add(conversation)
-        db.commit()
-        db.refresh(conversation)
-    return conversation
 
 
 async def _process_message_background(
@@ -187,7 +173,7 @@ async def telegram_inbound(
             return JSONResponse(content={"ok": True})
 
     contractor = _get_or_create_contractor(db, chat_id)
-    conversation = _get_or_create_conversation(db, contractor)
+    conversation, _is_new = await get_or_create_conversation(db, contractor.id)
 
     message = Message(
         conversation_id=conversation.id,
