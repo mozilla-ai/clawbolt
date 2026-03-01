@@ -21,6 +21,9 @@ class Settings(BaseSettings):
     llm_model: str = "gpt-4o"
     llm_api_base: str | None = None
     vision_model: str = ""  # empty = fall back to llm_model
+    llm_max_tokens_agent: int = 500
+    llm_max_tokens_heartbeat: int = 300
+    llm_max_tokens_vision: int = 1000
 
     # Storage
     storage_provider: str = "local"  # "local", "dropbox", or "google_drive"

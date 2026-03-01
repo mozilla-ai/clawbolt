@@ -46,7 +46,7 @@ async def analyze_image(
             {"role": "system", "content": VISION_SYSTEM_PROMPT},
             {"role": "user", "content": user_content},
         ],
-        max_tokens=1000,
+        max_tokens=settings.llm_max_tokens_vision,
         **llm_kwargs,
     )
     logger.debug("Vision LLM response received for mime_type=%s", mime_type)
