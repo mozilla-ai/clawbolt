@@ -27,6 +27,40 @@ async def test_send_reply_tool(mock_messaging_service: MessagingService) -> None
 
 
 @pytest.mark.asyncio()
+async def test_send_reply_rejects_empty_message(mock_messaging_service: MessagingService) -> None:
+    """send_reply should return error for empty messages."""
+    tools = create_messaging_tools(mock_messaging_service, to_address="123456789")
+    send_reply = tools[0].function
+    result = await send_reply(message="")
+    assert "Error" in result
+    mock_messaging_service.send_text.assert_not_called()  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio()
+async def test_send_reply_rejects_whitespace_message(
+    mock_messaging_service: MessagingService,
+) -> None:
+    """send_reply should return error for whitespace-only messages."""
+    tools = create_messaging_tools(mock_messaging_service, to_address="123456789")
+    send_reply = tools[0].function
+    result = await send_reply(message="   ")
+    assert "Error" in result
+    mock_messaging_service.send_text.assert_not_called()  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio()
+async def test_send_media_reply_rejects_empty_url(
+    mock_messaging_service: MessagingService,
+) -> None:
+    """send_media_reply should return error for empty media_url."""
+    tools = create_messaging_tools(mock_messaging_service, to_address="123456789")
+    send_media_reply = tools[1].function
+    result = await send_media_reply(message="Here's your file", media_url="")
+    assert "Error" in result
+    mock_messaging_service.send_media.assert_not_called()  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio()
 async def test_send_media_reply_tool(mock_messaging_service: MessagingService) -> None:
     """send_media_reply tool should send media with message."""
     tools = create_messaging_tools(mock_messaging_service, to_address="123456789")

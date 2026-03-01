@@ -7,11 +7,15 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
 
     async def send_reply(message: str) -> str:
         """Send a text reply to the contractor."""
+        if not message or not message.strip():
+            return "Error: message cannot be empty."
         msg_id = await messaging_service.send_text(to=to_address, body=message)
         return f"Sent message (ID: {msg_id})"
 
     async def send_media_reply(message: str, media_url: str) -> str:
         """Send a reply with a media attachment."""
+        if not media_url or not media_url.strip():
+            return "Error: media_url cannot be empty."
         msg_id = await messaging_service.send_media(
             to=to_address, body=message, media_url=media_url
         )
