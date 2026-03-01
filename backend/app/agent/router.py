@@ -24,6 +24,18 @@ from backend.app.services.storage_service import get_storage_service
 
 logger = logging.getLogger(__name__)
 
+# User-facing error/fallback messages
+AGENT_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
+MEDIA_DOWNLOAD_ERROR = (
+    "I couldn't download your attachment(s). The rest of your message came through fine."
+)
+VISION_UNAVAILABLE_NOTE = (
+    "Vision analysis was unavailable for the attached media. "
+    "The contractor may have sent a photo or document that could "
+    "not be analyzed. You can still help with their text message "
+    "and ask them to describe what the attachment shows."
+)
+
 
 async def handle_inbound_message(
     db: Session,
@@ -56,9 +68,7 @@ async def handle_inbound_message(
     # Step 2: Run media pipeline
     media_notes: list[str] = []
     if media_urls and not downloaded_media:
-        media_notes.append(
-            "I couldn't download your attachment(s). The rest of your message came through fine."
-        )
+        media_notes.append(MEDIA_DOWNLOAD_ERROR)
 
     try:
         pipeline_result = await process_message_media(message.body, downloaded_media)
@@ -70,12 +80,7 @@ async def handle_inbound_message(
         )
         pipeline_result = await process_message_media(message.body, [])
         if downloaded_media:
-            media_notes.append(
-                "Vision analysis was unavailable for the attached media. "
-                "The contractor may have sent a photo or document that could "
-                "not be analyzed. You can still help with their text message "
-                "and ask them to describe what the attachment shows."
-            )
+            media_notes.append(VISION_UNAVAILABLE_NOTE)
 
     # Step 3: Combined context (with any media failure notes)
     combined_context = pipeline_result.combined_context
@@ -132,9 +137,7 @@ async def handle_inbound_message(
             message.id,
             contractor.id,
         )
-        response = AgentResponse(
-            reply_text="I'm having trouble thinking right now. Can you try again in a moment?"
-        )
+        response = AgentResponse(reply_text=AGENT_ERROR_FALLBACK)
 
     # Step 6b: If onboarding, extract profile updates from tool calls
     if onboarding:
