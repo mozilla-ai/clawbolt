@@ -31,6 +31,7 @@ async def test_heartbeat_evaluate_returns_valid_action(
         mock_settings.llm_api_base = None
         mock_settings.heartbeat_provider = None
         mock_settings.heartbeat_model = None
+        mock_settings.llm_max_tokens_heartbeat = 300
 
         action = await evaluate_heartbeat_need(
             integration_db, onboarded_contractor, ["Test flag: check-in needed"]
@@ -83,6 +84,7 @@ async def test_heartbeat_evaluate_with_context(
         mock_settings.llm_api_base = None
         mock_settings.heartbeat_provider = None
         mock_settings.heartbeat_model = None
+        mock_settings.llm_max_tokens_heartbeat = 300
 
         action = await evaluate_heartbeat_need(
             integration_db,

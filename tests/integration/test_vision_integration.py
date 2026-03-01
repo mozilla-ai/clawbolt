@@ -63,6 +63,7 @@ async def test_analyze_image_returns_description() -> None:
         mock_settings.llm_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
+        mock_settings.llm_max_tokens_vision = 1000
 
         result = await analyze_image(png_bytes, "image/png")
 
@@ -81,6 +82,7 @@ async def test_analyze_image_with_context() -> None:
         mock_settings.llm_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
+        mock_settings.llm_max_tokens_vision = 1000
 
         result = await analyze_image(
             png_bytes,
@@ -110,6 +112,7 @@ async def test_pipeline_processes_real_image() -> None:
         mock_settings.llm_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
+        mock_settings.llm_max_tokens_vision = 1000
 
         result = await process_message_media(
             text_body="Here's a photo of the job site",
@@ -142,6 +145,7 @@ async def test_mime_mismatch_raises_error() -> None:
         mock_settings.llm_model = _VISION_MODEL
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_api_base = None
+        mock_settings.llm_max_tokens_vision = 1000
 
         # PNG bytes declared as JPEG — Claude validates and rejects this
         await analyze_image(png_bytes, "image/jpeg")
