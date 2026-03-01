@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.auth.scoping import get_user_estimate
+from backend.app.config import settings
 from backend.app.database import get_db
 from backend.app.models import Contractor
 
@@ -16,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-PDF_DIR = Path("data/estimates")
+PDF_DIR = Path(settings.pdf_storage_dir)
 
 
 @router.get("/estimates/{estimate_id}/pdf")
