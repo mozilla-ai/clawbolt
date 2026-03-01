@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # Whisper
     whisper_model_size: str = "base"
 
+    # Rate limiting
+    webhook_rate_limit_max_requests: int = 30
+    webhook_rate_limit_window_seconds: int = 60
+
     # HTTP timeouts
     http_timeout_seconds: float = 30.0
     cloudflared_metrics_timeout_seconds: float = 5.0
