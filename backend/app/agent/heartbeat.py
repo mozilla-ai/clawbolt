@@ -94,6 +94,9 @@ def _strip_code_fences(text: str) -> str:
 
 
 STALE_ESTIMATE_HOURS = 24
+CHECKLIST_DAILY_INTERVAL_HOURS = 20
+HEARTBEAT_RECENT_MESSAGES_COUNT = 5
+WEEKDAY_FRIDAY = 4  # Monday=0 … Friday=4
 
 
 @dataclass
@@ -258,7 +261,7 @@ def _is_checklist_item_due(
 ) -> bool:
     """Determine whether a checklist item should fire on this tick."""
     # Weekday gate applies regardless of trigger history
-    if item.schedule == "weekdays" and now.weekday() > 4:
+    if item.schedule == "weekdays" and now.weekday() > WEEKDAY_FRIDAY:
         return False
 
     # Never triggered -> due (for daily/weekdays/once)
@@ -271,7 +274,7 @@ def _is_checklist_item_due(
         # Already triggered once -> not due again
         return False
     # Default: "daily" or "weekdays" (weekday gate already passed above)
-    return elapsed >= datetime.timedelta(hours=20)
+    return elapsed >= datetime.timedelta(hours=CHECKLIST_DAILY_INTERVAL_HOURS)
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +297,7 @@ async def build_heartbeat_context(
         db.query(Message)
         .filter(Message.conversation_id == conv.id)
         .order_by(Message.id.desc())
-        .limit(5)
+        .limit(HEARTBEAT_RECENT_MESSAGES_COUNT)
         .all()
     )
     recent_lines: list[str] = []
