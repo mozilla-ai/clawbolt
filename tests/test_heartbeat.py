@@ -327,6 +327,116 @@ class TestRunCheapChecks:
         assert result.has_flags
         assert len(result.flags) == 2
 
+    def test_idle_contractor_flagged(self, db: Session, contractor: Contractor) -> None:
+        """Contractor with last inbound message older than idle_days should be flagged."""
+        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
+        conv = Conversation(contractor_id=contractor.id, is_active=True)
+        db.add(conv)
+        db.commit()
+        db.refresh(conv)
+
+        msg = Message(
+            conversation_id=conv.id,
+            direction="inbound",
+            body="Need a quote",
+            created_at=now - datetime.timedelta(days=5),
+        )
+        db.add(msg)
+        db.commit()
+
+        result = run_cheap_checks(db, contractor, now=now)
+        assert result.has_flags
+        idle_flags = [f for f in result.flags if "idle" in f.lower()]
+        assert len(idle_flags) == 1
+        assert "5 days" in idle_flags[0]
+
+    def test_active_contractor_not_flagged_idle(self, db: Session, contractor: Contractor) -> None:
+        """Contractor with recent inbound message should not be flagged as idle."""
+        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
+        conv = Conversation(contractor_id=contractor.id, is_active=True)
+        db.add(conv)
+        db.commit()
+        db.refresh(conv)
+
+        msg = Message(
+            conversation_id=conv.id,
+            direction="inbound",
+            body="Just checking in",
+            created_at=now - datetime.timedelta(hours=12),
+        )
+        db.add(msg)
+        db.commit()
+
+        result = run_cheap_checks(db, contractor, now=now)
+        idle_flags = [f for f in result.flags if "idle" in f.lower()]
+        assert len(idle_flags) == 0
+
+    def test_no_messages_old_contractor_flagged(self, db: Session) -> None:
+        """Contractor with no messages who was created more than idle_days ago should be flagged."""
+        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
+        c = Contractor(
+            user_id="hb-idle-001",
+            name="Old Timer",
+            phone="+15559990099",
+            trade="Carpenter",
+            onboarding_complete=True,
+            created_at=now - datetime.timedelta(days=7),
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+
+        result = run_cheap_checks(db, c, now=now)
+        assert result.has_flags
+        idle_flags = [f for f in result.flags if "idle" in f.lower()]
+        assert len(idle_flags) == 1
+        assert "onboarding" in idle_flags[0]
+
+    def test_no_messages_new_contractor_not_flagged(self, db: Session) -> None:
+        """Contractor with no messages who just onboarded should not be flagged as idle."""
+        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
+        c = Contractor(
+            user_id="hb-new-001",
+            name="Fresh Start",
+            phone="+15559990098",
+            trade="Plumber",
+            onboarding_complete=True,
+            created_at=now - datetime.timedelta(hours=6),
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+
+        result = run_cheap_checks(db, c, now=now)
+        idle_flags = [f for f in result.flags if "idle" in f.lower()]
+        assert len(idle_flags) == 0
+
+    def test_outbound_only_still_flagged_idle(self, db: Session, contractor: Contractor) -> None:
+        """Contractor with only outbound messages (no inbound) should check created_at."""
+        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
+        # Backdate the contractor's created_at
+        contractor.created_at = now - datetime.timedelta(days=5)
+        db.commit()
+
+        conv = Conversation(contractor_id=contractor.id, is_active=True)
+        db.add(conv)
+        db.commit()
+        db.refresh(conv)
+
+        msg = Message(
+            conversation_id=conv.id,
+            direction="outbound",
+            body="Welcome!",
+            created_at=now - datetime.timedelta(days=4),
+        )
+        db.add(msg)
+        db.commit()
+
+        result = run_cheap_checks(db, contractor, now=now)
+        idle_flags = [f for f in result.flags if "idle" in f.lower()]
+        assert len(idle_flags) == 1
+        assert "onboarding" in idle_flags[0]
+
 
 # ---------------------------------------------------------------------------
 # Checklist item due logic
