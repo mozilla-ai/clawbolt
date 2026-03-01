@@ -12,11 +12,15 @@ from backend.app.config import TELEGRAM_API_BASE
 logger = logging.getLogger(__name__)
 
 CLOUDFLARED_METRICS_URL = "http://tunnel:2000/quicktunnel"
+TUNNEL_DISCOVERY_MAX_RETRIES = 10
+TUNNEL_DISCOVERY_RETRY_DELAY = 2.0
+DNS_RESOLUTION_MAX_RETRIES = 30
+DNS_RESOLUTION_RETRY_DELAY = 2.0
 
 
 async def discover_tunnel_url(
-    max_retries: int = 10,
-    delay: float = 2.0,
+    max_retries: int = TUNNEL_DISCOVERY_MAX_RETRIES,
+    delay: float = TUNNEL_DISCOVERY_RETRY_DELAY,
     metrics_url: str = CLOUDFLARED_METRICS_URL,
 ) -> str | None:
     """Poll cloudflared metrics API for the quick-tunnel hostname.
@@ -44,8 +48,8 @@ async def discover_tunnel_url(
 
 async def wait_for_dns(
     url: str,
-    max_retries: int = 30,
-    delay: float = 2.0,
+    max_retries: int = DNS_RESOLUTION_MAX_RETRIES,
+    delay: float = DNS_RESOLUTION_RETRY_DELAY,
 ) -> bool:
     """Wait until the hostname in *url* is DNS-resolvable.
 
