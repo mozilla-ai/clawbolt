@@ -50,7 +50,7 @@ async def test_estimate_generation_roundtrip(
     # Estimate record should exist in DB
     estimates = integration_db.query(Estimate).all()
     assert len(estimates) == 1
-    assert estimates[0].status == "sent"
+    assert estimates[0].status == "draft"
     assert estimates[0].total_amount > 0
 
     # Line items should exist

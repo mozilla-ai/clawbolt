@@ -58,9 +58,18 @@ def e2e_client(
     def _override_get_messaging_service() -> Generator[MessagingService]:
         yield telegram_service
 
+    # Bind background-task SessionLocal to the same in-memory DB so
+    # _process_message_background can find the tables and rows created
+    # by the request-scoped session.
+    test_session_factory = sessionmaker(bind=e2e_db_session.get_bind())
+
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
-    with TestClient(app) as c:
+    with (
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
+        patch("backend.app.routers.telegram_webhook.SessionLocal", test_session_factory),
+        TestClient(app) as c,
+    ):
         yield c
     app.dependency_overrides.clear()
 
