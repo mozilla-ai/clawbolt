@@ -47,6 +47,7 @@ async def test_onboarding_extracts_profile_from_intro(
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
+        mock_settings.llm_max_tokens_agent = 500
 
         agent = BackshopAgent(db=integration_db, contractor=contractor)
         tools = create_memory_tools(integration_db, contractor.id)
