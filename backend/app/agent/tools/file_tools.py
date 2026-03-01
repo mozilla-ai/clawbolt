@@ -13,6 +13,9 @@ from backend.app.services.storage_service import StorageBackend
 
 logger = logging.getLogger(__name__)
 
+DESCRIPTION_SLUG_MAX_LENGTH = 40
+FILENAME_SLUG_MAX_LENGTH = 30
+
 # Category to folder mapping
 CATEGORY_FOLDERS: dict[str, str] = {
     "job_photo": "Job Photos",
@@ -22,7 +25,7 @@ CATEGORY_FOLDERS: dict[str, str] = {
 }
 
 
-def _slugify(text: str, max_length: int = 40) -> str:
+def _slugify(text: str, max_length: int = DESCRIPTION_SLUG_MAX_LENGTH) -> str:
     """Convert text to a filesystem-safe slug."""
     slug = text.lower().strip()
     slug = re.sub(r"[^\w\s-]", "", slug)
@@ -59,7 +62,7 @@ def _build_filename(
     base = fallback_names.get(category, "file")
 
     if description and description.strip():
-        base = _slugify(description, max_length=30)
+        base = _slugify(description, max_length=FILENAME_SLUG_MAX_LENGTH)
 
     return f"{base}_{index:03d}.{extension}"
 

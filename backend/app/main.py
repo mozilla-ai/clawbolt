@@ -24,6 +24,8 @@ logging.basicConfig(
 logging.getLogger("backend").setLevel(settings.log_level.upper())
 logger = logging.getLogger(__name__)
 
+STARTUP_DELAY_SECONDS = 3
+
 
 async def _auto_register_webhook() -> None:
     """Discover Cloudflare Tunnel URL and register Telegram webhook.
@@ -34,7 +36,7 @@ async def _auto_register_webhook() -> None:
     Telegram's DNS may not resolve them immediately.
     """
     # Small delay to ensure Uvicorn is accepting connections.
-    await asyncio.sleep(3)
+    await asyncio.sleep(STARTUP_DELAY_SECONDS)
     tunnel_url = await discover_tunnel_url()
     if not tunnel_url:
         logger.debug("Cloudflare tunnel not detected — skipping webhook auto-registration")

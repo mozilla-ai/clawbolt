@@ -9,6 +9,8 @@ from backend.app.config import TELEGRAM_API_BASE, settings
 
 logger = logging.getLogger(__name__)
 
+DEFAULT_MIME_TYPE = "application/octet-stream"
+
 MIME_EXTENSIONS: dict[str, str] = {
     "image/jpeg": ".jpg",
     "image/png": ".png",
@@ -86,11 +88,11 @@ async def download_telegram_media(
         )
         download.raise_for_status()
 
-    mime_type = download.headers.get("content-type", "application/octet-stream").split(";")[0]
+    mime_type = download.headers.get("content-type", DEFAULT_MIME_TYPE).split(";")[0]
 
     # Telegram's file download endpoint often returns application/octet-stream
     # regardless of the actual file type.  Infer from the file path extension.
-    if mime_type == "application/octet-stream":
+    if mime_type == DEFAULT_MIME_TYPE:
         ext = os.path.splitext(file_path)[1].lower()
         inferred = _EXTENSION_TO_MIME.get(ext)
         if inferred:

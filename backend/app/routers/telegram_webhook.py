@@ -18,6 +18,8 @@ from backend.app.services.rate_limiter import check_webhook_rate_limit
 
 logger = logging.getLogger(__name__)
 
+TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
+
 router = APIRouter()
 
 
@@ -25,7 +27,7 @@ def _validate_webhook_secret(request: Request) -> None:
     """Validate the Telegram webhook secret token header."""
     if not settings.telegram_webhook_secret:
         return
-    header = request.headers.get("X-Telegram-Bot-Api-Secret-Token", "")
+    header = request.headers.get(TELEGRAM_SECRET_HEADER, "")
     if header != settings.telegram_webhook_secret:
         logger.warning("Invalid Telegram webhook secret")
         # Still return 200 to avoid Telegram retries, but log the warning.
