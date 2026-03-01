@@ -123,7 +123,23 @@ class BackshopAgent:
             tool_results: list[dict[str, str]] = []
             for tool_call in choice.message.tool_calls:
                 tool_name = tool_call.function.name
-                tool_args = json.loads(tool_call.function.arguments)
+                try:
+                    tool_args = json.loads(tool_call.function.arguments)
+                except json.JSONDecodeError:
+                    logger.warning(
+                        "Malformed tool arguments for %s: %s",
+                        tool_name,
+                        tool_call.function.arguments[:200],
+                    )
+                    tool_results.append(
+                        {
+                            "role": "tool",
+                            "tool_call_id": tool_call.id,
+                            "content": f"Error: malformed arguments for {tool_name}",
+                        }
+                    )
+                    actions_taken.append(f"Failed: {tool_name} (bad args)")
+                    continue
 
                 tool_func = self._find_tool(tool_name)
                 result_str = ""
