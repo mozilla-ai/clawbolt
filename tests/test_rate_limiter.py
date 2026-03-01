@@ -170,6 +170,21 @@ class TestInMemoryRateLimiter:
             limiter.check(Request(scope))
         assert exc_info.value.status_code == 429
 
+    def test_expired_keys_removed_from_dict(self) -> None:
+        """After all timestamps expire and the key is pruned, it should be removed."""
+        limiter = InMemoryRateLimiter(max_requests=5, window_seconds=1)
+
+        limiter.check(Request(_make_scope(client_ip="10.0.0.1")))
+        assert "10.0.0.1" in limiter._requests
+
+        # Wait for the window to expire
+        time.sleep(1.1)
+
+        # Manually prune the expired key — this simulates what happens when
+        # the same IP makes another request after the window expires
+        limiter._prune("10.0.0.1", time.monotonic())
+        assert "10.0.0.1" not in limiter._requests
+
     def test_reset_clears_state(self) -> None:
         """reset() should clear all tracked requests."""
         limiter = InMemoryRateLimiter(max_requests=2, window_seconds=60)
