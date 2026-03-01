@@ -298,7 +298,10 @@ def _is_checklist_item_due(
     if item.last_triggered_at is None:
         return True
 
-    elapsed = now - item.last_triggered_at
+    last = item.last_triggered_at
+    if last.tzinfo is None:
+        last = last.replace(tzinfo=datetime.UTC)
+    elapsed = now - last
 
     if item.schedule == "once":
         # Already triggered once -> not due again
@@ -494,7 +497,7 @@ class HeartbeatScheduler:
             return
         if self._task is not None and not self._task.done():
             return
-        self._task = asyncio.get_event_loop().create_task(self._run())
+        self._task = asyncio.get_running_loop().create_task(self._run())
         logger.info(
             "Heartbeat started (interval=%dm, max_daily=%d)",
             settings.heartbeat_interval_minutes,

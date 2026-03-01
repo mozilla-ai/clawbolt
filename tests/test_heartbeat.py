@@ -512,6 +512,20 @@ class TestIsChecklistItemDue:
         )
         assert _is_checklist_item_due(item, monday) is True
 
+    def test_naive_last_triggered_at(self) -> None:
+        """Timezone-naive last_triggered_at (from SQLite) should not raise TypeError."""
+        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
+        # SQLite returns naive datetimes — simulate that here
+        naive_last = datetime.datetime(2025, 6, 14, 8, 0)
+        item = HeartbeatChecklistItem(
+            contractor_id=1,
+            description="Test",
+            schedule="daily",
+            last_triggered_at=naive_last,
+        )
+        # Should not raise TypeError and should be due (>20h elapsed)
+        assert _is_checklist_item_due(item, now) is True
+
 
 # ---------------------------------------------------------------------------
 # _strip_code_fences
