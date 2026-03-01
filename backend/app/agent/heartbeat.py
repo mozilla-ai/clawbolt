@@ -27,6 +27,7 @@ from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.models import (
     Contractor,
+    Conversation,
     Estimate,
     HeartbeatChecklistItem,
     Memory,
@@ -95,6 +96,7 @@ def _strip_code_fences(text: str) -> str:
 
 
 STALE_ESTIMATE_HOURS = settings.heartbeat_stale_estimate_hours
+IDLE_DAYS = settings.heartbeat_idle_days
 CHECKLIST_DAILY_INTERVAL_HOURS = 20
 HEARTBEAT_RECENT_MESSAGES_COUNT = 5
 WEEKDAY_FRIDAY = 4  # Monday=0 … Friday=4
@@ -252,6 +254,33 @@ def run_cheap_checks(
         if _TIME_KEYWORDS.search(text):
             result.time_sensitive_memories.append(mem)
             result.flags.append(f"Time-sensitive memory: {mem.key} = {mem.value}")
+
+    # 4. Idle contractor — no inbound messages for IDLE_DAYS
+    idle_cutoff = now - datetime.timedelta(days=IDLE_DAYS)
+    last_inbound = (
+        db.query(Message.created_at)
+        .join(Conversation, Message.conversation_id == Conversation.id)
+        .filter(
+            Conversation.contractor_id == contractor.id,
+            Message.direction == "inbound",
+        )
+        .order_by(Message.created_at.desc())
+        .first()
+    )
+    if last_inbound is not None:
+        last_ts = last_inbound[0]
+        if last_ts.tzinfo is None:
+            last_ts = last_ts.replace(tzinfo=datetime.UTC)
+        if last_ts <= idle_cutoff:
+            days = (now - last_ts).days
+            result.flags.append(f"Contractor idle for {days} days — no recent messages")
+    elif contractor.created_at is not None:
+        created = contractor.created_at
+        if created.tzinfo is None:
+            created = created.replace(tzinfo=datetime.UTC)
+        if created <= idle_cutoff:
+            days = (now - created).days
+            result.flags.append(f"Contractor idle for {days} days — no messages since onboarding")
 
     return result
 
