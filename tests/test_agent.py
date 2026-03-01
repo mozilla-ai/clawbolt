@@ -282,3 +282,45 @@ async def test_agent_tool_loop_respects_max_rounds(
 
     # Should still return a reply (from the last response's content)
     assert response.reply_text == "Still thinking..."
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_handles_malformed_tool_arguments(
+    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Agent should gracefully handle malformed JSON in tool call arguments."""
+    # LLM returns a tool call with invalid JSON arguments
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_bad",
+                "name": "save_fact",
+                "arguments": "{invalid json!!!",
+            }
+        ]
+    )
+    followup_response = make_text_response("Sorry, I had trouble with that.")
+
+    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+
+    mock_save = AsyncMock(return_value="saved")
+    tool = Tool(
+        name="save_fact",
+        description="Save a fact",
+        function=mock_save,
+        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+    )
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("My rate is $75/hour")
+
+    # Tool should NOT have been called (args were unparseable)
+    mock_save.assert_not_called()
+
+    # Agent should still produce a reply (not crash)
+    assert response.reply_text == "Sorry, I had trouble with that."
+
+    # The failure should be recorded in actions_taken
+    assert any("bad args" in a for a in response.actions_taken)
