@@ -107,19 +107,25 @@ def _extract_telegram_media(
     photos = msg.get("photo")
     if photos:
         largest = max(photos, key=lambda p: p.get("file_size", 0))
-        media.append((largest["file_id"], "image/jpeg"))
+        file_id = largest.get("file_id")
+        if file_id:
+            media.append((file_id, "image/jpeg"))
 
     # Voice note
     voice = msg.get("voice")
     if voice:
-        media.append((voice["file_id"], voice.get("mime_type", "audio/ogg")))
+        file_id = voice.get("file_id")
+        if file_id:
+            media.append((file_id, voice.get("mime_type", "audio/ogg")))
 
     # Document — preserve Telegram-provided MIME type so images sent as
     # documents (e.g. image/png) are correctly classified downstream
     doc = msg.get("document")
     if doc:
-        doc_mime = doc.get("mime_type", "application/octet-stream")
-        media.append((doc["file_id"], doc_mime))
+        file_id = doc.get("file_id")
+        if file_id:
+            doc_mime = doc.get("mime_type", "application/octet-stream")
+            media.append((file_id, doc_mime))
 
     if media:
         logger.debug(
@@ -143,13 +149,22 @@ async def telegram_inbound(
     except _InvalidSecret:
         return JSONResponse(content={"ok": True})
 
-    update: dict = await request.json()  # type: ignore[assignment]
+    try:
+        update: dict = await request.json()  # type: ignore[assignment]
+    except ValueError:
+        logger.warning("Telegram webhook received invalid JSON")
+        return JSONResponse(content={"ok": True})
+
     msg = update.get("message")
     if not msg:
         # Not a message update (could be edited_message, callback_query, etc.)
         return JSONResponse(content={"ok": True})
 
-    chat_id = str(msg["chat"]["id"])
+    chat = msg.get("chat") if isinstance(msg, dict) else None
+    if not chat or "id" not in chat:
+        logger.warning("Telegram message missing chat.id, ignoring")
+        return JSONResponse(content={"ok": True})
+    chat_id = str(chat["id"])
     text = msg.get("text", "")
     update_id = str(update.get("update_id", ""))
 

@@ -405,6 +405,64 @@ def test_username_allowlist_no_username_in_payload(client: TestClient, db_sessio
 # -- Regression tests for document MIME classification --
 
 
+def test_webhook_invalid_json_returns_200(client: TestClient) -> None:
+    """Invalid JSON body should return 200 without crashing."""
+    response = client.post(
+        "/api/webhooks/telegram",
+        content=b"not valid json",
+        headers={"content-type": "application/json"},
+    )
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
+def test_webhook_missing_chat_id_returns_200(client: TestClient) -> None:
+    """Message without chat.id should return 200 without crashing."""
+    payload = {"update_id": 1, "message": {"text": "hello"}}
+    response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+
+
+def test_extract_media_skips_photo_without_file_id() -> None:
+    """Photos missing file_id should be skipped instead of crashing."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {
+        "message": {
+            "photo": [{"file_unique_id": "abc", "width": 90, "height": 90, "file_size": 1000}],
+        }
+    }
+    media = _extract_telegram_media(update)
+    assert media == []
+
+
+def test_extract_media_skips_voice_without_file_id() -> None:
+    """Voice notes missing file_id should be skipped."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {
+        "message": {
+            "voice": {"file_unique_id": "v1", "duration": 5},
+        }
+    }
+    media = _extract_telegram_media(update)
+    assert media == []
+
+
+def test_extract_media_skips_document_without_file_id() -> None:
+    """Documents missing file_id should be skipped."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {
+        "message": {
+            "document": {"file_unique_id": "d1", "file_name": "test.pdf"},
+        }
+    }
+    media = _extract_telegram_media(update)
+    assert media == []
+
+
 def test_extract_telegram_media_image_document_preserves_mime() -> None:
     """Images sent as documents should preserve their image/* MIME type."""
     from backend.app.routers.telegram_webhook import _extract_telegram_media
