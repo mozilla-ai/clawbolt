@@ -49,6 +49,8 @@ class InMemoryRateLimiter:
             i += 1
         if i > 0:
             self._requests[key] = timestamps[i:]
+        if not self._requests[key]:
+            del self._requests[key]
 
     def check(self, request: Request) -> None:
         """Check rate limit for the given request. Raises 429 if exceeded."""
