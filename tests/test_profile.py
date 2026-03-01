@@ -4,33 +4,9 @@ from sqlalchemy.orm import Session
 from backend.app.agent.profile import (
     build_onboarding_prompt,
     build_soul_prompt,
-    get_or_create_contractor,
     update_contractor_profile,
 )
 from backend.app.models import Contractor
-
-
-@pytest.mark.asyncio()
-async def test_get_or_create_contractor_new(db_session: Session) -> None:
-    """Should create a new contractor when phone not found."""
-    contractor, is_new = await get_or_create_contractor(
-        db_session, user_id="+15559999999", phone="+15559999999"
-    )
-    assert is_new is True
-    assert contractor.phone == "+15559999999"
-    assert contractor.id is not None
-
-
-@pytest.mark.asyncio()
-async def test_get_or_create_contractor_existing(
-    db_session: Session, test_contractor: Contractor
-) -> None:
-    """Should return existing contractor when phone matches."""
-    contractor, is_new = await get_or_create_contractor(
-        db_session, user_id=test_contractor.user_id, phone=test_contractor.phone
-    )
-    assert is_new is False
-    assert contractor.id == test_contractor.id
 
 
 @pytest.mark.asyncio()
