@@ -55,6 +55,11 @@ async def handle_inbound_message(
     7. Agent sends reply via tools or returns reply text
     """
     to_address = contractor.channel_identifier or contractor.phone
+    if not to_address:
+        logger.error(
+            "Contractor %d has no channel_identifier or phone — cannot send replies",
+            contractor.id,
+        )
 
     # Step 1: Download media
     downloaded_media: list[DownloadedMedia] = []
