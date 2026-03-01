@@ -29,6 +29,7 @@ class Settings(BaseSettings):
     storage_provider: str = "local"  # "local", "dropbox", or "google_drive"
     dropbox_access_token: str = ""
     google_drive_credentials_json: str = ""
+    pdf_storage_dir: str = "data/estimates"
 
     # Whisper
     whisper_model_size: str = "base"

@@ -7,10 +7,11 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool
+from backend.app.config import settings
 from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
 
-PDF_DIR = Path("data/estimates")
+PDF_DIR = Path(settings.pdf_storage_dir)
 ESTIMATE_NUMBER_FORMAT = "EST-{:04d}"
 
 logger = logging.getLogger(__name__)
