@@ -11,14 +11,20 @@ from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
 
 PDF_DIR = Path("data/estimates")
+ESTIMATE_NUMBER_FORMAT = "EST-{:04d}"
 
 logger = logging.getLogger(__name__)
+
+
+class EstimateStatus:
+    DRAFT = "draft"
+    SENT = "sent"
 
 
 def _next_estimate_number(db: Session, contractor_id: int) -> str:
     """Generate the next sequential estimate number for a contractor."""
     count = db.query(Estimate).filter(Estimate.contractor_id == contractor_id).count()
-    return f"EST-{count + 1:04d}"
+    return ESTIMATE_NUMBER_FORMAT.format(count + 1)
 
 
 def create_estimate_tools(
@@ -62,7 +68,7 @@ def create_estimate_tools(
             contractor_id=contractor.id,
             description=description,
             total_amount=total_amount,
-            status="draft",
+            status=EstimateStatus.DRAFT,
         )
         db.add(estimate)
         db.flush()  # Get the ID before adding line items
@@ -105,7 +111,7 @@ def create_estimate_tools(
 
         # Update estimate with PDF URL (served by /api/estimates/{id}/pdf)
         estimate.pdf_url = f"/api/estimates/{estimate.id}/pdf"
-        estimate.status = "sent"
+        estimate.status = EstimateStatus.SENT
         db.commit()
 
         return (
