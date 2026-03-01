@@ -100,6 +100,13 @@ async def download_telegram_media(
             mime_type = inferred
 
     size_bytes = len(download.content)
+    if size_bytes > settings.max_media_size_bytes:
+        msg = (
+            f"Media file too large: {size_bytes} bytes "
+            f"(limit {settings.max_media_size_bytes} bytes)"
+        )
+        raise ValueError(msg)
+
     logger.info(
         "Download complete: file_id=%s, mime_type=%s, size=%d bytes",
         file_id,
