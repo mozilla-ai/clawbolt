@@ -11,7 +11,7 @@ from starlette.background import BackgroundTask
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
-from backend.app.database import get_db
+from backend.app.database import SessionLocal, get_db
 from backend.app.models import Contractor, Message
 from backend.app.services.messaging import MessagingService, get_messaging_service
 from backend.app.services.rate_limiter import check_webhook_rate_limit
@@ -55,14 +55,27 @@ def _get_or_create_contractor(db: Session, chat_id: str) -> Contractor:
 
 
 async def _process_message_background(
-    db: Session,
-    contractor: Contractor,
-    message: Message,
+    contractor_id: int,
+    message_id: int,
     media_urls: list[tuple[str, str]],
     messaging_service: MessagingService,
 ) -> None:
-    """Run the agent pipeline as a background task."""
+    """Run the agent pipeline as a background task.
+
+    Creates its own DB session rather than sharing the request-scoped one,
+    which would be closed by the time this task executes.
+    """
+    db: Session = SessionLocal()
     try:
+        contractor = db.get(Contractor, contractor_id)
+        message = db.get(Message, message_id)
+        if contractor is None or message is None:
+            logger.error(
+                "Background task: contractor %d or message %d not found",
+                contractor_id,
+                message_id,
+            )
+            return
         await handle_inbound_message(
             db=db,
             contractor=contractor,
@@ -72,10 +85,12 @@ async def _process_message_background(
         )
     except Exception:
         logger.exception(
-            "Agent pipeline failed for message %d from chat %s",
-            message.id,
-            contractor.channel_identifier,
+            "Agent pipeline failed for message %d (contractor %d)",
+            message_id,
+            contractor_id,
         )
+    finally:
+        db.close()
 
 
 def _extract_telegram_media(
@@ -190,9 +205,8 @@ async def telegram_inbound(
 
     task = BackgroundTask(
         _process_message_background,
-        db=db,
-        contractor=contractor,
-        message=message,
+        contractor_id=contractor.id,
+        message_id=message.id,
         media_urls=media_urls,
         messaging_service=messaging_service,
     )

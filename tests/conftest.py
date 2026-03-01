@@ -72,10 +72,21 @@ def client(
     def _override_get_messaging_service() -> Generator[MessagingService]:
         yield mock_messaging_service
 
+    # Build a sessionmaker bound to the test engine so background tasks
+    # (which call SessionLocal() directly) share the same in-memory DB.
+    test_session_factory = sessionmaker(bind=db_session.get_bind())
+
     webhook_rate_limiter.reset()
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_current_user] = _override_get_current_user
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
-    with patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"), TestClient(app) as c:
+    with (
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
+        patch("backend.app.routers.telegram_webhook.SessionLocal", test_session_factory),
+        # Prevent .env allowlist settings from leaking into tests
+        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids", ""),
+        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames", ""),
+        TestClient(app) as c,
+    ):
         yield c
     app.dependency_overrides.clear()
