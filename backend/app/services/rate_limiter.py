@@ -11,6 +11,8 @@ from collections import defaultdict
 
 from fastapi import HTTPException, Request
 
+from backend.app.config import settings
+
 
 class InMemoryRateLimiter:
     """Sliding-window rate limiter that tracks request counts per key (IP address).
@@ -66,7 +68,10 @@ class InMemoryRateLimiter:
 
 # Singleton instance used by the webhook endpoint.
 # 30 requests per 60 seconds per IP address.
-webhook_rate_limiter = InMemoryRateLimiter(max_requests=30, window_seconds=60)
+webhook_rate_limiter = InMemoryRateLimiter(
+    max_requests=settings.webhook_rate_limit_max_requests,
+    window_seconds=settings.webhook_rate_limit_window_seconds,
+)
 
 
 def check_webhook_rate_limit(request: Request) -> None:
