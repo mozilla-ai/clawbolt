@@ -1,6 +1,7 @@
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
+from backend.app.config import settings
 from backend.app.models import Client, Memory
 
 
@@ -46,7 +47,7 @@ async def recall_memories(
     contractor_id: int,
     query: str,
     category: str | None = None,
-    limit: int = 20,
+    limit: int = settings.memory_recall_limit,
 ) -> list[Memory]:
     """Recall memories relevant to a query using keyword matching (ILIKE)."""
     q = db.query(Memory).filter(Memory.contractor_id == contractor_id)
