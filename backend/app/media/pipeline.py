@@ -8,6 +8,12 @@ from backend.app.media.vision import analyze_image
 
 logger = logging.getLogger(__name__)
 
+# Fallback messages when media processing is unavailable
+VISION_FALLBACK = "[Photo — vision analysis not available]"
+AUDIO_FALLBACK = "[Audio file - transcription not available (faster-whisper not installed)]"
+VIDEO_FALLBACK = "[Video file - transcription not available (faster-whisper not installed)]"
+VIDEO_ERROR_FALLBACK = "[Video file - transcription not available]"
+
 
 @dataclass
 class ProcessedMedia:
@@ -39,27 +45,23 @@ async def _process_single_media(
             logger.exception(
                 "Vision analysis failed for %s (mime_type=%s)", media.original_url, media.mime_type
             )
-            extracted_text = "[Photo — vision analysis not available]"
+            extracted_text = VISION_FALLBACK
     elif category == "audio":
         try:
             extracted_text = await transcribe_audio(media.content, media.mime_type)
         except ImportError:
             logger.warning("faster-whisper not installed, skipping audio transcription")
-            extracted_text = (
-                "[Audio file - transcription not available (faster-whisper not installed)]"
-            )
+            extracted_text = AUDIO_FALLBACK
     elif category == "video":
         # Future: extract audio track. For now, try audio transcription.
         try:
             extracted_text = await transcribe_audio(media.content, media.mime_type)
         except ImportError:
             logger.warning("faster-whisper not installed, skipping video transcription")
-            extracted_text = (
-                "[Video file - transcription not available (faster-whisper not installed)]"
-            )
+            extracted_text = VIDEO_FALLBACK
         except Exception:
             logger.warning("Could not process video file: %s", media.original_url)
-            extracted_text = "[Video file - transcription not available]"
+            extracted_text = VIDEO_ERROR_FALLBACK
     else:
         logger.info("Skipping unsupported media type: %s", media.mime_type)
         extracted_text = f"[{category.title()} file - processing not available]"
