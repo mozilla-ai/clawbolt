@@ -71,13 +71,19 @@ async def download_telegram_media(
 
     async with httpx.AsyncClient() as client:
         # Step 1: get file path
-        resp = await client.get(f"{api_base}/getFile", params={"file_id": file_id}, timeout=30.0)
+        resp = await client.get(
+            f"{api_base}/getFile",
+            params={"file_id": file_id},
+            timeout=settings.http_timeout_seconds,
+        )
         resp.raise_for_status()
         file_path = resp.json()["result"]["file_path"]
 
         # Step 2: download the file
         file_url = f"{TELEGRAM_API_BASE}/file/bot{token}/{file_path}"
-        download = await client.get(file_url, follow_redirects=True, timeout=30.0)
+        download = await client.get(
+            file_url, follow_redirects=True, timeout=settings.http_timeout_seconds
+        )
         download.raise_for_status()
 
     mime_type = download.headers.get("content-type", "application/octet-stream").split(";")[0]

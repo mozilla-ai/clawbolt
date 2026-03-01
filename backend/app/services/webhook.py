@@ -7,7 +7,7 @@ from urllib.parse import urlparse
 
 import httpx
 
-from backend.app.config import TELEGRAM_API_BASE
+from backend.app.config import TELEGRAM_API_BASE, settings
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,9 @@ async def discover_tunnel_url(
     for attempt in range(1, max_retries + 1):
         try:
             async with httpx.AsyncClient() as client:
-                resp = await client.get(metrics_url, timeout=5.0)
+                resp = await client.get(
+                    metrics_url, timeout=settings.cloudflared_metrics_timeout_seconds
+                )
                 resp.raise_for_status()
                 hostname = resp.json().get("hostname", "")
                 if hostname:
@@ -89,7 +91,9 @@ async def register_telegram_webhook(
 
     try:
         async with httpx.AsyncClient() as client:
-            resp = await client.post(url, json=payload, timeout=10.0)
+            resp = await client.post(
+                url, json=payload, timeout=settings.telegram_webhook_timeout_seconds
+            )
             data = resp.json()
             if data.get("ok"):
                 logger.info("Telegram webhook registered: %s", webhook_url)
