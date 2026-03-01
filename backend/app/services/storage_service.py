@@ -136,24 +136,34 @@ class LocalFileStorage(StorageBackend):
     """Local filesystem storage for development and demos."""
 
     def __init__(self, base_dir: str = settings.file_storage_base_dir) -> None:
-        self.base_dir = Path(base_dir)
+        self.base_dir = Path(base_dir).resolve()
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
+    def _safe_path(self, *segments: str) -> Path:
+        """Resolve path segments under base_dir, rejecting traversal attempts."""
+        result = self.base_dir
+        for seg in segments:
+            result = result / seg.lstrip("/")
+        resolved = result.resolve()
+        if not str(resolved).startswith(str(self.base_dir)):
+            msg = f"Path escapes storage directory: {'/'.join(segments)}"
+            raise ValueError(msg)
+        return resolved
+
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
-        folder = self.base_dir / path.lstrip("/")
-        folder.mkdir(parents=True, exist_ok=True)
-        file_path = folder / filename
+        file_path = self._safe_path(path, filename)
+        file_path.parent.mkdir(parents=True, exist_ok=True)
         logger.info("Saving to local storage: %s (%d bytes)", file_path, len(file_bytes))
         await asyncio.to_thread(file_path.write_bytes, file_bytes)
-        return f"file://{file_path.resolve()}"
+        return f"file://{file_path}"
 
     async def create_folder(self, path: str) -> str:
-        folder = self.base_dir / path.lstrip("/")
+        folder = self._safe_path(path)
         folder.mkdir(parents=True, exist_ok=True)
         return str(folder)
 
     async def list_folder(self, path: str) -> list[dict[str, str]]:
-        folder = self.base_dir / path.lstrip("/")
+        folder = self._safe_path(path)
         if not folder.exists():
             return []
         return [{"name": f.name, "path": str(f)} for f in folder.iterdir() if f.is_file()]
