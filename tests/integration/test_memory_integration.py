@@ -30,6 +30,7 @@ async def test_memory_save_via_llm(
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
+        mock_settings.llm_max_tokens_agent = 500
 
         agent = BackshopAgent(db=integration_db, contractor=integration_contractor)
         tools = create_memory_tools(integration_db, integration_contractor.id)
@@ -65,6 +66,7 @@ async def test_memory_save_then_recall(
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
+        mock_settings.llm_max_tokens_agent = 500
 
         agent = BackshopAgent(db=integration_db, contractor=integration_contractor)
         tools = create_memory_tools(integration_db, integration_contractor.id)
