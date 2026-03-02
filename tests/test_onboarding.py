@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.core import AgentResponse
 from backend.app.agent.onboarding import (
+    _parse_rate,
     build_onboarding_system_prompt,
     extract_profile_updates,
     is_onboarding_needed,
@@ -174,9 +175,106 @@ def test_extract_profile_updates_invalid_rate() -> None:
     assert "hourly_rate" not in updates
 
 
+# --- _parse_rate unit tests ---
+
+
+@pytest.mark.parametrize(
+    ("input_value", "expected"),
+    [
+        ("$85/hr", 85.0),
+        ("$85/hour", 85.0),
+        ("$85 per hour", 85.0),
+        ("$85 an hour", 85.0),
+        ("85 dollars", 85.0),
+        ("$85.50", 85.5),
+        ("$85.50/hr", 85.5),
+        ("85", 85.0),
+        ("85.00", 85.0),
+        ("$50-75/hr", 50.0),
+        ("$4500 per project", 4500.0),
+        ("$4,500 per project", 4500.0),
+        ("Usually around $80", 80.0),
+        ("$125/hour for electrical", 125.0),
+        ("  $65 /hr  ", 65.0),
+    ],
+)
+def test_parse_rate_valid_formats(input_value: str, expected: float) -> None:
+    """_parse_rate should extract numeric rate from various natural-language formats."""
+    assert _parse_rate(input_value) == expected
+
+
+@pytest.mark.parametrize(
+    "input_value",
+    [
+        "not sure",
+        "varies",
+        "depends on the job",
+        "TBD",
+        "",
+    ],
+)
+def test_parse_rate_invalid_returns_none(input_value: str) -> None:
+    """_parse_rate should return None for non-numeric values."""
+    assert _parse_rate(input_value) is None
+
+
+# --- extract_profile_updates with various rate formats ---
+
+
+@pytest.mark.parametrize(
+    ("rate_value", "expected_rate"),
+    [
+        ("$85/hour", 85.0),
+        ("$85 per hour", 85.0),
+        ("$85 an hour", 85.0),
+        ("85 dollars", 85.0),
+        ("$85.50", 85.5),
+        ("$50-75/hr", 50.0),
+        ("$4,500 per project", 4500.0),
+        ("Usually around $80", 80.0),
+    ],
+)
+def test_extract_profile_updates_various_rate_formats(
+    rate_value: str, expected_rate: float
+) -> None:
+    """extract_profile_updates should handle various rate formats via _parse_rate."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "hourly_rate", "value": rate_value},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["hourly_rate"] == expected_rate
+
+
+def test_extract_profile_updates_invalid_rate_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Should log a warning when rate parsing fails."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "hourly_rate", "value": "varies"},
+                "result": "ok",
+            },
+        ],
+    )
+    with caplog.at_level("WARNING", logger="backend.app.agent.onboarding"):
+        updates = extract_profile_updates(response)
+    assert "hourly_rate" not in updates
+    assert "Could not parse hourly rate" in caplog.text
+
+
 @pytest.fixture()
 def new_contractor(db_session: Session) -> Contractor:
-    """Contractor with no profile — needs onboarding."""
+    """Contractor with no profile -- needs onboarding."""
     contractor = Contractor(
         user_id="new-user-onboard",
         phone="+15559999999",
