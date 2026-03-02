@@ -6,12 +6,14 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.core import AgentResponse
 from backend.app.agent.onboarding import (
+    REQUIRED_PROFILE_FIELDS,
     _match_profile_field,
     _parse_rate,
     build_onboarding_system_prompt,
     extract_profile_updates,
     is_onboarding_needed,
 )
+from backend.app.agent.profile import get_missing_optional_fields
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService
@@ -39,7 +41,7 @@ def test_is_onboarding_needed_partial_profile(db_session: Session) -> None:
 
 
 def test_is_onboarding_needed_complete_profile(test_contractor: Contractor) -> None:
-    """Contractor with name and trade does not need onboarding."""
+    """Contractor with name, trade, and location does not need onboarding."""
     assert is_onboarding_needed(test_contractor) is False
 
 
@@ -67,6 +69,175 @@ def test_is_onboarding_needed_empty_strings(db_session: Session) -> None:
     db_session.refresh(contractor)
 
     assert is_onboarding_needed(contractor) is True
+
+
+def test_required_profile_fields_includes_location() -> None:
+    """REQUIRED_PROFILE_FIELDS should include location."""
+    assert "location" in REQUIRED_PROFILE_FIELDS
+
+
+def test_is_onboarding_needed_name_trade_but_no_location(db_session: Session) -> None:
+    """Contractor with name and trade but no location still needs onboarding."""
+    contractor = Contractor(
+        user_id="no-location-user",
+        phone="+15550006666",
+        name="Jake",
+        trade="Plumber",
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    assert is_onboarding_needed(contractor) is True
+
+
+def test_get_missing_optional_fields_all_missing(db_session: Session) -> None:
+    """Should return all optional field labels when none are set."""
+    contractor = Contractor(
+        user_id="missing-optional",
+        phone="+15550008888",
+        name="Test",
+        trade="Electrician",
+        location="Denver, CO",
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    missing = get_missing_optional_fields(contractor)
+    assert "rates" in missing
+    assert "business hours" in missing
+
+
+def test_get_missing_optional_fields_none_missing(db_session: Session) -> None:
+    """Should return empty list when all optional fields are set."""
+    contractor = Contractor(
+        user_id="all-filled",
+        phone="+15550009999",
+        name="Test",
+        trade="Electrician",
+        location="Denver, CO",
+        hourly_rate=85.0,
+        business_hours="Mon-Fri 8-5",
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    missing = get_missing_optional_fields(contractor)
+    assert missing == []
+
+
+def test_get_missing_optional_fields_partial(db_session: Session) -> None:
+    """Should return only the labels of missing optional fields."""
+    contractor = Contractor(
+        user_id="partial-optional",
+        phone="+15550010000",
+        name="Test",
+        trade="Plumber",
+        location="Portland, OR",
+        hourly_rate=75.0,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    missing = get_missing_optional_fields(contractor)
+    assert missing == ["business hours"]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_normal_prompt_includes_missing_optional_nudge(
+    mock_acompletion: object,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Normal system prompt should include a nudge for missing optional fields."""
+    contractor = Contractor(
+        user_id="nudge-user",
+        phone="+15550011111",
+        channel_identifier="111111111",
+        name="Sarah",
+        trade="Electrician",
+        location="Austin, TX",
+        onboarding_complete=True,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(conversation_id=conv.id, direction="inbound", body="Hey there")
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["messages"][0]["content"]
+    assert "rates" in system_msg
+    assert "business hours" in system_msg
+    assert "opportunity comes up naturally" in system_msg
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_normal_prompt_no_nudge_when_optional_fields_filled(
+    mock_acompletion: object,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Normal system prompt should NOT include nudge when all optional fields filled."""
+    contractor = Contractor(
+        user_id="complete-user",
+        phone="+15550012222",
+        channel_identifier="222222222",
+        name="Bob",
+        trade="Plumber",
+        location="Seattle, WA",
+        hourly_rate=90.0,
+        business_hours="Mon-Fri 7-4",
+        onboarding_complete=True,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(conversation_id=conv.id, direction="inbound", body="What's up")
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    mock_acompletion.return_value = make_text_response("Hey!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["messages"][0]["content"]
+    assert "opportunity comes up naturally" not in system_msg
 
 
 def test_build_onboarding_system_prompt_new_contractor(db_session: Session) -> None:
@@ -781,14 +952,14 @@ async def test_profile_updates_during_onboarding_still_work(
     """Profile updates during onboarding still work after the refactor.
 
     Regression: ensures moving extract_profile_updates outside the onboarding
-    block didn't break the onboarding flow. When a new contractor provides name
-    and trade, onboarding should complete.
+    block didn't break the onboarding flow. When a new contractor provides name,
+    trade, and location, onboarding should complete.
     """
     assert is_onboarding_needed(new_contractor) is True
     assert not new_contractor.name  # empty or None
     assert not new_contractor.trade  # empty or None
 
-    # LLM saves name and trade, then gives a text reply
+    # LLM saves name, trade, and location, then gives a text reply
     tool_response = make_tool_call_response(
         tool_calls=[
             {
@@ -800,6 +971,11 @@ async def test_profile_updates_during_onboarding_still_work(
                 "id": "call_trade",
                 "name": "save_fact",
                 "arguments": json.dumps({"key": "trade", "value": "Plumber"}),
+            },
+            {
+                "id": "call_location",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "location", "value": "Austin, TX"}),
             },
         ]
     )
@@ -818,6 +994,7 @@ async def test_profile_updates_during_onboarding_still_work(
     db_session.refresh(new_contractor)
     assert new_contractor.name == "Sarah"
     assert new_contractor.trade == "Plumber"
+    assert new_contractor.location == "Austin, TX"
     assert new_contractor.onboarding_complete is True
 
 
@@ -843,6 +1020,7 @@ async def test_prepopulated_contractor_gets_onboarding_complete(
         user_id="prepopulated-user",
         name="Sarah",
         trade="Electrician",
+        location="Austin, TX",
         channel_identifier="888888888",
         preferred_channel="telegram",
         onboarding_complete=False,
@@ -907,6 +1085,7 @@ async def test_prepopulated_contractor_included_in_heartbeat(
         user_id="prepopulated-hb-user",
         name="Jake",
         trade="Plumber",
+        location="Portland, OR",
         phone="+15550009999",
         channel_identifier="777777777",
         preferred_channel="telegram",
@@ -987,12 +1166,16 @@ async def test_onboarding_completion_message_appended(
     db_session.add(conv)
     db_session.commit()
     db_session.refresh(conv)
-    msg = Message(conversation_id=conv.id, direction="inbound", body="I'm Jake, I'm a plumber")
+    msg = Message(
+        conversation_id=conv.id,
+        direction="inbound",
+        body="I'm Jake, I'm a plumber in Portland",
+    )
     db_session.add(msg)
     db_session.commit()
     db_session.refresh(msg)
 
-    # Simulate agent saving name and trade (completing required fields)
+    # Simulate agent saving name, trade, and location (completing required fields)
     tool_calls = [
         {
             "name": "save_fact",
@@ -1001,6 +1184,10 @@ async def test_onboarding_completion_message_appended(
         {
             "name": "save_fact",
             "arguments": '{"key": "trade", "value": "Plumber"}',
+        },
+        {
+            "name": "save_fact",
+            "arguments": '{"key": "location", "value": "Portland, OR"}',
         },
     ]
 
@@ -1021,6 +1208,7 @@ async def test_onboarding_completion_message_appended(
     assert "Setup complete!" in response.reply_text
     assert "- Name: Jake" in response.reply_text
     assert "- Trade: Plumber" in response.reply_text
+    assert "- Location: Portland, OR" in response.reply_text
     assert "You can update any of this anytime" in response.reply_text
 
 
