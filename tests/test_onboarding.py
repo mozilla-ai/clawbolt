@@ -312,3 +312,292 @@ async def test_complete_profile_uses_normal_prompt(
     system_msg = call_args.kwargs["messages"][0]["content"]
     # Normal prompt should NOT contain onboarding text
     assert "new contractor" not in system_msg
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_prepopulated_contractor_gets_onboarding_complete(
+    mock_acompletion: object,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Contractor with pre-populated name and trade should get onboarding_complete=True.
+
+    Regression test for #180: when required profile fields are already filled,
+    is_onboarding_needed() returns False but onboarding_complete was never set
+    because the 'if onboarding:' block was skipped entirely.
+    """
+    contractor = Contractor(
+        user_id="prepopulated-user",
+        name="Sarah",
+        trade="Electrician",
+        channel_identifier="888888888",
+        preferred_channel="telegram",
+        onboarding_complete=False,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    # Sanity: fields are populated but flag is not set
+    assert not contractor.onboarding_complete
+    assert not is_onboarding_needed(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+
+    msg = Message(
+        conversation_id=conv.id,
+        direction="inbound",
+        body="Hey, can you help me with a quote?",
+    )
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+        "Sure thing, Sarah!"
+    )
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(contractor)
+    assert contractor.onboarding_complete is True
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
+@patch("backend.app.agent.heartbeat.run_cheap_checks")
+@patch("backend.app.agent.core.acompletion")
+async def test_prepopulated_contractor_included_in_heartbeat(
+    mock_acompletion: object,
+    mock_cheap_checks: MagicMock,
+    _mock_hours: MagicMock,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Contractor with pre-populated fields should be eligible for heartbeat after first message.
+
+    Regression test for #180: heartbeat queries onboarding_complete=True, so
+    contractors that never got the flag set were permanently excluded.
+    """
+    from backend.app.agent.heartbeat import CheapCheckResult, run_heartbeat_for_contractor
+
+    contractor = Contractor(
+        user_id="prepopulated-hb-user",
+        name="Jake",
+        trade="Plumber",
+        phone="+15550009999",
+        channel_identifier="777777777",
+        preferred_channel="telegram",
+        onboarding_complete=False,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+
+    msg = Message(
+        conversation_id=conv.id,
+        direction="inbound",
+        body="I need help with an estimate",
+    )
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    # Process a message to trigger the onboarding_complete fix
+    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+        "Happy to help, Jake!"
+    )
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(contractor)
+    assert contractor.onboarding_complete is True
+
+    # Now verify heartbeat doesn't skip this contractor
+    mock_cheap_checks.return_value = CheapCheckResult(flags=[])
+    result = await run_heartbeat_for_contractor(
+        db=db_session,
+        contractor=contractor,
+        messaging_service=mock_messaging,
+        daily_counts={},
+        max_daily=5,
+    )
+    # Should get a result (not None which means skipped)
+    assert result is not None
+    assert result.action_type == "no_action"  # Clean checks, no message needed
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_onboarding_completion_message_appended(
+    mock_acompletion: object,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Completion summary should be appended when onboarding transitions to complete."""
+    # Contractor with no name/trade — needs onboarding
+    contractor = Contractor(
+        user_id="completing-user",
+        phone="+15550008888",
+        channel_identifier="888888888",
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(conversation_id=conv.id, direction="inbound", body="I'm Jake, I'm a plumber")
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    # Simulate agent saving name and trade (completing required fields)
+    tool_calls = [
+        {
+            "name": "save_fact",
+            "arguments": '{"key": "name", "value": "Jake"}',
+        },
+        {
+            "name": "save_fact",
+            "arguments": '{"key": "trade", "value": "Plumber"}',
+        },
+    ]
+    from tests.mocks.llm import make_tool_call_response
+
+    # First call: tool calls to save name/trade; second call: text reply
+    mock_acompletion.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(tool_calls, content=None),
+        make_text_response("Great to meet you, Jake!"),
+    ]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    assert "Setup complete!" in response.reply_text
+    assert "- Name: Jake" in response.reply_text
+    assert "- Trade: Plumber" in response.reply_text
+    assert "You can update any of this anytime" in response.reply_text
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_onboarding_completion_message_includes_optional_fields(
+    mock_acompletion: object,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Completion summary should include location and rate when available."""
+    # Contractor with location already set, still needs name+trade
+    contractor = Contractor(
+        user_id="optional-fields-user",
+        phone="+15550009999",
+        channel_identifier="999999998",
+        location="Portland, OR",
+        hourly_rate=85.0,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(conversation_id=conv.id, direction="inbound", body="I'm Sarah, electrician")
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    tool_calls = [
+        {
+            "name": "save_fact",
+            "arguments": '{"key": "name", "value": "Sarah"}',
+        },
+        {
+            "name": "save_fact",
+            "arguments": '{"key": "trade", "value": "Electrician"}',
+        },
+    ]
+    from tests.mocks.llm import make_tool_call_response
+
+    mock_acompletion.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(tool_calls, content=None),
+        make_text_response("Welcome aboard, Sarah!"),
+    ]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    assert "Setup complete!" in response.reply_text
+    assert "- Name: Sarah" in response.reply_text
+    assert "- Trade: Electrician" in response.reply_text
+    assert "- Location: Portland, OR" in response.reply_text
+    assert "- Rate: $85/hour" in response.reply_text
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_no_completion_message_when_already_onboarded(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    mock_messaging: MessagingService,
+) -> None:
+    """Completion message should NOT be appended for already-onboarded contractors."""
+    conv = Conversation(contractor_id=test_contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(
+        conversation_id=conv.id, direction="inbound", body="Can you help me with an estimate?"
+    )
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    mock_acompletion.return_value = make_text_response("Sure, I can help!")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    assert response.reply_text == "Sure, I can help!"
+    assert "Setup complete!" not in response.reply_text

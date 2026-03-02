@@ -2,9 +2,14 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from any_llm import AuthenticationError, ContentFilterError
 from sqlalchemy.orm import Session
 
-from backend.app.agent.router import handle_inbound_message
+from backend.app.agent.router import (
+    AUTH_ERROR_FALLBACK,
+    CONTENT_FILTER_FALLBACK,
+    handle_inbound_message,
+)
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
@@ -743,3 +748,108 @@ async def test_typing_indicator_failure_does_not_block_processing(
 
     assert response.reply_text == "Still works!"
     mock_messaging.send_text.assert_called_once()  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# Typed LLM exception handling in router (issue #173)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_content_filter_error_returns_rephrasing_message(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """ContentFilterError should produce a user-friendly rephrasing message."""
+    mock_acompletion.side_effect = ContentFilterError("Blocked by safety filter")
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    assert response.reply_text == CONTENT_FILTER_FALLBACK
+    assert "rephrasing" in response.reply_text.lower()
+    mock_messaging.send_text.assert_called_once()  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_authentication_error_returns_config_message(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """AuthenticationError should produce a configuration issue message."""
+    mock_acompletion.side_effect = AuthenticationError("Invalid API key")
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    assert response.reply_text == AUTH_ERROR_FALLBACK
+    assert "configuration" in response.reply_text.lower()
+    mock_messaging.send_text.assert_called_once()  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_content_filter_error_stores_outbound_message(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """ContentFilterError fallback reply should be persisted as outbound message."""
+    mock_acompletion.side_effect = ContentFilterError("Blocked")
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
+    assert outbound is not None
+    assert outbound.body == CONTENT_FILTER_FALLBACK
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_authentication_error_stores_outbound_message(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """AuthenticationError fallback reply should be persisted as outbound message."""
+    mock_acompletion.side_effect = AuthenticationError("Bad key")
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
+    assert outbound is not None
+    assert outbound.body == AUTH_ERROR_FALLBACK
