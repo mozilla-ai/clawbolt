@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -62,6 +64,44 @@ def test_build_soul_prompt_minimal_profile() -> None:
     assert "contracting" in prompt
 
 
+def test_build_soul_prompt_includes_preferences_json() -> None:
+    """Soul prompt should render communication style from preferences_json."""
+    contractor = Contractor(
+        user_id="test",
+        name="Jake",
+        trade="plumbing",
+        preferences_json=json.dumps({"communication_style": "casual and brief"}),
+    )
+    prompt = build_soul_prompt(contractor)
+    assert "Communication style: casual and brief." in prompt
+
+
+def test_build_soul_prompt_ignores_empty_preferences() -> None:
+    """Soul prompt should not include communication style when preferences_json is empty."""
+    contractor = Contractor(
+        user_id="test",
+        name="Jake",
+        trade="plumbing",
+        preferences_json="{}",
+    )
+    prompt = build_soul_prompt(contractor)
+    assert "Communication style" not in prompt
+
+
+def test_build_soul_prompt_handles_malformed_preferences() -> None:
+    """Soul prompt should gracefully handle malformed preferences_json."""
+    contractor = Contractor(
+        user_id="test",
+        name="Jake",
+        trade="plumbing",
+        preferences_json="not valid json",
+    )
+    prompt = build_soul_prompt(contractor)
+    # Should not raise, and should not include communication style
+    assert "Communication style" not in prompt
+    assert "Jake" in prompt
+
+
 def test_build_onboarding_prompt() -> None:
     """Onboarding prompt should include instructions for data collection."""
     prompt = build_onboarding_prompt()
@@ -75,3 +115,9 @@ def test_build_onboarding_prompt_includes_confirmation_instruction() -> None:
     prompt = build_onboarding_prompt()
     assert "confirm what you've saved" in prompt
     assert "what's missing" in prompt.lower()
+
+
+def test_build_onboarding_prompt_mentions_communication_style_key() -> None:
+    """Onboarding prompt should mention communication_style as a save_fact key."""
+    prompt = build_onboarding_prompt()
+    assert "communication_style" in prompt
