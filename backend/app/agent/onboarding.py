@@ -1,11 +1,14 @@
 """Onboarding conversation logic for new contractors."""
 
-import contextlib
+import logging
+import re
 from typing import Any
 
 from backend.app.agent.core import AgentResponse
 from backend.app.agent.profile import build_onboarding_prompt
 from backend.app.models import Contractor
+
+logger = logging.getLogger(__name__)
 
 # Fields that indicate a contractor has completed onboarding
 REQUIRED_PROFILE_FIELDS = {"name", "trade"}
@@ -59,6 +62,26 @@ def build_onboarding_system_prompt(contractor: Contractor) -> str:
     return "".join(parts)
 
 
+def _parse_rate(value: str) -> float | None:
+    """Extract a numeric rate from natural-language rate descriptions.
+
+    Handles formats like "$85/hr", "$85/hour", "$85 per hour", "$85 an hour",
+    "85 dollars", "$85.50", "$50-75/hr" (extracts first number), "$4500 per project",
+    "Usually around $80", etc.
+
+    Returns None for non-numeric values like "not sure" or "varies".
+    """
+    cleaned = str(value).replace(",", "").strip()
+
+    # Try to find a dollar amount or plain number
+    # Handles: $85, $85/hr, $85.50, 85, 85.00, etc.
+    match = re.search(r"\$?\s*(\d+(?:\.\d+)?)", cleaned)
+    if match:
+        return float(match.group(1))
+
+    return None
+
+
 def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
     """Extract profile field updates from agent tool calls during onboarding.
 
@@ -90,8 +113,11 @@ def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
         if key in key_to_field:
             field = key_to_field[key]
             if field == "hourly_rate":
-                with contextlib.suppress(ValueError):
-                    updates[field] = float(str(value).replace("$", "").replace("/hr", "").strip())
+                parsed = _parse_rate(str(value))
+                if parsed is not None:
+                    updates[field] = parsed
+                else:
+                    logger.warning("Could not parse hourly rate from value: %r", value)
             else:
                 updates[field] = str(value)
 
