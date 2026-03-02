@@ -132,6 +132,12 @@ async def handle_inbound_message(
 
     agent.register_tools(tools)
 
+    # Send typing indicator while processing (non-blocking on failure)
+    try:
+        await messaging_service.send_typing_indicator(to=to_address)
+    except Exception:
+        logger.debug("Failed to send typing indicator to %s", to_address)
+
     # Step 6: Process message through agent (with LLM failure fallback)
     try:
         response = await agent.process_message(

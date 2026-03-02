@@ -1,12 +1,16 @@
 """Telegram implementation of the MessagingService protocol."""
 
+import logging
 import mimetypes
 from pathlib import Path
 
 import httpx
 from telegram import Bot
+from telegram.constants import ChatAction
 
 from backend.app.config import Settings, settings
+
+logger = logging.getLogger(__name__)
 
 
 class TelegramMessagingService:
@@ -76,3 +80,12 @@ class TelegramMessagingService:
                 last_id = await self.send_media(to, caption, url)
             return last_id
         return await self.send_text(to, body)
+
+    async def send_typing_indicator(self, to: str) -> None:
+        """Send 'typing...' chat action to Telegram."""
+        try:
+            await self.bot.send_chat_action(
+                chat_id=self._parse_chat_id(to), action=ChatAction.TYPING
+            )
+        except Exception:
+            logger.debug("Failed to send typing indicator to %s", to)

@@ -22,6 +22,10 @@ class MessagingService(Protocol):
         """Send a text or media message. Returns an external message ID."""
         ...
 
+    async def send_typing_indicator(self, to: str) -> None:
+        """Send a typing indicator to show the bot is processing."""
+        ...
+
 
 def _build_messaging_service() -> MessagingService:
     """Build the configured messaging service."""
