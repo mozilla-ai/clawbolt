@@ -39,6 +39,12 @@ class StorageBackend(ABC):
         """Create a folder. Returns the folder path."""
 
     @abstractmethod
+    async def move_file(
+        self, from_path: str, from_filename: str, to_path: str, to_filename: str
+    ) -> str:
+        """Move/rename a file. Returns the new URL/path."""
+
+    @abstractmethod
     async def list_folder(self, path: str) -> list[dict[str, str]]:
         """List files in a folder. Returns list of file metadata."""
 
@@ -73,6 +79,25 @@ class DropboxStorage(StorageBackend):
         with contextlib.suppress(dropbox.exceptions.ApiError):
             await asyncio.to_thread(self.dbx.files_create_folder_v2, path)
         return path
+
+    async def move_file(
+        self, from_path: str, from_filename: str, to_path: str, to_filename: str
+    ) -> str:
+        src = f"{from_path}/{from_filename}"
+        dest = f"{to_path}/{to_filename}"
+        logger.info("Moving file in Dropbox: %s -> %s", src, dest)
+        await asyncio.to_thread(self.dbx.files_move_v2, src, dest)
+        # Create a shared link for the new location
+        try:
+            shared = await asyncio.to_thread(
+                self.dbx.sharing_create_shared_link_with_settings, dest
+            )
+            return shared.url
+        except dropbox.exceptions.ApiError:
+            links = await asyncio.to_thread(self.dbx.sharing_list_shared_links, path=dest)
+            if links.links:
+                return links.links[0].url
+            return dest
 
     async def list_folder(self, path: str) -> list[dict[str, str]]:
         result = await asyncio.to_thread(self.dbx.files_list_folder, path)
@@ -123,6 +148,34 @@ class GoogleDriveStorage(StorageBackend):
         )
         return result.get("id", "")
 
+    async def move_file(
+        self, from_path: str, from_filename: str, to_path: str, to_filename: str
+    ) -> str:
+        service = self._get_service()
+        # Search for the file by name in the source folder
+        query = f"name='{from_filename}' and '{from_path}' in parents and trashed=false"
+        result = await asyncio.to_thread(
+            service.files().list(q=query, fields="files(id,name)").execute
+        )
+        files = result.get("files", [])
+        if not files:
+            msg = f"File not found: {from_filename} in {from_path}"
+            raise FileNotFoundError(msg)
+        file_id = files[0]["id"]
+        # Move to new parent and rename
+        update_result = await asyncio.to_thread(
+            service.files()
+            .update(
+                fileId=file_id,
+                body={"name": to_filename},
+                addParents=to_path,
+                removeParents=from_path,
+                fields="id,webViewLink",
+            )
+            .execute
+        )
+        return update_result.get("webViewLink", update_result.get("id", ""))
+
     async def list_folder(self, path: str) -> list[dict[str, str]]:
         service = self._get_service()
         query = f"'{path}' in parents and trashed=false"
@@ -164,6 +217,19 @@ class LocalFileStorage(StorageBackend):
         folder = self._safe_path(path)
         folder.mkdir(parents=True, exist_ok=True)
         return str(folder)
+
+    async def move_file(
+        self, from_path: str, from_filename: str, to_path: str, to_filename: str
+    ) -> str:
+        src = self._safe_path(from_path, from_filename)
+        dest = self._safe_path(to_path, to_filename)
+        if not src.exists():
+            msg = f"Source file not found: {from_path}/{from_filename}"
+            raise FileNotFoundError(msg)
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        logger.info("Moving local file: %s -> %s", src, dest)
+        await asyncio.to_thread(src.rename, dest)
+        return f"file://{dest}"
 
     async def list_folder(self, path: str) -> list[dict[str, str]]:
         folder = self._safe_path(path)

@@ -8,9 +8,11 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.file_tools import _build_folder_path
 from backend.app.config import settings
 from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
+from backend.app.services.storage_service import StorageBackend
 
 PDF_DIR = Path(settings.pdf_storage_dir)
 ESTIMATE_NUMBER_FORMAT = "EST-{:04d}"
@@ -26,6 +28,7 @@ class EstimateStatus:
 def create_estimate_tools(
     db: Session,
     contractor: Contractor,
+    storage: StorageBackend | None = None,
 ) -> list[Tool]:
     """Create estimate-related tools for the agent."""
 
@@ -112,6 +115,12 @@ def create_estimate_tools(
         PDF_DIR.mkdir(parents=True, exist_ok=True)
         pdf_path = PDF_DIR / f"{estimate.id}.pdf"
         pdf_path.write_bytes(pdf_bytes)
+
+        # Also upload to cloud storage if available
+        if storage:
+            folder_path = _build_folder_path("estimate", client_name, client_address)
+            await storage.create_folder(folder_path)
+            await storage.upload_file(pdf_bytes, folder_path, f"{estimate_number}.pdf")
 
         # Update estimate with PDF path — stays as DRAFT until actually sent
         estimate.pdf_url = str(pdf_path)

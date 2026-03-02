@@ -7,7 +7,7 @@ import re
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool
-from backend.app.media.download import MIME_EXTENSIONS
+from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
 from backend.app.models import Contractor, MediaFile
 from backend.app.services.storage_service import StorageBackend
 
@@ -16,12 +16,12 @@ logger = logging.getLogger(__name__)
 DESCRIPTION_SLUG_MAX_LENGTH = 40
 FILENAME_SLUG_MAX_LENGTH = 30
 
-# Category to folder mapping
-CATEGORY_FOLDERS: dict[str, str] = {
-    "job_photo": "Job Photos",
-    "estimate": "Estimates",
-    "document": "Documents",
-    "voice_note": "Voice Notes",
+# Category to subfolder mapping (under client folders)
+CATEGORY_SUBFOLDERS: dict[str, str] = {
+    "job_photo": "photos",
+    "estimate": "estimates",
+    "document": "documents",
+    "voice_note": "voice_notes",
 }
 
 
@@ -33,17 +33,43 @@ def _slugify(text: str, max_length: int = DESCRIPTION_SLUG_MAX_LENGTH) -> str:
     return slug[:max_length].rstrip("_")
 
 
+def _build_client_folder(
+    client_name: str | None = None,
+    client_address: str | None = None,
+) -> str:
+    """Build a top-level client folder name from available context.
+
+    Returns a combined folder name like "John Smith - 116 Virginia Ave",
+    or an empty string when no context is available.
+    """
+    parts: list[str] = []
+    if client_name and client_name.strip():
+        parts.append(client_name.strip())
+    if client_address and client_address.strip():
+        parts.append(client_address.strip())
+    return " - ".join(parts)
+
+
 def _build_folder_path(
     category: str,
-    job_name: str | None = None,
+    client_name: str | None = None,
+    client_address: str | None = None,
 ) -> str:
-    """Build the folder path for a file upload."""
-    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
-    folder = CATEGORY_FOLDERS.get(category, "Other")
+    """Build the folder path for a file upload.
 
-    if job_name:
-        return f"/{folder}/{today}_{_slugify(job_name)}"
-    return f"/{folder}/{today}"
+    When client context is available, organizes by client:
+        /{Client Name - Address}/{category_subfolder}
+    When no client context, falls back to date-based:
+        /Unsorted/{date}
+    """
+    client_folder = _build_client_folder(client_name, client_address)
+
+    if client_folder:
+        subfolder = CATEGORY_SUBFOLDERS.get(category, "other")
+        return f"/{client_folder}/{subfolder}"
+
+    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+    return f"/Unsorted/{today}"
 
 
 def _build_filename(
@@ -73,6 +99,57 @@ def _extension_from_mime(mime_type: str) -> str:
     return dotted.lstrip(".")
 
 
+async def auto_save_media(
+    db: Session,
+    contractor: Contractor,
+    storage: StorageBackend,
+    downloaded_media: list[DownloadedMedia],
+    message_id: int | None = None,
+) -> list[MediaFile]:
+    """Auto-save downloaded media to storage before the agent loop.
+
+    Persists all inbound media to /Unsorted/{date}/ immediately after
+    download. This ensures files are never lost regardless of whether the
+    agent calls upload_to_storage.
+    """
+    if not downloaded_media:
+        return []
+
+    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
+    folder_path = f"/Unsorted/{today}"
+    await storage.create_folder(folder_path)
+
+    saved: list[MediaFile] = []
+    for media in downloaded_media:
+        extension = _extension_from_mime(media.mime_type)
+
+        existing = (
+            db.query(MediaFile)
+            .filter(
+                MediaFile.contractor_id == contractor.id,
+                MediaFile.storage_path.like(f"{folder_path}%"),
+            )
+            .count()
+        )
+
+        filename = f"file_{existing + 1:03d}.{extension}"
+        storage_url = await storage.upload_file(media.content, folder_path, filename)
+
+        media_file = MediaFile(
+            contractor_id=contractor.id,
+            message_id=message_id,
+            original_url=media.original_url,
+            mime_type=media.mime_type,
+            storage_url=storage_url,
+            storage_path=f"{folder_path}/{filename}",
+        )
+        db.add(media_file)
+        saved.append(media_file)
+
+    db.commit()
+    return saved
+
+
 def create_file_tools(
     db: Session,
     contractor: Contractor,
@@ -92,7 +169,8 @@ def create_file_tools(
     async def upload_to_storage(
         file_category: str,
         description: str = "",
-        job_name: str | None = None,
+        client_name: str | None = None,
+        client_address: str | None = None,
         original_url: str | None = None,
         mime_type: str = "image/jpeg",
     ) -> str:
@@ -119,7 +197,7 @@ def create_file_tools(
         )
 
         # Build path and filename
-        folder_path = _build_folder_path(file_category, job_name)
+        folder_path = _build_folder_path(file_category, client_name, client_address)
         extension = _extension_from_mime(mime_type)
 
         # Count existing files to get index
@@ -155,13 +233,81 @@ def create_file_tools(
         logger.info("File cataloged: %s/%s -> %s", folder_path, filename, storage_url)
         return f"Uploaded {filename} to {folder_path}/ ({storage_url})"
 
+    async def organize_file(
+        original_url: str,
+        file_category: str,
+        client_name: str | None = None,
+        client_address: str | None = None,
+        description: str = "",
+    ) -> str:
+        """Move an auto-saved file from Unsorted into the correct client folder."""
+        # Look up the MediaFile record
+        media_file = (
+            db.query(MediaFile)
+            .filter(
+                MediaFile.contractor_id == contractor.id,
+                MediaFile.original_url == original_url,
+            )
+            .first()
+        )
+        if media_file is None:
+            return f"File not found for URL: {original_url}"
+
+        current_path = media_file.storage_path  # e.g. /Unsorted/2026-03-02/file_001.jpg
+        new_folder = _build_folder_path(file_category, client_name, client_address)
+
+        # Check if already in a client folder (not Unsorted)
+        if not current_path.startswith("/Unsorted/"):
+            return f"File is already organized at {current_path}"
+
+        # Parse current path into folder and filename
+        parts = current_path.rsplit("/", 1)
+        if len(parts) != 2:
+            return f"Cannot parse storage path: {current_path}"
+        old_folder, old_filename = parts
+
+        # Build new filename
+        extension = old_filename.rsplit(".", 1)[-1] if "." in old_filename else "bin"
+        existing = (
+            db.query(MediaFile)
+            .filter(
+                MediaFile.contractor_id == contractor.id,
+                MediaFile.storage_path.like(f"{new_folder}%"),
+            )
+            .count()
+        )
+        new_filename = _build_filename(
+            description, file_category, index=existing + 1, extension=extension
+        )
+
+        # Create destination folder and move
+        await storage.create_folder(new_folder)
+        new_url = await storage.move_file(old_folder, old_filename, new_folder, new_filename)
+
+        # Update the DB record
+        media_file.storage_path = f"{new_folder}/{new_filename}"
+        media_file.storage_url = new_url
+        if description:
+            media_file.processed_text = description
+        db.commit()
+
+        logger.info(
+            "File organized: %s -> %s/%s",
+            current_path,
+            new_folder,
+            new_filename,
+        )
+        return f"Moved {old_filename} to {new_folder}/{new_filename}"
+
     return [
         Tool(
             name="upload_to_storage",
             description=(
-                "Upload a file to the contractor's cloud storage (Dropbox or Google Drive). "
-                "Files are organized into folders by category. Use when the contractor sends "
-                "photos, documents, or files that should be saved."
+                "Upload a file to the contractor's cloud storage. "
+                "Files are organized by client: when you know the client name or job address, "
+                "provide it to file under their folder. Otherwise files go to Unsorted. "
+                "Inbound media is auto-saved, so use this to organize files into "
+                "the right client folder with a descriptive filename."
             ),
             function=upload_to_storage,
             parameters={
@@ -174,15 +320,19 @@ def create_file_tools(
                     },
                     "description": {
                         "type": "string",
-                        "description": "Brief description for the filename (from vision analysis)",
+                        "description": "Brief description for the filename",
                     },
-                    "job_name": {
+                    "client_name": {
                         "type": "string",
-                        "description": "Name of the job/project this file relates to (optional)",
+                        "description": "Client name for folder organization",
+                    },
+                    "client_address": {
+                        "type": "string",
+                        "description": "Client or job address for folder organization",
                     },
                     "original_url": {
                         "type": "string",
-                        "description": "Original URL of the media to upload (optional)",
+                        "description": "Original URL of the media to upload",
                     },
                     "mime_type": {
                         "type": "string",
@@ -190,6 +340,44 @@ def create_file_tools(
                     },
                 },
                 "required": ["file_category"],
+            },
+        ),
+        Tool(
+            name="organize_file",
+            description=(
+                "Move an auto-saved file from the Unsorted folder into the correct "
+                "client folder. Use this when you learn which client a previously "
+                "received file belongs to. Requires the original_url of the file "
+                "(from the inbound media list) and at least a client_name or "
+                "client_address to build the destination folder."
+            ),
+            function=organize_file,
+            parameters={
+                "type": "object",
+                "properties": {
+                    "original_url": {
+                        "type": "string",
+                        "description": "Original URL/file_id of the media to move",
+                    },
+                    "file_category": {
+                        "type": "string",
+                        "enum": ["job_photo", "estimate", "document", "voice_note"],
+                        "description": "Category for organizing the file",
+                    },
+                    "client_name": {
+                        "type": "string",
+                        "description": "Client name for folder organization",
+                    },
+                    "client_address": {
+                        "type": "string",
+                        "description": "Client or job address for folder organization",
+                    },
+                    "description": {
+                        "type": "string",
+                        "description": "Brief description for the filename",
+                    },
+                },
+                "required": ["original_url", "file_category"],
             },
         ),
     ]

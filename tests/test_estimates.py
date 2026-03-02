@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.models import Contractor, Estimate, EstimateLineItem
+from tests.mocks.storage import MockStorageBackend
 
 
 @pytest.fixture(autouse=True)
@@ -277,6 +278,72 @@ def test_serve_estimate_pdf_other_user_rejected(
     response = client.get(f"/api/estimates/{estimate.id}/pdf")
     assert response.status_code == 404
     assert response.json()["detail"] == "Estimate not found"
+
+
+@pytest.mark.asyncio()
+async def test_generate_estimate_uploads_to_cloud_storage(
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """When storage is provided, estimate PDF should be uploaded to cloud storage."""
+    storage = MockStorageBackend()
+    tools = create_estimate_tools(db_session, test_contractor, storage)
+    generate = tools[0].function
+
+    await generate(
+        description="Deck build",
+        line_items=[{"description": "Materials", "quantity": 1, "unit_price": 2000.00}],
+        client_name="John Smith",
+        client_address="116 Virginia Ave",
+    )
+
+    # PDF should be uploaded to client folder in storage
+    assert len(storage.files) == 1
+    path = next(iter(storage.files))
+    assert "/John Smith - 116 Virginia Ave/estimates/" in path
+    assert "EST-0001.pdf" in path
+
+
+@pytest.mark.asyncio()
+async def test_generate_estimate_storage_uses_unsorted_without_client(
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Without client info, estimate PDF should go to Unsorted in cloud storage."""
+    storage = MockStorageBackend()
+    tools = create_estimate_tools(db_session, test_contractor, storage)
+    generate = tools[0].function
+
+    await generate(
+        description="Quick repair",
+        line_items=[{"description": "Labor", "quantity": 1, "unit_price": 150.00}],
+    )
+
+    assert len(storage.files) == 1
+    path = next(iter(storage.files))
+    assert "/Unsorted/" in path
+
+
+@pytest.mark.asyncio()
+async def test_generate_estimate_no_storage_still_saves_locally(
+    db_session: Session,
+    test_contractor: Contractor,
+    tmp_path: Path,
+) -> None:
+    """Without storage backend, estimate PDF should still save to local filesystem."""
+    tools = create_estimate_tools(db_session, test_contractor)
+    generate = tools[0].function
+
+    result = await generate(
+        description="Local only",
+        line_items=[{"description": "Work", "quantity": 1, "unit_price": 100.00}],
+    )
+
+    assert "EST-0001" in result
+    estimate = db_session.query(Estimate).first()
+    assert estimate is not None
+    pdf_path = tmp_path / "estimates" / f"{estimate.id}.pdf"
+    assert pdf_path.exists()
 
 
 def test_serve_estimate_pdf_requires_auth_dependency() -> None:

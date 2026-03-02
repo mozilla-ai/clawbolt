@@ -17,6 +17,17 @@ class MockStorageBackend(StorageBackend):
         self.folders.append(path)
         return path
 
+    async def move_file(
+        self, from_path: str, from_filename: str, to_path: str, to_filename: str
+    ) -> str:
+        src_key = f"{from_path}/{from_filename}"
+        if src_key not in self.files:
+            msg = f"File not found: {src_key}"
+            raise FileNotFoundError(msg)
+        dest_key = f"{to_path}/{to_filename}"
+        self.files[dest_key] = self.files.pop(src_key)
+        return f"https://mock-storage.example.com{dest_key}"
+
     async def list_folder(self, path: str) -> list[dict[str, str]]:
         result: list[dict[str, str]] = []
         for file_path in self.files:

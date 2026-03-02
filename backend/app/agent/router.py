@@ -13,7 +13,7 @@ from backend.app.agent.onboarding import (
 from backend.app.agent.profile import update_contractor_profile
 from backend.app.agent.tools.checklist_tools import create_checklist_tools
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
-from backend.app.agent.tools.file_tools import create_file_tools
+from backend.app.agent.tools.file_tools import auto_save_media, create_file_tools
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.messaging_tools import create_messaging_tools
 from backend.app.config import settings
@@ -21,7 +21,7 @@ from backend.app.media.download import DownloadedMedia, download_telegram_media
 from backend.app.media.pipeline import process_message_media
 from backend.app.models import Contractor, Message
 from backend.app.services.messaging import MessagingService
-from backend.app.services.storage_service import get_storage_service
+from backend.app.services.storage_service import StorageBackend, get_storage_service
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +77,29 @@ async def handle_inbound_message(
         except Exception:
             logger.exception("Failed to download media: %s", file_id)
 
+    # Initialize storage backend (used for auto-save and tools)
+    storage: StorageBackend | None = None
+    try:
+        has_storage = (
+            settings.storage_provider == "local"
+            or (settings.storage_provider == "dropbox" and settings.dropbox_access_token)
+            or (
+                settings.storage_provider == "google_drive"
+                and settings.google_drive_credentials_json
+            )
+        )
+        if has_storage:
+            storage = get_storage_service()
+    except Exception:
+        logger.debug("Storage not configured, skipping file features")
+
+    # Step 1.5: Auto-save inbound media to storage
+    if storage and downloaded_media:
+        try:
+            await auto_save_media(db, contractor, storage, downloaded_media, message_id=message.id)
+        except Exception:
+            logger.debug("Auto-save to storage failed, continuing")
+
     # Step 2: Run media pipeline
     media_notes: list[str] = []
     if media_urls and not downloaded_media:
@@ -115,26 +138,13 @@ async def handle_inbound_message(
     agent = BackshopAgent(db=db, contractor=contractor)
     tools = create_memory_tools(db, contractor.id)
     tools.extend(create_messaging_tools(messaging_service, to_address=to_address))
-    tools.extend(create_estimate_tools(db, contractor))
+    tools.extend(create_estimate_tools(db, contractor, storage))
     tools.extend(create_checklist_tools(db, contractor.id))
 
-    # Wire file tools if storage is configured
-    # TODO(multi-tenant): pass contractor to get_storage_service()
-    try:
-        has_storage = (
-            settings.storage_provider == "local"
-            or (settings.storage_provider == "dropbox" and settings.dropbox_access_token)
-            or (
-                settings.storage_provider == "google_drive"
-                and settings.google_drive_credentials_json
-            )
-        )
-        if has_storage:
-            storage = get_storage_service()
-            pending_media = {m.original_url: m.content for m in downloaded_media if m.content}
-            tools.extend(create_file_tools(db, contractor, storage, pending_media))
-    except Exception:
-        logger.debug("Storage not configured, skipping file tools")
+    # Wire file tools if storage is available
+    if storage:
+        pending_media = {m.original_url: m.content for m in downloaded_media if m.content}
+        tools.extend(create_file_tools(db, contractor, storage, pending_media))
 
     agent.register_tools(tools)
 

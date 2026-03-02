@@ -394,3 +394,117 @@ async def test_gdrive_list_folder(
     assert files[0] == {"name": "photo.jpg", "path": "https://drive.google.com/f1"}
     assert files[1] == {"name": "doc.pdf", "path": "https://drive.google.com/f2"}
     mock_drive_service.files.return_value.list.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# move_file tests: MockStorageBackend
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_mock_move_file(storage: MockStorageBackend) -> None:
+    """move_file should move bytes from old key to new key."""
+    await storage.upload_file(b"data", "/Unsorted/2026-03-02", "file_001.jpg")
+    url = await storage.move_file(
+        "/Unsorted/2026-03-02", "file_001.jpg", "/John/photos", "deck_001.jpg"
+    )
+    assert "/Unsorted/2026-03-02/file_001.jpg" not in storage.files
+    assert storage.files["/John/photos/deck_001.jpg"] == b"data"
+    assert "deck_001.jpg" in url
+
+
+@pytest.mark.asyncio()
+async def test_mock_move_file_not_found(storage: MockStorageBackend) -> None:
+    """move_file should raise FileNotFoundError for missing files."""
+    with pytest.raises(FileNotFoundError):
+        await storage.move_file("/nope", "missing.jpg", "/dest", "file.jpg")
+
+
+# ---------------------------------------------------------------------------
+# move_file tests: LocalFileStorage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_local_move_file(local_storage: LocalFileStorage) -> None:
+    """LocalFileStorage.move_file should rename the file on disk."""
+    await local_storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
+    url = await local_storage.move_file(
+        "/Unsorted/2026-03-02", "file_001.jpg", "/Client/photos", "deck_001.jpg"
+    )
+    assert url.startswith("file://")
+    assert "deck_001.jpg" in url
+    # Old file gone, new file exists
+    assert not (local_storage.base_dir / "Unsorted" / "2026-03-02" / "file_001.jpg").exists()
+    dest = local_storage.base_dir / "Client" / "photos" / "deck_001.jpg"
+    assert dest.read_bytes() == b"img-data"
+
+
+@pytest.mark.asyncio()
+async def test_local_move_file_not_found(local_storage: LocalFileStorage) -> None:
+    """LocalFileStorage.move_file should raise FileNotFoundError for missing source."""
+    with pytest.raises(FileNotFoundError):
+        await local_storage.move_file("/nope", "missing.jpg", "/dest", "file.jpg")
+
+
+@pytest.mark.asyncio()
+async def test_local_move_file_rejects_traversal(local_storage: LocalFileStorage) -> None:
+    """move_file should reject path-traversal attempts."""
+    await local_storage.upload_file(b"data", "/safe", "file.txt")
+    with pytest.raises(ValueError, match="Path escapes storage directory"):
+        await local_storage.move_file("/safe", "file.txt", "../../etc", "passwd")
+
+
+# ---------------------------------------------------------------------------
+# move_file tests: DropboxStorage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_dropbox_move_file(
+    dropbox_storage: DropboxStorage, mock_dbx_client: MagicMock
+) -> None:
+    """move_file should call files_move_v2 and return a shared link."""
+    url = await dropbox_storage.move_file(
+        "/Unsorted/2026-03-02", "file_001.jpg", "/Client/photos", "deck_001.jpg"
+    )
+    mock_dbx_client.files_move_v2.assert_called_once_with(
+        "/Unsorted/2026-03-02/file_001.jpg", "/Client/photos/deck_001.jpg"
+    )
+    assert url == "https://dropbox.com/s/abc/file.pdf?dl=0"
+
+
+# ---------------------------------------------------------------------------
+# move_file tests: GoogleDriveStorage
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_move_file(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """move_file should search, then update parents and name."""
+    # Mock search returning one file
+    mock_drive_service.files.return_value.list.return_value.execute.return_value = {
+        "files": [{"id": "file-abc", "name": "file_001.jpg"}]
+    }
+    mock_drive_service.files.return_value.update.return_value.execute.return_value = {
+        "id": "file-abc",
+        "webViewLink": "https://drive.google.com/file/d/abc/view",
+    }
+
+    url = await gdrive_storage.move_file(
+        "src-folder-id", "file_001.jpg", "dest-folder-id", "deck_001.jpg"
+    )
+    assert url == "https://drive.google.com/file/d/abc/view"
+    mock_drive_service.files.return_value.update.assert_called_once()
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_move_file_not_found(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """move_file should raise FileNotFoundError if source file not in Drive."""
+    mock_drive_service.files.return_value.list.return_value.execute.return_value = {"files": []}
+    with pytest.raises(FileNotFoundError):
+        await gdrive_storage.move_file("src", "missing.jpg", "dest", "file.jpg")
