@@ -44,6 +44,7 @@ def mock_messaging() -> MessagingService:
     service.send_text = AsyncMock(return_value="msg_42")
     service.send_media = AsyncMock(return_value="msg_43")
     service.send_message = AsyncMock(return_value="msg_42")
+    service.send_typing_indicator = AsyncMock()
     return service
 
 
@@ -690,6 +691,63 @@ async def test_send_media_reply_suppresses_duplicate_text(
     # The router should detect send_media_reply and suppress the extra send_text
     mock_messaging.send_text.assert_not_called()  # type: ignore[union-attr]
     assert response.reply_text == "I've uploaded your photo!"
+
+
+# ---------------------------------------------------------------------------
+# Typing indicator tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_typing_indicator_called_before_agent_processing(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Typing indicator should be sent before the agent processes the message."""
+    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    mock_messaging.send_typing_indicator.assert_called_once_with(  # type: ignore[union-attr]
+        to=test_contractor.channel_identifier,
+    )
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_typing_indicator_failure_does_not_block_processing(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """A failed typing indicator should not prevent message processing."""
+    mock_messaging.send_typing_indicator.side_effect = RuntimeError(  # type: ignore[union-attr]
+        "Telegram API down"
+    )
+    mock_acompletion.return_value = make_text_response("Still works!")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    assert response.reply_text == "Still works!"
+    mock_messaging.send_text.assert_called_once()  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------
