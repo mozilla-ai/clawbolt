@@ -68,3 +68,10 @@ def test_build_onboarding_prompt() -> None:
     assert "name" in prompt.lower()
     assert "trade" in prompt.lower()
     assert "rate" in prompt.lower()
+
+
+def test_build_onboarding_prompt_includes_confirmation_instruction() -> None:
+    """Onboarding prompt should instruct agent to confirm saved info."""
+    prompt = build_onboarding_prompt()
+    assert "confirm what you've saved" in prompt
+    assert "what's missing" in prompt.lower()
