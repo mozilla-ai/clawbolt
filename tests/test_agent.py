@@ -2,9 +2,20 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from any_llm import (
+    AuthenticationError,
+    ContentFilterError,
+    ContextLengthExceededError,
+    RateLimitError,
+)
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import (
+    CONTEXT_TRIM_KEEP_RECENT,
+    MAX_INPUT_TOKENS,
+    BackshopAgent,
+    _estimate_tokens,
+)
 from backend.app.agent.tools.base import Tool
 from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
@@ -370,3 +381,303 @@ async def test_agent_handles_malformed_tool_arguments(
 
     # The failure should be recorded in actions_taken
     assert any("bad args" in a for a in response.actions_taken)
+
+
+# ---------------------------------------------------------------------------
+# Typed LLM exception handling tests (issue #173)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_retries_on_rate_limit_error(
+    mock_acompletion: AsyncMock,
+    mock_sleep: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """RateLimitError should trigger one retry after a delay."""
+    mock_acompletion.side_effect = [
+        RateLimitError("Too many requests"),
+        make_text_response("Retry succeeded!"),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    response = await agent.process_message("Hello")
+
+    assert response.reply_text == "Retry succeeded!"
+    assert mock_acompletion.call_count == 2
+    mock_sleep.assert_called_once()
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_rate_limit_retry_failure_propagates(
+    mock_acompletion: AsyncMock,
+    mock_sleep: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """If the retry after RateLimitError also fails, the exception propagates."""
+    mock_acompletion.side_effect = [
+        RateLimitError("Too many requests"),
+        RateLimitError("Still rate limited"),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    with pytest.raises(RateLimitError):
+        await agent.process_message("Hello")
+
+    assert mock_acompletion.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# Context window overflow protection tests (issue #172)
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_tokens_returns_reasonable_estimate() -> None:
+    """_estimate_tokens should return a rough char-based token count."""
+    messages = [
+        {"role": "system", "content": "Hello world"},  # 11 chars -> 2 tokens
+        {"role": "user", "content": "How are you?"},  # 12 chars -> 3 tokens
+    ]
+    result = _estimate_tokens(messages)
+    # 11 // 4 + 12 // 4 = 2 + 3 = 5
+    assert result == 5
+
+
+def test_estimate_tokens_handles_empty_messages() -> None:
+    """_estimate_tokens should handle empty content gracefully."""
+    messages: list[dict[str, object]] = [
+        {"role": "system", "content": ""},
+        {"role": "user"},  # no content key at all
+    ]
+    result = _estimate_tokens(messages)
+    assert result == 0
+
+
+def test_estimate_tokens_handles_empty_list() -> None:
+    """_estimate_tokens should return 0 for an empty message list."""
+    assert _estimate_tokens([]) == 0
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_trims_context_on_context_length_exceeded(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """ContextLengthExceededError should trim messages and retry once."""
+    mock_acompletion.side_effect = [
+        ContextLengthExceededError("Input too long"),
+        make_text_response("Trimmed and retried!"),
+    ]
+
+    # Supply a long conversation history to verify trimming
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": f"Message {i}"}
+        for i in range(20)
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    response = await agent.process_message("Current message", conversation_history=long_history)
+
+    assert response.reply_text == "Trimmed and retried!"
+    assert mock_acompletion.call_count == 2
+
+    # Verify the retry call used trimmed messages
+    retry_call = mock_acompletion.call_args_list[1]
+    retry_messages = retry_call.kwargs["messages"]
+    # Should be system + CONTEXT_TRIM_KEEP_RECENT messages
+    assert len(retry_messages) == CONTEXT_TRIM_KEEP_RECENT + 1
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_trims_history_when_exceeding_token_limit(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Messages should be trimmed when estimated tokens exceed MAX_INPUT_TOKENS."""
+    mock_acompletion.return_value = make_text_response("Trimmed reply!")
+
+    # Create a huge conversation history that exceeds MAX_INPUT_TOKENS
+    # Each message ~4000 chars = ~1000 tokens; need >120K tokens = >120 messages
+    big_content = "x" * 4000
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    response = await agent.process_message("Current message", conversation_history=long_history)
+
+    assert response.reply_text == "Trimmed reply!"
+
+    # Verify that the messages sent to acompletion were trimmed
+    call_args = mock_acompletion.call_args
+    messages = call_args.kwargs["messages"]
+    total_tokens = _estimate_tokens(messages)
+    assert total_tokens <= MAX_INPUT_TOKENS
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_raises_content_filter_error(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """ContentFilterError should be re-raised (handled by router)."""
+    mock_acompletion.side_effect = ContentFilterError("Blocked by safety filter")
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    with pytest.raises(ContentFilterError):
+        await agent.process_message("Something problematic")
+
+    assert mock_acompletion.call_count == 1
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_preserves_system_and_user_during_trimming(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """System prompt and latest user message must survive trimming."""
+    mock_acompletion.return_value = make_text_response("Ok!")
+
+    # Create history that will trigger trimming
+    big_content = "x" * 4000
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    await agent.process_message(
+        "My important question",
+        conversation_history=long_history,
+        system_prompt_override="Custom system prompt",
+    )
+
+    call_args = mock_acompletion.call_args
+    messages = call_args.kwargs["messages"]
+
+    # System prompt is always first
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == "Custom system prompt"
+
+    # Latest user message is always last
+    assert messages[-1]["role"] == "user"
+    assert messages[-1]["content"] == "My important question"
+
+    # At least 2 messages: system + user
+    assert len(messages) >= 2
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_raises_authentication_error(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """AuthenticationError should be re-raised (handled by router)."""
+    mock_acompletion.side_effect = AuthenticationError("Invalid API key")
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    with pytest.raises(AuthenticationError):
+        await agent.process_message("Hello")
+
+    assert mock_acompletion.call_count == 1
+
+
+def test_trim_messages_preserves_short_conversation() -> None:
+    """Messages shorter than the threshold should be returned unchanged."""
+    messages: list[dict[str, object]] = [
+        {"role": "system", "content": "System prompt"},
+        {"role": "user", "content": "Hello"},
+        {"role": "assistant", "content": "Hi there!"},
+    ]
+    trimmed = BackshopAgent._trim_messages(messages)
+    assert trimmed == messages
+
+
+def test_trim_messages_keeps_system_and_recent() -> None:
+    """Long conversations should be trimmed to system + most recent N messages."""
+    messages: list[dict[str, object]] = [
+        {"role": "system", "content": "System prompt"},
+        *[
+            {"role": "user" if i % 2 == 0 else "assistant", "content": f"Msg {i}"}
+            for i in range(20)
+        ],
+    ]
+    trimmed = BackshopAgent._trim_messages(messages)
+    assert len(trimmed) == CONTEXT_TRIM_KEEP_RECENT + 1
+    assert trimmed[0]["role"] == "system"
+    # Last message should be the most recent one
+    assert trimmed[-1] == messages[-1]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_does_not_trim_normal_conversations(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Normal-sized conversations should not be trimmed."""
+    mock_acompletion.return_value = make_text_response("Got it!")
+
+    history = [
+        {"role": "user", "content": "Hi, I need help"},
+        {"role": "assistant", "content": "Hello! How can I help?"},
+        {"role": "user", "content": "Can you estimate a deck?"},
+        {"role": "assistant", "content": "Sure, what size?"},
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    await agent.process_message(
+        "12x12 composite deck",
+        conversation_history=history,
+        system_prompt_override="System prompt",
+    )
+
+    call_args = mock_acompletion.call_args
+    messages = call_args.kwargs["messages"]
+
+    # system + 4 history + 1 current = 6 — nothing trimmed
+    assert len(messages) == 6
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_logs_warning_when_trimming(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A warning should be logged when conversation history is trimmed."""
+    mock_acompletion.return_value = make_text_response("Ok!")
+
+    big_content = "x" * 4000
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+
+    with caplog.at_level("WARNING", logger="backend.app.agent.core"):
+        await agent.process_message(
+            "Current message",
+            conversation_history=long_history,
+            system_prompt_override="Short system prompt",
+        )
+
+    assert any("Trimmed" in record.message for record in caplog.records)
