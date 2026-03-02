@@ -1,8 +1,9 @@
 import asyncio
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, cast
 
 from any_llm import (
     AuthenticationError,
@@ -11,6 +12,7 @@ from any_llm import (
     RateLimitError,
     acompletion,
 )
+from any_llm.types.completion import ChatCompletion
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
@@ -74,7 +76,7 @@ class AgentResponse:
     reply_text: str
     actions_taken: list[str] = field(default_factory=list)
     memories_saved: list[dict[str, str]] = field(default_factory=list)
-    tool_calls: list[dict[str, object]] = field(default_factory=list)
+    tool_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
 class BackshopAgent:
@@ -116,10 +118,10 @@ class BackshopAgent:
 
     async def _call_llm_with_retry(
         self,
-        messages: list[dict[str, object]],
-        tool_schemas: list[dict[str, object]] | None,
-        llm_kwargs: dict[str, object],
-    ) -> object:
+        messages: list[Any],
+        tool_schemas: list[Any] | None,
+        llm_kwargs: dict[str, Any],
+    ) -> ChatCompletion:
         """Call acompletion with typed exception handling and retry logic.
 
         Handles RateLimitError (retry once after delay) and
@@ -128,26 +130,32 @@ class BackshopAgent:
         appropriate logging so the caller can produce a user-facing message.
         """
         try:
-            return await acompletion(
-                model=settings.llm_model,
-                provider=settings.llm_provider,
-                api_base=settings.llm_api_base,
-                messages=messages,
-                tools=tool_schemas,
-                max_tokens=settings.llm_max_tokens_agent,
-                **llm_kwargs,
+            return cast(
+                ChatCompletion,
+                await acompletion(
+                    model=settings.llm_model,
+                    provider=settings.llm_provider,
+                    api_base=settings.llm_api_base,
+                    messages=messages,
+                    tools=tool_schemas,
+                    max_tokens=settings.llm_max_tokens_agent,
+                    **llm_kwargs,
+                ),
             )
         except RateLimitError:
             logger.warning("Rate limit hit, retrying after %.1fs delay", RATE_LIMIT_RETRY_DELAY)
             await asyncio.sleep(RATE_LIMIT_RETRY_DELAY)
-            return await acompletion(
-                model=settings.llm_model,
-                provider=settings.llm_provider,
-                api_base=settings.llm_api_base,
-                messages=messages,
-                tools=tool_schemas,
-                max_tokens=settings.llm_max_tokens_agent,
-                **llm_kwargs,
+            return cast(
+                ChatCompletion,
+                await acompletion(
+                    model=settings.llm_model,
+                    provider=settings.llm_provider,
+                    api_base=settings.llm_api_base,
+                    messages=messages,
+                    tools=tool_schemas,
+                    max_tokens=settings.llm_max_tokens_agent,
+                    **llm_kwargs,
+                ),
             )
         except ContextLengthExceededError:
             trimmed = self._trim_messages(messages)
@@ -156,14 +164,17 @@ class BackshopAgent:
                 len(messages),
                 len(trimmed),
             )
-            return await acompletion(
-                model=settings.llm_model,
-                provider=settings.llm_provider,
-                api_base=settings.llm_api_base,
-                messages=trimmed,
-                tools=tool_schemas,
-                max_tokens=settings.llm_max_tokens_agent,
-                **llm_kwargs,
+            return cast(
+                ChatCompletion,
+                await acompletion(
+                    model=settings.llm_model,
+                    provider=settings.llm_provider,
+                    api_base=settings.llm_api_base,
+                    messages=trimmed,
+                    tools=tool_schemas,
+                    max_tokens=settings.llm_max_tokens_agent,
+                    **llm_kwargs,
+                ),
             )
         except ContentFilterError:
             logger.warning("Content blocked by provider safety filter")
@@ -174,8 +185,8 @@ class BackshopAgent:
 
     @staticmethod
     def _trim_messages(
-        messages: list[dict[str, object]],
-    ) -> list[dict[str, object]]:
+        messages: list[Any],
+    ) -> list[Any]:
         """Trim conversation messages to fit within context limits.
 
         Keeps the system prompt (first message) and the most recent messages.
@@ -195,7 +206,7 @@ class BackshopAgent:
         """Process a message through the agent loop."""
         system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
 
-        messages: list[dict[str, object]] = [{"role": "system", "content": system_prompt}]
+        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
 
         if conversation_history:
             messages.extend(conversation_history)
@@ -222,7 +233,7 @@ class BackshopAgent:
 
         tool_schemas = [tool_to_openai_schema(t) for t in self.tools] if self.tools else None
 
-        llm_kwargs: dict[str, object] = {}
+        llm_kwargs: dict[str, Any] = {}
         if settings.llm_provider == "openai":
             llm_kwargs["user"] = str(self.contractor.id)
         if temperature is not None:
@@ -230,7 +241,7 @@ class BackshopAgent:
 
         actions_taken: list[str] = []
         memories_saved: list[dict[str, str]] = []
-        tool_call_records: list[dict[str, object]] = []
+        tool_call_records: list[dict[str, Any]] = []
         reply_text = ""
 
         for _round in range(MAX_TOOL_ROUNDS):
@@ -238,7 +249,8 @@ class BackshopAgent:
 
             choice = response.choices[0]
 
-            if not getattr(choice.message, "tool_calls", None):
+            tool_calls = getattr(choice.message, "tool_calls", None)
+            if not tool_calls:
                 reply_text = choice.message.content or ""
                 break
 
@@ -246,15 +258,18 @@ class BackshopAgent:
             messages.append(choice.message.model_dump())
 
             tool_results: list[dict[str, str]] = []
-            for tool_call in choice.message.tool_calls:
-                tool_name = tool_call.function.name
+            for tool_call in tool_calls:
+                func = getattr(tool_call, "function", None)
+                if func is None:
+                    continue
+                tool_name = func.name
                 try:
-                    tool_args = json.loads(tool_call.function.arguments)
+                    tool_args = json.loads(func.arguments)
                 except json.JSONDecodeError:
                     logger.warning(
                         "Malformed tool arguments for %s: %s",
                         tool_name,
-                        tool_call.function.arguments[:200],
+                        func.arguments[:200],
                     )
                     tool_results.append(
                         {
@@ -309,7 +324,7 @@ class BackshopAgent:
             tool_calls=tool_call_records,
         )
 
-    def _find_tool(self, name: str) -> object | None:
+    def _find_tool(self, name: str) -> Callable[..., Any] | None:
         """Find a registered tool by name."""
         for tool in self.tools:
             if tool.name == name:

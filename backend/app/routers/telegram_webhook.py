@@ -150,7 +150,7 @@ async def telegram_inbound(
         return JSONResponse(content={"ok": True})
 
     try:
-        update: dict = await request.json()  # type: ignore[assignment]
+        update: dict = await request.json()
     except ValueError:
         logger.warning("Telegram webhook received invalid JSON")
         return JSONResponse(content={"ok": True})
