@@ -103,8 +103,8 @@ async def handle_inbound_message(
     conversation_history = await load_conversation_history(db, message.conversation_id)
 
     # Step 5: Initialize agent with tools
-    onboarding = is_onboarding_needed(contractor)
-    system_prompt_override = build_onboarding_system_prompt(contractor) if onboarding else None
+    was_onboarding = is_onboarding_needed(contractor)
+    system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
 
     agent = BackshopAgent(db=db, contractor=contractor)
     tools = create_memory_tools(db, contractor.id)
@@ -148,7 +148,7 @@ async def handle_inbound_message(
         response = AgentResponse(reply_text=AGENT_ERROR_FALLBACK)
 
     # Step 6b: If onboarding, extract profile updates from tool calls
-    if onboarding:
+    if was_onboarding:
         profile_updates = extract_profile_updates(response)
         if profile_updates:
             await update_contractor_profile(db, contractor, profile_updates)
@@ -157,6 +157,22 @@ async def handle_inbound_message(
             if not is_onboarding_needed(contractor):
                 contractor.onboarding_complete = True
                 db.commit()
+
+        # Append completion summary when onboarding transitions to complete
+        if contractor.onboarding_complete:
+            parts = [f"Name: {contractor.name}", f"Trade: {contractor.trade}"]
+            if contractor.location:
+                parts.append(f"Location: {contractor.location}")
+            if contractor.hourly_rate:
+                parts.append(f"Rate: ${contractor.hourly_rate:.0f}/hour")
+            summary = "\n".join(f"- {p}" for p in parts)
+            completion_note = (
+                "\n\nSetup complete! Here's what I know about you:\n"
+                f"{summary}\n\n"
+                "You can update any of this anytime. I'm ready to help!"
+            )
+            if response.reply_text:
+                response.reply_text += completion_note
 
     # Step 7: If agent didn't explicitly call send_reply/send_media_reply, send the reply text
     REPLY_TOOL_NAMES = {"send_reply", "send_media_reply"}
