@@ -4,9 +4,9 @@ from sqlalchemy.orm import Session
 from backend.app.agent.tools.file_tools import (
     _build_client_folder,
     _build_filename,
-    _build_folder_path,
     _slugify,
     auto_save_media,
+    build_folder_path,
     create_file_tools,
 )
 from backend.app.media.download import DownloadedMedia
@@ -55,37 +55,37 @@ def test_build_client_folder_whitespace_only() -> None:
 
 
 # ---------------------------------------------------------------------------
-# _build_folder_path tests
+# build_folder_path tests
 # ---------------------------------------------------------------------------
 
 
 def test_build_folder_path_with_client_name_and_address() -> None:
-    path = _build_folder_path("job_photo", client_name="John", client_address="116 Virginia Ave")
+    path = build_folder_path("job_photo", client_name="John", client_address="116 Virginia Ave")
     assert path == "/John - 116 Virginia Ave/photos"
 
 
 def test_build_folder_path_with_client_name_only() -> None:
-    path = _build_folder_path("document", client_name="Jane Doe")
+    path = build_folder_path("document", client_name="Jane Doe")
     assert path == "/Jane Doe/documents"
 
 
 def test_build_folder_path_with_address_only() -> None:
-    path = _build_folder_path("estimate", client_address="42 Elm St")
+    path = build_folder_path("estimate", client_address="42 Elm St")
     assert path == "/42 Elm St/estimates"
 
 
 def test_build_folder_path_no_client_falls_back_to_unsorted() -> None:
-    path = _build_folder_path("job_photo")
+    path = build_folder_path("job_photo")
     assert path.startswith("/Unsorted/")
 
 
 def test_build_folder_path_voice_note_with_client() -> None:
-    path = _build_folder_path("voice_note", client_name="Bob")
+    path = build_folder_path("voice_note", client_name="Bob")
     assert path == "/Bob/voice_notes"
 
 
 def test_build_folder_path_unknown_category() -> None:
-    path = _build_folder_path("unknown_type", client_name="Alice")
+    path = build_folder_path("unknown_type", client_name="Alice")
     assert path == "/Alice/other"
 
 
@@ -482,3 +482,31 @@ async def test_organize_file_already_in_client_folder(
         client_name="Jane",
     )
     assert "already organized" in result
+
+
+@pytest.mark.asyncio()
+async def test_organize_file_without_client_returns_error(
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """organize_file without client_name or client_address should return an error."""
+    storage = MockStorageBackend()
+    media_file = MediaFile(
+        contractor_id=test_contractor.id,
+        original_url="tg_file_id_789",
+        mime_type="image/jpeg",
+        storage_url="https://mock-storage.example.com/Unsorted/2026-03-02/file_001.jpg",
+        storage_path="/Unsorted/2026-03-02/file_001.jpg",
+    )
+    db_session.add(media_file)
+    db_session.commit()
+
+    tools = create_file_tools(db_session, test_contractor, storage)
+    organize = tools[1].function
+
+    result = await organize(
+        original_url="tg_file_id_789",
+        file_category="job_photo",
+    )
+    assert "Error" in result
+    assert "client_name or client_address is required" in result

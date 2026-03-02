@@ -8,7 +8,7 @@ from typing import Any
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool
-from backend.app.agent.tools.file_tools import _build_folder_path
+from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.config import settings
 from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
@@ -118,9 +118,15 @@ def create_estimate_tools(
 
         # Also upload to cloud storage if available
         if storage:
-            folder_path = _build_folder_path("estimate", client_name, client_address)
-            await storage.create_folder(folder_path)
-            await storage.upload_file(pdf_bytes, folder_path, f"{estimate_number}.pdf")
+            try:
+                folder_path = build_folder_path("estimate", client_name, client_address)
+                await storage.create_folder(folder_path)
+                await storage.upload_file(pdf_bytes, folder_path, f"{estimate_number}.pdf")
+            except Exception:
+                logger.warning(
+                    "Cloud upload failed for estimate %s, local PDF saved successfully",
+                    estimate_number,
+                )
 
         # Update estimate with PDF path — stays as DRAFT until actually sent
         estimate.pdf_url = str(pdf_path)

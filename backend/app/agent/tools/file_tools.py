@@ -50,7 +50,7 @@ def _build_client_folder(
     return " - ".join(parts)
 
 
-def _build_folder_path(
+def build_folder_path(
     category: str,
     client_name: str | None = None,
     client_address: str | None = None,
@@ -197,7 +197,7 @@ def create_file_tools(
         )
 
         # Build path and filename
-        folder_path = _build_folder_path(file_category, client_name, client_address)
+        folder_path = build_folder_path(file_category, client_name, client_address)
         extension = _extension_from_mime(mime_type)
 
         # Count existing files to get index
@@ -254,7 +254,14 @@ def create_file_tools(
             return f"File not found for URL: {original_url}"
 
         current_path = media_file.storage_path  # e.g. /Unsorted/2026-03-02/file_001.jpg
-        new_folder = _build_folder_path(file_category, client_name, client_address)
+        new_folder = build_folder_path(file_category, client_name, client_address)
+
+        # Guard: without client context the file would just move within Unsorted
+        if new_folder.startswith("/Unsorted"):
+            return (
+                "Error: client_name or client_address is required to organize a file. "
+                "Please provide at least one so the file can be moved to a client folder."
+            )
 
         # Check if already in a client folder (not Unsorted)
         if not current_path.startswith("/Unsorted/"):

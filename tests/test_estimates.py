@@ -358,3 +358,38 @@ def test_serve_estimate_pdf_requires_auth_dependency() -> None:
         p.default.dependency for p in sig.parameters.values() if hasattr(p.default, "dependency")
     }
     assert get_current_user in dependencies, "serve_estimate_pdf must use Depends(get_current_user)"
+
+
+@pytest.mark.asyncio()
+async def test_generate_estimate_cloud_upload_failure_does_not_kill_call(
+    db_session: Session,
+    test_contractor: Contractor,
+    tmp_path: Path,
+) -> None:
+    """Cloud upload failure should be logged but not prevent local PDF generation."""
+    storage = MockStorageBackend()
+
+    # Make upload_file raise to simulate a cloud failure
+    async def failing_upload(content: bytes, folder: str, filename: str) -> str:
+        raise RuntimeError("Simulated cloud failure")
+
+    storage.upload_file = failing_upload  # type: ignore[assignment]
+
+    tools = create_estimate_tools(db_session, test_contractor, storage)
+    generate = tools[0].function
+
+    result = await generate(
+        description="Deck build",
+        line_items=[{"description": "Materials", "quantity": 1, "unit_price": 2000.00}],
+        client_name="John Smith",
+    )
+
+    # The estimate should still succeed with the local PDF
+    assert "EST-0001" in result
+    assert "$2,000.00" in result
+
+    # Verify local PDF was saved
+    estimate = db_session.query(Estimate).first()
+    assert estimate is not None
+    pdf_path = tmp_path / "estimates" / f"{estimate.id}.pdf"
+    assert pdf_path.exists()
