@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -6,6 +7,8 @@ from sqlalchemy.orm import Session
 from backend.app.agent.core import AgentResponse
 from backend.app.agent.onboarding import (
     REQUIRED_PROFILE_FIELDS,
+    _match_profile_field,
+    _parse_rate,
     build_onboarding_system_prompt,
     extract_profile_updates,
     is_onboarding_needed,
@@ -14,7 +17,7 @@ from backend.app.agent.profile import get_missing_optional_fields
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService
-from tests.mocks.llm import make_text_response
+from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
 def test_is_onboarding_needed_new_contractor(db_session: Session) -> None:
@@ -248,7 +251,6 @@ def test_build_onboarding_system_prompt_new_contractor(db_session: Session) -> N
     assert "Backshop" in prompt
     assert "new contractor" in prompt
     assert "You already know" not in prompt
-    # Should include instruction to handle requests alongside onboarding
     assert "help them with that request FIRST" in prompt
 
 
@@ -353,6 +355,329 @@ def test_extract_profile_updates_invalid_rate() -> None:
     assert "hourly_rate" not in updates
 
 
+# --- _parse_rate unit tests ---
+
+
+@pytest.mark.parametrize(
+    ("input_value", "expected"),
+    [
+        ("$85/hr", 85.0),
+        ("$85/hour", 85.0),
+        ("$85 per hour", 85.0),
+        ("$85 an hour", 85.0),
+        ("85 dollars", 85.0),
+        ("$85.50", 85.5),
+        ("$85.50/hr", 85.5),
+        ("85", 85.0),
+        ("85.00", 85.0),
+        ("$50-75/hr", 50.0),
+        ("$4500 per project", 4500.0),
+        ("$4,500 per project", 4500.0),
+        ("Usually around $80", 80.0),
+        ("$125/hour for electrical", 125.0),
+        ("  $65 /hr  ", 65.0),
+    ],
+)
+def test_parse_rate_valid_formats(input_value: str, expected: float) -> None:
+    """_parse_rate should extract numeric rate from various natural-language formats."""
+    assert _parse_rate(input_value) == expected
+
+
+@pytest.mark.parametrize(
+    "input_value",
+    [
+        "not sure",
+        "varies",
+        "depends on the job",
+        "TBD",
+        "",
+    ],
+)
+def test_parse_rate_invalid_returns_none(input_value: str) -> None:
+    """_parse_rate should return None for non-numeric values."""
+    assert _parse_rate(input_value) is None
+
+
+# --- extract_profile_updates with various rate formats ---
+
+
+@pytest.mark.parametrize(
+    ("rate_value", "expected_rate"),
+    [
+        ("$85/hour", 85.0),
+        ("$85 per hour", 85.0),
+        ("$85 an hour", 85.0),
+        ("85 dollars", 85.0),
+        ("$85.50", 85.5),
+        ("$50-75/hr", 50.0),
+        ("$4,500 per project", 4500.0),
+        ("Usually around $80", 80.0),
+    ],
+)
+def test_extract_profile_updates_various_rate_formats(
+    rate_value: str, expected_rate: float
+) -> None:
+    """extract_profile_updates should handle various rate formats via _parse_rate."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "hourly_rate", "value": rate_value},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["hourly_rate"] == expected_rate
+
+
+def test_extract_profile_updates_invalid_rate_logs_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Should log a warning when rate parsing fails."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "hourly_rate", "value": "varies"},
+                "result": "ok",
+            },
+        ],
+    )
+    with caplog.at_level("WARNING", logger="backend.app.agent.onboarding"):
+        updates = extract_profile_updates(response)
+    assert "hourly_rate" not in updates
+    assert "Could not parse hourly rate" in caplog.text
+
+
+# --- _match_profile_field unit tests ---
+
+
+@pytest.mark.parametrize(
+    ("key", "expected_field"),
+    [
+        ("name", "name"),
+        ("trade", "trade"),
+        ("location", "location"),
+        ("rate", "hourly_rate"),
+        ("hours", "business_hours"),
+        ("contractor_name", "name"),
+        ("contractor name", "name"),
+        ("full_name", "name"),
+        ("full-name", "name"),
+        ("my name", "name"),
+        ("Name", "name"),
+        ("profession", "trade"),
+        ("specialty", "trade"),
+        ("craft", "trade"),
+        ("occupation", "trade"),
+        ("job", "trade"),
+        ("job_type", "trade"),
+        ("Profession", "trade"),
+        ("city", "location"),
+        ("region", "location"),
+        ("area", "location"),
+        ("based", "location"),
+        ("address", "location"),
+        ("town", "location"),
+        ("based_in", "location"),
+        ("service_area", "location"),
+        ("price", "hourly_rate"),
+        ("pricing", "hourly_rate"),
+        ("hourly", "hourly_rate"),
+        ("charge", "hourly_rate"),
+        ("cost", "hourly_rate"),
+        ("hourly_rate", "hourly_rate"),
+        ("hourly-rate", "hourly_rate"),
+        ("schedule", "business_hours"),
+        ("availability", "business_hours"),
+        ("work_hours", "business_hours"),
+        ("business_hours", "business_hours"),
+        ("work hours", "business_hours"),
+        ("business hours", "business_hours"),
+    ],
+)
+def test_match_profile_field_known_synonyms(key: str, expected_field: str) -> None:
+    """_match_profile_field should match common synonyms to profile fields."""
+    assert _match_profile_field(key) == expected_field
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "favorite_color",
+        "email",
+        "website",
+        "notes",
+        "client_info",
+        "project_details",
+        "phone_number",
+        "random_stuff",
+        "",
+    ],
+)
+def test_match_profile_field_unrelated_keys(key: str) -> None:
+    """_match_profile_field should return None for unrelated keys."""
+    assert _match_profile_field(key) is None
+
+
+def test_match_profile_field_name_no_false_positive_on_username() -> None:
+    """username should NOT match name since name is not a standalone token."""
+    assert _match_profile_field("username") is None
+
+
+def test_match_profile_field_name_no_false_positive_on_filename() -> None:
+    """filename should NOT match name since name is not a standalone token."""
+    assert _match_profile_field("filename") is None
+
+
+def test_match_profile_field_name_no_false_positive_on_hostname() -> None:
+    """hostname should NOT match name since name is not a standalone token."""
+    assert _match_profile_field("hostname") is None
+
+
+# --- extract_profile_updates with fuzzy key matching ---
+
+
+def test_extract_profile_updates_fuzzy_profession_maps_to_trade() -> None:
+    """profession key should map to trade via fuzzy matching."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "profession", "value": "Plumber"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["trade"] == "Plumber"
+
+
+def test_extract_profile_updates_fuzzy_area_maps_to_location() -> None:
+    """service_area key should map to location via fuzzy matching."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "service_area", "value": "Portland, OR"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["location"] == "Portland, OR"
+
+
+def test_extract_profile_updates_fuzzy_pricing_maps_to_hourly_rate() -> None:
+    """pricing key should map to hourly_rate via fuzzy matching."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "pricing", "value": "$95"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["hourly_rate"] == 95.0
+
+
+def test_extract_profile_updates_fuzzy_schedule_maps_to_business_hours() -> None:
+    """schedule key should map to business_hours via fuzzy matching."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "schedule", "value": "Mon-Fri 8am-5pm"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["business_hours"] == "Mon-Fri 8am-5pm"
+
+
+def test_extract_profile_updates_fuzzy_full_name_maps_to_name() -> None:
+    """full_name key should map to name via fuzzy matching."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "full_name", "value": "Sarah Connor"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["name"] == "Sarah Connor"
+
+
+def test_extract_profile_updates_exact_keys_still_work() -> None:
+    """Regression: all original exact keys should still work."""
+    response = AgentResponse(
+        reply_text="All set!",
+        tool_calls=[
+            {"name": "save_fact", "args": {"key": "name", "value": "Mike"}, "result": "ok"},
+            {
+                "name": "save_fact",
+                "args": {"key": "trade", "value": "Plumber"},
+                "result": "ok",
+            },
+            {
+                "name": "save_fact",
+                "args": {"key": "location", "value": "Denver"},
+                "result": "ok",
+            },
+            {
+                "name": "save_fact",
+                "args": {"key": "hourly_rate", "value": "$75"},
+                "result": "ok",
+            },
+            {
+                "name": "save_fact",
+                "args": {"key": "business_hours", "value": "9-5"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["name"] == "Mike"
+    assert updates["trade"] == "Plumber"
+    assert updates["location"] == "Denver"
+    assert updates["hourly_rate"] == 75.0
+    assert updates["business_hours"] == "9-5"
+
+
+def test_extract_profile_updates_fuzzy_does_not_match_unrelated() -> None:
+    """Unrelated keys should not produce profile updates even with fuzzy matching."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "favorite_color", "value": "blue"},
+                "result": "ok",
+            },
+            {
+                "name": "save_fact",
+                "args": {"key": "username", "value": "mike42"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates == {}
+
+
 @pytest.fixture()
 def new_contractor(db_session: Session) -> Contractor:
     """Contractor with no profile -- needs onboarding."""
@@ -395,6 +720,7 @@ def mock_messaging() -> MessagingService:
     service.send_text = AsyncMock(return_value="msg_42")
     service.send_media = AsyncMock(return_value="msg_43")
     service.send_message = AsyncMock(return_value="msg_42")
+    service.send_typing_indicator = AsyncMock()
     return service
 
 
@@ -421,7 +747,6 @@ async def test_onboarding_uses_onboarding_prompt(
     )
 
     assert response.reply_text == "Welcome to Backshop! What's your name?"
-    # Verify the system prompt passed was the onboarding prompt
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
     system_msg = call_args.kwargs["messages"][0]["content"]
     assert "new contractor" in system_msg
@@ -437,7 +762,6 @@ async def test_onboarding_extracts_profile_updates(
     mock_messaging: MessagingService,
 ) -> None:
     """Profile updates from onboarding should be saved to contractor record."""
-    # Simulate agent calling save_fact with name and trade
     resp_mock = make_text_response("Nice to meet you, Mike!")
     tool_call = MagicMock()
     tool_call.function.name = "save_fact"
@@ -490,8 +814,193 @@ async def test_complete_profile_uses_normal_prompt(
     assert response.reply_text == "Let me help with that estimate!"
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
     system_msg = call_args.kwargs["messages"][0]["content"]
-    # Normal prompt should NOT contain onboarding text
     assert "new contractor" not in system_msg
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for #186 / #183: profile updates post-onboarding
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_profile_updates_post_onboarding_single_field(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    mock_messaging: MessagingService,
+) -> None:
+    """Post-onboarding save_fact calls should update Contractor profile fields.
+
+    Regression test for #186: after onboarding, a contractor saying "I moved to
+    Denver" triggers save_fact(key='location', value='Denver, CO') in memory but
+    the Contractor.location field was never updated, causing soul prompt and
+    memory to diverge.
+    """
+    # test_contractor has onboarding complete (name + trade set)
+    assert test_contractor.location == "Portland, OR"
+
+    conv = Conversation(contractor_id=test_contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(conversation_id=conv.id, direction="inbound", body="I moved to Denver")
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    # First LLM call returns a save_fact tool call, second returns text reply
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_loc",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "location", "value": "Denver, CO"}),
+            }
+        ]
+    )
+    text_response = make_text_response("Got it, updated your location to Denver!")
+
+    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(test_contractor)
+    assert test_contractor.location == "Denver, CO"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_profile_updates_post_onboarding_multiple_fields(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    mock_messaging: MessagingService,
+) -> None:
+    """Multiple profile fields updated in a single post-onboarding message.
+
+    When a contractor says "I'm in Denver now and my rate is $100/hr", both
+    location and hourly_rate should be updated on the Contractor record.
+    """
+    assert test_contractor.location == "Portland, OR"
+
+    conv = Conversation(contractor_id=test_contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(
+        conversation_id=conv.id,
+        direction="inbound",
+        body="I moved to Denver and my rate is $100/hr now",
+    )
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    # LLM saves both facts in one round, then gives a text reply
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_loc",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "location", "value": "Denver, CO"}),
+            },
+            {
+                "id": "call_rate",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "hourly_rate", "value": "$100/hr"}),
+            },
+        ]
+    )
+    text_response = make_text_response("Updated your location and rate!")
+
+    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(test_contractor)
+    assert test_contractor.location == "Denver, CO"
+    assert test_contractor.hourly_rate == 100.0
+    # Onboarding should remain complete
+    assert (
+        test_contractor.onboarding_complete is not True
+        or is_onboarding_needed(test_contractor) is False
+    )
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_profile_updates_during_onboarding_still_work(
+    mock_acompletion: object,
+    db_session: Session,
+    new_contractor: Contractor,
+    onboarding_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Profile updates during onboarding still work after the refactor.
+
+    Regression: ensures moving extract_profile_updates outside the onboarding
+    block didn't break the onboarding flow. When a new contractor provides name,
+    trade, and location, onboarding should complete.
+    """
+    assert is_onboarding_needed(new_contractor) is True
+    assert not new_contractor.name  # empty or None
+    assert not new_contractor.trade  # empty or None
+
+    # LLM saves name, trade, and location, then gives a text reply
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_name",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "name", "value": "Sarah"}),
+            },
+            {
+                "id": "call_trade",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "trade", "value": "Plumber"}),
+            },
+            {
+                "id": "call_location",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "location", "value": "Austin, TX"}),
+            },
+        ]
+    )
+    text_response = make_text_response("Welcome Sarah! Great to have a plumber on board.")
+
+    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=new_contractor,
+        message=onboarding_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(new_contractor)
+    assert new_contractor.name == "Sarah"
+    assert new_contractor.trade == "Plumber"
+    assert new_contractor.location == "Austin, TX"
+    assert new_contractor.onboarding_complete is True
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for #180: pre-populated contractors
+# ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
@@ -630,6 +1139,11 @@ async def test_prepopulated_contractor_included_in_heartbeat(
     assert result.action_type == "no_action"  # Clean checks, no message needed
 
 
+# ---------------------------------------------------------------------------
+# Regression tests for #184: onboarding completion message
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
 async def test_onboarding_completion_message_appended(
@@ -676,7 +1190,6 @@ async def test_onboarding_completion_message_appended(
             "arguments": '{"key": "location", "value": "Portland, OR"}',
         },
     ]
-    from tests.mocks.llm import make_tool_call_response
 
     # First call: tool calls to save name/trade; second call: text reply
     mock_acompletion.side_effect = [  # type: ignore[union-attr]
@@ -738,7 +1251,6 @@ async def test_onboarding_completion_message_includes_optional_fields(
             "arguments": '{"key": "trade", "value": "Electrician"}',
         },
     ]
-    from tests.mocks.llm import make_tool_call_response
 
     mock_acompletion.side_effect = [  # type: ignore[union-attr]
         make_tool_call_response(tool_calls, content=None),

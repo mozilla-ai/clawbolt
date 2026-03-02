@@ -34,6 +34,7 @@ def mock_bot() -> MagicMock:
     bot.send_message = AsyncMock(return_value=mock_msg)
     bot.send_photo = AsyncMock(return_value=mock_msg)
     bot.send_document = AsyncMock(return_value=mock_msg)
+    bot.send_chat_action = AsyncMock()
     return bot
 
 
@@ -149,3 +150,29 @@ async def test_send_message_multi_media_caption_once(
     assert len(calls) == 2
     assert calls[0].kwargs["caption"] == "Here are the photos"
     assert calls[1].kwargs["caption"] == ""
+
+
+# ---------------------------------------------------------------------------
+# send_typing_indicator
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_send_typing_indicator(
+    telegram_service: TelegramMessagingService, mock_bot: MagicMock
+) -> None:
+    """send_typing_indicator should call bot.send_chat_action with 'typing'."""
+    from telegram.constants import ChatAction
+
+    await telegram_service.send_typing_indicator(to="123456789")
+    mock_bot.send_chat_action.assert_called_once_with(chat_id=123456789, action=ChatAction.TYPING)
+
+
+@pytest.mark.asyncio()
+async def test_send_typing_indicator_failure_does_not_raise(
+    telegram_service: TelegramMessagingService, mock_bot: MagicMock
+) -> None:
+    """send_typing_indicator should swallow exceptions and not raise."""
+    mock_bot.send_chat_action.side_effect = RuntimeError("Telegram API error")
+    # Should not raise
+    await telegram_service.send_typing_indicator(to="123456789")

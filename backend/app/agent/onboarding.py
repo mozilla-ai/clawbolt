@@ -1,11 +1,14 @@
 """Onboarding conversation logic for new contractors."""
 
-import contextlib
+import logging
+import re
 from typing import Any
 
 from backend.app.agent.core import AgentResponse
 from backend.app.agent.profile import build_onboarding_prompt
 from backend.app.models import Contractor
+
+logger = logging.getLogger(__name__)
 
 # Fields that indicate a contractor has completed onboarding
 REQUIRED_PROFILE_FIELDS = {"name", "trade", "location"}
@@ -59,14 +62,69 @@ def build_onboarding_system_prompt(contractor: Contractor) -> str:
     return "".join(parts)
 
 
+def _parse_rate(value: str) -> float | None:
+    """Extract a numeric rate from natural-language rate descriptions.
+
+    Handles formats like "$85/hr", "$85/hour", "$85 per hour", "$85 an hour",
+    "85 dollars", "$85.50", "$50-75/hr" (extracts first number), "$4500 per project",
+    "Usually around $80", etc.
+
+    Returns None for non-numeric values like "not sure" or "varies".
+    """
+    cleaned = str(value).replace(",", "").strip()
+
+    # Try to find a dollar amount or plain number
+    # Handles: $85, $85/hr, $85.50, 85, 85.00, etc.
+    match = re.search(r"\$?\s*(\d+(?:\.\d+)?)", cleaned)
+    if match:
+        return float(match.group(1))
+
+    return None
+
+
+def _match_profile_field(key: str) -> str | None:
+    """Match a fact key to a contractor profile field using keyword matching.
+
+    Handles common synonyms and variations that an LLM might use instead
+    of the exact expected key names (e.g. "profession" instead of "trade").
+    Returns the canonical profile field name, or None if no match.
+    """
+    key_lower = key.lower().strip().replace("_", " ").replace("-", " ")
+    tokens = key_lower.split()
+
+    # "name" matching - require "name" as a standalone token to avoid false
+    # positives on words like "username" or "filename"
+    if "name" in tokens:
+        return "name"
+
+    if any(
+        w in key_lower for w in ["trade", "profession", "specialty", "craft", "occupation", "job"]
+    ):
+        return "trade"
+    if any(
+        w in key_lower for w in ["location", "city", "region", "area", "based", "address", "town"]
+    ):
+        return "location"
+    if any(w in key_lower for w in ["rate", "price", "pricing", "hourly", "charge", "cost"]):
+        return "hourly_rate"
+    if any(
+        w in key_lower
+        for w in ["hours", "schedule", "availability", "work hours", "business hours"]
+    ):
+        return "business_hours"
+    return None
+
+
 def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
     """Extract profile field updates from agent tool calls during onboarding.
 
     Looks at save_fact calls and maps known categories to profile fields.
+    Uses exact key lookup as the fast path, then falls back to fuzzy keyword
+    matching for synonym keys the LLM might use.
     """
     updates: dict[str, Any] = {}
 
-    # Map memory keys to profile fields
+    # Map memory keys to profile fields (exact fast path)
     key_to_field: dict[str, str] = {
         "name": "name",
         "contractor_name": "name",
@@ -87,11 +145,16 @@ def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
         key = str(args.get("key", "")).lower().strip()
         value = args.get("value", "")
 
-        if key in key_to_field:
-            field = key_to_field[key]
+        # Try exact lookup first, then fall back to fuzzy matching
+        field = key_to_field.get(key) or _match_profile_field(key)
+
+        if field is not None:
             if field == "hourly_rate":
-                with contextlib.suppress(ValueError):
-                    updates[field] = float(str(value).replace("$", "").replace("/hr", "").strip())
+                parsed = _parse_rate(str(value))
+                if parsed is not None:
+                    updates[field] = parsed
+                else:
+                    logger.warning("Could not parse hourly rate from value: %r", value)
             else:
                 updates[field] = str(value)
 
