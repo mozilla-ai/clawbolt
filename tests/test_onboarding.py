@@ -621,6 +621,100 @@ def test_extract_profile_updates_fuzzy_full_name_maps_to_name() -> None:
     assert updates["name"] == "Sarah Connor"
 
 
+# --- soul_text and preferences_json write-path tests (fixes #185) ---
+
+
+def test_extract_profile_updates_communication_style_exact_key() -> None:
+    """communication_style key should map to preferences_json as JSON."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "communication_style", "value": "casual and brief"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert "preferences_json" in updates
+    import json
+
+    parsed = json.loads(updates["preferences_json"])
+    assert parsed == {"communication_style": "casual and brief"}
+
+
+def test_extract_profile_updates_communication_preference_exact_key() -> None:
+    """communication_preference key should map to preferences_json."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "communication_preference", "value": "formal and detailed"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert "preferences_json" in updates
+    import json
+
+    parsed = json.loads(updates["preferences_json"])
+    assert parsed == {"communication_style": "formal and detailed"}
+
+
+def test_extract_profile_updates_fuzzy_tone_maps_to_preferences() -> None:
+    """Fuzzy key 'preferred_tone' should map to preferences_json."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "preferred_tone", "value": "keep it short"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert "preferences_json" in updates
+
+
+def test_extract_profile_updates_soul_text_exact_key() -> None:
+    """soul_text key should map to soul_text field."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {
+                    "key": "soul_text",
+                    "value": "I specialize in custom decks.",
+                },
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["soul_text"] == "I specialize in custom decks."
+
+
+def test_extract_profile_updates_fuzzy_bio_maps_to_soul_text() -> None:
+    """Fuzzy key 'bio' should map to soul_text."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "bio", "value": "20 years in the trade."},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert updates["soul_text"] == "20 years in the trade."
+
+
 def test_extract_profile_updates_exact_keys_still_work() -> None:
     """Regression: all original exact keys should still work."""
     response = AgentResponse(
