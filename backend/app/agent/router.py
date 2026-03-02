@@ -158,6 +158,12 @@ async def handle_inbound_message(
                 contractor.onboarding_complete = True
                 db.commit()
 
+    # Step 6c: Ensure onboarding_complete is set when required fields are already satisfied
+    # (e.g. pre-populated contractors that skipped the onboarding flow)
+    if not contractor.onboarding_complete and not is_onboarding_needed(contractor):
+        contractor.onboarding_complete = True
+        db.commit()
+
     # Step 7: If agent didn't explicitly call send_reply/send_media_reply, send the reply text
     REPLY_TOOL_NAMES = {"send_reply", "send_media_reply"}
     sent_reply = any(tc.get("name") in REPLY_TOOL_NAMES for tc in response.tool_calls)

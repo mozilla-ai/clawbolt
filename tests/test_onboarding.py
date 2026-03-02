@@ -311,3 +311,137 @@ async def test_complete_profile_uses_normal_prompt(
     system_msg = call_args.kwargs["messages"][0]["content"]
     # Normal prompt should NOT contain onboarding text
     assert "new contractor" not in system_msg
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_prepopulated_contractor_gets_onboarding_complete(
+    mock_acompletion: object,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Contractor with pre-populated name and trade should get onboarding_complete=True.
+
+    Regression test for #180: when required profile fields are already filled,
+    is_onboarding_needed() returns False but onboarding_complete was never set
+    because the 'if onboarding:' block was skipped entirely.
+    """
+    contractor = Contractor(
+        user_id="prepopulated-user",
+        name="Sarah",
+        trade="Electrician",
+        channel_identifier="888888888",
+        preferred_channel="telegram",
+        onboarding_complete=False,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    # Sanity: fields are populated but flag is not set
+    assert not contractor.onboarding_complete
+    assert not is_onboarding_needed(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+
+    msg = Message(
+        conversation_id=conv.id,
+        direction="inbound",
+        body="Hey, can you help me with a quote?",
+    )
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+        "Sure thing, Sarah!"
+    )
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(contractor)
+    assert contractor.onboarding_complete is True
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
+@patch("backend.app.agent.heartbeat.run_cheap_checks")
+@patch("backend.app.agent.core.acompletion")
+async def test_prepopulated_contractor_included_in_heartbeat(
+    mock_acompletion: object,
+    mock_cheap_checks: MagicMock,
+    _mock_hours: MagicMock,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Contractor with pre-populated fields should be eligible for heartbeat after first message.
+
+    Regression test for #180: heartbeat queries onboarding_complete=True, so
+    contractors that never got the flag set were permanently excluded.
+    """
+    from backend.app.agent.heartbeat import CheapCheckResult, run_heartbeat_for_contractor
+
+    contractor = Contractor(
+        user_id="prepopulated-hb-user",
+        name="Jake",
+        trade="Plumber",
+        phone="+15550009999",
+        channel_identifier="777777777",
+        preferred_channel="telegram",
+        onboarding_complete=False,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+
+    msg = Message(
+        conversation_id=conv.id,
+        direction="inbound",
+        body="I need help with an estimate",
+    )
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    # Process a message to trigger the onboarding_complete fix
+    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+        "Happy to help, Jake!"
+    )
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(contractor)
+    assert contractor.onboarding_complete is True
+
+    # Now verify heartbeat doesn't skip this contractor
+    mock_cheap_checks.return_value = CheapCheckResult(flags=[])
+    result = await run_heartbeat_for_contractor(
+        db=db_session,
+        contractor=contractor,
+        messaging_service=mock_messaging,
+        daily_counts={},
+        max_daily=5,
+    )
+    # Should get a result (not None which means skipped)
+    assert result is not None
+    assert result.action_type == "no_action"  # Clean checks, no message needed
