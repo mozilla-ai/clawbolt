@@ -4,6 +4,7 @@ import logging
 from collections.abc import Generator
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -13,7 +14,7 @@ from backend.app.database import Base, get_db
 from backend.app.main import app
 
 
-def test_warns_when_both_allowlists_empty(caplog: "logging.LogCaptureFixture") -> None:
+def test_warns_when_both_allowlists_empty(caplog: "pytest.LogCaptureFixture") -> None:
     """Startup should warn when bot token is set but both allowlists are empty."""
     engine = create_engine(
         "sqlite:///:memory:",
@@ -48,7 +49,7 @@ def test_warns_when_both_allowlists_empty(caplog: "logging.LogCaptureFixture") -
     app.dependency_overrides.clear()
 
 
-def test_no_warning_when_chat_ids_set(caplog: "logging.LogCaptureFixture") -> None:
+def test_no_warning_when_chat_ids_set(caplog: "pytest.LogCaptureFixture") -> None:
     """No allowlist warning when TELEGRAM_ALLOWED_CHAT_IDS is configured."""
     engine = create_engine(
         "sqlite:///:memory:",
@@ -83,7 +84,7 @@ def test_no_warning_when_chat_ids_set(caplog: "logging.LogCaptureFixture") -> No
     app.dependency_overrides.clear()
 
 
-def test_no_warning_when_usernames_set(caplog: "logging.LogCaptureFixture") -> None:
+def test_no_warning_when_usernames_set(caplog: "pytest.LogCaptureFixture") -> None:
     """No allowlist warning when TELEGRAM_ALLOWED_USERNAMES is configured."""
     engine = create_engine(
         "sqlite:///:memory:",
@@ -119,7 +120,7 @@ def test_no_warning_when_usernames_set(caplog: "logging.LogCaptureFixture") -> N
 
 
 def test_no_allowlist_warning_when_bot_token_not_set(
-    caplog: "logging.LogCaptureFixture",
+    caplog: "pytest.LogCaptureFixture",
 ) -> None:
     """No allowlist warning when bot token is empty (Telegram not configured)."""
     engine = create_engine(

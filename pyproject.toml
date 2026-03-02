@@ -31,6 +31,7 @@ dev = [
     "pytest-timeout>=2.3",
     "ruff>=0.5",
     "pre-commit>=3.0",
+    "ty>=0.0.1a0",
 ]
 
 [build-system]
@@ -56,3 +57,13 @@ markers = [
     "integration: integration tests that call a real LLM API (requires ANTHROPIC_API_KEY)",
 ]
 addopts = "-m 'not e2e and not integration'"
+
+[tool.ty.environment]
+python-version = "3.11"
+
+[tool.ty.src]
+exclude = [".claude/"]
+
+[tool.ty.rules]
+# Pydantic BaseSettings accepts _env_file but it's not in the type stubs
+unknown-argument = "ignore"
