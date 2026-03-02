@@ -1,5 +1,6 @@
 import logging
 
+from any_llm import AuthenticationError, ContentFilterError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import load_conversation_history
@@ -26,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 # User-facing error/fallback messages
 AGENT_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
+CONTENT_FILTER_FALLBACK = "I wasn't able to process that message. Could you try rephrasing?"
+AUTH_ERROR_FALLBACK = (
+    "I'm experiencing a configuration issue and can't respond right now. "
+    "The admin has been notified."
+)
 MEDIA_DOWNLOAD_ERROR = (
     "I couldn't download your attachment(s). The rest of your message came through fine."
 )
@@ -139,6 +145,20 @@ async def handle_inbound_message(
             conversation_history=conversation_history,
             system_prompt_override=system_prompt_override,
         )
+    except ContentFilterError:
+        logger.warning(
+            "Content filter blocked message %d for contractor %d",
+            message.id,
+            contractor.id,
+        )
+        response = AgentResponse(reply_text=CONTENT_FILTER_FALLBACK)
+    except AuthenticationError:
+        logger.critical(
+            "LLM authentication failed processing message %d for contractor %d",
+            message.id,
+            contractor.id,
+        )
+        response = AgentResponse(reply_text=AUTH_ERROR_FALLBACK)
     except Exception:
         logger.exception(
             "Agent processing failed for message %d, contractor %d",
