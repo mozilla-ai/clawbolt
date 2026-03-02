@@ -69,6 +69,10 @@ def build_onboarding_prompt() -> str:
         "immediately save it using the save_fact tool. Use keys like 'name', 'trade', "
         "'location', 'hourly_rate', or 'business_hours'. Do not wait — save each "
         "piece of information as soon as you learn it.\n\n"
+        "After collecting and saving information, briefly confirm what you've saved "
+        "so the contractor knows you got it right. For example: \"Great, I've got you "
+        'down as Jake, a plumber in Portland." When you still need more information, '
+        "mention what's missing naturally in conversation.\n\n"
         "Be conversational and warm. Don't ask all questions at once — "
         "let the conversation flow naturally. Start by introducing yourself "
         "and asking their name and what kind of work they do."
