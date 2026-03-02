@@ -1,3 +1,4 @@
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,7 +13,7 @@ from backend.app.agent.onboarding import (
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService
-from tests.mocks.llm import make_text_response
+from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
 def test_is_onboarding_needed_new_contractor(db_session: Session) -> None:
@@ -311,3 +312,178 @@ async def test_complete_profile_uses_normal_prompt(
     system_msg = call_args.kwargs["messages"][0]["content"]
     # Normal prompt should NOT contain onboarding text
     assert "new contractor" not in system_msg
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for #186 / #183: profile updates post-onboarding
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_profile_updates_post_onboarding_single_field(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    mock_messaging: MessagingService,
+) -> None:
+    """Post-onboarding save_fact calls should update Contractor profile fields.
+
+    Regression test for #186: after onboarding, a contractor saying "I moved to
+    Denver" triggers save_fact(key='location', value='Denver, CO') in memory but
+    the Contractor.location field was never updated, causing soul prompt and
+    memory to diverge.
+    """
+    # test_contractor has onboarding complete (name + trade set)
+    assert test_contractor.location == "Portland, OR"
+
+    conv = Conversation(contractor_id=test_contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(conversation_id=conv.id, direction="inbound", body="I moved to Denver")
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    # First LLM call returns a save_fact tool call, second returns text reply
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_loc",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "location", "value": "Denver, CO"}),
+            }
+        ]
+    )
+    text_response = make_text_response("Got it, updated your location to Denver!")
+
+    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(test_contractor)
+    assert test_contractor.location == "Denver, CO"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_profile_updates_post_onboarding_multiple_fields(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    mock_messaging: MessagingService,
+) -> None:
+    """Multiple profile fields updated in a single post-onboarding message.
+
+    When a contractor says "I'm in Denver now and my rate is $100/hr", both
+    location and hourly_rate should be updated on the Contractor record.
+    """
+    assert test_contractor.location == "Portland, OR"
+
+    conv = Conversation(contractor_id=test_contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(
+        conversation_id=conv.id,
+        direction="inbound",
+        body="I moved to Denver and my rate is $100/hr now",
+    )
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    # LLM saves both facts in one round, then gives a text reply
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_loc",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "location", "value": "Denver, CO"}),
+            },
+            {
+                "id": "call_rate",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "hourly_rate", "value": "$100/hr"}),
+            },
+        ]
+    )
+    text_response = make_text_response("Updated your location and rate!")
+
+    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(test_contractor)
+    assert test_contractor.location == "Denver, CO"
+    assert test_contractor.hourly_rate == 100.0
+    # Onboarding should remain complete
+    assert (
+        test_contractor.onboarding_complete is not True
+        or is_onboarding_needed(test_contractor) is False
+    )
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_profile_updates_during_onboarding_still_work(
+    mock_acompletion: object,
+    db_session: Session,
+    new_contractor: Contractor,
+    onboarding_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Profile updates during onboarding still work after the refactor.
+
+    Regression: ensures moving extract_profile_updates outside the onboarding
+    block didn't break the onboarding flow. When a new contractor provides name
+    and trade, onboarding should complete.
+    """
+    assert is_onboarding_needed(new_contractor) is True
+    assert not new_contractor.name  # empty or None
+    assert not new_contractor.trade  # empty or None
+
+    # LLM saves name and trade, then gives a text reply
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_name",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "name", "value": "Sarah"}),
+            },
+            {
+                "id": "call_trade",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "trade", "value": "Plumber"}),
+            },
+        ]
+    )
+    text_response = make_text_response("Welcome Sarah! Great to have a plumber on board.")
+
+    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=new_contractor,
+        message=onboarding_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    db_session.refresh(new_contractor)
+    assert new_contractor.name == "Sarah"
+    assert new_contractor.trade == "Plumber"
+    assert new_contractor.onboarding_complete is True
