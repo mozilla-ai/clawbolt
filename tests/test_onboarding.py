@@ -273,6 +273,26 @@ def test_build_onboarding_system_prompt_partial_profile(db_session: Session) -> 
     assert "Don't re-ask" in prompt
 
 
+def test_build_onboarding_system_prompt_includes_known_communication_style(
+    db_session: Session,
+) -> None:
+    """Onboarding prompt should include known communication style in 'already know' list."""
+    contractor = Contractor(
+        user_id="style-known-user",
+        phone="+15550007777",
+        name="Jake",
+        preferences_json=json.dumps({"communication_style": "casual and brief"}),
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    prompt = build_onboarding_system_prompt(contractor)
+    assert "You already know" in prompt
+    assert "casual and brief" in prompt
+    assert "Don't re-ask" in prompt
+
+
 def test_extract_profile_updates_name_and_trade() -> None:
     """Should extract name and trade from save_fact tool calls."""
     response = AgentResponse(
@@ -638,8 +658,6 @@ def test_extract_profile_updates_communication_style_exact_key() -> None:
     )
     updates = extract_profile_updates(response)
     assert "preferences_json" in updates
-    import json
-
     parsed = json.loads(updates["preferences_json"])
     assert parsed == {"communication_style": "casual and brief"}
 
@@ -658,8 +676,6 @@ def test_extract_profile_updates_communication_preference_exact_key() -> None:
     )
     updates = extract_profile_updates(response)
     assert "preferences_json" in updates
-    import json
-
     parsed = json.loads(updates["preferences_json"])
     assert parsed == {"communication_style": "formal and detailed"}
 
@@ -713,6 +729,28 @@ def test_extract_profile_updates_fuzzy_bio_maps_to_soul_text() -> None:
     )
     updates = extract_profile_updates(response)
     assert updates["soul_text"] == "20 years in the trade."
+
+
+def test_extract_profile_updates_style_key_no_false_positive() -> None:
+    """Job-related 'style' keys like cabinet_style should NOT map to preferences."""
+    response = AgentResponse(
+        reply_text="Got it!",
+        tool_calls=[
+            {
+                "name": "save_fact",
+                "args": {"key": "cabinet_style", "value": "shaker"},
+                "result": "ok",
+            },
+            {
+                "name": "save_fact",
+                "args": {"key": "project_brief", "value": "deck replacement"},
+                "result": "ok",
+            },
+        ],
+    )
+    updates = extract_profile_updates(response)
+    assert "preferences_json" not in updates
+    assert "soul_text" not in updates
 
 
 def test_extract_profile_updates_exact_keys_still_work() -> None:

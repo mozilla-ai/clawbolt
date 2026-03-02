@@ -49,6 +49,15 @@ def build_onboarding_system_prompt(contractor: Contractor) -> str:
         known.append(f"- Rate: ${contractor.hourly_rate:.0f}/hour")
     if contractor.business_hours and contractor.business_hours.strip():
         known.append(f"- Business hours: {contractor.business_hours}")
+    if contractor.preferences_json and contractor.preferences_json != "{}":
+        try:
+            prefs = json.loads(contractor.preferences_json)
+            if isinstance(prefs, dict):
+                style = prefs.get("communication_style")
+                if style:
+                    known.append(f"- Communication style: {style}")
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     parts = [base]
     if known:
@@ -113,9 +122,7 @@ def _match_profile_field(key: str) -> str | None:
         for w in ["hours", "schedule", "availability", "work hours", "business hours"]
     ):
         return "business_hours"
-    if any(
-        w in key_lower for w in ["communication", "tone", "style", "formality", "verbose", "brief"]
-    ):
+    if any(w in key_lower for w in ["communication", "tone", "formality"]):
         return "preferences_json"
     if any(w in key_lower for w in ["soul", "bio", "about me", "personality"]):
         return "soul_text"

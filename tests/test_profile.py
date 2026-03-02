@@ -1,3 +1,5 @@
+import json
+
 import pytest
 from sqlalchemy.orm import Session
 
@@ -64,8 +66,6 @@ def test_build_soul_prompt_minimal_profile() -> None:
 
 def test_build_soul_prompt_includes_preferences_json() -> None:
     """Soul prompt should render communication style from preferences_json."""
-    import json
-
     contractor = Contractor(
         user_id="test",
         name="Jake",
