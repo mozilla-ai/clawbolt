@@ -26,9 +26,9 @@ class StorageBackend(ABC):
     Drive, local filesystem, etc.).  The interface is intentionally minimal so
     that adding new backends is straightforward.
 
-    Multi-tenant note: today one backend instance is shared across all
-    contractors.  A future iteration will allow per-contractor credentials so
-    each contractor's files go to their own cloud account.
+    Per-contractor isolation: when a contractor_id is provided, each backend
+    isolates files into a per-contractor subdirectory (local) or path prefix
+    (cloud).  A future Phase 2 will add shared cloud folders per contractor.
     """
 
     @abstractmethod
