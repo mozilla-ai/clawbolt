@@ -17,7 +17,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter()
 
-PDF_DIR = Path(settings.pdf_storage_dir)
+PDF_BASE_DIR = Path(settings.pdf_storage_dir)
 
 
 @router.get("/estimates/{estimate_id}/pdf")
@@ -30,7 +30,7 @@ async def serve_estimate_pdf(
     # Verify the estimate exists and belongs to the current user
     get_user_estimate(db, current_user, estimate_id)
 
-    pdf_path = PDF_DIR / f"{estimate_id}.pdf"
+    pdf_path = PDF_BASE_DIR / str(current_user.id) / f"{estimate_id}.pdf"
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="Estimate PDF not found")
 
