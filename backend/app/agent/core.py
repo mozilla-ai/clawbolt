@@ -1,6 +1,7 @@
 import json
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from any_llm import acompletion
 from sqlalchemy.orm import Session
@@ -15,6 +16,15 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 5
 CONTEXT_QUERY_MAX_LENGTH = 100
+
+# Conservative default; most models support 128K+ but we leave room for output
+MAX_INPUT_TOKENS = 120_000
+
+
+def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
+    """Rough token estimate: ~4 chars per token for English text."""
+    return sum(len(str(m.get("content", ""))) // 4 for m in messages)
+
 
 SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contractors.
 
@@ -99,6 +109,24 @@ class BackshopAgent:
             messages.extend(conversation_history)
 
         messages.append({"role": "user", "content": message_context})
+
+        # Trim oldest conversation history if estimated tokens exceed the limit
+        original_count = len(messages)
+        estimated = _estimate_tokens(messages)
+        while estimated > MAX_INPUT_TOKENS and len(messages) > 2:
+            # Remove the oldest conversation history message
+            # (keep system prompt at [0] and latest user message at [-1])
+            messages.pop(1)
+            estimated = _estimate_tokens(messages)
+        trimmed_count = original_count - len(messages)
+        if trimmed_count > 0:
+            logger.warning(
+                "Trimmed %d message(s) from conversation history to fit context window "
+                "(estimated %d tokens, limit %d)",
+                trimmed_count,
+                _estimate_tokens(messages),
+                MAX_INPUT_TOKENS,
+            )
 
         tool_schemas = [tool_to_openai_schema(t) for t in self.tools] if self.tools else None
 

@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import MAX_INPUT_TOKENS, BackshopAgent, _estimate_tokens
 from backend.app.agent.tools.base import Tool
 from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
@@ -370,3 +370,160 @@ async def test_agent_handles_malformed_tool_arguments(
 
     # The failure should be recorded in actions_taken
     assert any("bad args" in a for a in response.actions_taken)
+
+
+# ---------------------------------------------------------------------------
+# Context window overflow protection tests (issue #172)
+# ---------------------------------------------------------------------------
+
+
+def test_estimate_tokens_returns_reasonable_estimate() -> None:
+    """_estimate_tokens should return a rough char-based token count."""
+    messages = [
+        {"role": "system", "content": "Hello world"},  # 11 chars -> 2 tokens
+        {"role": "user", "content": "How are you?"},  # 12 chars -> 3 tokens
+    ]
+    result = _estimate_tokens(messages)
+    # 11 // 4 + 12 // 4 = 2 + 3 = 5
+    assert result == 5
+
+
+def test_estimate_tokens_handles_empty_messages() -> None:
+    """_estimate_tokens should handle empty content gracefully."""
+    messages: list[dict[str, object]] = [
+        {"role": "system", "content": ""},
+        {"role": "user"},  # no content key at all
+    ]
+    result = _estimate_tokens(messages)
+    assert result == 0
+
+
+def test_estimate_tokens_handles_empty_list() -> None:
+    """_estimate_tokens should return 0 for an empty message list."""
+    assert _estimate_tokens([]) == 0
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_trims_history_when_exceeding_token_limit(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Messages should be trimmed when estimated tokens exceed MAX_INPUT_TOKENS."""
+    mock_acompletion.return_value = make_text_response("Trimmed reply!")
+
+    # Create a huge conversation history that exceeds MAX_INPUT_TOKENS
+    # Each message ~4000 chars = ~1000 tokens; need >120K tokens = >120 messages
+    big_content = "x" * 4000
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    response = await agent.process_message("Current message", conversation_history=long_history)
+
+    assert response.reply_text == "Trimmed reply!"
+
+    # Verify that the messages sent to acompletion were trimmed
+    call_args = mock_acompletion.call_args
+    messages = call_args.kwargs["messages"]
+    total_tokens = _estimate_tokens(messages)
+    assert total_tokens <= MAX_INPUT_TOKENS
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_preserves_system_and_user_during_trimming(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """System prompt and latest user message must survive trimming."""
+    mock_acompletion.return_value = make_text_response("Ok!")
+
+    # Create history that will trigger trimming
+    big_content = "x" * 4000
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    await agent.process_message(
+        "My important question",
+        conversation_history=long_history,
+        system_prompt_override="Custom system prompt",
+    )
+
+    call_args = mock_acompletion.call_args
+    messages = call_args.kwargs["messages"]
+
+    # System prompt is always first
+    assert messages[0]["role"] == "system"
+    assert messages[0]["content"] == "Custom system prompt"
+
+    # Latest user message is always last
+    assert messages[-1]["role"] == "user"
+    assert messages[-1]["content"] == "My important question"
+
+    # At least 2 messages: system + user
+    assert len(messages) >= 2
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_does_not_trim_normal_conversations(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Normal-sized conversations should not be trimmed."""
+    mock_acompletion.return_value = make_text_response("Got it!")
+
+    history = [
+        {"role": "user", "content": "Hi, I need help"},
+        {"role": "assistant", "content": "Hello! How can I help?"},
+        {"role": "user", "content": "Can you estimate a deck?"},
+        {"role": "assistant", "content": "Sure, what size?"},
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    await agent.process_message(
+        "12x12 composite deck",
+        conversation_history=history,
+        system_prompt_override="System prompt",
+    )
+
+    call_args = mock_acompletion.call_args
+    messages = call_args.kwargs["messages"]
+
+    # system + 4 history + 1 current = 6 — nothing trimmed
+    assert len(messages) == 6
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_logs_warning_when_trimming(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A warning should be logged when conversation history is trimmed."""
+    mock_acompletion.return_value = make_text_response("Ok!")
+
+    big_content = "x" * 4000
+    long_history = [
+        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+
+    with caplog.at_level("WARNING", logger="backend.app.agent.core"):
+        await agent.process_message(
+            "Current message",
+            conversation_history=long_history,
+            system_prompt_override="Short system prompt",
+        )
+
+    assert any("Trimmed" in record.message for record in caplog.records)
