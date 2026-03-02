@@ -1,8 +1,15 @@
+import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
 
-from any_llm import acompletion
+from any_llm import (
+    AuthenticationError,
+    ContentFilterError,
+    ContextLengthExceededError,
+    RateLimitError,
+    acompletion,
+)
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
@@ -15,6 +22,9 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 5
 CONTEXT_QUERY_MAX_LENGTH = 100
+RATE_LIMIT_RETRY_DELAY = 2.0
+# Keep the most recent N messages (plus system prompt) when trimming for context length
+CONTEXT_TRIM_KEEP_RECENT = 4
 
 SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contractors.
 
@@ -83,6 +93,77 @@ class BackshopAgent:
             memory_context=memory_context or "(No memories saved yet)",
         )
 
+    async def _call_llm_with_retry(
+        self,
+        messages: list[dict[str, object]],
+        tool_schemas: list[dict[str, object]] | None,
+        llm_kwargs: dict[str, object],
+    ) -> object:
+        """Call acompletion with typed exception handling and retry logic.
+
+        Handles RateLimitError (retry once after delay) and
+        ContextLengthExceededError (trim history and retry once).
+        ContentFilterError and AuthenticationError are re-raised with
+        appropriate logging so the caller can produce a user-facing message.
+        """
+        try:
+            return await acompletion(
+                model=settings.llm_model,
+                provider=settings.llm_provider,
+                api_base=settings.llm_api_base,
+                messages=messages,
+                tools=tool_schemas,
+                max_tokens=settings.llm_max_tokens_agent,
+                **llm_kwargs,
+            )
+        except RateLimitError:
+            logger.warning("Rate limit hit, retrying after %.1fs delay", RATE_LIMIT_RETRY_DELAY)
+            await asyncio.sleep(RATE_LIMIT_RETRY_DELAY)
+            return await acompletion(
+                model=settings.llm_model,
+                provider=settings.llm_provider,
+                api_base=settings.llm_api_base,
+                messages=messages,
+                tools=tool_schemas,
+                max_tokens=settings.llm_max_tokens_agent,
+                **llm_kwargs,
+            )
+        except ContextLengthExceededError:
+            trimmed = self._trim_messages(messages)
+            logger.warning(
+                "Context length exceeded, trimmed from %d to %d messages and retrying",
+                len(messages),
+                len(trimmed),
+            )
+            return await acompletion(
+                model=settings.llm_model,
+                provider=settings.llm_provider,
+                api_base=settings.llm_api_base,
+                messages=trimmed,
+                tools=tool_schemas,
+                max_tokens=settings.llm_max_tokens_agent,
+                **llm_kwargs,
+            )
+        except ContentFilterError:
+            logger.warning("Content blocked by provider safety filter")
+            raise
+        except AuthenticationError:
+            logger.critical("LLM authentication failed — check API key configuration")
+            raise
+
+    @staticmethod
+    def _trim_messages(
+        messages: list[dict[str, object]],
+    ) -> list[dict[str, object]]:
+        """Trim conversation messages to fit within context limits.
+
+        Keeps the system prompt (first message) and the most recent messages.
+        """
+        if len(messages) <= CONTEXT_TRIM_KEEP_RECENT + 1:
+            return messages
+        # system prompt + last N messages
+        return [messages[0], *messages[-(CONTEXT_TRIM_KEEP_RECENT):]]
+
     async def process_message(
         self,
         message_context: str,
@@ -114,15 +195,7 @@ class BackshopAgent:
         reply_text = ""
 
         for _round in range(MAX_TOOL_ROUNDS):
-            response = await acompletion(
-                model=settings.llm_model,
-                provider=settings.llm_provider,
-                api_base=settings.llm_api_base,
-                messages=messages,
-                tools=tool_schemas,
-                max_tokens=settings.llm_max_tokens_agent,
-                **llm_kwargs,
-            )
+            response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
 
             choice = response.choices[0]
 
