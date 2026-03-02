@@ -5,10 +5,12 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.core import AgentResponse
 from backend.app.agent.onboarding import (
+    REQUIRED_PROFILE_FIELDS,
     build_onboarding_system_prompt,
     extract_profile_updates,
     is_onboarding_needed,
 )
+from backend.app.agent.profile import get_missing_optional_fields
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService
@@ -36,7 +38,7 @@ def test_is_onboarding_needed_partial_profile(db_session: Session) -> None:
 
 
 def test_is_onboarding_needed_complete_profile(test_contractor: Contractor) -> None:
-    """Contractor with name and trade does not need onboarding."""
+    """Contractor with name, trade, and location does not need onboarding."""
     assert is_onboarding_needed(test_contractor) is False
 
 
@@ -64,6 +66,175 @@ def test_is_onboarding_needed_empty_strings(db_session: Session) -> None:
     db_session.refresh(contractor)
 
     assert is_onboarding_needed(contractor) is True
+
+
+def test_required_profile_fields_includes_location() -> None:
+    """REQUIRED_PROFILE_FIELDS should include location."""
+    assert "location" in REQUIRED_PROFILE_FIELDS
+
+
+def test_is_onboarding_needed_name_trade_but_no_location(db_session: Session) -> None:
+    """Contractor with name and trade but no location still needs onboarding."""
+    contractor = Contractor(
+        user_id="no-location-user",
+        phone="+15550006666",
+        name="Jake",
+        trade="Plumber",
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    assert is_onboarding_needed(contractor) is True
+
+
+def test_get_missing_optional_fields_all_missing(db_session: Session) -> None:
+    """Should return all optional field labels when none are set."""
+    contractor = Contractor(
+        user_id="missing-optional",
+        phone="+15550008888",
+        name="Test",
+        trade="Electrician",
+        location="Denver, CO",
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    missing = get_missing_optional_fields(contractor)
+    assert "rates" in missing
+    assert "business hours" in missing
+
+
+def test_get_missing_optional_fields_none_missing(db_session: Session) -> None:
+    """Should return empty list when all optional fields are set."""
+    contractor = Contractor(
+        user_id="all-filled",
+        phone="+15550009999",
+        name="Test",
+        trade="Electrician",
+        location="Denver, CO",
+        hourly_rate=85.0,
+        business_hours="Mon-Fri 8-5",
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    missing = get_missing_optional_fields(contractor)
+    assert missing == []
+
+
+def test_get_missing_optional_fields_partial(db_session: Session) -> None:
+    """Should return only the labels of missing optional fields."""
+    contractor = Contractor(
+        user_id="partial-optional",
+        phone="+15550010000",
+        name="Test",
+        trade="Plumber",
+        location="Portland, OR",
+        hourly_rate=75.0,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    missing = get_missing_optional_fields(contractor)
+    assert missing == ["business hours"]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_normal_prompt_includes_missing_optional_nudge(
+    mock_acompletion: object,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Normal system prompt should include a nudge for missing optional fields."""
+    contractor = Contractor(
+        user_id="nudge-user",
+        phone="+15550011111",
+        channel_identifier="111111111",
+        name="Sarah",
+        trade="Electrician",
+        location="Austin, TX",
+        onboarding_complete=True,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(conversation_id=conv.id, direction="inbound", body="Hey there")
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["messages"][0]["content"]
+    assert "rates" in system_msg
+    assert "business hours" in system_msg
+    assert "opportunity comes up naturally" in system_msg
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_normal_prompt_no_nudge_when_optional_fields_filled(
+    mock_acompletion: object,
+    db_session: Session,
+    mock_messaging: MessagingService,
+) -> None:
+    """Normal system prompt should NOT include nudge when all optional fields filled."""
+    contractor = Contractor(
+        user_id="complete-user",
+        phone="+15550012222",
+        channel_identifier="222222222",
+        name="Bob",
+        trade="Plumber",
+        location="Seattle, WA",
+        hourly_rate=90.0,
+        business_hours="Mon-Fri 7-4",
+        onboarding_complete=True,
+    )
+    db_session.add(contractor)
+    db_session.commit()
+    db_session.refresh(contractor)
+
+    conv = Conversation(contractor_id=contractor.id)
+    db_session.add(conv)
+    db_session.commit()
+    db_session.refresh(conv)
+    msg = Message(conversation_id=conv.id, direction="inbound", body="What's up")
+    db_session.add(msg)
+    db_session.commit()
+    db_session.refresh(msg)
+
+    mock_acompletion.return_value = make_text_response("Hey!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=contractor,
+        message=msg,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["messages"][0]["content"]
+    assert "opportunity comes up naturally" not in system_msg
 
 
 def test_build_onboarding_system_prompt_new_contractor(db_session: Session) -> None:
@@ -105,8 +276,16 @@ def test_extract_profile_updates_name_and_trade() -> None:
     response = AgentResponse(
         reply_text="Nice to meet you!",
         tool_calls=[
-            {"name": "save_fact", "args": {"key": "name", "value": "Mike Johnson"}, "result": "ok"},
-            {"name": "save_fact", "args": {"key": "trade", "value": "Electrician"}, "result": "ok"},
+            {
+                "name": "save_fact",
+                "args": {"key": "name", "value": "Mike Johnson"},
+                "result": "ok",
+            },
+            {
+                "name": "save_fact",
+                "args": {"key": "trade", "value": "Electrician"},
+                "result": "ok",
+            },
         ],
     )
     updates = extract_profile_updates(response)
@@ -176,7 +355,7 @@ def test_extract_profile_updates_invalid_rate() -> None:
 
 @pytest.fixture()
 def new_contractor(db_session: Session) -> Contractor:
-    """Contractor with no profile — needs onboarding."""
+    """Contractor with no profile -- needs onboarding."""
     contractor = Contractor(
         user_id="new-user-onboard",
         phone="+15559999999",
@@ -296,7 +475,9 @@ async def test_complete_profile_uses_normal_prompt(
     db_session.commit()
     db_session.refresh(msg)
 
-    mock_acompletion.return_value = make_text_response("Let me help with that estimate!")  # type: ignore[union-attr]
+    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+        "Let me help with that estimate!"
+    )
 
     response = await handle_inbound_message(
         db=db_session,

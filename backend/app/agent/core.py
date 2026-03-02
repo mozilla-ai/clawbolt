@@ -6,7 +6,7 @@ from any_llm import acompletion
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
-from backend.app.agent.profile import build_soul_prompt
+from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
 from backend.app.agent.tools.base import Tool, tool_to_openai_schema
 from backend.app.config import settings
 from backend.app.models import Contractor
@@ -77,11 +77,22 @@ class BackshopAgent:
             self.contractor.id,
             query=message_context[:CONTEXT_QUERY_MAX_LENGTH] if message_context else None,
         )
-        return SYSTEM_PROMPT_TEMPLATE.format(
+        prompt = SYSTEM_PROMPT_TEMPLATE.format(
             contractor_name=self.contractor.name or "Contractor",
             soul_prompt=soul_prompt,
             memory_context=memory_context or "(No memories saved yet)",
         )
+
+        missing = get_missing_optional_fields(self.contractor)
+        if missing:
+            missing_str = " and ".join(missing)
+            prompt += (
+                f"\nNote: You haven't learned this contractor's {missing_str} yet. "
+                "If the opportunity comes up naturally in conversation, "
+                "try to learn and save these details.\n"
+            )
+
+        return prompt
 
     async def process_message(
         self,

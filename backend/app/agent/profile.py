@@ -52,6 +52,15 @@ def build_soul_prompt(contractor: Contractor) -> str:
     return "\n".join(lines)
 
 
+def get_missing_optional_fields(contractor: Contractor) -> list[str]:
+    """Return labels for optional profile fields that are still empty."""
+    optional: dict[str, str] = {
+        "hourly_rate": "rates",
+        "business_hours": "business hours",
+    }
+    return [label for field, label in optional.items() if not getattr(contractor, field, None)]
+
+
 def build_onboarding_prompt() -> str:
     """Build the system prompt for the onboarding conversation."""
     return (

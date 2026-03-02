@@ -8,7 +8,7 @@ from backend.app.agent.profile import build_onboarding_prompt
 from backend.app.models import Contractor
 
 # Fields that indicate a contractor has completed onboarding
-REQUIRED_PROFILE_FIELDS = {"name", "trade"}
+REQUIRED_PROFILE_FIELDS = {"name", "trade", "location"}
 
 
 def is_onboarding_needed(contractor: Contractor) -> bool:
