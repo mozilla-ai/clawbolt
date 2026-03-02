@@ -18,6 +18,9 @@ DATABASE_URL=sqlite:// uv run pytest -v
 uv run ruff check backend/ tests/
 uv run ruff format --check backend/ tests/
 
+# Type checking
+uv run ty check --python .venv backend/ tests/
+
 # Database migrations
 uv run alembic upgrade head
 uv run alembic revision --autogenerate -m "description"
@@ -30,7 +33,7 @@ uv run alembic revision --autogenerate -m "description"
 - Telegram Bot API for messaging (via python-telegram-bot), faster-whisper for audio transcription
 - ReportLab for PDF generation, Dropbox/Google Drive for file storage
 - PostgreSQL (production), in-memory SQLite + StaticPool (tests)
-- uv + hatchling build system, ruff linting
+- uv + hatchling build system, ruff linting, ty type checking
 
 ## Coding Standards
 
@@ -72,6 +75,7 @@ Every change must pass all checks before it's considered complete:
 uv run pytest -v                                  # tests pass
 uv run ruff check backend/ tests/                 # lint passes
 uv run ruff format --check backend/ tests/        # format passes
+uv run ty check --python .venv backend/ tests/    # type checking passes
 ```
 
 - Bug fixes include regression tests

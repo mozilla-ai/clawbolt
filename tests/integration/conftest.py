@@ -1,6 +1,7 @@
 """Shared fixtures for integration tests that hit a real LLM API."""
 
 import os
+from collections.abc import Generator
 
 import pytest
 from sqlalchemy import create_engine
@@ -19,7 +20,7 @@ skip_without_anthropic_key = pytest.mark.skipif(
 
 
 @pytest.fixture()
-def integration_db() -> Session:
+def integration_db() -> Generator[Session]:
     """Fresh in-memory SQLite for integration tests."""
     engine = create_engine(
         "sqlite:///:memory:",

@@ -15,8 +15,10 @@ import json
 import logging
 import re
 from dataclasses import dataclass, field
+from typing import Any, cast
 
 from any_llm import acompletion
+from any_llm.types.completion import ChatCompletion
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
@@ -364,20 +366,26 @@ async def evaluate_heartbeat_need(
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
 
-    llm_kwargs: dict[str, object] = {}
+    llm_kwargs: dict[str, Any] = {}
     if provider == "openai":
         llm_kwargs["user"] = str(contractor.id)
 
-    response = await acompletion(
-        model=model,
-        provider=provider,
-        api_base=settings.llm_api_base,
-        messages=[
-            {"role": "system", "content": prompt},
-            {"role": "user", "content": "Compose a proactive message based on the flags above."},
-        ],
-        max_tokens=settings.llm_max_tokens_heartbeat,
-        **llm_kwargs,
+    response = cast(
+        ChatCompletion,
+        await acompletion(
+            model=model,
+            provider=provider,
+            api_base=settings.llm_api_base,
+            messages=[
+                {"role": "system", "content": prompt},
+                {
+                    "role": "user",
+                    "content": "Compose a proactive message based on the flags above.",
+                },
+            ],
+            max_tokens=settings.llm_max_tokens_heartbeat,
+            **llm_kwargs,
+        ),
     )
     raw = response.choices[0].message.content or ""
     raw = _strip_code_fences(raw)

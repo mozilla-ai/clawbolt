@@ -7,8 +7,11 @@ import json
 import logging
 from abc import ABC, abstractmethod
 from pathlib import Path
+from typing import Any
 
 import dropbox
+import dropbox.exceptions
+import dropbox.files
 
 from backend.app.config import Settings, settings
 
@@ -82,9 +85,9 @@ class DropboxStorage(StorageBackend):
 class GoogleDriveStorage(StorageBackend):
     def __init__(self, credentials_json: str) -> None:
         self.credentials_json = credentials_json
-        self._service: object = None
+        self._service: Any = None
 
-    def _get_service(self) -> object:
+    def _get_service(self) -> Any:
         if self._service is None:
             from google.oauth2.credentials import Credentials
             from googleapiclient.discovery import build
@@ -103,7 +106,7 @@ class GoogleDriveStorage(StorageBackend):
         result = await asyncio.to_thread(
             service.files()
             .create(body=file_metadata, media_body=media, fields="id,webViewLink")
-            .execute  # type: ignore[union-attr]
+            .execute
         )
         url = result.get("webViewLink", result.get("id", ""))
         logger.info("Google Drive upload complete: %s/%s -> %s", path, filename, url)
@@ -116,7 +119,7 @@ class GoogleDriveStorage(StorageBackend):
             "mimeType": "application/vnd.google-apps.folder",
         }
         result = await asyncio.to_thread(
-            service.files().create(body=folder_metadata, fields="id").execute  # type: ignore[union-attr]
+            service.files().create(body=folder_metadata, fields="id").execute
         )
         return result.get("id", "")
 
@@ -124,7 +127,7 @@ class GoogleDriveStorage(StorageBackend):
         service = self._get_service()
         query = f"'{path}' in parents and trashed=false"
         result = await asyncio.to_thread(
-            service.files().list(q=query, fields="files(id,name,webViewLink)").execute  # type: ignore[union-attr]
+            service.files().list(q=query, fields="files(id,name,webViewLink)").execute
         )
         files: list[dict[str, str]] = []
         for f in result.get("files", []):

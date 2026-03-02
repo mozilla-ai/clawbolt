@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -40,7 +41,7 @@ from backend.app.models import (
 
 
 @pytest.fixture()
-def db() -> Session:
+def db() -> Generator[Session]:
     engine = create_engine(
         "sqlite:///:memory:",
         connect_args={"check_same_thread": False},

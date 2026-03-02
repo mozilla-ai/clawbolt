@@ -95,6 +95,7 @@ async def test_generate_estimate_pdf_generated(
 
     # Verify PDF file was actually written in the temp directory
     estimate = db_session.query(Estimate).first()
+    assert estimate is not None
     pdf_path = tmp_path / "estimates" / f"{estimate.id}.pdf"
     assert pdf_path.exists()
     assert pdf_path.stat().st_size > 0

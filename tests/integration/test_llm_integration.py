@@ -74,8 +74,9 @@ async def test_agent_message_format_accepted(
 async def test_acompletion_direct_call() -> None:
     """Verify acompletion() works directly with anthropic provider."""
     from any_llm import acompletion
+    from any_llm.types.completion import ChatCompletion
 
-    response = await acompletion(
+    raw = await acompletion(
         model=_ANTHROPIC_MODEL,
         provider="anthropic",
         messages=[
@@ -84,6 +85,7 @@ async def test_acompletion_direct_call() -> None:
         ],
         max_tokens=50,
     )
+    assert isinstance(raw, ChatCompletion)
 
-    assert response.choices
-    assert response.choices[0].message.content
+    assert raw.choices
+    assert raw.choices[0].message.content

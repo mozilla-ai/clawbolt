@@ -3,6 +3,7 @@
 import datetime
 import logging
 from pathlib import Path
+from typing import Any
 
 from sqlalchemy.orm import Session
 
@@ -30,7 +31,7 @@ def create_estimate_tools(
 
     async def generate_estimate(
         description: str,
-        line_items: list[dict[str, object]],
+        line_items: list[dict[str, Any]],
         client_name: str | None = None,
         client_address: str | None = None,
         terms: str | None = None,
@@ -39,7 +40,7 @@ def create_estimate_tools(
         today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
 
         # Calculate totals
-        processed_items: list[dict[str, object]] = []
+        processed_items: list[dict[str, Any]] = []
         subtotal = 0.0
         for item in line_items:
             try:

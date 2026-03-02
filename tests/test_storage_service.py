@@ -237,6 +237,7 @@ async def test_dropbox_upload_existing_link_fallback(
 ) -> None:
     """When shared link creation fails, should fall back to list_shared_links."""
     import dropbox as dbx_mod
+    import dropbox.exceptions
 
     mock_dbx_client.sharing_create_shared_link_with_settings.side_effect = (
         dbx_mod.exceptions.ApiError("", None, None, None)
@@ -257,6 +258,7 @@ async def test_dropbox_upload_no_links_fallback(
 ) -> None:
     """When both create and list fail, should return the file path."""
     import dropbox as dbx_mod
+    import dropbox.exceptions
 
     mock_dbx_client.sharing_create_shared_link_with_settings.side_effect = (
         dbx_mod.exceptions.ApiError("", None, None, None)
@@ -285,6 +287,7 @@ async def test_dropbox_create_folder_already_exists(
 ) -> None:
     """create_folder should suppress ApiError if folder already exists."""
     import dropbox as dbx_mod
+    import dropbox.exceptions
 
     mock_dbx_client.files_create_folder_v2.side_effect = dbx_mod.exceptions.ApiError(
         "", None, None, None

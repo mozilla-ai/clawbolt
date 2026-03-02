@@ -4,6 +4,7 @@ import logging
 from collections.abc import Generator
 from unittest.mock import patch
 
+import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
@@ -13,7 +14,7 @@ from backend.app.database import Base, get_db
 from backend.app.main import app
 
 
-def test_warns_when_webhook_secret_not_set(caplog: "logging.LogCaptureFixture") -> None:
+def test_warns_when_webhook_secret_not_set(caplog: "pytest.LogCaptureFixture") -> None:
     """Startup should log a warning when bot token is set but webhook secret is empty."""
     engine = create_engine(
         "sqlite:///:memory:",
@@ -46,7 +47,7 @@ def test_warns_when_webhook_secret_not_set(caplog: "logging.LogCaptureFixture") 
     app.dependency_overrides.clear()
 
 
-def test_no_warning_when_webhook_secret_set(caplog: "logging.LogCaptureFixture") -> None:
+def test_no_warning_when_webhook_secret_set(caplog: "pytest.LogCaptureFixture") -> None:
     """No warning should be logged when webhook secret is configured."""
     engine = create_engine(
         "sqlite:///:memory:",
@@ -79,7 +80,7 @@ def test_no_warning_when_webhook_secret_set(caplog: "logging.LogCaptureFixture")
     app.dependency_overrides.clear()
 
 
-def test_no_warning_when_bot_token_not_set(caplog: "logging.LogCaptureFixture") -> None:
+def test_no_warning_when_bot_token_not_set(caplog: "pytest.LogCaptureFixture") -> None:
     """No warning when bot token is empty (Telegram not configured at all)."""
     engine = create_engine(
         "sqlite:///:memory:",

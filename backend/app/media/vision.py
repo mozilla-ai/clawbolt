@@ -1,7 +1,9 @@
 import base64
 import logging
+from typing import Any, cast
 
 from any_llm import acompletion
+from any_llm.types.completion import ChatCompletion
 
 from backend.app.config import settings
 
@@ -25,7 +27,7 @@ async def analyze_image(
     b64_image = base64.b64encode(image_bytes).decode("utf-8")
     data_url = f"data:{mime_type};base64,{b64_image}"
 
-    user_content: list[dict[str, object]] = [
+    user_content: list[dict[str, Any]] = [
         {"type": "image_url", "image_url": {"url": data_url}},
     ]
     if context:
@@ -34,20 +36,23 @@ async def analyze_image(
     model = settings.vision_model or settings.llm_model
     logger.info("Using vision model: %s (provider=%s)", model, settings.llm_provider)
 
-    llm_kwargs: dict[str, object] = {}
+    llm_kwargs: dict[str, Any] = {}
     if user is not None and settings.llm_provider == "openai":
         llm_kwargs["user"] = user
 
-    response = await acompletion(
-        model=model,
-        provider=settings.llm_provider,
-        api_base=settings.llm_api_base,
-        messages=[
-            {"role": "system", "content": VISION_SYSTEM_PROMPT},
-            {"role": "user", "content": user_content},
-        ],
-        max_tokens=settings.llm_max_tokens_vision,
-        **llm_kwargs,
+    response = cast(
+        ChatCompletion,
+        await acompletion(
+            model=model,
+            provider=settings.llm_provider,
+            api_base=settings.llm_api_base,
+            messages=[
+                {"role": "system", "content": VISION_SYSTEM_PROMPT},
+                {"role": "user", "content": user_content},
+            ],
+            max_tokens=settings.llm_max_tokens_vision,
+            **llm_kwargs,
+        ),
     )
     logger.debug("Vision LLM response received for mime_type=%s", mime_type)
     return response.choices[0].message.content or ""
