@@ -1,5 +1,6 @@
 import logging
 
+from any_llm import AuthenticationError, ContentFilterError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import load_conversation_history
@@ -26,6 +27,11 @@ logger = logging.getLogger(__name__)
 
 # User-facing error/fallback messages
 AGENT_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
+CONTENT_FILTER_FALLBACK = "I wasn't able to process that message. Could you try rephrasing?"
+AUTH_ERROR_FALLBACK = (
+    "I'm experiencing a configuration issue and can't respond right now. "
+    "The admin has been notified."
+)
 MEDIA_DOWNLOAD_ERROR = (
     "I couldn't download your attachment(s). The rest of your message came through fine."
 )
@@ -103,8 +109,8 @@ async def handle_inbound_message(
     conversation_history = await load_conversation_history(db, message.conversation_id)
 
     # Step 5: Initialize agent with tools
-    onboarding = is_onboarding_needed(contractor)
-    system_prompt_override = build_onboarding_system_prompt(contractor) if onboarding else None
+    was_onboarding = is_onboarding_needed(contractor)
+    system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
 
     agent = BackshopAgent(db=db, contractor=contractor)
     tools = create_memory_tools(db, contractor.id)
@@ -139,6 +145,20 @@ async def handle_inbound_message(
             conversation_history=conversation_history,
             system_prompt_override=system_prompt_override,
         )
+    except ContentFilterError:
+        logger.warning(
+            "Content filter blocked message %d for contractor %d",
+            message.id,
+            contractor.id,
+        )
+        response = AgentResponse(reply_text=CONTENT_FILTER_FALLBACK)
+    except AuthenticationError:
+        logger.critical(
+            "LLM authentication failed processing message %d for contractor %d",
+            message.id,
+            contractor.id,
+        )
+        response = AgentResponse(reply_text=AUTH_ERROR_FALLBACK)
     except Exception:
         logger.exception(
             "Agent processing failed for message %d, contractor %d",
@@ -148,7 +168,7 @@ async def handle_inbound_message(
         response = AgentResponse(reply_text=AGENT_ERROR_FALLBACK)
 
     # Step 6b: If onboarding, extract profile updates from tool calls
-    if onboarding:
+    if was_onboarding:
         profile_updates = extract_profile_updates(response)
         if profile_updates:
             await update_contractor_profile(db, contractor, profile_updates)
@@ -157,6 +177,22 @@ async def handle_inbound_message(
             if not is_onboarding_needed(contractor):
                 contractor.onboarding_complete = True
                 db.commit()
+
+        # Append completion summary when onboarding transitions to complete
+        if contractor.onboarding_complete:
+            parts = [f"Name: {contractor.name}", f"Trade: {contractor.trade}"]
+            if contractor.location:
+                parts.append(f"Location: {contractor.location}")
+            if contractor.hourly_rate:
+                parts.append(f"Rate: ${contractor.hourly_rate:.0f}/hour")
+            summary = "\n".join(f"- {p}" for p in parts)
+            completion_note = (
+                "\n\nSetup complete! Here's what I know about you:\n"
+                f"{summary}\n\n"
+                "You can update any of this anytime. I'm ready to help!"
+            )
+            if response.reply_text:
+                response.reply_text += completion_note
 
     # Step 6c: Ensure onboarding_complete is set when required fields are already satisfied
     # (e.g. pre-populated contractors that skipped the onboarding flow)
