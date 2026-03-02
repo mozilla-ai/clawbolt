@@ -30,6 +30,9 @@ async def serve_estimate_pdf(
     # Verify the estimate exists and belongs to the current user
     get_user_estimate(db, current_user, estimate_id)
 
+    # NOTE: This path includes {contractor_id}/ which is a breaking change for
+    # any pre-existing estimate PDFs stored at data/estimates/{id}.pdf. Since the
+    # project is pre-production, old PDFs must be migrated manually if needed.
     pdf_path = PDF_BASE_DIR / str(current_user.id) / f"{estimate_id}.pdf"
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="Estimate PDF not found")

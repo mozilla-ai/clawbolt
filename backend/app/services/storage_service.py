@@ -90,6 +90,11 @@ class DropboxStorage(StorageBackend):
 
 
 class GoogleDriveStorage(StorageBackend):
+    # TODO(Phase 2): Google Drive uses folder IDs, not path strings, so the
+    # _path_prefix approach does not provide real per-contractor isolation.
+    # Proper isolation requires creating a per-contractor root folder on first
+    # use and passing its folder ID as the parent for all operations.
+
     def __init__(self, credentials_json: str, contractor_id: int | None = None) -> None:
         self.credentials_json = credentials_json
         self._service: Any = None
@@ -105,6 +110,8 @@ class GoogleDriveStorage(StorageBackend):
         return self._service
 
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
+        # TODO(Phase 2): Does not apply contractor isolation. Drive needs a
+        # per-contractor root folder ID as the parent. See class-level TODO.
         from googleapiclient.http import MediaIoBaseUpload
 
         logger.info("Uploading to Google Drive: %s/%s (%d bytes)", path, filename, len(file_bytes))
@@ -121,6 +128,11 @@ class GoogleDriveStorage(StorageBackend):
         return url
 
     async def create_folder(self, path: str) -> str:
+        # TODO(Phase 2): The prefix logic here does not actually isolate folder
+        # names. For path="/Job Photos" with contractor_id=42, prefixed becomes
+        # "42/Job Photos" and split("/")[-1] still yields "Job Photos"
+        # (unchanged). Real isolation needs a per-contractor root folder ID as
+        # the parent. See class-level TODO.
         service = self._get_service()
         prefixed = f"{self._path_prefix}{path}" if self._path_prefix else path
         folder_metadata = {
@@ -133,6 +145,8 @@ class GoogleDriveStorage(StorageBackend):
         return result.get("id", "")
 
     async def list_folder(self, path: str) -> list[dict[str, str]]:
+        # TODO(Phase 2): Does not apply contractor isolation. Drive queries
+        # folders by ID, not path. See class-level TODO.
         service = self._get_service()
         query = f"'{path}' in parents and trashed=false"
         result = await asyncio.to_thread(
