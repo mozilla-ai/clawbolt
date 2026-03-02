@@ -82,14 +82,49 @@ def _parse_rate(value: str) -> float | None:
     return None
 
 
+def _match_profile_field(key: str) -> str | None:
+    """Match a fact key to a contractor profile field using keyword matching.
+
+    Handles common synonyms and variations that an LLM might use instead
+    of the exact expected key names (e.g. "profession" instead of "trade").
+    Returns the canonical profile field name, or None if no match.
+    """
+    key_lower = key.lower().strip().replace("_", " ").replace("-", " ")
+    tokens = key_lower.split()
+
+    # "name" matching - require "name" as a standalone token to avoid false
+    # positives on words like "username" or "filename"
+    if "name" in tokens:
+        return "name"
+
+    if any(
+        w in key_lower for w in ["trade", "profession", "specialty", "craft", "occupation", "job"]
+    ):
+        return "trade"
+    if any(
+        w in key_lower for w in ["location", "city", "region", "area", "based", "address", "town"]
+    ):
+        return "location"
+    if any(w in key_lower for w in ["rate", "price", "pricing", "hourly", "charge", "cost"]):
+        return "hourly_rate"
+    if any(
+        w in key_lower
+        for w in ["hours", "schedule", "availability", "work hours", "business hours"]
+    ):
+        return "business_hours"
+    return None
+
+
 def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
     """Extract profile field updates from agent tool calls during onboarding.
 
     Looks at save_fact calls and maps known categories to profile fields.
+    Uses exact key lookup as the fast path, then falls back to fuzzy keyword
+    matching for synonym keys the LLM might use.
     """
     updates: dict[str, Any] = {}
 
-    # Map memory keys to profile fields
+    # Map memory keys to profile fields (exact fast path)
     key_to_field: dict[str, str] = {
         "name": "name",
         "contractor_name": "name",
@@ -110,8 +145,10 @@ def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
         key = str(args.get("key", "")).lower().strip()
         value = args.get("value", "")
 
-        if key in key_to_field:
-            field = key_to_field[key]
+        # Try exact lookup first, then fall back to fuzzy matching
+        field = key_to_field.get(key) or _match_profile_field(key)
+
+        if field is not None:
             if field == "hourly_rate":
                 parsed = _parse_rate(str(value))
                 if parsed is not None:
