@@ -173,16 +173,19 @@ async def handle_inbound_message(
         )
         response = AgentResponse(reply_text=AGENT_ERROR_FALLBACK)
 
-    # Step 6b: If onboarding, extract profile updates from tool calls
-    if was_onboarding:
-        profile_updates = extract_profile_updates(response)
-        if profile_updates:
-            await update_contractor_profile(db, contractor, profile_updates)
-            # Check if onboarding is now complete (required fields filled)
-            db.refresh(contractor)
-            if not is_onboarding_needed(contractor):
-                contractor.onboarding_complete = True
-                db.commit()
+    # Step 6b: Always extract profile updates from tool calls (not just during
+    # onboarding).  This keeps contractor profile fields in sync with memory
+    # facts when contractors update their info post-onboarding (e.g., "I moved
+    # to Denver", "my new rate is $100/hr").  Fixes #186 / #183.
+    profile_updates = extract_profile_updates(response)
+    if profile_updates:
+        await update_contractor_profile(db, contractor, profile_updates)
+        db.refresh(contractor)
+
+    # If still onboarding, check whether the required fields are now complete
+    if was_onboarding and not is_onboarding_needed(contractor):
+        contractor.onboarding_complete = True
+        db.commit()
 
         # Append completion summary when onboarding transitions to complete
         if contractor.onboarding_complete:
