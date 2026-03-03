@@ -12,6 +12,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, cast
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
@@ -21,6 +22,36 @@ if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
+
+
+class UpdateProfileParams(BaseModel):
+    """Parameters for the update_profile tool."""
+
+    name: str | None = Field(default=None, description="Contractor's full name")
+    trade: str | None = Field(
+        default=None,
+        description="Trade or profession (e.g. plumber, electrician)",
+    )
+    location: str | None = Field(
+        default=None,
+        description="City or region where they work",
+    )
+    hourly_rate: str | None = Field(
+        default=None,
+        description="Hourly rate (e.g. '$85/hr', '85')",
+    )
+    business_hours: str | None = Field(
+        default=None,
+        description="Working hours (e.g. 'Mon-Fri 7am-5pm')",
+    )
+    communication_style: str | None = Field(
+        default=None,
+        description="Preferred communication style (e.g. 'casual', 'formal')",
+    )
+    soul_text: str | None = Field(
+        default=None,
+        description="Bio or personality description for the assistant",
+    )
 
 
 def _parse_rate(value: str) -> float | None:
@@ -135,40 +166,8 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
                 "Only include fields you want to change."
             ),
             function=update_profile,
+            params_model=UpdateProfileParams,
             usage_hint=("Use this to update known contractor details (name, trade, rates, etc.)."),
-            parameters={
-                "type": "object",
-                "properties": {
-                    "name": {
-                        "type": "string",
-                        "description": "Contractor's full name",
-                    },
-                    "trade": {
-                        "type": "string",
-                        "description": "Trade or profession (e.g. plumber, electrician)",
-                    },
-                    "location": {
-                        "type": "string",
-                        "description": "City or region where they work",
-                    },
-                    "hourly_rate": {
-                        "type": "string",
-                        "description": "Hourly rate (e.g. '$85/hr', '85')",
-                    },
-                    "business_hours": {
-                        "type": "string",
-                        "description": "Working hours (e.g. 'Mon-Fri 7am-5pm')",
-                    },
-                    "communication_style": {
-                        "type": "string",
-                        "description": ("Preferred communication style (e.g. 'casual', 'formal')"),
-                    },
-                    "soul_text": {
-                        "type": "string",
-                        "description": ("Bio or personality description for the assistant"),
-                    },
-                },
-            },
         ),
     ]
 
