@@ -1,6 +1,6 @@
 from pydantic import BaseModel, Field
 
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 from backend.app.services.messaging import MessagingService
 
 
@@ -42,11 +42,13 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
             description="Send a text reply to the contractor.",
             function=send_reply,
             params_model=SendReplyParams,
+            tags={ToolTags.SENDS_REPLY},
         ),
         Tool(
             name="send_media_reply",
             description="Send a reply with a media attachment (e.g., PDF estimate).",
             function=send_media_reply,
             params_model=SendMediaReplyParams,
+            tags={ToolTags.SENDS_REPLY},
         ),
     ]

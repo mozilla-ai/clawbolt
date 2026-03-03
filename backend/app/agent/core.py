@@ -18,7 +18,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
-from backend.app.agent.tools.base import Tool, ToolResult, tool_to_openai_schema
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags, tool_to_openai_schema
 from backend.app.config import settings
 from backend.app.models import Contractor
 
@@ -75,7 +75,7 @@ You will proactively reach out during business hours when something needs attent
 When the contractor asks a question about their business, clients, or past work:
 1. Use recall_facts to search your memory for relevant information.
 2. If you find relevant facts, use them to answer clearly and concisely.
-3. If you don't find anything, say so honestly — don't make things up.
+3. If you don't find anything, say so honestly -- don't make things up.
 4. If the question is about general knowledge (not their specific business), answer from your training.
 5. For "what do you know about me?" questions, summarize key facts by category.
 """
@@ -197,7 +197,7 @@ class BackshopAgent:
             logger.warning("Content blocked by provider safety filter")
             raise
         except AuthenticationError:
-            logger.critical("LLM authentication failed — check API key configuration")
+            logger.critical("LLM authentication failed -- check API key configuration")
             raise
 
     @staticmethod
@@ -231,6 +231,11 @@ class BackshopAgent:
             return validated.model_dump(), None
         except ValidationError as exc:
             return tool_args, _format_validation_error(tool.name, exc)
+
+    def _get_tool_tags(self, tool_name: str) -> set[str]:
+        """Look up the tags for a registered tool by name."""
+        tool = self._tools_by_name.get(tool_name)
+        return tool.tags if tool else set()
 
     async def process_message(
         self,
@@ -319,11 +324,14 @@ class BackshopAgent:
 
                 tool_obj = self._tools_by_name.get(tool_name)
                 tool_func = tool_obj.function if tool_obj else None
+                tool_tags = self._get_tool_tags(tool_name)
                 result_str = ""
                 is_error = False
                 if tool_func and tool_obj:
                     # Validate arguments against Pydantic model if present
-                    validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
+                    validated_args, validation_error = self._validate_tool_args(
+                        tool_obj, tool_args
+                    )
                     if validation_error is not None:
                         logger.warning(
                             "Validation failed for %s: %s",
@@ -342,6 +350,7 @@ class BackshopAgent:
                                 "args": tool_args,
                                 "result": result_str,
                                 "is_error": True,
+                                "tags": tool_tags,
                             }
                         )
                         tool_results.append(
@@ -373,9 +382,10 @@ class BackshopAgent:
                                 "args": validated_args,
                                 "result": result_str,
                                 "is_error": is_error,
+                                "tags": tool_tags,
                             }
                         )
-                        if tool_name == "save_fact":
+                        if ToolTags.SAVES_MEMORY in tool_tags:
                             memories_saved.append(validated_args)
                     except Exception:
                         logger.exception("Tool call failed: %s", tool_name)

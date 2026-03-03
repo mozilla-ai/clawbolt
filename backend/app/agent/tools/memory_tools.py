@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 
 
 class SaveFactParams(BaseModel):
@@ -60,13 +60,17 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
     return [
         Tool(
             name="save_fact",
-            description="Save a key-value fact to the contractor's memory. Use for pricing, client info, preferences, etc.",
+            description=(
+                "Save a key-value fact to the contractor\'s memory. "
+                "Use for pricing, client info, preferences, etc."
+            ),
             function=save_fact,
             params_model=SaveFactParams,
+            tags={ToolTags.SAVES_MEMORY},
         ),
         Tool(
             name="recall_facts",
-            description="Search the contractor's memory for facts matching a query.",
+            description="Search the contractor\'s memory for facts matching a query.",
             function=recall_facts,
             params_model=RecallFactsParams,
         ),
