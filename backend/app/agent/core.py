@@ -17,6 +17,15 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
+from backend.app.agent.messages import (
+    AgentMessage,
+    AssistantMessage,
+    SystemMessage,
+    ToolCallRequest,
+    ToolResultMessage,
+    UserMessage,
+    messages_to_dicts,
+)
 from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
 from backend.app.agent.tools.base import (
     Tool,
@@ -45,38 +54,29 @@ _MESSAGE_OVERHEAD_TOKENS = 4
 _CHARS_PER_TOKEN = 3.5
 
 
-def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
-    """Estimate token count from messages, including tool call content and overhead.
+def _estimate_tokens(messages: list[AgentMessage]) -> int:
+    """Estimate token count from typed messages, including tool call content.
 
-    Counts content from the ``content`` field and from any ``tool_calls`` entries
-    (function name + serialized arguments). Adds a small per-message overhead for
-    role and delimiter tokens.
+    Counts content and any tool-call function names + serialized arguments.
+    Adds a small per-message overhead for role and delimiter tokens.
     """
     total = 0
     for m in messages:
-        # Per-message overhead (role, delimiters, structural tokens)
         total += _MESSAGE_OVERHEAD_TOKENS
 
-        # Content field
-        content = m.get("content", "")
-        if content:
-            total += int(len(str(content)) / _CHARS_PER_TOKEN)
-
-        # Tool calls (assistant messages requesting tool use)
-        tool_calls = m.get("tool_calls")
-        if tool_calls and isinstance(tool_calls, list):
-            for tc in tool_calls:
-                func = tc.get("function") if isinstance(tc, dict) else getattr(tc, "function", None)
-                if func is None:
-                    continue
-                name = func.get("name", "") if isinstance(func, dict) else getattr(func, "name", "")
-                args = (
-                    func.get("arguments", "")
-                    if isinstance(func, dict)
-                    else getattr(func, "arguments", "")
-                )
-                total += int(len(str(name)) / _CHARS_PER_TOKEN)
-                total += int(len(str(args)) / _CHARS_PER_TOKEN)
+        if isinstance(m, (SystemMessage, UserMessage)):
+            if m.content:
+                total += int(len(m.content) / _CHARS_PER_TOKEN)
+        elif isinstance(m, AssistantMessage):
+            if m.content:
+                total += int(len(m.content) / _CHARS_PER_TOKEN)
+            for tc in m.tool_calls:
+                total += int(len(tc.name) / _CHARS_PER_TOKEN)
+                # Estimate from the dict representation of arguments
+                args_str = str(tc.arguments)
+                total += int(len(args_str) / _CHARS_PER_TOKEN)
+        elif isinstance(m, ToolResultMessage) and m.content:
+            total += int(len(m.content) / _CHARS_PER_TOKEN)
 
     return total
 
@@ -252,17 +252,19 @@ class BackshopAgent:
 
     async def _call_llm_with_retry(
         self,
-        messages: list[Any],
+        messages: list[AgentMessage],
         tool_schemas: list[Any] | None,
         llm_kwargs: dict[str, Any],
     ) -> ChatCompletion:
         """Call acompletion with typed exception handling and retry logic.
 
-        Handles RateLimitError (retry once after delay) and
-        ContextLengthExceededError (trim history and retry once).
+        Accepts typed ``AgentMessage`` objects and serializes them to dicts
+        at the LLM API boundary.  Handles RateLimitError (retry once after
+        delay) and ContextLengthExceededError (trim history and retry once).
         ContentFilterError and AuthenticationError are re-raised with
         appropriate logging so the caller can produce a user-facing message.
         """
+        msg_dicts = messages_to_dicts(messages)
         try:
             return cast(
                 ChatCompletion,
@@ -270,7 +272,7 @@ class BackshopAgent:
                     model=settings.llm_model,
                     provider=settings.llm_provider,
                     api_base=settings.llm_api_base,
-                    messages=messages,
+                    messages=msg_dicts,  # type: ignore[arg-type]
                     tools=tool_schemas,
                     max_tokens=settings.llm_max_tokens_agent,
                     **llm_kwargs,
@@ -285,7 +287,7 @@ class BackshopAgent:
                     model=settings.llm_model,
                     provider=settings.llm_provider,
                     api_base=settings.llm_api_base,
-                    messages=messages,
+                    messages=msg_dicts,  # type: ignore[arg-type]
                     tools=tool_schemas,
                     max_tokens=settings.llm_max_tokens_agent,
                     **llm_kwargs,
@@ -298,13 +300,14 @@ class BackshopAgent:
                 len(messages),
                 len(trimmed),
             )
+            trimmed_dicts = messages_to_dicts(trimmed)
             return cast(
                 ChatCompletion,
                 await acompletion(
                     model=settings.llm_model,
                     provider=settings.llm_provider,
                     api_base=settings.llm_api_base,
-                    messages=trimmed,
+                    messages=trimmed_dicts,  # type: ignore[arg-type]
                     tools=tool_schemas,
                     max_tokens=settings.llm_max_tokens_agent,
                     **llm_kwargs,
@@ -319,17 +322,17 @@ class BackshopAgent:
 
     @staticmethod
     def _trim_messages(
-        messages: list[Any],
+        messages: list[AgentMessage],
         target_tokens: int = CONTEXT_TRIM_TARGET_TOKENS,
-    ) -> list[Any]:
+    ) -> list[AgentMessage]:
         """Trim conversation messages to fit within a token budget.
 
         Keeps the system prompt (first message) and removes the oldest
         conversation messages until the estimated token count is at or below
         *target_tokens*. Tool-call / tool-result pairs are treated as atomic
-        units: an assistant message containing ``tool_calls`` is never removed
-        without also removing the corresponding ``tool`` role messages that
-        follow it (and vice-versa).
+        units: an ``AssistantMessage`` with ``tool_calls`` is never removed
+        without also removing the ``ToolResultMessage`` entries that follow it
+        (and vice-versa).
         """
         if len(messages) <= 2:
             return messages
@@ -337,37 +340,20 @@ class BackshopAgent:
         if _estimate_tokens(messages) <= target_tokens:
             return messages
 
-        # Separate the system prompt from the conversation body.
         system = messages[0]
         body = list(messages[1:])
 
         # Group the body into "blocks" that must be removed together.
-        # A block is either:
-        #   - A single message (user or assistant without tool_calls)
-        #   - An assistant message with tool_calls + all immediately following
-        #     tool-role messages (the paired results)
-        blocks: list[list[Any]] = []
+        blocks: list[list[AgentMessage]] = []
         i = 0
         while i < len(body):
             msg = body[i]
-            tc = (
-                msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
-            )
-            has_tool_calls = bool(tc)
-            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
-            if role == "assistant" and has_tool_calls:
-                # Collect this assistant message and all consecutive tool results
-                block: list[Any] = [msg]
+            if isinstance(msg, AssistantMessage) and msg.tool_calls:
+                block: list[AgentMessage] = [msg]
                 j = i + 1
                 while j < len(body):
-                    next_msg = body[j]
-                    next_role = (
-                        next_msg.get("role")
-                        if isinstance(next_msg, dict)
-                        else getattr(next_msg, "role", None)
-                    )
-                    if next_role == "tool":
-                        block.append(next_msg)
+                    if isinstance(body[j], ToolResultMessage):
+                        block.append(body[j])
                         j += 1
                     else:
                         break
@@ -378,17 +364,16 @@ class BackshopAgent:
                 i += 1
 
         # Remove blocks from the front (oldest) until we fit the budget,
-        # but always keep at least the last block so we never return only the
-        # system prompt.
+        # but always keep at least the last block.
         while len(blocks) > 1:
-            remaining = [system]
+            remaining: list[AgentMessage] = [system]
             for blk in blocks:
                 remaining.extend(blk)
             if _estimate_tokens(remaining) <= target_tokens:
                 break
             blocks.pop(0)
 
-        result: list[Any] = [system]
+        result: list[AgentMessage] = [system]
         for blk in blocks:
             result.extend(blk)
         return result
@@ -420,26 +405,32 @@ class BackshopAgent:
     async def process_message(
         self,
         message_context: str,
-        conversation_history: list[dict[str, str]] | None = None,
+        conversation_history: list[AgentMessage] | list[dict[str, str]] | None = None,
         system_prompt_override: str | None = None,
         temperature: float | None = None,
     ) -> AgentResponse:
-        """Process a message through the agent loop."""
+        """Process a message through the agent loop.
+
+        *conversation_history* accepts both typed ``AgentMessage`` objects
+        (preferred) and legacy ``dict`` messages for backward compatibility.
+        """
         system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
 
-        messages: list[dict[str, Any]] = [{"role": "system", "content": system_prompt}]
+        messages: list[AgentMessage] = [SystemMessage(content=system_prompt)]
 
         if conversation_history:
-            messages.extend(conversation_history)
+            for entry in conversation_history:
+                if isinstance(entry, dict):
+                    messages.append(_dict_to_message(cast(dict[str, Any], entry)))
+                else:
+                    messages.append(entry)
 
-        messages.append({"role": "user", "content": message_context})
+        messages.append(UserMessage(content=message_context))
 
         # Trim oldest conversation history if estimated tokens exceed the limit
         original_count = len(messages)
         estimated = _estimate_tokens(messages)
         while estimated > MAX_INPUT_TOKENS and len(messages) > 2:
-            # Remove the oldest conversation history message
-            # (keep system prompt at [0] and latest user message at [-1])
             messages.pop(1)
             estimated = _estimate_tokens(messages)
         trimmed_count = original_count - len(messages)
@@ -468,36 +459,60 @@ class BackshopAgent:
 
             choice = response.choices[0]
 
-            tool_calls = getattr(choice.message, "tool_calls", None)
-            if not tool_calls:
+            raw_tool_calls = getattr(choice.message, "tool_calls", None)
+            if not raw_tool_calls:
                 reply_text = choice.message.content or ""
                 break
 
-            # Append the assistant message (with tool_calls) to conversation
-            messages.append(choice.message.model_dump())
-
-            tool_results: list[dict[str, str]] = []
-            for tool_call in tool_calls:
-                func = getattr(tool_call, "function", None)
+            # Parse LLM tool calls into typed objects
+            parsed_calls: list[ToolCallRequest] = []
+            for raw_tc in raw_tool_calls:
+                func = getattr(raw_tc, "function", None)
                 if func is None:
                     continue
-                tool_name = func.name
                 try:
-                    tool_args = json_repair.loads(func.arguments)
-                    if not isinstance(tool_args, dict):
-                        raise ValueError(f"Expected dict, got {type(tool_args).__name__}")
+                    args = json_repair.loads(func.arguments)
+                    if not isinstance(args, dict):
+                        raise ValueError(f"Expected dict, got {type(args).__name__}")
                 except (ValueError, TypeError):
+                    args = None
+                parsed_calls.append(
+                    ToolCallRequest(
+                        id=raw_tc.id,
+                        name=func.name,
+                        arguments=args if args is not None else {},
+                    )
+                )
+
+            # Append the assistant message (with tool_calls) to conversation
+            messages.append(
+                AssistantMessage(
+                    content=choice.message.content,
+                    tool_calls=parsed_calls,
+                )
+            )
+
+            tool_results: list[ToolResultMessage] = []
+            for tc_req in parsed_calls:
+                tool_name = tc_req.name
+                tool_args = tc_req.arguments
+
+                # Handle malformed arguments (args was None before, stored as {})
+                if not tool_args and any(
+                    getattr(raw, "function", None)
+                    and raw.id == tc_req.id
+                    and _is_malformed_args(getattr(raw, "function", None))
+                    for raw in raw_tool_calls
+                ):
                     logger.warning(
-                        "Malformed tool arguments for %s: %s",
+                        "Malformed tool arguments for %s",
                         tool_name,
-                        func.arguments[:200],
                     )
                     tool_results.append(
-                        {
-                            "role": "tool",
-                            "tool_call_id": tool_call.id,
-                            "content": f"Error: malformed arguments for {tool_name}",
-                        }
+                        ToolResultMessage(
+                            tool_call_id=tc_req.id,
+                            content=f"Error: malformed arguments for {tool_name}",
+                        )
                     )
                     actions_taken.append(f"Failed: {tool_name} (bad args)")
                     continue
@@ -508,7 +523,6 @@ class BackshopAgent:
                 result_str = ""
                 is_error = False
                 if tool_func and tool_obj:
-                    # Validate arguments against Pydantic model if present
                     validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
                     if validation_error is not None:
                         logger.warning(
@@ -530,11 +544,10 @@ class BackshopAgent:
                             }
                         )
                         tool_results.append(
-                            {
-                                "role": "tool",
-                                "tool_call_id": tool_call.id,
-                                "content": result_str,
-                            }
+                            ToolResultMessage(
+                                tool_call_id=tc_req.id,
+                                content=result_str,
+                            )
                         )
                         continue
 
@@ -577,11 +590,10 @@ class BackshopAgent:
                     )
 
                 tool_results.append(
-                    {
-                        "role": "tool",
-                        "tool_call_id": tool_call.id,
-                        "content": result_str,
-                    }
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=result_str,
+                    )
                 )
 
             messages.extend(tool_results)
@@ -600,3 +612,31 @@ class BackshopAgent:
         """Find a registered tool by name."""
         tool = self._tools_by_name.get(name)
         return tool.function if tool else None
+
+
+def _dict_to_message(d: dict[str, Any]) -> AgentMessage:
+    """Convert a legacy dict message to a typed message object."""
+    role = d.get("role", "user")
+    content = d.get("content", "")
+    if role == "system":
+        return SystemMessage(content=content)
+    if role == "assistant":
+        return AssistantMessage(content=content)
+    if role == "tool":
+        return ToolResultMessage(
+            tool_call_id=d.get("tool_call_id", ""),
+            content=content,
+        )
+    return UserMessage(content=content)
+
+
+def _is_malformed_args(func: object) -> bool:
+    """Check whether a raw LLM function object has unparseable arguments."""
+    args_str = getattr(func, "arguments", "")
+    if not args_str:
+        return True
+    try:
+        parsed = json_repair.loads(args_str)
+        return not isinstance(parsed, dict)
+    except (ValueError, TypeError):
+        return True

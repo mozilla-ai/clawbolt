@@ -5,6 +5,7 @@ import logging
 
 from sqlalchemy.orm import Session
 
+from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
 from backend.app.models import Conversation, Message
@@ -19,12 +20,12 @@ async def load_conversation_history(
     db: Session,
     conversation_id: int,
     limit: int = DEFAULT_HISTORY_LIMIT,
-) -> list[dict[str, str]]:
-    """Load recent messages formatted for LLM context.
+) -> list[AgentMessage]:
+    """Load recent messages as typed message objects for LLM context.
 
-    Returns list of {"role": "user"/"assistant", "content": "..."} dicts.
-    Messages are returned in chronological order, excluding the most recent
-    (which is the current message being processed).
+    Returns a list of :class:`UserMessage` / :class:`AssistantMessage` in
+    chronological order, excluding the most recent (which is the current
+    message being processed).
     """
     messages = (
         db.query(Message)
@@ -36,12 +37,14 @@ async def load_conversation_history(
     # Reverse to chronological order, skip the current (most recent) message
     messages = list(reversed(messages))[:-1] if len(messages) > 1 else []
 
-    history: list[dict[str, str]] = []
+    history: list[AgentMessage] = []
     for msg in messages:
-        role = "user" if msg.direction == MessageDirection.INBOUND else "assistant"
         # Prefer processed context (includes media descriptions) over raw body
         content = msg.processed_context if msg.processed_context else msg.body
-        history.append({"role": role, "content": content})
+        if msg.direction == MessageDirection.INBOUND:
+            history.append(UserMessage(content=content))
+        else:
+            history.append(AssistantMessage(content=content))
     return history
 
 
