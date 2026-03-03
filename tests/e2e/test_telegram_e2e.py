@@ -67,7 +67,7 @@ def e2e_client(
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
     with (
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
-        patch("backend.app.routers.telegram_webhook.SessionLocal", test_session_factory),
+        patch("backend.app.agent.ingestion.SessionLocal", test_session_factory),
         TestClient(app) as c,
     ):
         yield c

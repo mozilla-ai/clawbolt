@@ -84,7 +84,7 @@ def client(
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
     with (
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
-        patch("backend.app.routers.telegram_webhook.SessionLocal", test_session_factory),
+        patch("backend.app.agent.ingestion.SessionLocal", test_session_factory),
         # Prevent .env allowlist settings from leaking into tests
         patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids", ""),
         patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames", ""),
