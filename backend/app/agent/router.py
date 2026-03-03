@@ -167,21 +167,21 @@ async def handle_inbound_message(
             message.id,
             contractor.id,
         )
-        response = AgentResponse(reply_text=CONTENT_FILTER_FALLBACK)
+        response = AgentResponse(reply_text=CONTENT_FILTER_FALLBACK, is_error_fallback=True)
     except AuthenticationError:
         logger.critical(
             "LLM authentication failed processing message %d for contractor %d",
             message.id,
             contractor.id,
         )
-        response = AgentResponse(reply_text=AUTH_ERROR_FALLBACK)
+        response = AgentResponse(reply_text=AUTH_ERROR_FALLBACK, is_error_fallback=True)
     except Exception:
         logger.exception(
             "Agent processing failed for message %d, contractor %d",
             message.id,
             contractor.id,
         )
-        response = AgentResponse(reply_text=AGENT_ERROR_FALLBACK)
+        response = AgentResponse(reply_text=AGENT_ERROR_FALLBACK, is_error_fallback=True)
 
     # Step 6b: Always extract profile updates from tool calls (not just during
     # onboarding).  This keeps contractor profile fields in sync with memory
@@ -232,8 +232,9 @@ async def handle_inbound_message(
                 message.id,
             )
 
-    # Store outbound message
-    if response.reply_text:
+    # Store outbound message (skip error fallbacks to avoid poisoning
+    # conversation history -- the LLM would see the error on subsequent turns)
+    if response.reply_text and not response.is_error_fallback:
         outbound = Message(
             conversation_id=message.conversation_id,
             direction="outbound",

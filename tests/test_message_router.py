@@ -497,14 +497,14 @@ async def test_agent_processing_failure_returns_fallback_reply(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-async def test_agent_processing_failure_stores_fallback_outbound(
+async def test_agent_processing_failure_does_not_store_fallback(
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
     mock_messaging: MessagingService,
 ) -> None:
-    """When agent fails, fallback reply is still stored as an outbound message."""
+    """When agent fails, fallback reply is NOT stored to avoid poisoning context."""
     mock_acompletion.side_effect = RuntimeError("LLM down")  # type: ignore[union-attr]
 
     await handle_inbound_message(
@@ -516,8 +516,7 @@ async def test_agent_processing_failure_stores_fallback_outbound(
     )
 
     outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
-    assert outbound is not None
-    assert "trouble" in outbound.body.lower()
+    assert outbound is None
 
 
 @pytest.mark.asyncio()
@@ -922,14 +921,14 @@ async def test_authentication_error_returns_config_message(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-async def test_content_filter_error_stores_outbound_message(
+async def test_content_filter_error_does_not_store_outbound(
     mock_acompletion: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
     mock_messaging: MessagingService,
 ) -> None:
-    """ContentFilterError fallback reply should be persisted as outbound message."""
+    """ContentFilterError fallback reply should NOT be persisted (avoids context poisoning)."""
     mock_acompletion.side_effect = ContentFilterError("Blocked")
 
     await handle_inbound_message(
@@ -941,20 +940,19 @@ async def test_content_filter_error_stores_outbound_message(
     )
 
     outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
-    assert outbound is not None
-    assert outbound.body == CONTENT_FILTER_FALLBACK
+    assert outbound is None
 
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-async def test_authentication_error_stores_outbound_message(
+async def test_authentication_error_does_not_store_outbound(
     mock_acompletion: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
     mock_messaging: MessagingService,
 ) -> None:
-    """AuthenticationError fallback reply should be persisted as outbound message."""
+    """AuthenticationError fallback reply should NOT be persisted (avoids context poisoning)."""
     mock_acompletion.side_effect = AuthenticationError("Bad key")
 
     await handle_inbound_message(
@@ -966,5 +964,62 @@ async def test_authentication_error_stores_outbound_message(
     )
 
     outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
+    assert outbound is None
+
+
+# ---------------------------------------------------------------------------
+# Error poisoning protection tests (issue #283)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_normal_response_still_stored_as_outbound(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Normal (non-error) responses should still be stored as outbound messages."""
+    mock_acompletion.return_value = make_text_response("Here's your estimate!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
     assert outbound is not None
-    assert outbound.body == AUTH_ERROR_FALLBACK
+    assert outbound.body == "Here's your estimate!"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_error_fallback_sent_but_not_stored(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Error fallback should be sent to user even though it's not stored in DB."""
+    mock_acompletion.side_effect = RuntimeError("LLM down")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    # Sent to the user
+    mock_messaging.send_text.assert_called_once()  # type: ignore[union-attr]
+    assert "trouble" in response.reply_text.lower()
+    # But not stored in DB
+    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
+    assert outbound is None

@@ -77,6 +77,7 @@ class AgentResponse:
     actions_taken: list[str] = field(default_factory=list)
     memories_saved: list[dict[str, str]] = field(default_factory=list)
     tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    is_error_fallback: bool = False
 
 
 class BackshopAgent:
