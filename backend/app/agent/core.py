@@ -18,7 +18,13 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
-from backend.app.agent.tools.base import Tool, ToolResult, ToolTags, tool_to_openai_schema
+from backend.app.agent.tools.base import (
+    Tool,
+    ToolErrorKind,
+    ToolResult,
+    ToolTags,
+    tool_to_openai_schema,
+)
 from backend.app.config import settings
 from backend.app.models import Contractor
 
@@ -78,6 +84,40 @@ def _summarize_tool_params(tool: Tool) -> str:
         else:
             parts.append(f'"{name}": {ptype} ({req})')
     return "{" + ", ".join(parts) + "}"
+
+
+_DEFAULT_ERROR_HINT = "[Analyze the error above and try a different approach.]"
+
+_ERROR_KIND_HINTS: dict[ToolErrorKind, str] = {
+    ToolErrorKind.VALIDATION: (
+        "[Check the expected parameter format and try again with corrected arguments.]"
+    ),
+    ToolErrorKind.NOT_FOUND: (
+        "[The requested resource was not found. Verify the identifier and try again.]"
+    ),
+    ToolErrorKind.SERVICE: (
+        "[An external service is temporarily unavailable."
+        " Try a different approach or inform the user.]"
+    ),
+    ToolErrorKind.PERMISSION: ("[You do not have permission for this operation. Inform the user.]"),
+    ToolErrorKind.INTERNAL: (
+        "[An internal error occurred."
+        " Inform the user that this operation is temporarily unavailable.]"
+    ),
+}
+
+
+def _build_error_hint(result: ToolResult) -> str:
+    """Build the LLM guidance suffix for an error ToolResult.
+
+    Priority: explicit ``hint`` on the result, then ``error_kind`` mapping,
+    then the generic default.
+    """
+    if result.hint:
+        return f"[{result.hint}]" if not result.hint.startswith("[") else result.hint
+    if result.error_kind is not None:
+        return _ERROR_KIND_HINTS.get(result.error_kind, _DEFAULT_ERROR_HINT)
+    return _DEFAULT_ERROR_HINT
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contractors.
@@ -368,10 +408,8 @@ class BackshopAgent:
                             tool_name,
                             validation_error,
                         )
-                        result_str = (
-                            validation_error
-                            + "\n\n[Analyze the error above and try a different approach.]"
-                        )
+                        hint = _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
+                        result_str = validation_error + "\n\n" + hint
                         is_error = True
                         actions_taken.append(f"Failed: {tool_name} (validation)")
                         tool_call_records.append(
@@ -397,12 +435,12 @@ class BackshopAgent:
                         if isinstance(result, ToolResult):
                             result_str = result.content
                             is_error = result.is_error
+                            if is_error:
+                                hint = _build_error_hint(result)
+                                result_str += "\n\n" + hint
                         else:
                             result_str = str(result)
                         if is_error:
-                            result_str += (
-                                "\n\n[Analyze the error above and try a different approach.]"
-                            )
                             actions_taken.append(f"Failed: {tool_name}")
                         else:
                             actions_taken.append(f"Called {tool_name}")
@@ -419,17 +457,15 @@ class BackshopAgent:
                             memories_saved.append(validated_args)
                     except Exception:
                         logger.exception("Tool call failed: %s", tool_name)
-                        result_str = (
-                            f"Error: tool {tool_name} failed"
-                            "\n\n[Analyze the error above and try a different approach.]"
-                        )
+                        hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
+                        result_str = f"Error: tool {tool_name} failed\n\n{hint}"
                         actions_taken.append(f"Failed: {tool_name}")
                 else:
                     available = ", ".join(sorted(self._tools_by_name.keys()))
                     result_str = (
                         f'Error: unknown tool "{tool_name}".'
                         f" Available tools: {available}"
-                        "\n\n[Analyze the error above and try a different approach.]"
+                        f"\n\n{_DEFAULT_ERROR_HINT}"
                     )
 
                 tool_results.append(

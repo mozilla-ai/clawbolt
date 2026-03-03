@@ -4,7 +4,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
-from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 
 
 class SaveFactParams(BaseModel):
@@ -55,7 +55,9 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
         deleted = await delete_memory(db, contractor_id, key=key)
         if deleted:
             return ToolResult(content=f"Deleted: {key}")
-        return ToolResult(content=f"Not found: {key}", is_error=True)
+        return ToolResult(
+            content=f"Not found: {key}", is_error=True, error_kind=ToolErrorKind.NOT_FOUND
+        )
 
     return [
         Tool(

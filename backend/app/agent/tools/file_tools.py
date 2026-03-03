@@ -8,7 +8,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
 from backend.app.models import Contractor, MediaFile
 from backend.app.services.storage_service import StorageBackend
@@ -242,7 +242,11 @@ def create_file_tools(
 
         if not file_bytes:
             logger.warning("upload_to_storage called but no file content available")
-            return ToolResult(content="No file content available to upload.", is_error=True)
+            return ToolResult(
+                content="No file content available to upload.",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
 
         logger.info(
             "Cataloging file: category=%s, mime=%s, size=%d bytes",
@@ -306,7 +310,11 @@ def create_file_tools(
             .first()
         )
         if media_file is None:
-            return ToolResult(content=f"File not found for URL: {original_url}", is_error=True)
+            return ToolResult(
+                content=f"File not found for URL: {original_url}",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
 
         current_path = media_file.storage_path  # e.g. /Unsorted/2026-03-02/file_001.jpg
         new_folder = build_folder_path(file_category, client_name, client_address)
@@ -319,6 +327,7 @@ def create_file_tools(
                     "Please provide at least one so the file can be moved to a client folder."
                 ),
                 is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
             )
 
         # Check if already in a client folder (not Unsorted)
@@ -328,7 +337,11 @@ def create_file_tools(
         # Parse current path into folder and filename
         parts = current_path.rsplit("/", 1)
         if len(parts) != 2:
-            return ToolResult(content=f"Cannot parse storage path: {current_path}", is_error=True)
+            return ToolResult(
+                content=f"Cannot parse storage path: {current_path}",
+                is_error=True,
+                error_kind=ToolErrorKind.INTERNAL,
+            )
         old_folder, old_filename = parts
 
         # Build new filename
