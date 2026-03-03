@@ -96,6 +96,7 @@ class Conversation(Base):
         DateTime(timezone=True), server_default=func.now()
     )
     is_active: Mapped[bool] = mapped_column(default=True)
+    last_compacted_message_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     contractor: Mapped["Contractor"] = relationship(back_populates="conversations")
     messages: Mapped[list["Message"]] = relationship(back_populates="conversation")
