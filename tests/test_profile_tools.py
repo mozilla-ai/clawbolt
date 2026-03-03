@@ -1,11 +1,17 @@
-"""Tests for the update_profile tool and extract_profile_updates_from_tool_calls."""
+"""Tests for profile tools: view_profile, update_profile, and helpers."""
+
+from __future__ import annotations
 
 import json
+from collections.abc import Awaitable, Callable
+from typing import Any
 
 import pytest
 from sqlalchemy.orm import Session
 
+from backend.app.agent.tools.base import ToolResult
 from backend.app.agent.tools.profile_tools import (
+    _format_profile,
     _parse_rate,
     create_profile_tools,
     extract_profile_updates_from_tool_calls,
@@ -55,14 +61,177 @@ def test_parse_rate_invalid_returns_none(input_value: str) -> None:
     assert _parse_rate(input_value) is None
 
 
+# --- Helper to get tool functions by name ---
+
+
+def _get_tool_fn(
+    db: Session, contractor: Contractor, tool_name: str
+) -> Callable[..., Awaitable[ToolResult]]:
+    """Return the async function for the named tool."""
+    tools = create_profile_tools(db, contractor)
+    for t in tools:
+        if t.name == tool_name:
+            return t.function
+    msg = f"Tool {tool_name!r} not found"
+    raise ValueError(msg)
+
+
+# --- view_profile tool tests ---
+
+
+@pytest.mark.asyncio()
+async def test_view_profile_shows_populated_fields(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """view_profile should return all populated profile fields."""
+    view_fn = _get_tool_fn(db_session, test_contractor, "view_profile")
+    result = await view_fn()
+    assert result.is_error is False
+    assert "Test Contractor" in result.content
+    assert "General Contractor" in result.content
+    assert "Portland, OR" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_view_profile_shows_not_set_for_empty_fields(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """view_profile should show 'Not set' for empty fields."""
+    # Clear some fields
+    test_contractor.hourly_rate = None
+    test_contractor.business_hours = ""
+    test_contractor.soul_text = ""
+    db_session.commit()
+
+    view_fn = _get_tool_fn(db_session, test_contractor, "view_profile")
+    result = await view_fn()
+    assert result.is_error is False
+    assert "Hourly Rate: Not set" in result.content
+    assert "Business Hours: Not set" in result.content
+    assert "Soul/Bio: Not set" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_view_profile_shows_rate_formatted(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """view_profile should format hourly rate with dollar sign."""
+    test_contractor.hourly_rate = 85.0
+    db_session.commit()
+
+    view_fn = _get_tool_fn(db_session, test_contractor, "view_profile")
+    result = await view_fn()
+    assert "$85/hr" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_view_profile_shows_communication_style(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """view_profile should extract and display communication style from preferences."""
+    test_contractor.preferences_json = json.dumps({"communication_style": "casual and brief"})
+    db_session.commit()
+
+    view_fn = _get_tool_fn(db_session, test_contractor, "view_profile")
+    result = await view_fn()
+    assert "casual and brief" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_view_profile_shows_soul_text(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """view_profile should display soul text."""
+    test_contractor.soul_text = "I keep it real with my clients."
+    db_session.commit()
+
+    view_fn = _get_tool_fn(db_session, test_contractor, "view_profile")
+    result = await view_fn()
+    assert "I keep it real with my clients." in result.content
+
+
+@pytest.mark.asyncio()
+async def test_view_profile_shows_onboarding_status(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """view_profile should show onboarding completion status."""
+    test_contractor.onboarding_complete = True
+    db_session.commit()
+
+    view_fn = _get_tool_fn(db_session, test_contractor, "view_profile")
+    result = await view_fn()
+    assert "Onboarding Complete: Yes" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_view_profile_reflects_updates(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """view_profile should reflect changes made by update_profile."""
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
+    await update_fn(name="Jake the Plumber", trade="Plumber")
+
+    view_fn = _get_tool_fn(db_session, test_contractor, "view_profile")
+    result = await view_fn()
+    assert "Jake the Plumber" in result.content
+    assert "Plumber" in result.content
+
+
+# --- _format_profile unit tests ---
+
+
+def test_format_profile_complete(db_session: Session, test_contractor: Contractor) -> None:
+    """_format_profile should include all fields for a fully populated profile."""
+    test_contractor.hourly_rate = 100.0
+    test_contractor.business_hours = "Mon-Fri 8am-5pm"
+    test_contractor.soul_text = "Deck specialist"
+    test_contractor.preferences_json = json.dumps({"communication_style": "formal"})
+    db_session.commit()
+
+    output = _format_profile(test_contractor)
+    assert "Test Contractor" in output
+    assert "General Contractor" in output
+    assert "Portland, OR" in output
+    assert "$100/hr" in output
+    assert "Mon-Fri 8am-5pm" in output
+    assert "Deck specialist" in output
+    assert "formal" in output
+
+
+def test_format_profile_empty_contractor(db_session: Session) -> None:
+    """_format_profile should show 'Not set' for all fields on a blank contractor."""
+    contractor = Contractor(user_id="blank-user")
+    db_session.add(contractor)
+    db_session.commit()
+
+    output = _format_profile(contractor)
+    assert "Name: Not set" in output
+    assert "Trade: Not set" in output
+    assert "Location: Not set" in output
+    assert "Hourly Rate: Not set" in output
+    assert "Business Hours: Not set" in output
+    assert "Communication Style: Not set" in output
+    assert "Soul/Bio: Not set" in output
+
+
+def test_format_profile_invalid_preferences_json(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """_format_profile should handle malformed preferences_json gracefully."""
+    test_contractor.preferences_json = "not valid json"
+    db_session.commit()
+
+    output = _format_profile(test_contractor)
+    assert "Communication Style: Not set" in output
+
+
 # --- update_profile tool unit tests ---
 
 
 @pytest.mark.asyncio()
 async def test_update_profile_name(db_session: Session, test_contractor: Contractor) -> None:
     """update_profile should update contractor name."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(name="Mike Johnson")
     assert "name" in result.content
     assert result.is_error is False
@@ -73,8 +242,7 @@ async def test_update_profile_name(db_session: Session, test_contractor: Contrac
 @pytest.mark.asyncio()
 async def test_update_profile_trade(db_session: Session, test_contractor: Contractor) -> None:
     """update_profile should update contractor trade."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(trade="Electrician")
     assert "trade" in result.content
     assert result.is_error is False
@@ -85,8 +253,7 @@ async def test_update_profile_trade(db_session: Session, test_contractor: Contra
 @pytest.mark.asyncio()
 async def test_update_profile_location(db_session: Session, test_contractor: Contractor) -> None:
     """update_profile should update contractor location."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(location="Denver, CO")
     assert "location" in result.content
     assert result.is_error is False
@@ -97,8 +264,7 @@ async def test_update_profile_location(db_session: Session, test_contractor: Con
 @pytest.mark.asyncio()
 async def test_update_profile_hourly_rate(db_session: Session, test_contractor: Contractor) -> None:
     """update_profile should parse and update hourly rate."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(hourly_rate="$85/hr")
     assert "hourly_rate" in result.content
     assert result.is_error is False
@@ -111,8 +277,7 @@ async def test_update_profile_hourly_rate_numeric(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """update_profile should handle numeric hourly rate values."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(hourly_rate=95.0)
     assert "hourly_rate" in result.content
     assert result.is_error is False
@@ -125,8 +290,7 @@ async def test_update_profile_invalid_rate(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """update_profile should return error for unparseable rates."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(hourly_rate="depends on the job")
     assert result.is_error is True
     assert "Could not parse" in result.content
@@ -137,8 +301,7 @@ async def test_update_profile_business_hours(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """update_profile should update business hours."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(business_hours="Mon-Fri 7am-5pm")
     assert "business_hours" in result.content
     assert result.is_error is False
@@ -151,8 +314,7 @@ async def test_update_profile_communication_style(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """update_profile should store communication style in preferences_json."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(communication_style="casual and brief")
     assert "communication_style" in result.content
     assert result.is_error is False
@@ -164,8 +326,7 @@ async def test_update_profile_communication_style(
 @pytest.mark.asyncio()
 async def test_update_profile_soul_text(db_session: Session, test_contractor: Contractor) -> None:
     """update_profile should update soul text."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(soul_text="I specialize in deck building.")
     assert "soul_text" in result.content
     assert result.is_error is False
@@ -178,8 +339,7 @@ async def test_update_profile_multiple_fields(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """update_profile should update multiple fields at once."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn(name="Jake", trade="Plumber", location="Portland, OR")
     assert result.is_error is False
     assert "name" in result.content
@@ -194,8 +354,7 @@ async def test_update_profile_multiple_fields(
 @pytest.mark.asyncio()
 async def test_update_profile_no_fields(db_session: Session, test_contractor: Contractor) -> None:
     """update_profile should return error when no fields provided."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
     result = await update_fn()
     assert result.is_error is True
     assert "No fields provided" in result.content
@@ -206,8 +365,7 @@ async def test_update_profile_various_rate_formats(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """update_profile should handle various rate formats."""
-    tools = create_profile_tools(db_session, test_contractor)
-    update_fn = tools[0].function
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
 
     for rate_str, expected in [
         ("$85/hour", 85.0),
@@ -225,7 +383,7 @@ async def test_update_profile_various_rate_formats(
 
 def test_extract_from_update_profile_calls() -> None:
     """Should extract profile fields from update_profile tool call records."""
-    tool_calls = [
+    tool_calls: list[dict[str, Any]] = [
         {
             "name": "update_profile",
             "args": {"name": "Mike", "trade": "Electrician"},
@@ -240,7 +398,7 @@ def test_extract_from_update_profile_calls() -> None:
 
 def test_extract_from_update_profile_with_rate() -> None:
     """Should extract and parse hourly rate from update_profile calls."""
-    tool_calls = [
+    tool_calls: list[dict[str, Any]] = [
         {
             "name": "update_profile",
             "args": {"hourly_rate": "$85/hr"},
@@ -254,7 +412,7 @@ def test_extract_from_update_profile_with_rate() -> None:
 
 def test_extract_from_update_profile_with_communication_style() -> None:
     """Should extract communication style as preferences_json."""
-    tool_calls = [
+    tool_calls: list[dict[str, Any]] = [
         {
             "name": "update_profile",
             "args": {"communication_style": "casual and brief"},
@@ -270,7 +428,7 @@ def test_extract_from_update_profile_with_communication_style() -> None:
 
 def test_extract_ignores_non_update_profile_tools() -> None:
     """Should ignore tool calls that are not update_profile."""
-    tool_calls = [
+    tool_calls: list[dict[str, Any]] = [
         {
             "name": "save_fact",
             "args": {"key": "name", "value": "Mike"},
@@ -284,7 +442,7 @@ def test_extract_ignores_non_update_profile_tools() -> None:
 
 def test_extract_ignores_error_tool_calls() -> None:
     """Should ignore update_profile calls that had errors."""
-    tool_calls = [
+    tool_calls: list[dict[str, Any]] = [
         {
             "name": "update_profile",
             "args": {"hourly_rate": "varies"},
@@ -298,7 +456,7 @@ def test_extract_ignores_error_tool_calls() -> None:
 
 def test_extract_multiple_update_profile_calls() -> None:
     """Should merge results from multiple update_profile calls."""
-    tool_calls = [
+    tool_calls: list[dict[str, Any]] = [
         {
             "name": "update_profile",
             "args": {"name": "Jake"},
@@ -320,7 +478,7 @@ def test_extract_multiple_update_profile_calls() -> None:
 
 def test_extract_all_fields() -> None:
     """Should extract all supported profile fields."""
-    tool_calls = [
+    tool_calls: list[dict[str, Any]] = [
         {
             "name": "update_profile",
             "args": {
@@ -350,11 +508,28 @@ def test_extract_all_fields() -> None:
 # --- Tool schema tests ---
 
 
+def test_tool_list_contains_both_tools(db_session: Session, test_contractor: Contractor) -> None:
+    """create_profile_tools should return both view_profile and update_profile."""
+    tools = create_profile_tools(db_session, test_contractor)
+    names = [t.name for t in tools]
+    assert "view_profile" in names
+    assert "update_profile" in names
+    assert len(tools) == 2
+
+
+def test_view_profile_tool_schema(db_session: Session, test_contractor: Contractor) -> None:
+    """view_profile tool should have correct name and no required parameters."""
+    tools = create_profile_tools(db_session, test_contractor)
+    tool = next(t for t in tools if t.name == "view_profile")
+    assert tool.params_model is not None
+    schema = tool.params_model.model_json_schema()
+    assert schema["properties"] == {}
+
+
 def test_update_profile_tool_schema(db_session: Session, test_contractor: Contractor) -> None:
     """update_profile tool should have correct name and params_model schema."""
     tools = create_profile_tools(db_session, test_contractor)
-    assert len(tools) == 1
-    tool = tools[0]
+    tool = next(t for t in tools if t.name == "update_profile")
     assert tool.name == "update_profile"
     assert tool.params_model is not None
     schema = tool.params_model.model_json_schema()
