@@ -1,4 +1,4 @@
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -39,7 +39,7 @@ class Tool:
 
     name: str
     description: str
-    function: Callable[..., Any]
+    function: Callable[..., Awaitable[ToolResult]]
     parameters: dict[str, Any] = field(default_factory=dict)
     params_model: type[BaseModel] | None = None
     tags: set[str] = field(default_factory=set)
