@@ -3,6 +3,8 @@
 import json
 from unittest.mock import MagicMock
 
+import pytest
+
 from backend.app.agent.llm_parsing import ParsedToolCall, get_response_text, parse_tool_calls
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
@@ -206,3 +208,79 @@ class TestGetResponseText:
         resp.choices = [choice]
 
         assert get_response_text(resp) == ""
+
+
+class TestJsonRepairWarning:
+    """Tests for the warning logged when json_repair fixes malformed JSON."""
+
+    def test_no_warning_for_valid_json(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Valid JSON should not trigger a warning."""
+        from backend.app.agent.llm_parsing import _parse_arguments
+
+        with caplog.at_level("WARNING", logger="backend.app.agent.llm_parsing"):
+            result = _parse_arguments('{"key": "value"}')
+
+        assert result == {"key": "value"}
+        assert caplog.records == []
+
+    def test_warning_for_trailing_comma(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Trailing comma (invalid JSON fixed by json_repair) should log a warning."""
+        from backend.app.agent.llm_parsing import _parse_arguments
+
+        malformed = '{"key": "value",}'
+        with caplog.at_level("WARNING", logger="backend.app.agent.llm_parsing"):
+            result = _parse_arguments(malformed)
+
+        assert result == {"key": "value"}
+        assert len(caplog.records) == 1
+        assert "json_repair modified malformed tool arguments" in caplog.records[0].message
+        assert malformed in caplog.records[0].message
+
+    def test_warning_for_unquoted_keys(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Unquoted keys (invalid JSON fixed by json_repair) should log a warning."""
+        from backend.app.agent.llm_parsing import _parse_arguments
+
+        malformed = '{key: "value"}'
+        with caplog.at_level("WARNING", logger="backend.app.agent.llm_parsing"):
+            result = _parse_arguments(malformed)
+
+        assert result == {"key": "value"}
+        assert len(caplog.records) == 1
+        assert "json_repair modified malformed tool arguments" in caplog.records[0].message
+
+    def test_warning_truncates_long_arguments(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Long malformed arguments should be truncated to 200 chars in the warning."""
+        from backend.app.agent.llm_parsing import _parse_arguments
+
+        # Build a malformed JSON string longer than 200 chars
+        long_value = "x" * 300
+        malformed = '{key: "' + long_value + '"}'
+        with caplog.at_level("WARNING", logger="backend.app.agent.llm_parsing"):
+            result = _parse_arguments(malformed)
+
+        assert result is not None
+        assert len(caplog.records) == 1
+        # The logged message should contain only the first 200 chars of the raw input
+        logged_msg = caplog.records[0].message
+        assert malformed[:200] in logged_msg
+        assert malformed[201:] not in logged_msg
+
+    def test_no_warning_for_none_arguments(self, caplog: pytest.LogCaptureFixture) -> None:
+        """None arguments should return None without any warning."""
+        from backend.app.agent.llm_parsing import _parse_arguments
+
+        with caplog.at_level("WARNING", logger="backend.app.agent.llm_parsing"):
+            result = _parse_arguments(None)
+
+        assert result is None
+        assert caplog.records == []
+
+    def test_no_warning_for_empty_arguments(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Empty string arguments should return None without any warning."""
+        from backend.app.agent.llm_parsing import _parse_arguments
+
+        with caplog.at_level("WARNING", logger="backend.app.agent.llm_parsing"):
+            result = _parse_arguments("")
+
+        assert result is None
+        assert caplog.records == []

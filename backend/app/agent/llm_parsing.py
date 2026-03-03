@@ -7,6 +7,7 @@ JSON repair, and validation logic.
 
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any
@@ -75,7 +76,8 @@ def _parse_arguments(raw_arguments: str | None) -> dict[str, Any] | None:
     """Parse raw JSON arguments string into a dict.
 
     Returns ``None`` when the input is missing, empty, or cannot be parsed
-    into a dict.
+    into a dict.  Logs a warning when ``json_repair`` has to fix malformed
+    JSON so we can track LLM output quality.
     """
     if not raw_arguments:
         return None
@@ -84,6 +86,14 @@ def _parse_arguments(raw_arguments: str | None) -> dict[str, Any] | None:
         parsed = json_repair.loads(raw_arguments)
         if not isinstance(parsed, dict):
             return None
+        # Detect whether json_repair had to fix the JSON
+        try:
+            json.loads(raw_arguments)
+        except (json.JSONDecodeError, ValueError):
+            logger.warning(
+                "json_repair modified malformed tool arguments: %s",
+                raw_arguments[:200],
+            )
         return parsed
     except (ValueError, TypeError):
         return None
