@@ -24,6 +24,7 @@ from backend.app.agent.heartbeat import (
     evaluate_heartbeat_need,
     get_daily_heartbeat_count,
     is_within_business_hours,
+    parse_frequency_to_minutes,
     run_cheap_checks,
     run_heartbeat_for_contractor,
 )
@@ -1446,3 +1447,244 @@ class TestHeartbeatScheduler:
         mock_db.close.assert_called_once()
         # SessionLocal called only once (listing session, no per-contractor sessions)
         mock_session_local.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# parse_frequency_to_minutes
+# ---------------------------------------------------------------------------
+
+
+class TestParseFrequencyToMinutes:
+    def test_empty_string_returns_none(self) -> None:
+        assert parse_frequency_to_minutes("") is None
+
+    def test_whitespace_returns_none(self) -> None:
+        assert parse_frequency_to_minutes("   ") is None
+
+    def test_daily_keyword(self) -> None:
+        assert parse_frequency_to_minutes("daily") == 1440
+
+    def test_daily_case_insensitive(self) -> None:
+        assert parse_frequency_to_minutes("Daily") == 1440
+        assert parse_frequency_to_minutes("DAILY") == 1440
+
+    def test_minutes_short(self) -> None:
+        assert parse_frequency_to_minutes("30m") == 30
+
+    def test_hours_short(self) -> None:
+        assert parse_frequency_to_minutes("1h") == 60
+        assert parse_frequency_to_minutes("2h") == 120
+
+    def test_days_short(self) -> None:
+        assert parse_frequency_to_minutes("1d") == 1440
+        assert parse_frequency_to_minutes("2d") == 2880
+
+    def test_long_form_minutes(self) -> None:
+        assert parse_frequency_to_minutes("45minutes") == 45
+        assert parse_frequency_to_minutes("1minute") == 1
+
+    def test_long_form_hours(self) -> None:
+        assert parse_frequency_to_minutes("3hours") == 180
+        assert parse_frequency_to_minutes("1hour") == 60
+
+    def test_long_form_days(self) -> None:
+        assert parse_frequency_to_minutes("1day") == 1440
+        assert parse_frequency_to_minutes("2days") == 2880
+
+    def test_invalid_returns_none(self) -> None:
+        assert parse_frequency_to_minutes("never") is None
+        assert parse_frequency_to_minutes("weekly") is None
+        assert parse_frequency_to_minutes("abc") is None
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat opt-in / frequency gate tests
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatOptIn:
+    @pytest.mark.asyncio
+    async def test_opted_out_contractor_is_skipped(
+        self, db: Session, contractor: Contractor
+    ) -> None:
+        """A contractor with heartbeat_opt_in=False should be skipped entirely."""
+        contractor.heartbeat_opt_in = False
+        db.commit()
+
+        mock_messaging = AsyncMock()
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
+
+        assert result is None
+        mock_messaging.send_text.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.run_cheap_checks")
+    async def test_opted_in_contractor_proceeds(
+        self,
+        mock_checks: MagicMock,
+        mock_eval: MagicMock,
+        db: Session,
+        contractor: Contractor,
+    ) -> None:
+        """A contractor with heartbeat_opt_in=True (default) should proceed normally."""
+        assert contractor.heartbeat_opt_in is True
+
+        mock_checks.return_value = CheapCheckResult(flags=[])
+        mock_messaging = AsyncMock()
+
+        with patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True):
+            result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
+
+        # Should get no_action because cheap checks are clean, but NOT None (not skipped)
+        assert result is not None
+        assert result.action_type == "no_action"
+
+    @pytest.mark.asyncio
+    async def test_default_opt_in_is_true(self, db: Session) -> None:
+        """New contractors should have heartbeat_opt_in=True by default."""
+        c = Contractor(
+            user_id="hb-opt-in-default",
+            name="Default Contractor",
+            onboarding_complete=True,
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+
+        assert c.heartbeat_opt_in is True
+
+    @pytest.mark.asyncio
+    async def test_default_frequency_is_empty(self, db: Session) -> None:
+        """New contractors should have empty heartbeat_frequency by default."""
+        c = Contractor(
+            user_id="hb-freq-default",
+            name="Default Freq Contractor",
+            onboarding_complete=True,
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+
+        assert c.heartbeat_frequency == ""
+
+
+class TestHeartbeatFrequencyGate:
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
+    @patch("backend.app.agent.heartbeat.run_cheap_checks")
+    async def test_frequency_gate_blocks_when_too_soon(
+        self,
+        mock_checks: MagicMock,
+        mock_biz_hours: MagicMock,
+        db: Session,
+        contractor: Contractor,
+    ) -> None:
+        """If the contractor's frequency has not elapsed, skip the heartbeat."""
+        contractor.heartbeat_frequency = "2h"
+        db.commit()
+
+        # Create a recent outbound message (30 minutes ago)
+        conv = Conversation(contractor_id=contractor.id, is_active=True)
+        db.add(conv)
+        db.commit()
+        db.refresh(conv)
+
+        recent_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
+        msg = Message(
+            conversation_id=conv.id,
+            direction="outbound",
+            body="Previous heartbeat",
+            created_at=recent_time,
+        )
+        db.add(msg)
+        db.commit()
+
+        mock_messaging = AsyncMock()
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
+
+        assert result is None
+        mock_checks.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
+    @patch("backend.app.agent.heartbeat.run_cheap_checks")
+    async def test_frequency_gate_allows_when_elapsed(
+        self,
+        mock_checks: MagicMock,
+        mock_biz_hours: MagicMock,
+        db: Session,
+        contractor: Contractor,
+    ) -> None:
+        """If enough time has elapsed since the last message, proceed."""
+        contractor.heartbeat_frequency = "1h"
+        db.commit()
+
+        # Create an old outbound message (2 hours ago)
+        conv = Conversation(contractor_id=contractor.id, is_active=True)
+        db.add(conv)
+        db.commit()
+        db.refresh(conv)
+
+        old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=2)
+        msg = Message(
+            conversation_id=conv.id,
+            direction="outbound",
+            body="Old heartbeat",
+            created_at=old_time,
+        )
+        db.add(msg)
+        db.commit()
+
+        mock_checks.return_value = CheapCheckResult(flags=[])
+        mock_messaging = AsyncMock()
+
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
+
+        assert result is not None
+        assert result.action_type == "no_action"
+        mock_checks.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
+    @patch("backend.app.agent.heartbeat.run_cheap_checks")
+    async def test_empty_frequency_skips_gate(
+        self,
+        mock_checks: MagicMock,
+        mock_biz_hours: MagicMock,
+        db: Session,
+        contractor: Contractor,
+    ) -> None:
+        """An empty heartbeat_frequency should not apply any frequency gate."""
+        contractor.heartbeat_frequency = ""
+        db.commit()
+
+        mock_checks.return_value = CheapCheckResult(flags=[])
+        mock_messaging = AsyncMock()
+
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
+
+        assert result is not None
+        mock_checks.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
+    @patch("backend.app.agent.heartbeat.run_cheap_checks")
+    async def test_frequency_gate_allows_when_no_prior_messages(
+        self,
+        mock_checks: MagicMock,
+        mock_biz_hours: MagicMock,
+        db: Session,
+        contractor: Contractor,
+    ) -> None:
+        """If there are no prior outbound messages, the frequency gate should not block."""
+        contractor.heartbeat_frequency = "1h"
+        db.commit()
+
+        mock_checks.return_value = CheapCheckResult(flags=[])
+        mock_messaging = AsyncMock()
+
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
+
+        assert result is not None
+        mock_checks.assert_called_once()
