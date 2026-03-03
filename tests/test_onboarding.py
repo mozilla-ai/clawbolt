@@ -757,7 +757,6 @@ async def test_prepopulated_contractor_included_in_heartbeat(
         db=db_session,
         contractor=contractor,
         messaging_service=mock_messaging,
-        daily_counts={},
         max_daily=5,
     )
     # Should get a result (not None which means skipped)

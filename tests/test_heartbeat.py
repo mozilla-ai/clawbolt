@@ -22,6 +22,7 @@ from backend.app.agent.heartbeat import (
     _parse_tool_call_response,
     build_heartbeat_context,
     evaluate_heartbeat_need,
+    get_daily_heartbeat_count,
     is_within_business_hours,
     run_cheap_checks,
     run_heartbeat_for_contractor,
@@ -32,6 +33,7 @@ from backend.app.models import (
     Conversation,
     Estimate,
     HeartbeatChecklistItem,
+    HeartbeatLog,
     Memory,
     Message,
 )
@@ -966,7 +968,7 @@ class TestRunHeartbeatForContractor:
         c = Contractor(user_id="hb-new", phone="+15550000000", onboarding_complete=False)
         db.add(c)
         db.commit()
-        result = await run_heartbeat_for_contractor(db, c, mock_messaging, {}, 5)
+        result = await run_heartbeat_for_contractor(db, c, mock_messaging, 5)
         assert result is None
         mock_messaging.send_text.assert_not_called()
 
@@ -979,7 +981,7 @@ class TestRunHeartbeatForContractor:
         contractor: Contractor,
         mock_messaging: MagicMock,
     ) -> None:
-        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, {}, 5)
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
         assert result is None
 
     @pytest.mark.asyncio
@@ -991,8 +993,11 @@ class TestRunHeartbeatForContractor:
         contractor: Contractor,
         mock_messaging: MagicMock,
     ) -> None:
-        counts = {contractor.id: 5}
-        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, counts, 5)
+        # Add 5 heartbeat log entries to hit the daily limit
+        for _ in range(5):
+            db.add(HeartbeatLog(contractor_id=contractor.id))
+        db.commit()
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
         assert result is None
 
     @pytest.mark.asyncio
@@ -1005,7 +1010,7 @@ class TestRunHeartbeatForContractor:
         mock_messaging: MagicMock,
     ) -> None:
         """When cheap checks return no flags, LLM is skipped and no message sent."""
-        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, {}, 5)
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
         assert result is not None
         assert result.action_type == "no_action"
         assert "cheap checks clean" in result.reasoning
@@ -1035,8 +1040,7 @@ class TestRunHeartbeatForContractor:
             reasoning="Stale draft",
             priority=4,
         )
-        counts: dict[int, int] = {}
-        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, counts, 5)
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
 
         assert result is not None
         assert result.action_type == "send_message"
@@ -1047,8 +1051,9 @@ class TestRunHeartbeatForContractor:
         msgs = db.query(Message).filter(Message.direction == "outbound").all()
         assert len(msgs) == 1
         assert msgs[0].body == "Reminder: draft estimate pending!"
-        # Daily count should be incremented
-        assert counts[contractor.id] == 1
+        # Heartbeat log should be recorded for persistent rate limiting
+        logs = db.query(HeartbeatLog).filter(HeartbeatLog.contractor_id == contractor.id).all()
+        assert len(logs) == 1
         # LLM was called with the flags
         mock_eval.assert_awaited_once_with(db, contractor, ["Stale draft estimate"])
 
@@ -1073,8 +1078,7 @@ class TestRunHeartbeatForContractor:
             priority=3,
         )
         mock_messaging.send_text = AsyncMock(side_effect=Exception("Messaging service down"))
-        counts: dict[int, int] = {}
-        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, counts, 5)
+        result = await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
         # Should still return the action, just not record a message
         assert result is not None
         assert result.action_type == "send_message"
@@ -1115,7 +1119,7 @@ class TestRunHeartbeatForContractor:
             reasoning="checklist",
             priority=3,
         )
-        await run_heartbeat_for_contractor(db, contractor, mock_messaging, {}, 5)
+        await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
 
         db.refresh(item)
         assert item.last_triggered_at is not None
@@ -1154,11 +1158,57 @@ class TestRunHeartbeatForContractor:
             reasoning="once item",
             priority=4,
         )
-        await run_heartbeat_for_contractor(db, contractor, mock_messaging, {}, 5)
+        await run_heartbeat_for_contractor(db, contractor, mock_messaging, 5)
 
         db.refresh(item)
         assert item.last_triggered_at is not None
         assert item.status == "completed"
+
+
+# ---------------------------------------------------------------------------
+# get_daily_heartbeat_count (persistent rate limiting)
+# ---------------------------------------------------------------------------
+
+
+class TestGetDailyHeartbeatCount:
+    def test_zero_when_no_logs(self, db: Session, contractor: Contractor) -> None:
+        assert get_daily_heartbeat_count(db, contractor.id) == 0
+
+    def test_counts_today_only(self, db: Session, contractor: Contractor) -> None:
+        """Logs from yesterday should not count toward today's limit."""
+        # Add a log from today
+        db.add(HeartbeatLog(contractor_id=contractor.id))
+        db.commit()
+
+        # Add a log from yesterday by manually setting created_at
+        yesterday = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
+        old_log = HeartbeatLog(contractor_id=contractor.id, created_at=yesterday)
+        db.add(old_log)
+        db.commit()
+
+        assert get_daily_heartbeat_count(db, contractor.id) == 1
+
+    def test_counts_multiple_today(self, db: Session, contractor: Contractor) -> None:
+        for _ in range(3):
+            db.add(HeartbeatLog(contractor_id=contractor.id))
+        db.commit()
+        assert get_daily_heartbeat_count(db, contractor.id) == 3
+
+    def test_scoped_to_contractor(self, db: Session, contractor: Contractor) -> None:
+        """Logs from other contractors should not count."""
+        other = Contractor(
+            user_id="hb-other",
+            phone="+15551112222",
+            onboarding_complete=True,
+        )
+        db.add(other)
+        db.commit()
+
+        db.add(HeartbeatLog(contractor_id=other.id))
+        db.commit()
+
+        assert get_daily_heartbeat_count(db, contractor.id) == 0
+        assert get_daily_heartbeat_count(db, other.id) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -1194,26 +1244,6 @@ class TestBuildHeartbeatContext:
 
 
 class TestHeartbeatScheduler:
-    @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.SessionLocal")
-    @patch("backend.app.agent.heartbeat._build_messaging_service")
-    async def test_daily_count_reset(
-        self, mock_messaging_cls: MagicMock, mock_session_local: MagicMock
-    ) -> None:
-        """tick() on a new day should reset daily counts."""
-        mock_db = MagicMock()
-        mock_db.query.return_value.filter.return_value.all.return_value = []
-        mock_session_local.return_value = mock_db
-
-        scheduler = HeartbeatScheduler()
-        scheduler._daily_counts = {1: 3, 2: 5}
-        scheduler._last_reset_date = datetime.date(2025, 1, 1)
-
-        await scheduler.tick()
-
-        assert scheduler._daily_counts == {}
-        assert scheduler._last_reset_date == datetime.date.today()
-
     @patch("backend.app.agent.heartbeat.settings")
     def test_start_when_disabled(self, mock_settings: MagicMock) -> None:
         mock_settings.heartbeat_enabled = False
