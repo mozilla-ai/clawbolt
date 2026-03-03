@@ -12,7 +12,7 @@ from tests.mocks.telegram import make_telegram_update_payload
 
 # All webhook tests mock handle_inbound_message to avoid LLM calls
 _MOCK_AGENT_RESPONSE = AgentResponse(reply_text="Mock reply")
-_PATCH_HANDLE = "backend.app.routers.telegram_webhook.handle_inbound_message"
+_PATCH_HANDLE = "backend.app.agent.ingestion.handle_inbound_message"
 
 
 def test_inbound_webhook_returns_200(client: TestClient) -> None:

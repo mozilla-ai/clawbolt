@@ -21,7 +21,7 @@ from backend.app.services.rate_limiter import InMemoryRateLimiter, check_webhook
 from tests.mocks.telegram import make_telegram_update_payload
 
 _MOCK_AGENT_RESPONSE = AgentResponse(reply_text="Mock reply")
-_PATCH_HANDLE = "backend.app.routers.telegram_webhook.handle_inbound_message"
+_PATCH_HANDLE = "backend.app.agent.ingestion.handle_inbound_message"
 
 
 def _make_scope(
