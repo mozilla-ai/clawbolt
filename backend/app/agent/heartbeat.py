@@ -40,6 +40,7 @@ from backend.app.models import (
     Memory,
     Message,
 )
+from backend.app.services.llm_usage import log_llm_usage
 from backend.app.services.messaging import MessagingService, _build_messaging_service
 
 logger = logging.getLogger(__name__)
@@ -471,6 +472,7 @@ async def evaluate_heartbeat_need(
         ),
     )
 
+    log_llm_usage(db, contractor.id, model, response, "heartbeat")
     return _parse_tool_call_response(response)
 
 
