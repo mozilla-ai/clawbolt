@@ -1,7 +1,7 @@
 [project]
 name = "clawbolt"
 version = "0.1.0"
-description = "AI assistant for solo blue-collar contractors"
+description = "AI assistant for the trades"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.115.0",
