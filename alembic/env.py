@@ -11,6 +11,7 @@ from backend.app.models import (  # noqa: F401
     Conversation,
     Estimate,
     EstimateLineItem,
+    HeartbeatLog,
     MediaFile,
     Memory,
     Message,
