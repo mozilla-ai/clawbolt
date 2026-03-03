@@ -109,6 +109,7 @@ class Message(Base):
     body: Mapped[str] = mapped_column(Text, default="")
     media_urls_json: Mapped[str] = mapped_column(Text, default="[]")
     processed_context: Mapped[str] = mapped_column(Text, default="")
+    tool_interactions_json: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )

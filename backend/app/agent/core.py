@@ -486,6 +486,7 @@ class BackshopAgent:
                         actions_taken.append(f"Failed: {tool_name} (validation)")
                         tool_call_records.append(
                             {
+                                "tool_call_id": tc_req.id,
                                 "name": tool_name,
                                 "args": tool_args,
                                 "result": result_str,
@@ -518,6 +519,7 @@ class BackshopAgent:
                             actions_taken.append(f"Called {tool_name}")
                         tool_call_records.append(
                             {
+                                "tool_call_id": tc_req.id,
                                 "name": tool_name,
                                 "args": validated_args,
                                 "result": result_str,

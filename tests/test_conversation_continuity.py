@@ -1,4 +1,5 @@
 import datetime
+import json
 
 import pytest
 from sqlalchemy.orm import Session
@@ -8,7 +9,11 @@ from backend.app.agent.context import (
     get_or_create_conversation,
     load_conversation_history,
 )
-from backend.app.agent.messages import AssistantMessage, UserMessage
+from backend.app.agent.messages import (
+    AssistantMessage,
+    ToolResultMessage,
+    UserMessage,
+)
 from backend.app.models import Contractor, Conversation, Message
 
 
@@ -228,3 +233,162 @@ def test_webhook_uses_canonical_get_or_create_conversation() -> None:
 
     # The local _get_or_create_conversation should no longer exist
     assert not hasattr(telegram_webhook, "_get_or_create_conversation")
+
+
+# ---------------------------------------------------------------------------
+# Tool interaction persistence tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_load_history_reconstructs_tool_interactions(
+    db_session: Session,
+    conversation: Conversation,
+) -> None:
+    """Outbound messages with tool_interactions_json should expand to full sequence."""
+    # Inbound message
+    db_session.add(
+        Message(conversation_id=conversation.id, direction="inbound", body="Save my rate")
+    )
+
+    # Outbound with tool interactions
+    tool_data = [
+        {
+            "tool_call_id": "call_abc",
+            "name": "save_fact",
+            "args": {"key": "rate", "value": "$85/hr"},
+            "result": "Saved: rate = $85/hr",
+            "is_error": False,
+        }
+    ]
+    db_session.add(
+        Message(
+            conversation_id=conversation.id,
+            direction="outbound",
+            body="I saved your rate.",
+            tool_interactions_json=json.dumps(tool_data),
+        )
+    )
+
+    # Current message (will be excluded)
+    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
+    db_session.commit()
+
+    history = await load_conversation_history(db_session, conversation.id)
+
+    # Should be: UserMessage, AssistantMessage(tool_calls), ToolResultMessage, AssistantMessage
+    assert len(history) == 4
+    assert isinstance(history[0], UserMessage)
+    assert history[0].content == "Save my rate"
+
+    assert isinstance(history[1], AssistantMessage)
+    assert len(history[1].tool_calls) == 1
+    assert history[1].tool_calls[0].name == "save_fact"
+    assert history[1].tool_calls[0].id == "call_abc"
+
+    assert isinstance(history[2], ToolResultMessage)
+    assert history[2].tool_call_id == "call_abc"
+    assert "Saved: rate" in history[2].content
+
+    assert isinstance(history[3], AssistantMessage)
+    assert history[3].content == "I saved your rate."
+
+
+@pytest.mark.asyncio()
+async def test_load_history_backward_compatible_without_tool_interactions(
+    db_session: Session,
+    conversation: Conversation,
+) -> None:
+    """Old outbound messages without tool_interactions_json load as flat text."""
+    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Hello"))
+    db_session.add(
+        Message(
+            conversation_id=conversation.id,
+            direction="outbound",
+            body="Hi there!",
+            tool_interactions_json="",
+        )
+    )
+    # Current
+    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
+    db_session.commit()
+
+    history = await load_conversation_history(db_session, conversation.id)
+    assert len(history) == 2
+    assert isinstance(history[0], UserMessage)
+    assert isinstance(history[1], AssistantMessage)
+    assert history[1].content == "Hi there!"
+    assert history[1].tool_calls == []
+
+
+@pytest.mark.asyncio()
+async def test_load_history_multiple_tool_calls_in_one_turn(
+    db_session: Session,
+    conversation: Conversation,
+) -> None:
+    """Multiple tool calls in a single turn should all be reconstructed."""
+    db_session.add(
+        Message(conversation_id=conversation.id, direction="inbound", body="Save two facts")
+    )
+    tool_data = [
+        {
+            "tool_call_id": "call_1",
+            "name": "save_fact",
+            "args": {"key": "rate", "value": "$85/hr"},
+            "result": "Saved: rate = $85/hr",
+            "is_error": False,
+        },
+        {
+            "tool_call_id": "call_2",
+            "name": "save_fact",
+            "args": {"key": "trade", "value": "plumber"},
+            "result": "Saved: trade = plumber",
+            "is_error": False,
+        },
+    ]
+    db_session.add(
+        Message(
+            conversation_id=conversation.id,
+            direction="outbound",
+            body="Done!",
+            tool_interactions_json=json.dumps(tool_data),
+        )
+    )
+    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
+    db_session.commit()
+
+    history = await load_conversation_history(db_session, conversation.id)
+
+    # UserMessage, AssistantMessage(2 tool_calls), ToolResult, ToolResult, AssistantMessage
+    assert len(history) == 5
+    assert isinstance(history[1], AssistantMessage)
+    assert len(history[1].tool_calls) == 2
+    assert isinstance(history[2], ToolResultMessage)
+    assert isinstance(history[3], ToolResultMessage)
+    assert isinstance(history[4], AssistantMessage)
+    assert history[4].content == "Done!"
+
+
+@pytest.mark.asyncio()
+async def test_load_history_malformed_tool_json_falls_back_to_flat(
+    db_session: Session,
+    conversation: Conversation,
+) -> None:
+    """Malformed tool_interactions_json should fall back to flat AssistantMessage."""
+    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Hello"))
+    db_session.add(
+        Message(
+            conversation_id=conversation.id,
+            direction="outbound",
+            body="Reply text",
+            tool_interactions_json="not valid json{{{",
+        )
+    )
+    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
+    db_session.commit()
+
+    history = await load_conversation_history(db_session, conversation.id)
+    assert len(history) == 2
+    assert isinstance(history[1], AssistantMessage)
+    assert history[1].content == "Reply text"
+    assert history[1].tool_calls == []
