@@ -16,12 +16,12 @@ import re
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-import json_repair
 from any_llm import acompletion
 from any_llm.types.completion import ChatCompletion
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
+from backend.app.agent.llm_parsing import parse_tool_calls
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt
 from backend.app.config import settings
@@ -383,12 +383,11 @@ def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
     If the LLM did not call the compose_message tool (e.g. returned plain text
     instead), falls back to no_action.
     """
-    choice = response.choices[0]
-    tool_calls = getattr(choice.message, "tool_calls", None)
+    parsed = parse_tool_calls(response)
 
-    if not tool_calls:
+    if not parsed:
         # LLM returned text instead of calling the tool: default to no_action
-        content = choice.message.content or ""
+        content = response.choices[0].message.content or ""
         logger.warning("Heartbeat LLM returned text instead of tool call: %s", content[:200])
         return HeartbeatAction(
             action_type="no_action",
@@ -398,13 +397,9 @@ def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
         )
 
     # Use the first tool call
-    tool_call = tool_calls[0]
-    func = getattr(tool_call, "function", None)
-    if func is None or func.name != "compose_message":
-        logger.warning(
-            "Heartbeat LLM called unexpected tool: %s",
-            getattr(func, "name", None) if func else "(no function)",
-        )
+    tc = parsed[0]
+    if tc.name != "compose_message":
+        logger.warning("Heartbeat LLM called unexpected tool: %s", tc.name)
         return HeartbeatAction(
             action_type="no_action",
             message="",
@@ -412,21 +407,16 @@ def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
             priority=0,
         )
 
-    try:
-        data = json_repair.loads(func.arguments)
-        if not isinstance(data, dict):
-            raise ValueError(f"Expected dict, got {type(data).__name__}")
-    except (ValueError, TypeError):
-        logger.warning(
-            "Heartbeat tool call had malformed arguments: %s", (func.arguments or "")[:200]
-        )
+    if tc.arguments is None:
+        logger.warning("Heartbeat tool call had malformed arguments")
         return HeartbeatAction(
             action_type="no_action",
             message="",
-            reasoning=f"Malformed tool arguments: {(func.arguments or '')[:100]}",
+            reasoning="Malformed tool arguments",
             priority=0,
         )
 
+    data = tc.arguments
     try:
         priority = int(data.get("priority", 3))
     except (ValueError, TypeError):
