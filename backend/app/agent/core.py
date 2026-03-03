@@ -16,7 +16,6 @@ from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.llm_parsing import parse_tool_calls
-from backend.app.agent.memory import build_memory_context
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -26,7 +25,7 @@ from backend.app.agent.messages import (
     UserMessage,
     messages_to_dicts,
 )
-from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
+from backend.app.agent.system_prompt import build_agent_system_prompt
 from backend.app.agent.tools.base import (
     Tool,
     ToolErrorKind,
@@ -40,7 +39,6 @@ from backend.app.models import Contractor
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = 5
-CONTEXT_QUERY_MAX_LENGTH = 100
 RATE_LIMIT_RETRY_DELAY = 2.0
 # Target token budget when trimming for context length (leave room for output tokens)
 CONTEXT_TRIM_TARGET_TOKENS = 80_000
@@ -156,38 +154,6 @@ def _build_error_hint(result: ToolResult) -> str:
     return _DEFAULT_ERROR_HINT
 
 
-SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contractors.
-
-## About {contractor_name}
-{soul_prompt}
-
-## Your Memory
-{memory_context}
-
-## Instructions
-- Be concise and practical. Contractors are busy.
-- You can ONLY communicate via this chat. You cannot send emails, make phone calls, or contact clients directly.
-- Always be helpful, friendly, and professional.
-- Keep replies concise. Contractors are on the job site.
-{tool_instructions}
-
-## Proactive Messaging
-You will proactively reach out during business hours when something needs attention:
-- A draft estimate has been sitting unsent for over 24 hours
-- A scheduled checklist item is due
-- A follow-up reminder or deadline is approaching
-- You haven't heard from the contractor in a few days
-
-## Recall Behavior
-When the contractor asks a question about their business, clients, or past work:
-1. Search your memory for relevant information.
-2. If you find relevant facts, use them to answer clearly and concisely.
-3. If you don't find anything, say so honestly -- don't make things up.
-4. If the question is about general knowledge (not their specific business), answer from your training.
-5. For "what do you know about me?" questions, summarize key facts by category.
-"""
-
-
 @dataclass
 class AgentResponse:
     reply_text: str
@@ -215,40 +181,11 @@ class BackshopAgent:
                 logger.warning("Duplicate tool name registered: %s", tool.name)
             self._tools_by_name[tool.name] = tool
 
-    def _build_tool_instructions(self) -> str:
-        """Generate tool usage instructions from registered tools."""
-        hints = [tool.usage_hint for tool in self.tools if tool.usage_hint]
-        if not hints:
-            return ""
-        lines = "\n".join(f"- {hint}" for hint in hints)
-        return f"\n## Tool Guidelines\n{lines}"
-
     async def _build_system_prompt(self, message_context: str) -> str:
-        """Build the full system prompt with soul + memory + tool instructions."""
-        soul_prompt = build_soul_prompt(self.contractor)
-        memory_context = await build_memory_context(
-            self.db,
-            self.contractor.id,
-            query=message_context[:CONTEXT_QUERY_MAX_LENGTH] if message_context else None,
+        """Build the full system prompt via the composable builder."""
+        return await build_agent_system_prompt(
+            self.db, self.contractor, self.tools, message_context
         )
-        tool_instructions = self._build_tool_instructions()
-        prompt = SYSTEM_PROMPT_TEMPLATE.format(
-            contractor_name=self.contractor.name or "Contractor",
-            soul_prompt=soul_prompt,
-            memory_context=memory_context or "(No memories saved yet)",
-            tool_instructions=tool_instructions,
-        )
-
-        missing = get_missing_optional_fields(self.contractor)
-        if missing:
-            missing_str = " and ".join(missing)
-            prompt += (
-                f"\nNote: You haven't learned this contractor's {missing_str} yet. "
-                "If the opportunity comes up naturally in conversation, "
-                "try to learn and save these details.\n"
-            )
-
-        return prompt
 
     async def _call_llm_with_retry(
         self,
