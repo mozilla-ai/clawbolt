@@ -8,6 +8,7 @@ from backend.app.agent.context import (
     get_or_create_conversation,
     load_conversation_history,
 )
+from backend.app.agent.messages import AssistantMessage, UserMessage
 from backend.app.models import Contractor, Conversation, Message
 
 
@@ -44,9 +45,9 @@ async def test_load_history_chronological_order(
     history = await load_conversation_history(db_session, conversation.id)
     # Should exclude the current (most recent) message
     assert len(history) == 3
-    assert history[0]["content"] == "Message 0"
-    assert history[1]["content"] == "Message 1"
-    assert history[2]["content"] == "Message 2"
+    assert history[0].content == "Message 0"
+    assert history[1].content == "Message 1"
+    assert history[2].content == "Message 2"
 
 
 @pytest.mark.asyncio()
@@ -61,8 +62,8 @@ async def test_load_history_roles(
     db_session.commit()
 
     history = await load_conversation_history(db_session, conversation.id)
-    assert history[0]["role"] == "user"
-    assert history[1]["role"] == "assistant"
+    assert isinstance(history[0], UserMessage)
+    assert isinstance(history[1], AssistantMessage)
 
 
 @pytest.mark.asyncio()
@@ -100,7 +101,7 @@ async def test_load_history_prefers_processed_context(
     db_session.commit()
 
     history = await load_conversation_history(db_session, conversation.id)
-    assert "damaged deck railing" in history[0]["content"]
+    assert "damaged deck railing" in history[0].content
 
 
 @pytest.mark.asyncio()
