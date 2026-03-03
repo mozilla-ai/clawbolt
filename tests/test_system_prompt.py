@@ -121,36 +121,15 @@ class TestSectionBuilders:
             result = await build_memory_section(MagicMock(), contractor_id=1)
         assert result == "(No memories saved yet)"
 
-    def test_build_instructions_section_no_contractor(self) -> None:
-        """Should contain core behavioral rules without contractor."""
+    def test_build_instructions_section(self) -> None:
+        """Should contain core behavioral rules."""
         result = build_instructions_section()
         assert "concise" in result
         assert "ONLY communicate via this chat" in result
 
-    def test_build_instructions_section_with_contractor(self) -> None:
-        """Should contain core rules plus trade guidance with a contractor."""
-        contractor = MagicMock()
-        contractor.trade = "electrician"
-        result = build_instructions_section(contractor)
-        assert "concise" in result
-        assert "ONLY communicate via this chat" in result
-        assert "Trade guidance" in result
-        assert "electrician" in result
-
-    def test_build_instructions_section_unknown_trade(self) -> None:
-        """Should contain only core rules when trade has no defaults."""
-        contractor = MagicMock()
-        contractor.trade = "chimney sweep"
-        result = build_instructions_section(contractor)
-        assert "concise" in result
-        assert "Trade guidance" not in result
-
-    def test_build_instructions_section_empty_trade(self) -> None:
-        """Should contain only core rules when trade is empty."""
-        contractor = MagicMock()
-        contractor.trade = ""
-        result = build_instructions_section(contractor)
-        assert "concise" in result
+    def test_build_instructions_section_no_trade_guidance(self) -> None:
+        """Instructions section should not contain trade-specific guidance."""
+        result = build_instructions_section()
         assert "Trade guidance" not in result
 
     def test_build_tool_guidelines_empty(self) -> None:
@@ -238,8 +217,8 @@ class TestBuildAgentSystemPrompt:
         assert "Recall Behavior" in result
 
     @pytest.mark.asyncio
-    async def test_assembles_trade_guidance_in_instructions(self) -> None:
-        """Agent prompt should include trade-specific guidance in instructions."""
+    async def test_trade_guidance_only_in_identity_section(self) -> None:
+        """Trade guidance should appear in the identity section, not instructions."""
         contractor = MagicMock()
         contractor.name = "Sparky"
         contractor.trade = "electrician"
@@ -262,8 +241,10 @@ class TestBuildAgentSystemPrompt:
                 message_context="hello",
             )
 
-        assert "Trade guidance" in result
-        assert "electrician" in result
+        # Trade guidance should appear in the About section (from build_soul_prompt)
+        assert "NEC codes" in result
+        # But not as a "Trade guidance" label in the instructions section
+        assert "Trade guidance" not in result
 
     @pytest.mark.asyncio
     async def test_no_trade_guidance_for_unknown_trade(self) -> None:

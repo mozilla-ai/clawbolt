@@ -176,6 +176,21 @@ class TestTradeDefaults:
             assert "\u2014" not in guidance, f"Em dash found in trade defaults for {trade}"
             assert "\u2013" not in guidance, f"En dash found in trade defaults for {trade}"
 
+    def test_trade_variants_share_same_string(self) -> None:
+        """Variant trade names should reference the same guidance string object."""
+        variant_pairs = [
+            ("plumber", "plumbing"),
+            ("carpenter", "carpentry"),
+            ("painter", "painting"),
+            ("roofer", "roofing"),
+            ("landscaper", "landscaping"),
+            ("general contractor", "general contracting"),
+        ]
+        for name_a, name_b in variant_pairs:
+            assert TRADE_DEFAULTS[name_a] is TRADE_DEFAULTS[name_b], (
+                f"'{name_a}' and '{name_b}' should reference the same string object"
+            )
+
 
 class TestSoulPromptWithTradeDefaults:
     def test_trade_defaults_included_without_soul_text(self) -> None:

@@ -10,77 +10,71 @@ logger = logging.getLogger(__name__)
 
 # Trade-specific behavioral defaults keyed by normalized trade name.
 # These provide sensible guidance when the contractor hasn't written custom soul_text.
+# Canonical guidance strings are defined once; variant trade names reference the same string.
+
+_ELECTRICIAN_GUIDANCE = (
+    "Use correct electrical terminology (panels, circuits, amperage, NEC codes). "
+    "Safety is paramount: always flag permit requirements and code compliance. "
+    "When estimating, account for materials, labor, and inspection fees separately."
+)
+
+_PLUMBER_GUIDANCE = (
+    "Use correct plumbing terminology (fixtures, supply lines, DWV, backflow). "
+    "Distinguish between repair work and new installation in estimates. "
+    "Flag permit requirements for water heater installs and re-pipes."
+)
+
+_HVAC_GUIDANCE = (
+    "Use correct HVAC terminology (tonnage, SEER ratings, ductwork, refrigerant). "
+    "Seasonal context matters: prioritize AC in summer, heating in winter. "
+    "Always note equipment warranty terms and maintenance schedules."
+)
+
+_GENERAL_CONTRACTOR_GUIDANCE = (
+    "Coordinate across trades and manage project timelines. "
+    "Break estimates into phases (demo, framing, finish). "
+    "Track subcontractor schedules and material lead times."
+)
+
+_CARPENTER_GUIDANCE = (
+    "Use correct carpentry terminology (joists, studs, headers, trim). "
+    "Distinguish between rough and finish carpentry in estimates. "
+    "Account for wood species and grade when pricing materials."
+)
+
+_PAINTER_GUIDANCE = (
+    "Distinguish between interior and exterior work in estimates. "
+    "Account for surface prep (scraping, priming, patching) as separate line items. "
+    "Note paint type, sheen, and number of coats."
+)
+
+_ROOFER_GUIDANCE = (
+    "Use correct roofing terminology (squares, underlayment, flashing, ridge caps). "
+    "Always note tear-off vs. overlay in estimates. "
+    "Flag weather windows and seasonal scheduling constraints."
+)
+
+_LANDSCAPER_GUIDANCE = (
+    "Distinguish between hardscape and softscape in estimates. "
+    "Account for seasonal planting windows and irrigation needs. "
+    "Note ongoing maintenance requirements for installed features."
+)
+
 TRADE_DEFAULTS: dict[str, str] = {
-    "electrician": (
-        "Use correct electrical terminology (panels, circuits, amperage, NEC codes). "
-        "Safety is paramount: always flag permit requirements and code compliance. "
-        "When estimating, account for materials, labor, and inspection fees separately."
-    ),
-    "plumber": (
-        "Use correct plumbing terminology (fixtures, supply lines, DWV, backflow). "
-        "Distinguish between repair work and new installation in estimates. "
-        "Flag permit requirements for water heater installs and re-pipes."
-    ),
-    "plumbing": (
-        "Use correct plumbing terminology (fixtures, supply lines, DWV, backflow). "
-        "Distinguish between repair work and new installation in estimates. "
-        "Flag permit requirements for water heater installs and re-pipes."
-    ),
-    "hvac": (
-        "Use correct HVAC terminology (tonnage, SEER ratings, ductwork, refrigerant). "
-        "Seasonal context matters: prioritize AC in summer, heating in winter. "
-        "Always note equipment warranty terms and maintenance schedules."
-    ),
-    "general contractor": (
-        "Coordinate across trades and manage project timelines. "
-        "Break estimates into phases (demo, framing, finish). "
-        "Track subcontractor schedules and material lead times."
-    ),
-    "general contracting": (
-        "Coordinate across trades and manage project timelines. "
-        "Break estimates into phases (demo, framing, finish). "
-        "Track subcontractor schedules and material lead times."
-    ),
-    "carpenter": (
-        "Use correct carpentry terminology (joists, studs, headers, trim). "
-        "Distinguish between rough and finish carpentry in estimates. "
-        "Account for wood species and grade when pricing materials."
-    ),
-    "carpentry": (
-        "Use correct carpentry terminology (joists, studs, headers, trim). "
-        "Distinguish between rough and finish carpentry in estimates. "
-        "Account for wood species and grade when pricing materials."
-    ),
-    "painter": (
-        "Distinguish between interior and exterior work in estimates. "
-        "Account for surface prep (scraping, priming, patching) as separate line items. "
-        "Note paint type, sheen, and number of coats."
-    ),
-    "painting": (
-        "Distinguish between interior and exterior work in estimates. "
-        "Account for surface prep (scraping, priming, patching) as separate line items. "
-        "Note paint type, sheen, and number of coats."
-    ),
-    "roofer": (
-        "Use correct roofing terminology (squares, underlayment, flashing, ridge caps). "
-        "Always note tear-off vs. overlay in estimates. "
-        "Flag weather windows and seasonal scheduling constraints."
-    ),
-    "roofing": (
-        "Use correct roofing terminology (squares, underlayment, flashing, ridge caps). "
-        "Always note tear-off vs. overlay in estimates. "
-        "Flag weather windows and seasonal scheduling constraints."
-    ),
-    "landscaper": (
-        "Distinguish between hardscape and softscape in estimates. "
-        "Account for seasonal planting windows and irrigation needs. "
-        "Note ongoing maintenance requirements for installed features."
-    ),
-    "landscaping": (
-        "Distinguish between hardscape and softscape in estimates. "
-        "Account for seasonal planting windows and irrigation needs. "
-        "Note ongoing maintenance requirements for installed features."
-    ),
+    "electrician": _ELECTRICIAN_GUIDANCE,
+    "plumber": _PLUMBER_GUIDANCE,
+    "plumbing": _PLUMBER_GUIDANCE,
+    "hvac": _HVAC_GUIDANCE,
+    "general contractor": _GENERAL_CONTRACTOR_GUIDANCE,
+    "general contracting": _GENERAL_CONTRACTOR_GUIDANCE,
+    "carpenter": _CARPENTER_GUIDANCE,
+    "carpentry": _CARPENTER_GUIDANCE,
+    "painter": _PAINTER_GUIDANCE,
+    "painting": _PAINTER_GUIDANCE,
+    "roofer": _ROOFER_GUIDANCE,
+    "roofing": _ROOFER_GUIDANCE,
+    "landscaper": _LANDSCAPER_GUIDANCE,
+    "landscaping": _LANDSCAPER_GUIDANCE,
 }
 
 
