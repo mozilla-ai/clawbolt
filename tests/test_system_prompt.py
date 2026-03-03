@@ -127,6 +127,11 @@ class TestSectionBuilders:
         assert "concise" in result
         assert "ONLY communicate via this chat" in result
 
+    def test_build_instructions_section_no_trade_guidance(self) -> None:
+        """Instructions section should not contain trade-specific guidance."""
+        result = build_instructions_section()
+        assert "Trade guidance" not in result
+
     def test_build_tool_guidelines_empty(self) -> None:
         """Should return empty string when no tools have usage hints."""
         tool = MagicMock()
@@ -210,6 +215,63 @@ class TestBuildAgentSystemPrompt:
         assert "save_fact" in result
         assert "Proactive Messaging" in result
         assert "Recall Behavior" in result
+
+    @pytest.mark.asyncio
+    async def test_trade_guidance_only_in_identity_section(self) -> None:
+        """Trade guidance should appear in the identity section, not instructions."""
+        contractor = MagicMock()
+        contractor.name = "Sparky"
+        contractor.trade = "electrician"
+        contractor.location = None
+        contractor.hourly_rate = None
+        contractor.business_hours = None
+        contractor.soul_text = None
+        contractor.preferences_json = None
+        contractor.id = 1
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                db=MagicMock(),
+                contractor=contractor,
+                tools=[],
+                message_context="hello",
+            )
+
+        # Trade guidance should appear in the About section (from build_soul_prompt)
+        assert "NEC codes" in result
+        # But not as a "Trade guidance" label in the instructions section
+        assert "Trade guidance" not in result
+
+    @pytest.mark.asyncio
+    async def test_no_trade_guidance_for_unknown_trade(self) -> None:
+        """Agent prompt should omit trade guidance for unrecognized trades."""
+        contractor = MagicMock()
+        contractor.name = "Bob"
+        contractor.trade = "chimney sweep"
+        contractor.location = None
+        contractor.hourly_rate = None
+        contractor.business_hours = None
+        contractor.soul_text = None
+        contractor.preferences_json = None
+        contractor.id = 1
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                db=MagicMock(),
+                contractor=contractor,
+                tools=[],
+                message_context="hello",
+            )
+
+        assert "Trade guidance" not in result
 
     @pytest.mark.asyncio
     async def test_curly_braces_in_contractor_name(self) -> None:
