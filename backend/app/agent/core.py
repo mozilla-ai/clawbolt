@@ -39,13 +39,45 @@ def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
     return sum(len(str(m.get("content", ""))) // 4 for m in messages)
 
 
-def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
+def _format_validation_error(tool_name: str, exc: ValidationError, tool: Tool | None = None) -> str:
     """Format a Pydantic ValidationError into a structured message for the LLM."""
     error_lines: list[str] = [f"Validation error for {tool_name}:"]
     for err in exc.errors():
         loc = " -> ".join(str(part) for part in err["loc"])
         error_lines.append(f"  {loc}: {err['msg']} (type={err['type']})")
+
+    if tool is not None:
+        schema_summary = _summarize_tool_params(tool)
+        if schema_summary:
+            error_lines.append(f"\nExpected parameters: {schema_summary}")
+
     return "\n".join(error_lines)
+
+
+def _summarize_tool_params(tool: Tool) -> str:
+    """Build a concise parameter summary string from a tool's schema."""
+    if tool.params_model is not None:
+        schema = tool.params_model.model_json_schema()
+    elif tool.parameters:
+        schema = tool.parameters
+    else:
+        return ""
+
+    props = schema.get("properties", {})
+    required = set(schema.get("required", []))
+    if not props:
+        return ""
+
+    parts: list[str] = []
+    for name, info in props.items():
+        ptype = info.get("type", "any")
+        req = "required" if name in required else "optional"
+        default = info.get("default")
+        if default is not None:
+            parts.append(f'"{name}": {ptype} ({req}, default: {default})')
+        else:
+            parts.append(f'"{name}": {ptype} ({req})')
+    return "{" + ", ".join(parts) + "}"
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contractors.
@@ -230,7 +262,7 @@ class BackshopAgent:
             validated = tool.params_model.model_validate(tool_args)
             return validated.model_dump(), None
         except ValidationError as exc:
-            return tool_args, _format_validation_error(tool.name, exc)
+            return tool_args, _format_validation_error(tool.name, exc, tool)
 
     def _get_tool_tags(self, tool_name: str) -> set[str]:
         """Look up the tags for a registered tool by name."""
@@ -395,7 +427,12 @@ class BackshopAgent:
                         )
                         actions_taken.append(f"Failed: {tool_name}")
                 else:
-                    result_str = f"Error: unknown tool {tool_name}"
+                    available = ", ".join(sorted(self._tools_by_name.keys()))
+                    result_str = (
+                        f'Error: unknown tool "{tool_name}".'
+                        f" Available tools: {available}"
+                        "\n\n[Analyze the error above and try a different approach.]"
+                    )
 
                 tool_results.append(
                     {
