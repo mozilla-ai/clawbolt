@@ -1,5 +1,6 @@
 """Telegram webhook endpoint for inbound messages."""
 
+import hmac
 import logging
 
 from fastapi import APIRouter, Depends, Request
@@ -26,7 +27,7 @@ def _validate_webhook_secret(request: Request) -> None:
     if not secret:
         return
     header = request.headers.get(TELEGRAM_SECRET_HEADER, "")
-    if header != secret:
+    if not hmac.compare_digest(header, secret):
         logger.warning("Invalid Telegram webhook secret")
         # Still return 200 to avoid Telegram retries, but log the warning.
         # The message will not be processed (early return in the endpoint).
