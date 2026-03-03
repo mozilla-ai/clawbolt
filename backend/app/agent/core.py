@@ -1,6 +1,7 @@
 import asyncio
 import logging
-from collections.abc import Callable
+import time
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -15,6 +16,15 @@ from any_llm.types.completion import ChatCompletion
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from backend.app.agent.events import (
+    AgentEndEvent,
+    AgentEvent,
+    AgentStartEvent,
+    ToolExecutionEndEvent,
+    ToolExecutionStartEvent,
+    TurnEndEvent,
+    TurnStartEvent,
+)
 from backend.app.agent.llm_parsing import parse_tool_calls
 from backend.app.agent.messages import (
     AgentMessage,
@@ -171,6 +181,23 @@ class BackshopAgent:
         self.contractor = contractor
         self.tools: list[Tool] = []
         self._tools_by_name: dict[str, Tool] = {}
+        self._subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = []
+
+    def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
+        """Register an event subscriber.
+
+        The callback is invoked with each ``AgentEvent`` during processing.
+        Multiple subscribers are supported and called in registration order.
+        """
+        self._subscribers.append(callback)
+
+    async def _emit(self, event: AgentEvent) -> None:
+        """Notify all subscribers of an event.  Errors are logged, not raised."""
+        for cb in self._subscribers:
+            try:
+                await cb(event)
+            except Exception:
+                logger.exception("Event subscriber error for %s", type(event).__name__)
 
     def register_tools(self, tools: list[Tool]) -> None:
         """Register available tools for this agent session."""
@@ -351,7 +378,14 @@ class BackshopAgent:
         *conversation_history* accepts both typed ``AgentMessage`` objects
         (preferred) and legacy ``dict`` messages for backward compatibility.
         """
+        agent_start_time = time.monotonic()
         system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
+        await self._emit(
+            AgentStartEvent(
+                contractor_id=self.contractor.id,
+                message_context=message_context,
+            )
+        )
 
         messages: list[AgentMessage] = [SystemMessage(content=system_prompt)]
 
@@ -392,12 +426,14 @@ class BackshopAgent:
         reply_text = ""
 
         for _round in range(MAX_TOOL_ROUNDS):
+            await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
 
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)
             if not parsed_raw:
                 reply_text = response.choices[0].message.content or ""
+                await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=False))
                 break
 
             # Convert to typed ToolCallRequest objects
@@ -473,6 +509,10 @@ class BackshopAgent:
                         )
                         continue
 
+                    await self._emit(
+                        ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args)
+                    )
+                    tool_start = time.monotonic()
                     try:
                         result = await tool_func(**validated_args)
                         if not isinstance(result, ToolResult):
@@ -506,7 +546,17 @@ class BackshopAgent:
                         logger.exception("Tool call failed: %s", tool_name)
                         hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
                         result_str = f"Error: tool {tool_name} failed\n\n{hint}"
+                        is_error = True
                         actions_taken.append(f"Failed: {tool_name}")
+                    tool_duration = (time.monotonic() - tool_start) * 1000
+                    await self._emit(
+                        ToolExecutionEndEvent(
+                            tool_name=tool_name,
+                            result=result_str,
+                            is_error=is_error,
+                            duration_ms=tool_duration,
+                        )
+                    )
                 else:
                     available = ", ".join(sorted(self._tools_by_name.keys()))
                     result_str = (
@@ -523,9 +573,19 @@ class BackshopAgent:
                 )
 
             messages.extend(tool_results)
+            await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))
         else:
             # Max rounds reached -- use last response content
             reply_text = response.choices[0].message.content or ""
+
+        total_duration = (time.monotonic() - agent_start_time) * 1000
+        await self._emit(
+            AgentEndEvent(
+                reply_text=reply_text,
+                actions_taken=actions_taken,
+                total_duration_ms=total_duration,
+            )
+        )
 
         return AgentResponse(
             reply_text=reply_text,
