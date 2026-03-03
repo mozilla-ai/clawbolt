@@ -13,7 +13,10 @@ import logging
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
-from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
+from backend.app.agent.profile import (
+    build_soul_prompt,
+    get_missing_optional_fields,
+)
 from backend.app.agent.tools.base import Tool
 from backend.app.models import Contractor
 
@@ -84,7 +87,11 @@ async def build_memory_section(
 
 
 def build_instructions_section() -> str:
-    """Build the behavioral instructions section content."""
+    """Build the behavioral instructions section content.
+
+    Trade-specific guidance is handled by the soul prompt (identity section),
+    so this section only contains universal behavioral rules.
+    """
     return (
         "- Be concise and practical. Contractors are busy.\n"
         "- You can ONLY communicate via this chat. You cannot send emails, "
