@@ -155,15 +155,13 @@ async def run_agent(
     messaging_service: MessagingService,
     to_address: str,
     downloaded_media: list[DownloadedMedia],
+    system_prompt_override: str | None = None,
 ) -> AgentResponse:
     """Initialize agent with tools and process the message.
 
     Handles LLM-level errors (content filter, auth, unexpected) by returning
     an error fallback AgentResponse.
     """
-    was_onboarding = is_onboarding_needed(contractor)
-    system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
-
     agent = BackshopAgent(db=db, contractor=contractor)
 
     tool_context = ToolContext(
@@ -345,6 +343,7 @@ async def handle_inbound_message(
     # 3. Load history and run agent
     conversation_history = await load_conversation_history(db, message.conversation_id)
     was_onboarding = is_onboarding_needed(contractor)
+    system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
     response = await run_agent(
         db=db,
         contractor=contractor,
@@ -355,6 +354,7 @@ async def handle_inbound_message(
         messaging_service=messaging_service,
         to_address=to_address,
         downloaded_media=downloaded_media,
+        system_prompt_override=system_prompt_override,
     )
 
     # 4. Post-process (onboarding, profile updates)
