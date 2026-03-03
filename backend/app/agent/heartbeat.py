@@ -24,6 +24,7 @@ from sqlalchemy.orm import Session
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.llm_parsing import parse_tool_calls
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt
+from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import (
@@ -54,7 +55,7 @@ logger = logging.getLogger(__name__)
 COMPOSE_MESSAGE_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
-        "name": "compose_message",
+        "name": ToolName.COMPOSE_MESSAGE,
         "description": (
             "Compose a proactive message to send to the contractor, or decide no message is needed."
         ),
@@ -419,7 +420,7 @@ def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
 
     # Use the first tool call
     tc = parsed[0]
-    if tc.name != "compose_message":
+    if tc.name != ToolName.COMPOSE_MESSAGE:
         logger.warning("Heartbeat LLM called unexpected tool: %s", tc.name)
         return HeartbeatAction(
             action_type="no_action",
