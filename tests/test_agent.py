@@ -888,3 +888,105 @@ async def test_tool_exception_appends_hint(
     response = await agent.process_message("test", system_prompt_override="system")
 
     assert any("Failed: bad_tool" in a for a in response.actions_taken)
+
+
+# ---------------------------------------------------------------------------
+# Tool error feedback tests (issue #292)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_unknown_tool_error_lists_available_tools(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Unknown tool error should list all registered tool names."""
+
+    async def dummy(**kwargs: object) -> str:
+        return "ok"
+
+    tools = [
+        Tool(name="save_fact", description="Save a fact", function=dummy, parameters={}),
+        Tool(name="recall_facts", description="Recall facts", function=dummy, parameters={}),
+    ]
+
+    # LLM calls a tool that doesn't exist
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[
+                {"id": "call_1", "name": "save_notes", "arguments": json.dumps({"text": "hi"})}
+            ]
+        ),
+        make_text_response("Let me try again."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools(tools)
+    await agent.process_message("test", system_prompt_override="system")
+
+    # Check the tool result sent back to the LLM
+    followup_call = mock_acompletion.call_args_list[1]
+    messages = followup_call.kwargs["messages"]
+    tool_msg = next(m for m in messages if m.get("role") == "tool")
+    content = tool_msg["content"]
+
+    assert 'unknown tool "save_notes"' in content
+    assert "save_fact" in content
+    assert "recall_facts" in content
+    assert "[Analyze the error" in content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_validation_error_includes_expected_schema(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Validation errors should include the expected parameter schema."""
+    from pydantic import BaseModel
+
+    class FactParams(BaseModel):
+        key: str
+        value: str
+        category: str = "general"
+
+    async def save_fact(**kwargs: object) -> str:
+        return "saved"
+
+    tool = Tool(
+        name="save_fact",
+        description="Save a fact",
+        function=save_fact,
+        parameters={},
+        params_model=FactParams,
+    )
+
+    # LLM calls save_fact with missing required fields
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[
+                {"id": "call_1", "name": "save_fact", "arguments": json.dumps({"category": "job"})}
+            ]
+        ),
+        make_text_response("Let me fix that."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    await agent.process_message("test", system_prompt_override="system")
+
+    # Check the tool result sent back to the LLM
+    followup_call = mock_acompletion.call_args_list[1]
+    messages = followup_call.kwargs["messages"]
+    tool_msg = next(m for m in messages if m.get("role") == "tool")
+    content = tool_msg["content"]
+
+    assert "Validation error for save_fact" in content
+    assert "Expected parameters:" in content
+    assert '"key": string (required)' in content
+    assert '"value": string (required)' in content
+    assert '"category": string (optional, default: general)' in content
+    assert "[Analyze the error" in content
