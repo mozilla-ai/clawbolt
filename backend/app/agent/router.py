@@ -1,3 +1,4 @@
+import json
 import logging
 
 from any_llm import AuthenticationError, ContentFilterError
@@ -236,10 +237,20 @@ async def handle_inbound_message(
     # Store outbound message (skip error fallbacks to avoid poisoning
     # conversation history -- the LLM would see the error on subsequent turns)
     if response.reply_text and not response.is_error_fallback:
+        # Serialize tool interactions for conversation history reconstruction.
+        # Strip non-serializable 'tags' (sets) before JSON encoding.
+        tool_interactions = ""
+        if response.tool_calls:
+            serializable = [
+                {k: v for k, v in tc.items() if k != "tags"} for tc in response.tool_calls
+            ]
+            tool_interactions = json.dumps(serializable)
+
         outbound = Message(
             conversation_id=message.conversation_id,
             direction=MessageDirection.OUTBOUND,
             body=response.reply_text,
+            tool_interactions_json=tool_interactions,
         )
         db.add(outbound)
         db.commit()

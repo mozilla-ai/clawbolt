@@ -149,6 +149,7 @@ async def test_recall_end_to_end_save_then_query(
     # Mock agent using recall_facts tool and returning answer
     recall_response = make_text_response("You quoted $4,500 for the Johnson 12x12 composite deck.")
     tool_call = MagicMock()
+    tool_call.id = "call_recall_0"
     tool_call.function.name = "recall_facts"
     tool_call.function.arguments = '{"query": "johnson deck"}'
     recall_response.choices[0].message.tool_calls = [tool_call]

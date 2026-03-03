@@ -136,6 +136,73 @@ async def test_stores_outbound_message(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
+async def test_stores_tool_interactions_with_outbound(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Tool interactions should be serialized with outbound message."""
+    # First call: LLM requests a tool call
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_abc",
+                "name": "save_fact",
+                "arguments": json.dumps({"key": "rate", "value": "$50/hr", "category": "pricing"}),
+            }
+        ]
+    )
+    # Second call: LLM responds with text
+    text_response = make_text_response("Saved your rate!")
+    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
+    assert outbound is not None
+    assert outbound.tool_interactions_json
+    interactions = json.loads(outbound.tool_interactions_json)
+    assert len(interactions) == 1
+    assert interactions[0]["name"] == "save_fact"
+    assert interactions[0]["tool_call_id"] == "call_abc"
+    assert "result" in interactions[0]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_no_tool_interactions_for_text_only_response(
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Text-only responses should have empty tool_interactions_json."""
+    mock_acompletion.return_value = make_text_response("Just text!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        db=db_session,
+        contractor=test_contractor,
+        message=inbound_message,
+        media_urls=[],
+        messaging_service=mock_messaging,
+    )
+
+    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
+    assert outbound is not None
+    assert outbound.tool_interactions_json == ""
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
 async def test_media_download_failure_still_processes_text(
     mock_acompletion: object,
     db_session: Session,
