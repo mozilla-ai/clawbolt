@@ -4,7 +4,7 @@ Every ``heartbeat_interval_minutes`` the scheduler wakes up, iterates over
 onboarded contractors, and runs **cheap deterministic checks** first.  Only when
 a cheap check flags something actionable does the engine escalate to an LLM call
 to compose a natural-language message.  Most ticks produce **no** outbound
-messages and **no** LLM calls — saving cost and avoiding noise.
+messages and **no** LLM calls -- saving cost and avoiding noise.
 """
 
 from __future__ import annotations
@@ -67,13 +67,46 @@ actionable message for the contractor based on the flags below.
 compose one concise, helpful message.
 - Combine multiple flags into a single message when possible.
 - Keep the message under 160 characters.
-- Be direct and actionable — no fluff.
+- Be direct and actionable, no fluff.
 - If after reviewing the flags you believe none actually warrant a message \
-right now, you may still return "no_action".
-
-Respond with ONLY a JSON object (no markdown fences):
-{{"action": "send_message" | "no_action", "message": "...", "reasoning": "...", "priority": 1-5}}
+right now, you may still choose "no_action".
+- Use the compose_message tool to return your decision.
 """
+
+# Tool schema for the heartbeat compose_message tool
+COMPOSE_MESSAGE_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "compose_message",
+        "description": (
+            "Compose a proactive message to send to the contractor, or decide no message is needed."
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "enum": ["send_message", "no_action"],
+                },
+                "message": {
+                    "type": "string",
+                    "description": "The message to send (required if action is send_message)",
+                },
+                "reasoning": {
+                    "type": "string",
+                    "description": "Brief explanation of why this action was chosen",
+                },
+                "priority": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5,
+                    "description": "Priority level from 1 (lowest) to 5 (highest)",
+                },
+            },
+            "required": ["action", "reasoning", "priority"],
+        },
+    },
+}
 
 # Keywords that suggest a memory fact is time-sensitive
 _TIME_KEYWORDS = re.compile(
@@ -81,27 +114,12 @@ _TIME_KEYWORDS = re.compile(
     re.IGNORECASE,
 )
 
-_CODE_FENCE_RE = re.compile(r"^```(?:json)?\s*\n?(.*?)\n?\s*```$", re.DOTALL)
-
-
-def _strip_code_fences(text: str) -> str:
-    """Remove markdown code fences wrapping a JSON response.
-
-    Handles both triple-backtick-json and plain triple-backtick wrappers.
-    Plain text without fences is returned unchanged.
-    """
-    stripped = text.strip()
-    m = _CODE_FENCE_RE.match(stripped)
-    if m:
-        return m.group(1).strip()
-    return stripped
-
 
 STALE_ESTIMATE_HOURS = settings.heartbeat_stale_estimate_hours
 IDLE_DAYS = settings.heartbeat_idle_days
 CHECKLIST_DAILY_INTERVAL_HOURS = 20
 HEARTBEAT_RECENT_MESSAGES_COUNT = 5
-WEEKDAY_FRIDAY = 4  # Monday=0 … Friday=4
+WEEKDAY_FRIDAY = 4  # Monday=0 ... Friday=4
 
 
 @dataclass
@@ -187,7 +205,7 @@ def is_within_business_hours(
             start, end = parsed
             if start <= end:
                 return start <= current_hour < end
-            # Overnight range (e.g. 22-6) — unlikely but handle it
+            # Overnight range (e.g. 22-6), unlikely but handle it
             return current_hour >= start or current_hour < end
 
     # Fallback: outside quiet hours means "business hours"
@@ -202,7 +220,7 @@ def is_within_business_hours(
 
 
 # ---------------------------------------------------------------------------
-# Cheap checks — deterministic, no LLM call
+# Cheap checks -- deterministic, no LLM call
 # ---------------------------------------------------------------------------
 
 
@@ -257,7 +275,7 @@ def run_cheap_checks(
             result.time_sensitive_memories.append(mem)
             result.flags.append(f"Time-sensitive memory: {mem.key} = {mem.value}")
 
-    # 4. Idle contractor — no inbound messages for IDLE_DAYS
+    # 4. Idle contractor -- no inbound messages for IDLE_DAYS
     idle_cutoff = now - datetime.timedelta(days=IDLE_DAYS)
     last_inbound = (
         db.query(Message.created_at)
@@ -275,14 +293,14 @@ def run_cheap_checks(
             last_ts = last_ts.replace(tzinfo=datetime.UTC)
         if last_ts <= idle_cutoff:
             days = (now - last_ts).days
-            result.flags.append(f"Contractor idle for {days} days — no recent messages")
+            result.flags.append(f"Contractor idle for {days} days -- no recent messages")
     elif contractor.created_at is not None:
         created = contractor.created_at
         if created.tzinfo is None:
             created = created.replace(tzinfo=datetime.UTC)
         if created <= idle_cutoff:
             days = (now - created).days
-            result.flags.append(f"Contractor idle for {days} days — no messages since onboarding")
+            result.flags.append(f"Contractor idle for {days} days -- no messages since onboarding")
 
     return result
 
@@ -350,6 +368,72 @@ async def build_heartbeat_context(
 
 
 # ---------------------------------------------------------------------------
+# Tool call response parsing
+# ---------------------------------------------------------------------------
+
+
+def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
+    """Extract a HeartbeatAction from an LLM tool call response.
+
+    If the LLM did not call the compose_message tool (e.g. returned plain text
+    instead), falls back to no_action.
+    """
+    choice = response.choices[0]
+    tool_calls = getattr(choice.message, "tool_calls", None)
+
+    if not tool_calls:
+        # LLM returned text instead of calling the tool: default to no_action
+        content = choice.message.content or ""
+        logger.warning("Heartbeat LLM returned text instead of tool call: %s", content[:200])
+        return HeartbeatAction(
+            action_type="no_action",
+            message="",
+            reasoning=f"LLM did not call compose_message tool: {content[:100]}",
+            priority=0,
+        )
+
+    # Use the first tool call
+    tool_call = tool_calls[0]
+    func = getattr(tool_call, "function", None)
+    if func is None or func.name != "compose_message":
+        logger.warning(
+            "Heartbeat LLM called unexpected tool: %s",
+            getattr(func, "name", None) if func else "(no function)",
+        )
+        return HeartbeatAction(
+            action_type="no_action",
+            message="",
+            reasoning="LLM called unexpected tool",
+            priority=0,
+        )
+
+    try:
+        data = json.loads(func.arguments)
+    except (json.JSONDecodeError, TypeError):
+        logger.warning(
+            "Heartbeat tool call had malformed arguments: %s", (func.arguments or "")[:200]
+        )
+        return HeartbeatAction(
+            action_type="no_action",
+            message="",
+            reasoning=f"Malformed tool arguments: {(func.arguments or '')[:100]}",
+            priority=0,
+        )
+
+    try:
+        priority = int(data.get("priority", 3))
+    except (ValueError, TypeError):
+        priority = 3
+
+    return HeartbeatAction(
+        action_type=data.get("action", "no_action"),
+        message=data.get("message", ""),
+        reasoning=data.get("reasoning", ""),
+        priority=priority,
+    )
+
+
+# ---------------------------------------------------------------------------
 # LLM evaluation (only called when cheap checks flag something)
 # ---------------------------------------------------------------------------
 
@@ -359,7 +443,11 @@ async def evaluate_heartbeat_need(
     contractor: Contractor,
     flags: list[str],
 ) -> HeartbeatAction:
-    """Ask the LLM to compose a message based on flagged items."""
+    """Ask the LLM to compose a message based on flagged items.
+
+    Uses the compose_message tool calling protocol instead of raw JSON parsing.
+    If the LLM does not call the tool, defaults to no_action.
+    """
     ctx = await build_heartbeat_context(db, contractor, flags)
     prompt = HEARTBEAT_SYSTEM_PROMPT.format(**ctx)
 
@@ -383,29 +471,13 @@ async def evaluate_heartbeat_need(
                     "content": "Compose a proactive message based on the flags above.",
                 },
             ],
+            tools=[COMPOSE_MESSAGE_TOOL],
             max_tokens=settings.llm_max_tokens_heartbeat,
             **llm_kwargs,
         ),
     )
-    raw = response.choices[0].message.content or ""
-    raw = _strip_code_fences(raw)
 
-    try:
-        data = json.loads(raw)
-        return HeartbeatAction(
-            action_type=data.get("action", "no_action"),
-            message=data.get("message", ""),
-            reasoning=data.get("reasoning", ""),
-            priority=int(data.get("priority", 3)),
-        )
-    except (json.JSONDecodeError, ValueError, TypeError):
-        logger.warning("Heartbeat LLM returned unparseable response: %s", raw[:200])
-        return HeartbeatAction(
-            action_type="no_action",
-            message="",
-            reasoning=f"Unparseable LLM response: {raw[:100]}",
-            priority=0,
-        )
+    return _parse_tool_call_response(response)
 
 
 # ---------------------------------------------------------------------------
@@ -436,17 +508,17 @@ async def run_heartbeat_for_contractor(
     if daily_counts.get(contractor.id, 0) >= max_daily:
         return None
 
-    # Cheap checks — skip LLM entirely if nothing is flagged
+    # Cheap checks -- skip LLM entirely if nothing is flagged
     check_result = run_cheap_checks(db, contractor)
     if not check_result.has_flags:
         return HeartbeatAction(
             action_type="no_action",
             message="",
-            reasoning="All cheap checks clean — skipped LLM",
+            reasoning="All cheap checks clean -- skipped LLM",
             priority=0,
         )
 
-    # Something was flagged — escalate to LLM for message composition
+    # Something was flagged -- escalate to LLM for message composition
     action = await evaluate_heartbeat_need(db, contractor, check_result.flags)
 
     if action.action_type != "send_message" or not action.message:
