@@ -22,8 +22,7 @@ Clawbolt is a messaging-first AI assistant that helps contractors manage their b
 
 ## Demo
 
-<!-- TODO: Replace YOUTUBE_VIDEO_ID with the actual video ID -->
-[![Clawbolt Demo](https://img.youtube.com/vi/YOUTUBE_VIDEO_ID/maxresdefault.jpg)](https://www.youtube.com/watch?v=YOUTUBE_VIDEO_ID)
+[![Clawbolt Demo](https://img.youtube.com/vi/Tp4nS8CapD4/maxresdefault.jpg)](https://www.youtube.com/watch?v=Tp4nS8CapD4)
 
 ## Features
 
