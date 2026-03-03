@@ -1,0 +1,81 @@
+---
+title: Docker
+description: Run Clawbolt with Docker Compose.
+---
+
+Docker Compose is the recommended way to run Clawbolt. It handles PostgreSQL, migrations, and tunnel setup.
+
+## Quick start
+
+```bash
+# Clone and configure
+git clone https://github.com/mozilla-ai/clawbolt.git
+cd clawbolt
+cp .env.example .env
+# Edit .env with your credentials
+
+# Start everything
+docker compose up --build
+```
+
+## What Docker Compose starts
+
+| Service | Description |
+|---------|-------------|
+| **db** | PostgreSQL 16 database |
+| **app** | FastAPI server on port 8000, with ffmpeg for audio |
+| **tunnel** | Cloudflare Tunnel for HTTPS webhook registration |
+
+On startup, the app:
+1. Waits for PostgreSQL to be healthy
+2. Runs Alembic migrations to create/update the schema
+3. Starts the FastAPI server
+4. Auto-registers the Telegram webhook via the Cloudflare Tunnel URL
+
+## Verify it's running
+
+```bash
+curl http://localhost:8000/api/health
+# {"status":"ok"}
+```
+
+## Troubleshooting
+
+### Docker build fails with dependency errors
+
+Some optional dependencies require specific system libraries. The Dockerfile includes `ffmpeg` for audio processing.
+
+```bash
+# Rebuild without cache
+docker compose build --no-cache
+```
+
+### Database connection refused
+
+Make sure PostgreSQL is healthy before the app starts. Docker Compose handles this via the `service_healthy` condition.
+
+```bash
+# Check service status
+docker compose ps
+
+# View logs
+docker compose logs db
+docker compose logs app
+```
+
+### Port 8000 already in use
+
+```bash
+# Stop existing containers
+docker compose down
+
+# Or use a different port
+docker compose up --build -e APP_PORT=8080
+```
+
+### Reset the database
+
+```bash
+docker compose down -v   # removes the pgdata volume
+docker compose up --build
+```

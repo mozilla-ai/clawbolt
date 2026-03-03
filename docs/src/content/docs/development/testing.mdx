@@ -1,0 +1,61 @@
+---
+title: Testing
+description: Run tests and understand the test infrastructure.
+---
+
+Clawbolt uses pytest with FastAPI's TestClient. Tests run against in-memory SQLite, so no database setup is needed.
+
+## Run all tests
+
+```bash
+uv sync --all-extras
+DATABASE_URL=sqlite:// uv run pytest -v
+```
+
+## Lint and format
+
+```bash
+uv run ruff check backend/ tests/
+uv run ruff format --check backend/ tests/
+```
+
+## Type checking
+
+```bash
+uv run ty check --python .venv backend/ tests/
+```
+
+## Test infrastructure
+
+### Database
+
+Tests use in-memory SQLite with `StaticPool`. The `get_db` dependency is overridden via FastAPI dependency injection to use the test database.
+
+### Mock factories
+
+All external services are mocked in tests. Mock factories live in `tests/mocks/`:
+
+| Mock | What it replaces |
+|------|------------------|
+| Telegram | Telegram Bot API calls |
+| LLM | any-llm `acompletion` calls |
+| faster-whisper | Audio transcription |
+| Dropbox/Drive | Cloud storage operations |
+| Storage | `MockStorageBackend` for file operations |
+
+### Auth override
+
+The `get_current_user` dependency is overridden in tests to return a fixed test user, bypassing authentication.
+
+## Definition of done
+
+Every change should pass all checks:
+
+```bash
+uv run pytest -v                                  # tests pass
+uv run ruff check backend/ tests/                 # lint passes
+uv run ruff format --check backend/ tests/        # format passes
+uv run ty check --python .venv backend/ tests/    # type checking passes
+```
+
+Bug fixes must include regression tests.

@@ -35,6 +35,10 @@ clawbolt-premium/
 clawbolt-infra/
 data/
 
+# Docs site
+docs/node_modules/
+docs/dist/
+
 # OS
 .DS_Store
 Thumbs.db

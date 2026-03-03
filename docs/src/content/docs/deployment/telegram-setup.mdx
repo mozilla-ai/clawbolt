@@ -1,0 +1,68 @@
+---
+title: Telegram Setup
+description: Create a Telegram bot and configure the webhook.
+---
+
+Clawbolt uses a Telegram bot as its messaging interface. Here's how to set one up.
+
+## Create a bot
+
+1. Open Telegram and search for [@BotFather](https://t.me/BotFather)
+2. Send `/newbot` and follow the prompts
+3. Choose a name and username for your bot
+4. Copy the **bot token** (looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`)
+5. Set it in your `.env`:
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+```
+
+## Webhook auto-registration
+
+When using Docker Compose, the webhook is registered automatically on startup:
+
+1. Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app
+2. The tunnel creates a public HTTPS URL (a random `*.trycloudflare.com` domain)
+3. The app discovers the tunnel URL and calls Telegram's `setWebhook` API
+
+No Cloudflare account or auth token is required. Check the tunnel URL with:
+
+```bash
+docker compose logs tunnel
+```
+
+## Manual webhook registration
+
+If you're running without Docker (e.g., local development), register the webhook manually:
+
+```bash
+# Start a tunnel
+cloudflared tunnel --url http://localhost:8000
+
+# Copy the https://*.trycloudflare.com URL from the output, then:
+curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://<your-tunnel-url>/api/webhooks/telegram"}'
+```
+
+## Access control
+
+You can restrict which Telegram users can interact with Clawbolt:
+
+```bash
+# Allow only specific chat IDs
+TELEGRAM_ALLOWED_CHAT_IDS=123456789,987654321
+
+# Allow only specific usernames
+TELEGRAM_ALLOWED_USERNAMES=johndoe,janedoe
+```
+
+Leave both empty to allow all users.
+
+## Verify the webhook
+
+```bash
+curl "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo"
+```
+
+This returns the current webhook URL, pending update count, and any errors.

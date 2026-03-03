@@ -79,6 +79,7 @@ uv run ty check --python .venv backend/ tests/    # type checking passes
 ```
 
 - Bug fixes include regression tests
+- New features evaluate whether the docs site (`docs/`) needs updates
 - CI green
 
 ## Sandbox Tips
