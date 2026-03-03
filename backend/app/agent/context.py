@@ -7,6 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
+from backend.app.agent.compaction import compact_session
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -83,6 +84,7 @@ async def load_conversation_history(
     db: Session,
     conversation_id: int,
     limit: int = DEFAULT_HISTORY_LIMIT,
+    contractor_id: int | None = None,
 ) -> list[AgentMessage]:
     """Load recent messages as typed message objects for LLM context.
 
@@ -93,7 +95,15 @@ async def load_conversation_history(
     tool call/result sequence is reconstructed so the LLM can see its
     prior tool usage.  Old messages without tool interaction data are
     loaded as flat ``AssistantMessage`` (backward compatible).
+
+    When the conversation has more messages than *limit* and a *contractor_id*
+    is provided, the messages that are about to age out are passed through
+    session compaction to extract durable facts before they leave the context
+    window.
     """
+    # Count total messages in this conversation to detect overflow
+    total_count = db.query(Message).filter(Message.conversation_id == conversation_id).count()
+
     messages = (
         db.query(Message)
         .filter(Message.conversation_id == conversation_id)
@@ -103,6 +113,44 @@ async def load_conversation_history(
     )
     # Reverse to chronological order, skip the current (most recent) message
     messages = list(reversed(messages))[:-1] if len(messages) > 1 else []
+
+    # If messages were trimmed and we have a contractor_id, run compaction
+    # on the messages that are aging out of the window.
+    if contractor_id is not None and total_count > limit:
+        trimmed_count = total_count - limit
+        trimmed_db_messages = (
+            db.query(Message)
+            .filter(Message.conversation_id == conversation_id)
+            .order_by(Message.id.asc())
+            .limit(trimmed_count)
+            .all()
+        )
+
+        trimmed_agent_messages: list[AgentMessage] = []
+        for msg in trimmed_db_messages:
+            content = msg.processed_context if msg.processed_context else msg.body
+            if msg.direction == MessageDirection.INBOUND:
+                trimmed_agent_messages.append(UserMessage(content=content))
+            else:
+                trimmed_agent_messages.append(AssistantMessage(content=content))
+
+        if trimmed_agent_messages:
+            try:
+                saved = await compact_session(db, contractor_id, trimmed_agent_messages)
+                if saved:
+                    logger.info(
+                        "Session compaction extracted %d fact(s) from %d trimmed message(s) "
+                        "for contractor %d",
+                        len(saved),
+                        len(trimmed_agent_messages),
+                        contractor_id,
+                    )
+            except Exception:
+                logger.exception(
+                    "Session compaction failed for conversation %d, contractor %d",
+                    conversation_id,
+                    contractor_id,
+                )
 
     history: list[AgentMessage] = []
     for msg in messages:
