@@ -96,6 +96,33 @@ CHECKLIST_DAILY_INTERVAL_HOURS = 20
 HEARTBEAT_RECENT_MESSAGES_COUNT = 5
 WEEKDAY_FRIDAY = 4  # Monday=0 ... Friday=4
 
+_FREQ_RE = re.compile(r"^(\d+)\s*(m|h|d)(?:in(?:utes?)?|ours?|ays?)?$", re.IGNORECASE)
+
+
+def parse_frequency_to_minutes(freq: str) -> int | None:
+    """Parse a human-friendly frequency string into minutes.
+
+    Supports formats like ``"30m"``, ``"1h"``, ``"2d"``, ``"daily"``.
+    Returns *None* when the string is empty or cannot be parsed.
+    """
+    freq = freq.strip()
+    if not freq:
+        return None
+    if freq.lower() == "daily":
+        return 1440  # 24 * 60
+    m = _FREQ_RE.match(freq)
+    if not m:
+        return None
+    value = int(m.group(1))
+    unit = m.group(2).lower()
+    if unit == "m":
+        return value
+    if unit == "h":
+        return value * 60
+    if unit == "d":
+        return value * 1440
+    return None
+
 
 @dataclass
 class CheapCheckResult:
@@ -492,6 +519,10 @@ async def run_heartbeat_for_contractor(
     if not contractor.onboarding_complete:
         return None
 
+    # Gate: contractor heartbeat opt-in
+    if not contractor.heartbeat_opt_in:
+        return None
+
     # Gate: business hours
     if not is_within_business_hours(contractor):
         return None
@@ -499,6 +530,28 @@ async def run_heartbeat_for_contractor(
     # Gate: daily rate limit (persistent via heartbeat_log table)
     if get_daily_heartbeat_count(db, contractor.id) >= max_daily:
         return None
+
+    # Gate: per-contractor frequency override
+    freq_minutes = parse_frequency_to_minutes(contractor.heartbeat_frequency)
+    if freq_minutes is not None:
+        last_outbound = (
+            db.query(Message.created_at)
+            .join(Conversation, Message.conversation_id == Conversation.id)
+            .filter(
+                Conversation.contractor_id == contractor.id,
+                Message.direction == MessageDirection.OUTBOUND,
+            )
+            .order_by(Message.created_at.desc())
+            .first()
+        )
+        if last_outbound is not None:
+            last_ts = last_outbound[0]
+            if last_ts.tzinfo is None:
+                last_ts = last_ts.replace(tzinfo=datetime.UTC)
+            now = datetime.datetime.now(datetime.UTC)
+            elapsed = now - last_ts
+            if elapsed < datetime.timedelta(minutes=freq_minutes):
+                return None
 
     # Cheap checks -- skip LLM entirely if nothing is flagged
     check_result = run_cheap_checks(db, contractor)
