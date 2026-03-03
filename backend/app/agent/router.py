@@ -10,14 +10,12 @@ from backend.app.agent.onboarding import (
     is_onboarding_needed,
 )
 from backend.app.agent.tools.base import ToolTags
-from backend.app.agent.tools.checklist_tools import create_checklist_tools
-from backend.app.agent.tools.estimate_tools import create_estimate_tools
-from backend.app.agent.tools.file_tools import auto_save_media, create_file_tools
-from backend.app.agent.tools.memory_tools import create_memory_tools
-from backend.app.agent.tools.messaging_tools import create_messaging_tools
-from backend.app.agent.tools.profile_tools import (
-    create_profile_tools,
-    extract_profile_updates_from_tool_calls,
+from backend.app.agent.tools.file_tools import auto_save_media
+from backend.app.agent.tools.profile_tools import extract_profile_updates_from_tool_calls
+from backend.app.agent.tools.registry import (
+    ToolContext,
+    default_registry,
+    ensure_tool_modules_imported,
 )
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
@@ -28,6 +26,10 @@ from backend.app.services.messaging import MessagingService
 from backend.app.services.storage_service import StorageBackend, get_storage_service
 
 logger = logging.getLogger(__name__)
+
+# Ensure all tool modules register their factories with the default registry.
+# This must happen after all imports to avoid circular import issues.
+ensure_tool_modules_imported()
 
 # User-facing error/fallback messages
 AGENT_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
@@ -140,17 +142,16 @@ async def handle_inbound_message(
     system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
 
     agent = BackshopAgent(db=db, contractor=contractor)
-    tools = create_memory_tools(db, contractor.id)
-    tools.extend(create_messaging_tools(messaging_service, to_address=to_address))
-    tools.extend(create_estimate_tools(db, contractor, storage))
-    tools.extend(create_checklist_tools(db, contractor.id))
-    tools.extend(create_profile_tools(db, contractor))
-
-    # Wire file tools if storage is available
-    if storage:
-        pending_media = {m.original_url: m.content for m in downloaded_media if m.content}
-        tools.extend(create_file_tools(db, contractor, storage, pending_media))
-
+    pending_media = {m.original_url: m.content for m in downloaded_media if m.content}
+    context = ToolContext(
+        db=db,
+        contractor=contractor,
+        storage=storage,
+        messaging_service=messaging_service,
+        to_address=to_address,
+        downloaded_media=pending_media,
+    )
+    tools = default_registry.create_tools(context)
     agent.register_tools(tools)
 
     # Send typing indicator while processing (non-blocking on failure)

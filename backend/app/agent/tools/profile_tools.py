@@ -12,6 +12,7 @@ import re
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.registry import ToolContext, ToolFactory, default_registry
 from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
@@ -201,3 +202,10 @@ def extract_profile_updates_from_tool_calls(
             updates["preferences_json"] = json.dumps({"communication_style": str(style)})
 
     return updates
+
+
+def _factory(ctx: ToolContext) -> list[Tool]:
+    return create_profile_tools(ctx.db, ctx.contractor)
+
+
+default_registry.register(ToolFactory(create=_factory))

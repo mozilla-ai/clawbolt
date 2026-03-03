@@ -10,6 +10,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
+from backend.app.agent.tools.registry import ToolContext, ToolFactory, default_registry
 from backend.app.config import settings
 from backend.app.enums import EstimateStatus
 from backend.app.models import Contractor, Estimate, EstimateLineItem
@@ -174,3 +175,10 @@ def create_estimate_tools(
             params_model=GenerateEstimateParams,
         ),
     ]
+
+
+def _factory(ctx: ToolContext) -> list[Tool]:
+    return create_estimate_tools(ctx.db, ctx.contractor, ctx.storage)
+
+
+default_registry.register(ToolFactory(create=_factory))

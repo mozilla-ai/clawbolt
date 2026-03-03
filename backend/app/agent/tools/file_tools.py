@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.registry import ToolContext, ToolFactory, default_registry
 from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
 from backend.app.models import Contractor, MediaFile
 from backend.app.services.storage_service import StorageBackend
@@ -390,3 +391,11 @@ def create_file_tools(
             params_model=OrganizeFileParams,
         ),
     ]
+
+
+def _factory(ctx: ToolContext) -> list[Tool]:
+    assert ctx.storage is not None
+    return create_file_tools(ctx.db, ctx.contractor, ctx.storage, ctx.downloaded_media)
+
+
+default_registry.register(ToolFactory(create=_factory, requires_storage=True))

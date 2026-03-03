@@ -1,6 +1,7 @@
 from pydantic import BaseModel, Field
 
 from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
+from backend.app.agent.tools.registry import ToolContext, ToolFactory, default_registry
 from backend.app.services.messaging import MessagingService
 
 
@@ -52,3 +53,11 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
             tags={ToolTags.SENDS_REPLY},
         ),
     ]
+
+
+def _factory(ctx: ToolContext) -> list[Tool]:
+    assert ctx.messaging_service is not None
+    return create_messaging_tools(ctx.messaging_service, to_address=ctx.to_address)
+
+
+default_registry.register(ToolFactory(create=_factory, requires_messaging=True))

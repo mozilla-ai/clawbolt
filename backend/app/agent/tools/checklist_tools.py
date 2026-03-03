@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.registry import ToolContext, ToolFactory, default_registry
 from backend.app.enums import ChecklistSchedule, ChecklistStatus
 from backend.app.models import HeartbeatChecklistItem
 
@@ -109,3 +110,10 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             params_model=RemoveChecklistItemParams,
         ),
     ]
+
+
+def _factory(ctx: ToolContext) -> list[Tool]:
+    return create_checklist_tools(ctx.db, ctx.contractor.id)
+
+
+default_registry.register(ToolFactory(create=_factory))

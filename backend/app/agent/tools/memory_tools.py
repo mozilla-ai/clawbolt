@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
 from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
+from backend.app.agent.tools.registry import ToolContext, ToolFactory, default_registry
 
 
 class SaveFactParams(BaseModel):
@@ -81,3 +82,10 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
             params_model=ForgetFactParams,
         ),
     ]
+
+
+def _factory(ctx: ToolContext) -> list[Tool]:
+    return create_memory_tools(ctx.db, ctx.contractor.id)
+
+
+default_registry.register(ToolFactory(create=_factory))
