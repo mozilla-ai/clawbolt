@@ -4,7 +4,6 @@
 
 <p align="center">
   <strong>AI assistant for the trades</strong><br>
-  Built by <a href="https://mozilla.ai">Mozilla.ai</a>
 </p>
 
 <p align="center">
