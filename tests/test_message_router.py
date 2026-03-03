@@ -45,6 +45,7 @@ def mock_messaging() -> MessagingService:
     service.send_media = AsyncMock(return_value="msg_43")
     service.send_message = AsyncMock(return_value="msg_42")
     service.send_typing_indicator = AsyncMock()
+    service.download_media = AsyncMock()
     return service
 
 
@@ -75,9 +76,7 @@ async def test_text_only_message(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_message_with_photo(
-    mock_download: AsyncMock,
     mock_vision: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
@@ -88,7 +87,7 @@ async def test_message_with_photo(
     """Message with photo should download, process via vision, then agent."""
     from backend.app.media.download import DownloadedMedia
 
-    mock_download.return_value = DownloadedMedia(
+    mock_messaging.download_media.return_value = DownloadedMedia(  # type: ignore[union-attr]
         content=b"fake-image",
         mime_type="image/jpeg",
         original_url="AgACAgIAAxkBAAI",
@@ -106,7 +105,7 @@ async def test_message_with_photo(
     )
 
     assert response.reply_text == "Looks like a great deck project!"
-    mock_download.assert_called_once()
+    mock_messaging.download_media.assert_called_once()  # type: ignore[union-attr]
     mock_vision.assert_called_once()
     # Verify user (contractor ID) is passed for OpenAI tracking
     call_kwargs = mock_vision.call_args
@@ -140,9 +139,7 @@ async def test_stores_outbound_message(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_media_download_failure_still_processes_text(
-    mock_download: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
@@ -150,7 +147,7 @@ async def test_media_download_failure_still_processes_text(
     mock_messaging: MessagingService,
 ) -> None:
     """If media download fails, agent should still process text."""
-    mock_download.side_effect = Exception("Download failed")
+    mock_messaging.download_media.side_effect = Exception("Download failed")  # type: ignore[union-attr]
     mock_acompletion.return_value = make_text_response("Got your text!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -260,9 +257,7 @@ async def test_file_tools_skipped_when_no_storage(
     new_callable=AsyncMock,
     side_effect=RuntimeError("Vision API down"),
 )
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_pipeline_failure_note_mentions_vision(
-    mock_download: AsyncMock,
     mock_vision: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
@@ -273,7 +268,7 @@ async def test_pipeline_failure_note_mentions_vision(
     """When media pipeline fails, the system note should mention vision analysis."""
     from backend.app.media.download import DownloadedMedia
 
-    mock_download.return_value = DownloadedMedia(
+    mock_messaging.download_media.return_value = DownloadedMedia(  # type: ignore[union-attr]
         content=b"fake-image",
         mime_type="image/jpeg",
         original_url="AgACAgIAAxkBAAI",
@@ -318,9 +313,7 @@ async def test_pipeline_failure_note_mentions_vision(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_media_download_failure_adds_system_note_to_context(
-    mock_download: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
@@ -328,7 +321,7 @@ async def test_media_download_failure_adds_system_note_to_context(
     mock_messaging: MessagingService,
 ) -> None:
     """When all media downloads fail, the persisted context includes the download-failure note."""
-    mock_download.side_effect = Exception("Network timeout")
+    mock_messaging.download_media.side_effect = Exception("Network timeout")  # type: ignore[union-attr]
     mock_acompletion.return_value = make_text_response("Got your text!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
@@ -345,9 +338,7 @@ async def test_media_download_failure_adds_system_note_to_context(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_multiple_media_partial_download_failure_no_download_note(
-    mock_download: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
@@ -357,7 +348,7 @@ async def test_multiple_media_partial_download_failure_no_download_note(
     """When some media downloads succeed and others fail, no download-failure note is added."""
     from backend.app.media.download import DownloadedMedia
 
-    mock_download.side_effect = [
+    mock_messaging.download_media.side_effect = [  # type: ignore[union-attr]
         DownloadedMedia(
             content=b"image-bytes",
             mime_type="image/jpeg",
@@ -386,9 +377,7 @@ async def test_multiple_media_partial_download_failure_no_download_note(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_media_pipeline_failure_retries_with_empty_media(
-    mock_download: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
@@ -399,7 +388,7 @@ async def test_media_pipeline_failure_retries_with_empty_media(
     from backend.app.media.download import DownloadedMedia
     from backend.app.media.pipeline import PipelineResult
 
-    mock_download.return_value = DownloadedMedia(
+    mock_messaging.download_media.return_value = DownloadedMedia(  # type: ignore[union-attr]
         content=b"image-bytes",
         mime_type="image/jpeg",
         original_url="AgACAgIAAxkBAAI",
@@ -575,9 +564,7 @@ async def test_send_reply_failure_still_stores_outbound(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
-    mock_download: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
@@ -588,7 +575,7 @@ async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
     from backend.app.media.pipeline import PipelineResult
 
     # All downloads fail
-    mock_download.side_effect = Exception("Download failed")
+    mock_messaging.download_media.side_effect = Exception("Download failed")  # type: ignore[union-attr]
     mock_acompletion.return_value = make_text_response("Fallback!")  # type: ignore[union-attr]
 
     with patch(
@@ -763,9 +750,7 @@ async def test_typing_indicator_failure_does_not_block_processing(
 @patch("backend.app.agent.core.acompletion")
 @patch("backend.app.agent.router.get_storage_service")
 @patch("backend.app.agent.router.settings")
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_auto_save_persists_media_to_storage(
-    mock_download: AsyncMock,
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_acompletion: object,
@@ -778,7 +763,7 @@ async def test_auto_save_persists_media_to_storage(
     from backend.app.media.download import DownloadedMedia
     from backend.app.models import MediaFile
 
-    mock_download.return_value = DownloadedMedia(
+    mock_messaging.download_media.return_value = DownloadedMedia(  # type: ignore[union-attr]
         content=b"auto-saved-image",
         mime_type="image/jpeg",
         original_url="AgACAgIAAxkBAAI",
@@ -819,9 +804,7 @@ async def test_auto_save_persists_media_to_storage(
 @patch("backend.app.agent.core.acompletion")
 @patch("backend.app.agent.router.get_storage_service")
 @patch("backend.app.agent.router.settings")
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_auto_save_failure_does_not_block_processing(
-    mock_download: AsyncMock,
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_acompletion: object,
@@ -833,7 +816,7 @@ async def test_auto_save_failure_does_not_block_processing(
     """If auto-save fails, message processing should continue."""
     from backend.app.media.download import DownloadedMedia
 
-    mock_download.return_value = DownloadedMedia(
+    mock_messaging.download_media.return_value = DownloadedMedia(  # type: ignore[union-attr]
         content=b"image",
         mime_type="image/jpeg",
         original_url="AgACAgIAAxkBAAI",

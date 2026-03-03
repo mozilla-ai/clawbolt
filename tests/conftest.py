@@ -55,6 +55,7 @@ def mock_messaging_service() -> MessagingService:
     service.send_media = AsyncMock(return_value="mock_msg_id")
     service.send_message = AsyncMock(return_value="mock_msg_id")
     service.send_typing_indicator = AsyncMock()
+    service.download_media = AsyncMock()
     return service
 
 

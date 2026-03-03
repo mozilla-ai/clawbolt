@@ -9,6 +9,7 @@ from telegram import Bot
 from telegram.constants import ChatAction
 
 from backend.app.config import Settings, settings
+from backend.app.media.download import DownloadedMedia, download_telegram_media
 
 logger = logging.getLogger(__name__)
 
@@ -89,3 +90,7 @@ class TelegramMessagingService:
             )
         except Exception:
             logger.debug("Failed to send typing indicator to %s", to)
+
+    async def download_media(self, file_id: str) -> DownloadedMedia:
+        """Download media from Telegram via the Bot API."""
+        return await download_telegram_media(file_id, bot_token=self._token)
