@@ -172,7 +172,7 @@ async def telegram_inbound(
             .first()
         )
         if existing:
-            logger.info("Duplicate webhook, skipping")
+            logger.info("Duplicate webhook for %s, skipping", inbound.external_message_id)
             return JSONResponse(content={"ok": True})
 
     task, _contractor, _message = await process_inbound_message(db, inbound, messaging_service)
