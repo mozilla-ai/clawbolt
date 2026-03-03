@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 from backend.app.agent.router import (
     AUTH_ERROR_FALLBACK,
     CONTENT_FILTER_FALLBACK,
+    dispatch_reply,
     handle_inbound_message,
 )
 from backend.app.models import Contractor, Conversation, Message
@@ -1070,3 +1071,44 @@ async def test_error_fallback_sent_but_not_stored(
     # But not stored in DB
     outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
     assert outbound is None
+
+
+# ---------------------------------------------------------------------------
+# dispatch_reply: reply suppression checks tool success
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_dispatch_reply_suppresses_when_send_reply_succeeds() -> None:
+    """Auto-reply should be suppressed when a SENDS_REPLY tool succeeded."""
+    from backend.app.agent.core import AgentResponse
+    from backend.app.agent.tools.base import ToolTags
+
+    response = AgentResponse(
+        reply_text="Fallback text",
+        tool_calls=[{"name": "send_reply", "tags": {ToolTags.SENDS_REPLY}, "is_error": False}],
+    )
+    messaging = MagicMock(spec=MessagingService)
+    messaging.send_text = AsyncMock()
+
+    await dispatch_reply(response, messaging, to_address="123", message_id=1)
+
+    messaging.send_text.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_dispatch_reply_sends_fallback_when_send_reply_fails() -> None:
+    """Auto-reply should be sent when the SENDS_REPLY tool failed."""
+    from backend.app.agent.core import AgentResponse
+    from backend.app.agent.tools.base import ToolTags
+
+    response = AgentResponse(
+        reply_text="Fallback text",
+        tool_calls=[{"name": "send_reply", "tags": {ToolTags.SENDS_REPLY}, "is_error": True}],
+    )
+    messaging = MagicMock(spec=MessagingService)
+    messaging.send_text = AsyncMock()
+
+    await dispatch_reply(response, messaging, to_address="123", message_id=1)
+
+    messaging.send_text.assert_called_once_with(to="123", body="Fallback text")
