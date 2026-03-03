@@ -1262,7 +1262,7 @@ class TestHeartbeatScheduler:
     async def test_tick_queries_onboarded(
         self, mock_messaging_cls: MagicMock, mock_session_local: MagicMock
     ) -> None:
-        """Tick should query only onboarded contractors and close the session."""
+        """Tick should query only onboarded contractors and close the listing session."""
         mock_db = MagicMock()
         mock_db.query.return_value.filter.return_value.all.return_value = []
         mock_session_local.return_value = mock_db
@@ -1271,4 +1271,178 @@ class TestHeartbeatScheduler:
         await scheduler.tick()
 
         mock_db.query.assert_called_once()
+        mock_db.expunge_all.assert_called_once()
         mock_db.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
+    @patch("backend.app.agent.heartbeat.SessionLocal")
+    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_concurrent_processing(
+        self,
+        mock_settings: MagicMock,
+        mock_messaging_cls: MagicMock,
+        mock_session_local: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """tick() should process multiple contractors concurrently with per-contractor sessions."""
+        mock_settings.heartbeat_concurrency = 2
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        # Create mock contractors
+        contractors = []
+        for i in range(4):
+            c = MagicMock()
+            c.id = i + 1
+            c.onboarding_complete = True
+            contractors.append(c)
+
+        # The first SessionLocal call is the listing session;
+        # subsequent calls are per-contractor sessions.
+        listing_db = MagicMock()
+        listing_db.query.return_value.filter.return_value.all.return_value = contractors
+        per_contractor_dbs = [MagicMock() for _ in contractors]
+        mock_session_local.side_effect = [listing_db, *per_contractor_dbs]
+
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        # Listing session should be closed after fetching contractors
+        listing_db.expunge_all.assert_called_once()
+        listing_db.close.assert_called_once()
+
+        # run_heartbeat_for_contractor called once per contractor
+        assert mock_run.await_count == len(contractors)
+
+        # Each per-contractor session should be closed
+        for db_mock in per_contractor_dbs:
+            db_mock.close.assert_called_once()
+
+        # Verify each call used its own DB session (not the listing session)
+        for call_args in mock_run.call_args_list:
+            used_db = call_args.kwargs.get("db") or call_args[0][0]
+            assert used_db is not listing_db
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
+    @patch("backend.app.agent.heartbeat.SessionLocal")
+    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_error_isolation(
+        self,
+        mock_settings: MagicMock,
+        mock_messaging_cls: MagicMock,
+        mock_session_local: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """One contractor failure should not prevent others from being processed."""
+        mock_settings.heartbeat_concurrency = 5
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        contractors = []
+        for i in range(3):
+            c = MagicMock()
+            c.id = i + 1
+            c.onboarding_complete = True
+            contractors.append(c)
+
+        listing_db = MagicMock()
+        listing_db.query.return_value.filter.return_value.all.return_value = contractors
+        per_contractor_dbs = [MagicMock() for _ in contractors]
+        mock_session_local.side_effect = [listing_db, *per_contractor_dbs]
+
+        # Second contractor raises, others succeed
+        mock_run.side_effect = [
+            HeartbeatAction("no_action", "", "clean", 0),
+            RuntimeError("LLM timeout"),
+            HeartbeatAction("no_action", "", "clean", 0),
+        ]
+
+        scheduler = HeartbeatScheduler()
+        # Should not raise despite one contractor failing
+        await scheduler.tick()
+
+        # All three were attempted
+        assert mock_run.await_count == 3
+
+        # All per-contractor sessions closed, even the failing one
+        for db_mock in per_contractor_dbs:
+            db_mock.close.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
+    @patch("backend.app.agent.heartbeat.SessionLocal")
+    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_semaphore_limits_concurrency(
+        self,
+        mock_settings: MagicMock,
+        mock_messaging_cls: MagicMock,
+        mock_session_local: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """Semaphore should limit the number of concurrent contractor evaluations."""
+        concurrency_limit = 2
+        mock_settings.heartbeat_concurrency = concurrency_limit
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        contractors = []
+        for i in range(5):
+            c = MagicMock()
+            c.id = i + 1
+            c.onboarding_complete = True
+            contractors.append(c)
+
+        listing_db = MagicMock()
+        listing_db.query.return_value.filter.return_value.all.return_value = contractors
+        per_contractor_dbs = [MagicMock() for _ in contractors]
+        mock_session_local.side_effect = [listing_db, *per_contractor_dbs]
+
+        # Track max concurrent executions
+        import asyncio
+
+        current_count = 0
+        max_concurrent = 0
+        lock = asyncio.Lock()
+
+        async def tracked_run(*args: object, **kwargs: object) -> HeartbeatAction:
+            nonlocal current_count, max_concurrent
+            async with lock:
+                current_count += 1
+                if current_count > max_concurrent:
+                    max_concurrent = current_count
+            # Simulate some async work so concurrency can be observed
+            await asyncio.sleep(0.01)
+            async with lock:
+                current_count -= 1
+            return HeartbeatAction("no_action", "", "clean", 0)
+
+        mock_run.side_effect = tracked_run
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        assert mock_run.await_count == 5
+        assert max_concurrent <= concurrency_limit
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.SessionLocal")
+    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    async def test_tick_no_contractors(
+        self, mock_messaging_cls: MagicMock, mock_session_local: MagicMock
+    ) -> None:
+        """tick() with no onboarded contractors should return early."""
+        mock_db = MagicMock()
+        mock_db.query.return_value.filter.return_value.all.return_value = []
+        mock_session_local.return_value = mock_db
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        # Listing session should still be closed
+        mock_db.close.assert_called_once()
+        # SessionLocal called only once (listing session, no per-contractor sessions)
+        mock_session_local.assert_called_once()

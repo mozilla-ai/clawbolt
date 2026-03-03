@@ -65,6 +65,7 @@ class Settings(BaseSettings):
     heartbeat_idle_days: int = 3  # flag contractors with no inbound messages for N days
     heartbeat_model: str = ""  # empty = fall back to llm_model
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
+    heartbeat_concurrency: int = 5  # max concurrent contractor evaluations per tick
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 

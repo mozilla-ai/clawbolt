@@ -597,15 +597,28 @@ class HeartbeatScheduler:
             await asyncio.sleep(settings.heartbeat_interval_minutes * 60)
 
     async def tick(self) -> None:
-        """Single heartbeat pass: evaluate every onboarded contractor."""
-        db: Session = SessionLocal()
+        """Single heartbeat pass: evaluate every onboarded contractor concurrently."""
+        # Use a dedicated session just to fetch the contractor list, then close it.
+        listing_db: Session = SessionLocal()
         try:
             contractors = (
-                db.query(Contractor).filter(Contractor.onboarding_complete.is_(True)).all()
+                listing_db.query(Contractor).filter(Contractor.onboarding_complete.is_(True)).all()
             )
-            messaging_service = _build_messaging_service()
+            # Detach contractor objects so they can be used outside this session
+            listing_db.expunge_all()
+        finally:
+            listing_db.close()
 
-            for contractor in contractors:
+        if not contractors:
+            return
+
+        messaging_service = _build_messaging_service()
+        semaphore = asyncio.Semaphore(settings.heartbeat_concurrency)
+
+        async def _process_one(contractor: Contractor) -> None:
+            """Process a single contractor with its own DB session."""
+            async with semaphore:
+                db: Session = SessionLocal()
                 try:
                     await run_heartbeat_for_contractor(
                         db=db,
@@ -615,8 +628,23 @@ class HeartbeatScheduler:
                     )
                 except Exception:
                     logger.exception("Heartbeat failed for contractor %d", contractor.id)
-        finally:
-            db.close()
+                finally:
+                    db.close()
+
+        results = await asyncio.gather(
+            *[_process_one(c) for c in contractors],
+            return_exceptions=True,
+        )
+
+        # Log any unexpected exceptions that escaped the per-contractor handler
+        for i, result in enumerate(results):
+            if isinstance(result, BaseException):
+                logger.error(
+                    "Unhandled error in heartbeat for contractor %d: %s",
+                    contractors[i].id,
+                    result,
+                    exc_info=result if isinstance(result, Exception) else None,
+                )
 
 
 # Module-level singleton used by main.py lifespan
