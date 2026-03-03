@@ -247,7 +247,7 @@ def test_build_onboarding_system_prompt_new_contractor(db_session: Session) -> N
     db_session.refresh(contractor)
 
     prompt = build_onboarding_system_prompt(contractor)
-    assert "Backshop" in prompt
+    assert "Clawbolt" in prompt
     assert "new contractor" in prompt
     assert "You already know" not in prompt
     assert "help them with that request FIRST" in prompt
@@ -331,7 +331,7 @@ def onboarding_message(db_session: Session, onboarding_conversation: Conversatio
     msg = Message(
         conversation_id=onboarding_conversation.id,
         direction="inbound",
-        body="Hey, I heard about Backshop",
+        body="Hey, I heard about Clawbolt",
     )
     db_session.add(msg)
     db_session.commit()
@@ -364,7 +364,7 @@ async def test_onboarding_uses_onboarding_prompt(
 ) -> None:
     """Router should use onboarding prompt for new contractors."""
     mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
-        "Welcome to Backshop! What's your name?"
+        "Welcome to Clawbolt! What's your name?"
     )
 
     response = await handle_inbound_message(
@@ -375,7 +375,7 @@ async def test_onboarding_uses_onboarding_prompt(
         messaging_service=mock_messaging,
     )
 
-    assert response.reply_text == "Welcome to Backshop! What's your name?"
+    assert response.reply_text == "Welcome to Clawbolt! What's your name?"
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
     system_msg = call_args.kwargs["messages"][0]["content"]
     assert "new contractor" in system_msg

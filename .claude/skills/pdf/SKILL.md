@@ -1,6 +1,6 @@
 ---
 name: pdf
-description: Convert a markdown file to a branded PDF with the backshop.ai logo. Use when the user wants to generate a PDF, share a document, or create a polished version of a markdown file.
+description: Convert a markdown file to a branded PDF with the clawbolt.ai logo. Use when the user wants to generate a PDF, share a document, or create a polished version of a markdown file.
 argument-hint: <markdown-file>
 allowed-tools: Read, Write, Edit, Glob, Bash, Grep
 ---
@@ -11,8 +11,8 @@ Convert the markdown file at `$ARGUMENTS` to a polished, branded PDF using weasy
 
 1. **Read the target markdown file.** If `$ARGUMENTS` is empty, ask which file to convert.
 
-2. **Locate the logo.** Look for `backshop-logo.svg` in the repo root. If the markdown file
-   does not already reference the logo, insert `![backshop.ai](backshop-logo.svg)` as the
+2. **Locate the logo.** Look for `assets/clawbolt_text.png` in the repo root. If the markdown file
+   does not already reference the logo, insert `![clawbolt.ai](assets/clawbolt_text.png)` as the
    first line (before the title).
 
 3. **Set up the Python environment.** Install dependencies into a temporary venv:
@@ -27,7 +27,7 @@ Convert the markdown file at `$ARGUMENTS` to a polished, branded PDF using weasy
 
 4. **Write a Python conversion script** to `/tmp/md_to_pdf.py` that:
    - Reads the markdown file
-   - Embeds the SVG logo as a base64 data URI so weasyprint can render it inline
+   - Embeds the PNG logo as a base64 data URI so weasyprint can render it inline
    - Converts markdown to HTML using the `markdown` library with extensions:
      `tables`, `fenced_code`, `toc`, `smarty`
    - Wraps the HTML in a styled document with:
@@ -44,7 +44,7 @@ Convert the markdown file at `$ARGUMENTS` to a polished, branded PDF using weasy
      - **HR**: orange line
      - **Logo**: max-width 240px at the top
      - **Page footer**: centered page number
-     - **Running header** (pages 2+): "backshop.ai | {document title}" in italic gray,
+     - **Running header** (pages 2+): "clawbolt.ai | {document title}" in italic gray,
        right-aligned (suppress on first page)
    - Outputs the PDF to the same directory as the source file, with a `.pdf` extension
 

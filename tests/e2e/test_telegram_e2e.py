@@ -90,7 +90,7 @@ async def test_send_text_message(
         pytest.skip("TELEGRAM_TEST_CHAT_ID not set")
     msg_id = await telegram_service.send_text(
         to=test_chat_id,
-        body="[backshop e2e] text delivery test",
+        body="[clawbolt e2e] text delivery test",
     )
     assert msg_id.isdigit(), f"Expected numeric message_id, got: {msg_id}"
 
@@ -110,7 +110,7 @@ def test_webhook_to_reply_round_trip(
     if not test_chat_id:
         pytest.skip("TELEGRAM_TEST_CHAT_ID not set")
 
-    expected_reply = "[backshop e2e] I can help with that deck estimate!"
+    expected_reply = "[clawbolt e2e] I can help with that deck estimate!"
 
     with patch(
         "backend.app.agent.core.acompletion",
@@ -125,7 +125,7 @@ def test_webhook_to_reply_round_trip(
 
     assert response.status_code == 200
 
-    # Verify backshop stored both inbound and outbound messages
+    # Verify clawbolt stored both inbound and outbound messages
     from backend.app.models import Message
 
     messages = e2e_db_session.query(Message).order_by(Message.id).all()

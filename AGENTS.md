@@ -1,6 +1,6 @@
-# Backshop
+# Clawbolt
 
-Backshop is an AI assistant for solo blue-collar contractors. FastAPI backend with a Telegram messaging interface and a custom tool-calling agent loop built on any-llm. Built by Mozilla.ai using the open-core model.
+Clawbolt is an AI assistant for solo blue-collar contractors. FastAPI backend with a Telegram messaging interface and a custom tool-calling agent loop built on any-llm. Built by Mozilla.ai using the open-core model.
 
 ## Build & Run Commands
 
@@ -96,8 +96,8 @@ Git auth is pre-configured. Never push directly to main. Always create a branch 
 Git worktrees store absolute paths. When a worktree is created on the host and the sandbox mounts the same tree at a different path, the cross-references break. Fix by rewriting the paths:
 
 ```bash
-HOST_PREFIX="/Users/you/scm/backshop"   # adjust to match your host
-SANDBOX_PREFIX="/workspace/backshop"
+HOST_PREFIX="/Users/you/scm/clawbolt"   # adjust to match your host
+SANDBOX_PREFIX="/workspace/clawbolt"
 
 # Fix main repo -> worktree references
 sed -i "s|$HOST_PREFIX|$SANDBOX_PREFIX|g" .git/worktrees/*/gitdir 2>/dev/null
@@ -112,4 +112,4 @@ git worktree list
 
 ### Multiple repos in workspace
 
-The workspace root `/workspace/backshop` is the OSS repo. Premium (`backshop-premium/`) and infra (`backshop-infra/`) are separate git repos cloned as subdirectories, listed in `.gitignore`. Do not commit files from those repos into the OSS repo.
+The workspace root `/workspace/clawbolt` is the OSS repo. Premium (`clawbolt-premium/`) and infra (`clawbolt-infra/`) are separate git repos cloned as subdirectories, listed in `.gitignore`. Do not commit files from those repos into the OSS repo.

@@ -159,7 +159,7 @@ async def build_agent_system_prompt(
 ) -> str:
     """Assemble the full system prompt for the main agent loop."""
     builder = SystemPromptBuilder()
-    builder.set_preamble("You are Backshop, an AI assistant for solo contractors.")
+    builder.set_preamble("You are Clawbolt, an AI assistant for solo contractors.")
 
     builder.add_section(
         f"About {contractor.name or 'Contractor'}",
@@ -197,7 +197,7 @@ async def build_heartbeat_system_prompt(
     """Assemble the system prompt for the heartbeat evaluator."""
     builder = SystemPromptBuilder()
     builder.set_preamble(
-        "You are Backshop's heartbeat evaluator. Your job is to compose a short, "
+        "You are Clawbolt's heartbeat evaluator. Your job is to compose a short, "
         "actionable message for the contractor based on the flags below."
     )
 

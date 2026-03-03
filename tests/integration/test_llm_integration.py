@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.messages import AssistantMessage, UserMessage
 from backend.app.models import Contractor
 
@@ -25,14 +25,14 @@ async def test_agent_returns_nonempty_reply(
     integration_db: Session,
     integration_contractor: Contractor,
 ) -> None:
-    """BackshopAgent.process_message() should return a non-empty reply from a real LLM."""
+    """ClawboltAgent.process_message() should return a non-empty reply from a real LLM."""
     with patch("backend.app.agent.core.settings") as mock_settings:
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = BackshopAgent(db=integration_db, contractor=integration_contractor)
+        agent = ClawboltAgent(db=integration_db, contractor=integration_contractor)
         response = await agent.process_message(
             "Hello, can you help me with a deck estimate?",
             system_prompt_override="You are a helpful assistant. Reply briefly.",
@@ -55,7 +55,7 @@ async def test_agent_message_format_accepted(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = BackshopAgent(db=integration_db, contractor=integration_contractor)
+        agent = ClawboltAgent(db=integration_db, contractor=integration_contractor)
         history = [
             UserMessage(content="Hi there"),
             AssistantMessage(content="Hello! How can I help?"),

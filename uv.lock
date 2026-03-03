@@ -144,70 +144,6 @@ wheels = [
 ]
 
 [[package]]
-name = "backshop"
-version = "0.1.0"
-source = { editable = "." }
-dependencies = [
-    { name = "alembic" },
-    { name = "any-llm-sdk", extra = ["anthropic"] },
-    { name = "dropbox" },
-    { name = "fastapi" },
-    { name = "google-api-python-client" },
-    { name = "google-auth-oauthlib" },
-    { name = "httpx" },
-    { name = "json-repair" },
-    { name = "psycopg2-binary" },
-    { name = "pydantic" },
-    { name = "pydantic-settings" },
-    { name = "python-multipart" },
-    { name = "python-telegram-bot" },
-    { name = "reportlab" },
-    { name = "sqlalchemy" },
-    { name = "uvicorn", extra = ["standard"] },
-]
-
-[package.optional-dependencies]
-dev = [
-    { name = "pre-commit" },
-    { name = "pytest" },
-    { name = "pytest-asyncio" },
-    { name = "pytest-timeout" },
-    { name = "ruff" },
-    { name = "ty" },
-]
-whisper = [
-    { name = "faster-whisper" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "alembic", specifier = ">=1.13" },
-    { name = "any-llm-sdk", extras = ["anthropic"], specifier = ">=1.8" },
-    { name = "dropbox", specifier = ">=12.0" },
-    { name = "fastapi", specifier = ">=0.115.0" },
-    { name = "faster-whisper", marker = "extra == 'whisper'", specifier = ">=1.0" },
-    { name = "google-api-python-client", specifier = ">=2.0" },
-    { name = "google-auth-oauthlib", specifier = ">=1.0" },
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "json-repair", specifier = ">=0.30" },
-    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0" },
-    { name = "psycopg2-binary", specifier = ">=2.9" },
-    { name = "pydantic", specifier = ">=2.0" },
-    { name = "pydantic-settings", specifier = ">=2.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
-    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
-    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3" },
-    { name = "python-multipart", specifier = ">=0.0.9" },
-    { name = "python-telegram-bot", specifier = ">=22.0" },
-    { name = "reportlab", specifier = ">=4.0" },
-    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
-    { name = "sqlalchemy", specifier = ">=2.0" },
-    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a0" },
-    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
-]
-provides-extras = ["whisper", "dev"]
-
-[[package]]
 name = "certifi"
 version = "2026.2.25"
 source = { registry = "https://pypi.org/simple" }
@@ -367,6 +303,70 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/da/5f/6b8f83a55bb8278772c5ae54a577f3099025f9ade59d0136ac24a0df4bde/charset_normalizer-3.4.4-cp314-cp314-win_arm64.whl", hash = "sha256:de00632ca48df9daf77a2c65a484531649261ec9f25489917f09e455cb09ddb2", size = 100743, upload-time = "2025-10-14T04:41:52.122Z" },
     { url = "https://files.pythonhosted.org/packages/0a/4c/925909008ed5a988ccbb72dcc897407e5d6d3bd72410d69e051fc0c14647/charset_normalizer-3.4.4-py3-none-any.whl", hash = "sha256:7a32c560861a02ff789ad905a2fe94e3f840803362c84fecf1851cb4cf3dc37f", size = 53402, upload-time = "2025-10-14T04:42:31.76Z" },
 ]
+
+[[package]]
+name = "clawbolt"
+version = "0.1.0"
+source = { editable = "." }
+dependencies = [
+    { name = "alembic" },
+    { name = "any-llm-sdk", extra = ["anthropic"] },
+    { name = "dropbox" },
+    { name = "fastapi" },
+    { name = "google-api-python-client" },
+    { name = "google-auth-oauthlib" },
+    { name = "httpx" },
+    { name = "json-repair" },
+    { name = "psycopg2-binary" },
+    { name = "pydantic" },
+    { name = "pydantic-settings" },
+    { name = "python-multipart" },
+    { name = "python-telegram-bot" },
+    { name = "reportlab" },
+    { name = "sqlalchemy" },
+    { name = "uvicorn", extra = ["standard"] },
+]
+
+[package.optional-dependencies]
+dev = [
+    { name = "pre-commit" },
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+    { name = "pytest-timeout" },
+    { name = "ruff" },
+    { name = "ty" },
+]
+whisper = [
+    { name = "faster-whisper" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "alembic", specifier = ">=1.13" },
+    { name = "any-llm-sdk", extras = ["anthropic"], specifier = ">=1.8" },
+    { name = "dropbox", specifier = ">=12.0" },
+    { name = "fastapi", specifier = ">=0.115.0" },
+    { name = "faster-whisper", marker = "extra == 'whisper'", specifier = ">=1.0" },
+    { name = "google-api-python-client", specifier = ">=2.0" },
+    { name = "google-auth-oauthlib", specifier = ">=1.0" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "json-repair", specifier = ">=0.30" },
+    { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0" },
+    { name = "psycopg2-binary", specifier = ">=2.9" },
+    { name = "pydantic", specifier = ">=2.0" },
+    { name = "pydantic-settings", specifier = ">=2.0" },
+    { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
+    { name = "pytest-asyncio", marker = "extra == 'dev'", specifier = ">=0.23" },
+    { name = "pytest-timeout", marker = "extra == 'dev'", specifier = ">=2.3" },
+    { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "python-telegram-bot", specifier = ">=22.0" },
+    { name = "reportlab", specifier = ">=4.0" },
+    { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
+    { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
+]
+provides-extras = ["whisper", "dev"]
 
 [[package]]
 name = "click"
