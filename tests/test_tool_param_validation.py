@@ -418,3 +418,133 @@ def test_update_profile_params_accepts_all_fields() -> None:
     )
     assert p.name == "Jane Doe"
     assert p.hourly_rate == "$85/hr"
+
+
+# ---------------------------------------------------------------------------
+# Eager (batch) validation tests: all errors reported in one round (#350)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_batch_validation_reports_all_errors_at_once(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """When multiple tool calls have invalid args, ALL errors should be returned in one round.
+
+    Before eager validation, errors were discovered one at a time: if the first
+    tool call failed validation, the LLM would only see that error. Now all
+    validation runs upfront, so the LLM sees every error in a single round.
+    """
+
+    class StrictParams(BaseModel):
+        name: str = Field(description="A required name")
+        value: int = Field(description="Must be an integer")
+
+    mock_func = AsyncMock(return_value=ToolResult(content="ok"))
+    tool = Tool(
+        name="strict_tool",
+        description="A strict tool",
+        function=mock_func,
+        params_model=StrictParams,
+    )
+
+    # Two tool calls in one response, both with invalid args
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_a",
+                "name": "strict_tool",
+                "arguments": json.dumps({"value": 42}),  # missing required 'name'
+            },
+            {
+                "id": "call_b",
+                "name": "strict_tool",
+                "arguments": json.dumps({"name": "ok", "value": "not_a_number"}),
+            },
+        ]
+    )
+    followup_response = make_text_response("I see both errors. Let me fix them.")
+    mock_acompletion.side_effect = [tool_response, followup_response]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    # Neither call should have executed
+    mock_func.assert_not_called()
+
+    # Both validation failures should be recorded
+    validation_failures = [a for a in response.actions_taken if "(validation)" in a]
+    assert len(validation_failures) == 2
+
+    # Both errors should appear in tool_calls records
+    error_records = [tc for tc in response.tool_calls if tc["is_error"]]
+    assert len(error_records) == 2
+    assert error_records[0]["tool_call_id"] == "call_a"
+    assert error_records[1]["tool_call_id"] == "call_b"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_batch_validation_executes_valid_calls_alongside_invalid(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Valid tool calls should still execute even when other calls in the same batch fail."""
+
+    class StrictParams(BaseModel):
+        name: str = Field(description="A required name")
+        value: int = Field(description="Must be an integer")
+
+    mock_func = AsyncMock(return_value=ToolResult(content="ok"))
+    tool = Tool(
+        name="strict_tool",
+        description="A strict tool",
+        function=mock_func,
+        params_model=StrictParams,
+    )
+
+    # Three calls: first invalid, second valid, third invalid
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_bad1",
+                "name": "strict_tool",
+                "arguments": json.dumps({"value": 42}),  # missing 'name'
+            },
+            {
+                "id": "call_good",
+                "name": "strict_tool",
+                "arguments": json.dumps({"name": "test", "value": 7}),
+            },
+            {
+                "id": "call_bad2",
+                "name": "strict_tool",
+                "arguments": json.dumps({"name": "ok", "value": "NaN"}),
+            },
+        ]
+    )
+    followup_response = make_text_response("Done!")
+    mock_acompletion.side_effect = [tool_response, followup_response]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    # Only the valid call should have executed
+    mock_func.assert_called_once_with(name="test", value=7)
+
+    # Two validation failures + one success
+    assert sum(1 for a in response.actions_taken if "(validation)" in a) == 2
+    assert sum(1 for a in response.actions_taken if a == "Called strict_tool") == 1
+
+    # Verify tool_call_records: 2 errors + 1 success = 3 records
+    assert len(response.tool_calls) == 3
+    error_ids = {tc["tool_call_id"] for tc in response.tool_calls if tc["is_error"]}
+    success_ids = {tc["tool_call_id"] for tc in response.tool_calls if not tc["is_error"]}
+    assert error_ids == {"call_bad1", "call_bad2"}
+    assert success_ids == {"call_good"}
