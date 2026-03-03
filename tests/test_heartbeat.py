@@ -676,6 +676,56 @@ class TestParseToolCallResponse:
         assert action.action_type == "no_action"
         assert "Malformed tool arguments" in action.reasoning
 
+    def test_none_arguments_does_not_crash(self) -> None:
+        """None func.arguments should not raise TypeError on slicing."""
+        func = MagicMock()
+        func.name = "compose_message"
+        func.arguments = None
+        tool_call = MagicMock()
+        tool_call.function = func
+        tool_call.id = "call_none_args"
+
+        msg = MagicMock()
+        msg.tool_calls = [tool_call]
+        msg.content = None
+        choice = MagicMock()
+        choice.message = msg
+        resp = MagicMock()
+        resp.choices = [choice]
+
+        action = _parse_tool_call_response(resp)
+        assert action.action_type == "no_action"
+        assert action.priority == 0
+
+    def test_non_numeric_priority_defaults_to_3(self) -> None:
+        """Non-numeric priority value should default to 3 instead of crashing."""
+        args = json.dumps(
+            {
+                "action": "send_message",
+                "message": "Hello",
+                "reasoning": "test",
+                "priority": "high",
+            }
+        )
+        func = MagicMock()
+        func.name = "compose_message"
+        func.arguments = args
+        tool_call = MagicMock()
+        tool_call.function = func
+        tool_call.id = "call_bad_priority"
+
+        msg = MagicMock()
+        msg.tool_calls = [tool_call]
+        msg.content = None
+        choice = MagicMock()
+        choice.message = msg
+        resp = MagicMock()
+        resp.choices = [choice]
+
+        action = _parse_tool_call_response(resp)
+        assert action.action_type == "send_message"
+        assert action.priority == 3
+
     def test_missing_optional_message_defaults_empty(self) -> None:
         """If the LLM omits the optional message field, it should default to empty."""
         args = json.dumps({"action": "no_action", "reasoning": "nothing", "priority": 2})

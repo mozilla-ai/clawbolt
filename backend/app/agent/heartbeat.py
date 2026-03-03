@@ -410,19 +410,26 @@ def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
     try:
         data = json.loads(func.arguments)
     except (json.JSONDecodeError, TypeError):
-        logger.warning("Heartbeat tool call had malformed arguments: %s", func.arguments[:200])
+        logger.warning(
+            "Heartbeat tool call had malformed arguments: %s", (func.arguments or "")[:200]
+        )
         return HeartbeatAction(
             action_type="no_action",
             message="",
-            reasoning=f"Malformed tool arguments: {func.arguments[:100]}",
+            reasoning=f"Malformed tool arguments: {(func.arguments or '')[:100]}",
             priority=0,
         )
+
+    try:
+        priority = int(data.get("priority", 3))
+    except (ValueError, TypeError):
+        priority = 3
 
     return HeartbeatAction(
         action_type=data.get("action", "no_action"),
         message=data.get("message", ""),
         reasoning=data.get("reasoning", ""),
-        priority=int(data.get("priority", 3)),
+        priority=priority,
     )
 
 
