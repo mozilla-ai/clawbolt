@@ -503,7 +503,10 @@ class BackshopAgent:
                 )
             )
 
+            # -- Phase 1: validate ALL tool calls before executing any -------
+            pre_validated: list[tuple[int, Tool, dict[str, Any]]] = []
             tool_results: list[ToolResultMessage] = []
+
             for i, tc_req in enumerate(parsed_calls):
                 tool_name = tc_req.name
                 tool_args = tc_req.arguments
@@ -524,90 +527,102 @@ class BackshopAgent:
                     continue
 
                 tool_obj = self._tools_by_name.get(tool_name)
-                tool_func = tool_obj.function if tool_obj else None
-                tool_tags = self._get_tool_tags(tool_name)
-                result_str = ""
-                is_error = False
-                if tool_func and tool_obj:
-                    validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
-                    if validation_error is not None:
-                        logger.warning(
-                            "Validation failed for %s: %s",
-                            tool_name,
-                            validation_error,
-                        )
-                        hint = _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
-                        result_str = validation_error + "\n\n" + hint
-                        is_error = True
-                        actions_taken.append(f"Failed: {tool_name} (validation)")
-                        tool_call_records.append(
-                            {
-                                "tool_call_id": tc_req.id,
-                                "name": tool_name,
-                                "args": tool_args,
-                                "result": result_str,
-                                "is_error": True,
-                                "tags": tool_tags,
-                            }
-                        )
-                        tool_results.append(
-                            ToolResultMessage(
-                                tool_call_id=tc_req.id,
-                                content=result_str,
-                            )
-                        )
-                        continue
-
-                    await self._emit(
-                        ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args)
-                    )
-                    tool_start = time.monotonic()
-                    try:
-                        result = await tool_func(**validated_args)
-                        result_str = result.content
-                        is_error = result.is_error
-                        if is_error:
-                            hint = _build_error_hint(result)
-                            result_str += "\n\n" + hint
-                        if is_error:
-                            actions_taken.append(f"Failed: {tool_name}")
-                        else:
-                            actions_taken.append(f"Called {tool_name}")
-                        tool_call_records.append(
-                            {
-                                "tool_call_id": tc_req.id,
-                                "name": tool_name,
-                                "args": validated_args,
-                                "result": result_str,
-                                "is_error": is_error,
-                                "tags": tool_tags,
-                            }
-                        )
-                        if ToolTags.SAVES_MEMORY in tool_tags:
-                            memories_saved.append(validated_args)
-                    except Exception:
-                        logger.exception("Tool call failed: %s", tool_name)
-                        hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
-                        result_str = f"Error: tool {tool_name} failed\n\n{hint}"
-                        is_error = True
-                        actions_taken.append(f"Failed: {tool_name}")
-                    tool_duration = (time.monotonic() - tool_start) * 1000
-                    await self._emit(
-                        ToolExecutionEndEvent(
-                            tool_name=tool_name,
-                            result=result_str,
-                            is_error=is_error,
-                            duration_ms=tool_duration,
-                        )
-                    )
-                else:
+                if not tool_obj:
                     available = ", ".join(sorted(self._tools_by_name.keys()))
                     result_str = (
                         f'Error: unknown tool "{tool_name}".'
                         f" Available tools: {available}"
                         f"\n\n{_DEFAULT_ERROR_HINT}"
                     )
+                    tool_results.append(
+                        ToolResultMessage(
+                            tool_call_id=tc_req.id,
+                            content=result_str,
+                        )
+                    )
+                    continue
 
+                validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
+                if validation_error is not None:
+                    logger.warning(
+                        "Validation failed for %s: %s",
+                        tool_name,
+                        validation_error,
+                    )
+                    tool_tags = self._get_tool_tags(tool_name)
+                    hint = _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
+                    result_str = validation_error + "\n\n" + hint
+                    actions_taken.append(f"Failed: {tool_name} (validation)")
+                    tool_call_records.append(
+                        {
+                            "tool_call_id": tc_req.id,
+                            "name": tool_name,
+                            "args": tool_args,
+                            "result": result_str,
+                            "is_error": True,
+                            "tags": tool_tags,
+                        }
+                    )
+                    tool_results.append(
+                        ToolResultMessage(
+                            tool_call_id=tc_req.id,
+                            content=result_str,
+                        )
+                    )
+                    continue
+
+                pre_validated.append((i, tool_obj, validated_args))
+
+            # -- Phase 2: execute only the validated tool calls --------------
+            for i, tool_obj, validated_args in pre_validated:
+                tc_req = parsed_calls[i]
+                tool_name = tc_req.name
+                tool_tags = self._get_tool_tags(tool_name)
+
+                await self._emit(
+                    ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args)
+                )
+                tool_start = time.monotonic()
+                result_str = ""
+                is_error = False
+                try:
+                    result = await tool_obj.function(**validated_args)
+                    result_str = result.content
+                    is_error = result.is_error
+                    if is_error:
+                        hint = _build_error_hint(result)
+                        result_str += "\n\n" + hint
+                    if is_error:
+                        actions_taken.append(f"Failed: {tool_name}")
+                    else:
+                        actions_taken.append(f"Called {tool_name}")
+                    tool_call_records.append(
+                        {
+                            "tool_call_id": tc_req.id,
+                            "name": tool_name,
+                            "args": validated_args,
+                            "result": result_str,
+                            "is_error": is_error,
+                            "tags": tool_tags,
+                        }
+                    )
+                    if ToolTags.SAVES_MEMORY in tool_tags:
+                        memories_saved.append(validated_args)
+                except Exception:
+                    logger.exception("Tool call failed: %s", tool_name)
+                    hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
+                    result_str = f"Error: tool {tool_name} failed\n\n{hint}"
+                    is_error = True
+                    actions_taken.append(f"Failed: {tool_name}")
+                tool_duration = (time.monotonic() - tool_start) * 1000
+                await self._emit(
+                    ToolExecutionEndEvent(
+                        tool_name=tool_name,
+                        result=result_str,
+                        is_error=is_error,
+                        duration_ms=tool_duration,
+                    )
+                )
                 tool_results.append(
                     ToolResultMessage(
                         tool_call_id=tc_req.id,
