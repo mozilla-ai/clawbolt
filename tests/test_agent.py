@@ -1,5 +1,6 @@
 import json
-from unittest.mock import AsyncMock, patch
+import logging
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from any_llm import (
@@ -16,6 +17,7 @@ from backend.app.agent.core import (
     MAX_INPUT_TOKENS,
     BackshopAgent,
     _estimate_tokens,
+    _log_token_estimation_drift,
 )
 from backend.app.agent.messages import (
     AgentMessage,
@@ -589,6 +591,82 @@ def test_estimate_tokens_counts_tool_call_content() -> None:
     # Compare with a message that has no tool_calls -- should be less
     plain = [AssistantMessage(content=None)]
     assert _estimate_tokens(plain) < result
+
+
+# ---------------------------------------------------------------------------
+# Token estimation drift logging
+# ---------------------------------------------------------------------------
+
+
+def test_log_token_estimation_drift_warns_when_off(caplog: pytest.LogCaptureFixture) -> None:
+    """_log_token_estimation_drift should warn when estimate drifts more than 30 percent."""
+    messages: list[AgentMessage] = [
+        SystemMessage(content="You are a helpful assistant."),
+        UserMessage(content="Hello, how are you today?"),
+    ]
+    # Build a mock response whose actual prompt_tokens differs greatly from our estimate.
+    # Our estimate: ~(35 + 26) / 3.5 + 2*4 = ~25 tokens
+    # Set actual to 100 so the estimate (~25) is far below actual.
+    response = MagicMock()
+    usage = MagicMock()
+    usage.prompt_tokens = 100
+    response.usage = usage
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
+        _log_token_estimation_drift(messages, response)
+
+    assert any("Token estimate drift" in rec.message for rec in caplog.records)
+    # Verify logged values contain the key details
+    drift_record = next(r for r in caplog.records if "Token estimate drift" in r.message)
+    assert "estimated=" in drift_record.message
+    assert "actual=100" in drift_record.message
+
+
+def test_log_token_estimation_drift_silent_when_close(caplog: pytest.LogCaptureFixture) -> None:
+    """_log_token_estimation_drift should not warn when estimate is within 30 percent."""
+    messages: list[AgentMessage] = [
+        SystemMessage(content="x" * 350),  # ~100 tokens
+    ]
+    # Our estimate: 350/3.5 + 4 = 104 tokens. Set actual to 100 (4% off).
+    response = MagicMock()
+    usage = MagicMock()
+    usage.prompt_tokens = 100
+    response.usage = usage
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
+        _log_token_estimation_drift(messages, response)
+
+    assert not any("Token estimate drift" in rec.message for rec in caplog.records)
+
+
+def test_log_token_estimation_drift_no_usage(caplog: pytest.LogCaptureFixture) -> None:
+    """_log_token_estimation_drift should be silent when response has no usage."""
+    messages: list[AgentMessage] = [
+        SystemMessage(content="Hello"),
+    ]
+    response = MagicMock()
+    response.usage = None
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
+        _log_token_estimation_drift(messages, response)
+
+    assert not any("Token estimate drift" in rec.message for rec in caplog.records)
+
+
+def test_log_token_estimation_drift_zero_prompt_tokens(caplog: pytest.LogCaptureFixture) -> None:
+    """_log_token_estimation_drift should be silent when prompt_tokens is 0."""
+    messages: list[AgentMessage] = [
+        SystemMessage(content="Hello"),
+    ]
+    response = MagicMock()
+    usage = MagicMock()
+    usage.prompt_tokens = 0
+    response.usage = usage
+
+    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
+        _log_token_estimation_drift(messages, response)
+
+    assert not any("Token estimate drift" in rec.message for rec in caplog.records)
 
 
 def test_trim_messages_preserves_tool_call_result_pairs() -> None:
