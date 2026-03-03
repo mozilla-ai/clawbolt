@@ -249,7 +249,12 @@ def create_file_tools(
         if not file_bytes:
             logger.warning("upload_to_storage called but no file content available")
             return ToolResult(
-                content="No file content available to upload.",
+                content=(
+                    "No file content available to upload. This tool only works with "
+                    "media attached to the current message. To organize a previously "
+                    "received file, use the organize_file tool instead with the "
+                    "file's original_url."
+                ),
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
@@ -387,24 +392,25 @@ def create_file_tools(
         Tool(
             name=ToolName.UPLOAD_TO_STORAGE,
             description=(
-                "Upload a file to the contractor's cloud storage. "
-                "Files are organized by client: when you know the client name or job address, "
-                "provide it to file under their folder. Otherwise files go to Unsorted. "
-                "Inbound media is auto-saved, so use this to organize files into "
-                "the right client folder with a descriptive filename."
+                "Upload a file attached to the CURRENT message to the contractor's "
+                "cloud storage. Only works when the contractor sent media in this "
+                "message. Files are organized by client: provide client_name or "
+                "client_address to file under their folder, otherwise files go to "
+                "Unsorted. For files received in previous messages, use "
+                "organize_file instead."
             ),
             function=upload_to_storage,
             params_model=UploadToStorageParams,
-            usage_hint="Upload and organize files into the contractor's cloud storage.",
+            usage_hint="Upload media from the current message to cloud storage.",
         ),
         Tool(
             name=ToolName.ORGANIZE_FILE,
             description=(
-                "Move an auto-saved file from the Unsorted folder into the correct "
-                "client folder. Use this when you learn which client a previously "
-                "received file belongs to. Requires the original_url of the file "
-                "(from the inbound media list) and at least a client_name or "
-                "client_address to build the destination folder."
+                "Move a previously received file from the Unsorted folder into the "
+                "correct client folder. Use this when you learn which client a file "
+                "belongs to, even if the file was received in an earlier message. "
+                "Requires the original_url of the file and at least a client_name "
+                "or client_address to build the destination folder."
             ),
             function=organize_file,
             params_model=OrganizeFileParams,
