@@ -1,7 +1,7 @@
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 
 
 def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
@@ -45,6 +45,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
                 },
                 "required": ["key", "value"],
             },
+            tags={ToolTags.SAVES_MEMORY},
         ),
         Tool(
             name="recall_facts",

@@ -7,6 +7,7 @@ from typing import Any
 
 from backend.app.agent.core import AgentResponse
 from backend.app.agent.profile import build_onboarding_prompt
+from backend.app.agent.tools.base import ToolTags
 from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
@@ -132,9 +133,9 @@ def _match_profile_field(key: str) -> str | None:
 def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
     """Extract profile field updates from agent tool calls during onboarding.
 
-    Looks at save_fact calls and maps known categories to profile fields.
-    Uses exact key lookup as the fast path, then falls back to fuzzy keyword
-    matching for synonym keys the LLM might use.
+    Looks at tool calls tagged with SAVES_MEMORY and maps known categories
+    to profile fields. Uses exact key lookup as the fast path, then falls
+    back to fuzzy keyword matching for synonym keys the LLM might use.
     """
     updates: dict[str, Any] = {}
 
@@ -156,7 +157,7 @@ def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
     }
 
     for tc in agent_response.tool_calls:
-        if tc.get("name") != "save_fact":
+        if ToolTags.SAVES_MEMORY not in tc.get("tags", set()):
             continue
         args = tc.get("args", {})
         key = str(args.get("key", "")).lower().strip()

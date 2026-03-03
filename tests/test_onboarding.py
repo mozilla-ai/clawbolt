@@ -15,6 +15,7 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.profile import get_missing_optional_fields
 from backend.app.agent.router import handle_inbound_message
+from backend.app.agent.tools.base import ToolTags
 from backend.app.models import Contractor, Conversation, Message
 from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
@@ -302,11 +303,13 @@ def test_extract_profile_updates_name_and_trade() -> None:
                 "name": "save_fact",
                 "args": {"key": "name", "value": "Mike Johnson"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
             {
                 "name": "save_fact",
                 "args": {"key": "trade", "value": "Electrician"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -324,6 +327,7 @@ def test_extract_profile_updates_hourly_rate() -> None:
                 "name": "save_fact",
                 "args": {"key": "hourly_rate", "value": "$85/hr"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -340,6 +344,7 @@ def test_extract_profile_updates_ignores_non_profile_facts() -> None:
                 "name": "save_fact",
                 "args": {"key": "favorite_color", "value": "blue"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -368,6 +373,7 @@ def test_extract_profile_updates_invalid_rate() -> None:
                 "name": "save_fact",
                 "args": {"key": "hourly_rate", "value": "depends on the job"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -445,6 +451,7 @@ def test_extract_profile_updates_various_rate_formats(
                 "name": "save_fact",
                 "args": {"key": "hourly_rate", "value": rate_value},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -463,6 +470,7 @@ def test_extract_profile_updates_invalid_rate_logs_warning(
                 "name": "save_fact",
                 "args": {"key": "hourly_rate", "value": "varies"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -570,6 +578,7 @@ def test_extract_profile_updates_fuzzy_profession_maps_to_trade() -> None:
                 "name": "save_fact",
                 "args": {"key": "profession", "value": "Plumber"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -586,6 +595,7 @@ def test_extract_profile_updates_fuzzy_area_maps_to_location() -> None:
                 "name": "save_fact",
                 "args": {"key": "service_area", "value": "Portland, OR"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -602,6 +612,7 @@ def test_extract_profile_updates_fuzzy_pricing_maps_to_hourly_rate() -> None:
                 "name": "save_fact",
                 "args": {"key": "pricing", "value": "$95"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -618,6 +629,7 @@ def test_extract_profile_updates_fuzzy_schedule_maps_to_business_hours() -> None
                 "name": "save_fact",
                 "args": {"key": "schedule", "value": "Mon-Fri 8am-5pm"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -634,6 +646,7 @@ def test_extract_profile_updates_fuzzy_full_name_maps_to_name() -> None:
                 "name": "save_fact",
                 "args": {"key": "full_name", "value": "Sarah Connor"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -653,6 +666,7 @@ def test_extract_profile_updates_communication_style_exact_key() -> None:
                 "name": "save_fact",
                 "args": {"key": "communication_style", "value": "casual and brief"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -671,6 +685,7 @@ def test_extract_profile_updates_communication_preference_exact_key() -> None:
                 "name": "save_fact",
                 "args": {"key": "communication_preference", "value": "formal and detailed"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -689,6 +704,7 @@ def test_extract_profile_updates_fuzzy_tone_maps_to_preferences() -> None:
                 "name": "save_fact",
                 "args": {"key": "preferred_tone", "value": "keep it short"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -708,6 +724,7 @@ def test_extract_profile_updates_soul_text_exact_key() -> None:
                     "value": "I specialize in custom decks.",
                 },
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -724,6 +741,7 @@ def test_extract_profile_updates_fuzzy_bio_maps_to_soul_text() -> None:
                 "name": "save_fact",
                 "args": {"key": "bio", "value": "20 years in the trade."},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -740,11 +758,13 @@ def test_extract_profile_updates_style_key_no_false_positive() -> None:
                 "name": "save_fact",
                 "args": {"key": "cabinet_style", "value": "shaker"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
             {
                 "name": "save_fact",
                 "args": {"key": "project_brief", "value": "deck replacement"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -758,26 +778,35 @@ def test_extract_profile_updates_exact_keys_still_work() -> None:
     response = AgentResponse(
         reply_text="All set!",
         tool_calls=[
-            {"name": "save_fact", "args": {"key": "name", "value": "Mike"}, "result": "ok"},
+            {
+                "name": "save_fact",
+                "args": {"key": "name", "value": "Mike"},
+                "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
+            },
             {
                 "name": "save_fact",
                 "args": {"key": "trade", "value": "Plumber"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
             {
                 "name": "save_fact",
                 "args": {"key": "location", "value": "Denver"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
             {
                 "name": "save_fact",
                 "args": {"key": "hourly_rate", "value": "$75"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
             {
                 "name": "save_fact",
                 "args": {"key": "business_hours", "value": "9-5"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )
@@ -798,11 +827,13 @@ def test_extract_profile_updates_fuzzy_does_not_match_unrelated() -> None:
                 "name": "save_fact",
                 "args": {"key": "favorite_color", "value": "blue"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
             {
                 "name": "save_fact",
                 "args": {"key": "username", "value": "mike42"},
                 "result": "ok",
+                "tags": {ToolTags.SAVES_MEMORY},
             },
         ],
     )

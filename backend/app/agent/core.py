@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
-from backend.app.agent.tools.base import Tool, ToolResult, tool_to_openai_schema
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags, tool_to_openai_schema
 from backend.app.config import settings
 from backend.app.models import Contractor
 
@@ -203,6 +203,11 @@ class BackshopAgent:
         # system prompt + last N messages
         return [messages[0], *messages[-(CONTEXT_TRIM_KEEP_RECENT):]]
 
+    def _get_tool_tags(self, tool_name: str) -> set[str]:
+        """Look up the tags for a registered tool by name."""
+        tool = self._tools_by_name.get(tool_name)
+        return tool.tags if tool else set()
+
     async def process_message(
         self,
         message_context: str,
@@ -289,6 +294,7 @@ class BackshopAgent:
                     continue
 
                 tool_func = self._find_tool(tool_name)
+                tool_tags = self._get_tool_tags(tool_name)
                 result_str = ""
                 is_error = False
                 if tool_func:
@@ -312,9 +318,10 @@ class BackshopAgent:
                                 "args": tool_args,
                                 "result": result_str,
                                 "is_error": is_error,
+                                "tags": tool_tags,
                             }
                         )
-                        if tool_name == "save_fact":
+                        if ToolTags.SAVES_MEMORY in tool_tags:
                             memories_saved.append(tool_args)
                     except Exception:
                         logger.exception("Tool call failed: %s", tool_name)
@@ -336,7 +343,7 @@ class BackshopAgent:
 
             messages.extend(tool_results)
         else:
-            # Max rounds reached — use last response content
+            # Max rounds reached -- use last response content
             reply_text = choice.message.content or ""
 
         return AgentResponse(
