@@ -105,18 +105,21 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             ),
             function=add_checklist_item,
             params_model=AddChecklistItemParams,
+            usage_hint="When the contractor wants a recurring reminder, add it to the checklist.",
         ),
         Tool(
             name="list_checklist_items",
             description="List all active items on the contractor's heartbeat checklist.",
             function=list_checklist_items,
             params_model=ListChecklistItemsParams,
+            usage_hint="When asked about active reminders or checklist items, list them.",
         ),
         Tool(
             name="remove_checklist_item",
             description="Remove an item from the contractor's heartbeat checklist by its ID.",
             function=remove_checklist_item,
             params_model=RemoveChecklistItemParams,
+            usage_hint="When the contractor wants to stop a reminder, remove it by ID.",
         ),
     ]
 

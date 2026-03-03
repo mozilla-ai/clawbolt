@@ -79,6 +79,99 @@ async def test_agent_system_prompt_includes_soul(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
+async def test_system_prompt_includes_tool_hints(
+    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+) -> None:
+    """System prompt should include usage hints from registered tools."""
+    mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+
+    async def dummy(**kwargs: object) -> str:
+        return "ok"
+
+    tools = [
+        Tool(
+            name="save_fact",
+            description="Save a fact",
+            function=dummy,
+            parameters={},
+            usage_hint="When you learn new info, save it.",
+        ),
+        Tool(
+            name="recall_facts",
+            description="Recall facts",
+            function=dummy,
+            parameters={},
+            usage_hint="Search memory for relevant information.",
+        ),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools(tools)
+    await agent.process_message("Hello")
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["messages"][0]["content"]
+    assert "Tool Guidelines" in system_prompt
+    assert "When you learn new info, save it." in system_prompt
+    assert "Search memory for relevant information." in system_prompt
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_system_prompt_omits_tool_section_when_no_hints(
+    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+) -> None:
+    """System prompt should not include tool guidelines when no tools have hints."""
+    mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    # No tools registered
+    await agent.process_message("Hello")
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["messages"][0]["content"]
+    assert "Tool Guidelines" not in system_prompt
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_system_prompt_skips_tools_without_hints(
+    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Tools with empty usage_hint should not appear in the system prompt."""
+    mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+
+    async def dummy(**kwargs: object) -> str:
+        return "ok"
+
+    tools = [
+        Tool(
+            name="tool_with_hint",
+            description="Has a hint",
+            function=dummy,
+            parameters={},
+            usage_hint="This tool does something useful.",
+        ),
+        Tool(
+            name="tool_without_hint",
+            description="No hint",
+            function=dummy,
+            parameters={},
+        ),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools(tools)
+    await agent.process_message("Hello")
+
+    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["messages"][0]["content"]
+    assert "This tool does something useful." in system_prompt
+    assert "tool_without_hint" not in system_prompt
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
 async def test_agent_does_not_pass_api_key(
     mock_acompletion: object, db_session: Session, test_contractor: Contractor
 ) -> None:

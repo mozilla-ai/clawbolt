@@ -74,18 +74,24 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
             function=save_fact,
             params_model=SaveFactParams,
             tags={ToolTags.SAVES_MEMORY},
+            usage_hint=("When you learn new information (rates, clients, preferences), save it."),
         ),
         Tool(
             name="recall_facts",
             description="Search the contractor's memory for facts matching a query.",
             function=recall_facts,
             params_model=RecallFactsParams,
+            usage_hint=(
+                "When asked about the contractor's business, clients, or past work,"
+                " search your memory first."
+            ),
         ),
         Tool(
             name="forget_fact",
             description="Delete a fact from memory by key.",
             function=forget_fact,
             params_model=ForgetFactParams,
+            usage_hint="When asked to forget or delete a specific fact, remove it.",
         ),
     ]
 

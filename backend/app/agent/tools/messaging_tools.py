@@ -58,6 +58,7 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
             function=send_reply,
             params_model=SendReplyParams,
             tags={ToolTags.SENDS_REPLY},
+            usage_hint="Use this to send a text message to the contractor.",
         ),
         Tool(
             name="send_media_reply",
@@ -65,6 +66,9 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
             function=send_media_reply,
             params_model=SendMediaReplyParams,
             tags={ToolTags.SENDS_REPLY},
+            usage_hint=(
+                "When sending estimates or files, use this to send media to the contractor."
+            ),
         ),
     ]
 
