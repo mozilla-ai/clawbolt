@@ -88,11 +88,11 @@ def client(
         patch("backend.app.agent.ingestion.SessionLocal", test_session_factory),
         # Default allowlist to "*" (allow all) so tests are not blocked.
         # Individual allowlist tests override these values.
-        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids", "*"),
-        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames", ""),
+        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_ids", "*"),
+        patch("backend.app.channels.telegram.settings.telegram_allowed_usernames", ""),
         # Clear bot token so auto-derived webhook secret is empty for tests that
         # don't send a secret header
-        patch("backend.app.routers.telegram_webhook.settings.telegram_bot_token", ""),
+        patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
         TestClient(app) as c,
     ):
         yield c

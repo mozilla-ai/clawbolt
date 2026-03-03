@@ -235,11 +235,11 @@ def test_allowlist_rejects_unlisted_chat_id(client: TestClient, db_session: Sess
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "111,222",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
@@ -259,11 +259,11 @@ def test_allowlist_accepts_listed_chat_id(
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             f"111,{chat_id},333",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
@@ -280,11 +280,11 @@ def test_allowlist_empty_denies_all(client: TestClient, db_session: Session) -> 
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
@@ -301,11 +301,11 @@ def test_allowlist_wildcard_allows_all(client: TestClient, db_session: Session) 
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "*",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
@@ -321,11 +321,11 @@ def test_username_wildcard_allows_all(client: TestClient, db_session: Session) -
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "*",
         ),
     ):
@@ -344,11 +344,11 @@ def test_username_allowlist_accepts_listed_user(client: TestClient, db_session: 
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "alice,bob",
         ),
     ):
@@ -364,11 +364,11 @@ def test_username_allowlist_rejects_unlisted_user(client: TestClient, db_session
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "alice,bob",
         ),
     ):
@@ -385,11 +385,11 @@ def test_username_allowlist_strips_at_prefix(client: TestClient, db_session: Ses
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "@Alice, @Bob",
         ),
     ):
@@ -405,11 +405,11 @@ def test_username_or_chat_id_either_passes(client: TestClient, db_session: Sessi
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "999",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "alice",
         ),
     ):
@@ -426,11 +426,11 @@ def test_username_allowlist_no_username_in_payload(client: TestClient, db_sessio
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "alice",
         ),
     ):
@@ -467,46 +467,46 @@ def test_webhook_missing_chat_id_returns_200(client: TestClient) -> None:
 
 def test_extract_media_skips_photo_without_file_id() -> None:
     """Photos missing file_id should be skipped instead of crashing."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {
         "message": {
             "photo": [{"file_unique_id": "abc", "width": 90, "height": 90, "file_size": 1000}],
         }
     }
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_skips_voice_without_file_id() -> None:
     """Voice notes missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {
         "message": {
             "voice": {"file_unique_id": "v1", "duration": 5},
         }
     }
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_skips_document_without_file_id() -> None:
     """Documents missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {
         "message": {
             "document": {"file_unique_id": "d1", "file_name": "test.pdf"},
         }
     }
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_telegram_media_image_document_preserves_mime() -> None:
     """Images sent as documents should preserve their image/* MIME type."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {
         "message": {
@@ -520,14 +520,14 @@ def test_extract_telegram_media_image_document_preserves_mime() -> None:
             },
         }
     }
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BQACAgIAAxkBAAI", "image/png")
 
 
 def test_extract_telegram_media_document_without_mime_defaults() -> None:
     """Documents without mime_type should default to application/octet-stream."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {
         "message": {
@@ -540,7 +540,7 @@ def test_extract_telegram_media_document_without_mime_defaults() -> None:
             },
         }
     }
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BQACAgIAAxkBAAI", "application/octet-stream")
 
@@ -607,7 +607,7 @@ def test_parse_media_without_caption_has_empty_body(
 
 def test_extract_media_video() -> None:
     """Video file_ids should be extracted."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {
         "message": {
@@ -621,14 +621,14 @@ def test_extract_media_video() -> None:
             }
         }
     }
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BAACAgIAAxkBAAI", "video/mp4")
 
 
 def test_extract_media_video_note() -> None:
     """Video note (round video) file_ids should be extracted."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {
         "message": {
@@ -640,14 +640,14 @@ def test_extract_media_video_note() -> None:
             }
         }
     }
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("DQACAgIAAxkBAAI", "video/mp4")
 
 
 def test_extract_media_audio() -> None:
     """Audio file_ids should be extracted."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {
         "message": {
@@ -659,35 +659,35 @@ def test_extract_media_audio() -> None:
             }
         }
     }
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("CQACAgIAAxkBAAI", "audio/mpeg")
 
 
 def test_extract_media_video_without_file_id() -> None:
     """Videos missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {"message": {"video": {"file_unique_id": "v1", "duration": 10}}}
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_video_note_without_file_id() -> None:
     """Video notes missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {"message": {"video_note": {"file_unique_id": "vn1", "duration": 5}}}
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_audio_without_file_id() -> None:
     """Audio files missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel
 
     update = {"message": {"audio": {"file_unique_id": "a1", "duration": 180}}}
-    media = _extract_telegram_media(update)
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 

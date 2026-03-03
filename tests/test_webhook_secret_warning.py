@@ -34,7 +34,6 @@ def test_logs_auto_derived_secret_when_no_explicit_secret(
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
-        patch("backend.app.main.get_effective_webhook_secret"),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),
     ):
@@ -73,7 +72,6 @@ def test_logs_configured_secret_when_explicit_secret_set(
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
-        patch("backend.app.main.get_effective_webhook_secret"),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),
     ):

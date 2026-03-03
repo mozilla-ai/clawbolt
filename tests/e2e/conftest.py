@@ -4,8 +4,8 @@ import os
 
 import pytest
 
+from backend.app.channels.telegram import TelegramChannel
 from backend.app.config import Settings
-from backend.app.services.telegram_service import TelegramMessagingService
 
 
 def _telegram_credentials_available() -> bool:
@@ -30,9 +30,9 @@ def telegram_settings() -> Settings:
 
 
 @pytest.fixture()
-def telegram_service(telegram_settings: Settings) -> TelegramMessagingService:
-    """Real TelegramMessagingService wired to actual Telegram Bot API."""
-    return TelegramMessagingService(svc_settings=telegram_settings)
+def telegram_service(telegram_settings: Settings) -> TelegramChannel:
+    """Real TelegramChannel wired to actual Telegram Bot API."""
+    return TelegramChannel(svc_settings=telegram_settings)
 
 
 @pytest.fixture()
