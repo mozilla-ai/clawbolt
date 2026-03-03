@@ -229,10 +229,10 @@ async def test_get_or_create_conversation_custom_timeout(
 
 def test_webhook_uses_canonical_get_or_create_conversation() -> None:
     """Webhook should use context.get_or_create_conversation, not a local duplicate."""
-    from backend.app.routers import telegram_webhook
+    from backend.app.channels import telegram
 
     # The local _get_or_create_conversation should no longer exist
-    assert not hasattr(telegram_webhook, "_get_or_create_conversation")
+    assert not hasattr(telegram, "_get_or_create_conversation")
 
 
 # ---------------------------------------------------------------------------

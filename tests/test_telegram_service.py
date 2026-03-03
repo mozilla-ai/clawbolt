@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.services.telegram_service import TelegramMessagingService
+from backend.app.channels.telegram import TelegramChannel
 
 # ---------------------------------------------------------------------------
 # _parse_chat_id
@@ -11,18 +11,18 @@ from backend.app.services.telegram_service import TelegramMessagingService
 
 class TestParseChatId:
     def test_plain_numeric(self) -> None:
-        assert TelegramMessagingService._parse_chat_id("123456789") == 123456789
+        assert TelegramChannel._parse_chat_id("123456789") == 123456789
 
     def test_strips_plus_prefix(self) -> None:
-        assert TelegramMessagingService._parse_chat_id("+15551234567") == 15551234567
+        assert TelegramChannel._parse_chat_id("+15551234567") == 15551234567
 
     def test_empty_string_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid Telegram chat_id"):
-            TelegramMessagingService._parse_chat_id("")
+            TelegramChannel._parse_chat_id("")
 
     def test_non_numeric_raises(self) -> None:
         with pytest.raises(ValueError, match="Invalid Telegram chat_id"):
-            TelegramMessagingService._parse_chat_id("not-a-number")
+            TelegramChannel._parse_chat_id("not-a-number")
 
 
 @pytest.fixture()
@@ -39,16 +39,16 @@ def mock_bot() -> MagicMock:
 
 
 @pytest.fixture()
-def telegram_service(mock_bot: MagicMock) -> TelegramMessagingService:
-    """Create a TelegramMessagingService with mocked Bot."""
-    service = TelegramMessagingService.__new__(TelegramMessagingService)
+def telegram_service(mock_bot: MagicMock) -> TelegramChannel:
+    """Create a TelegramChannel with mocked Bot."""
+    service = TelegramChannel.__new__(TelegramChannel)
     service.bot = mock_bot
     service._token = "test-token"
     return service
 
 
 @pytest.mark.asyncio()
-async def test_send_text(telegram_service: TelegramMessagingService, mock_bot: MagicMock) -> None:
+async def test_send_text(telegram_service: TelegramChannel, mock_bot: MagicMock) -> None:
     """send_text should call bot.send_message with correct params."""
     msg_id = await telegram_service.send_text(to="123456789", body="Your estimate is ready")
     assert msg_id == "42"
@@ -56,10 +56,10 @@ async def test_send_text(telegram_service: TelegramMessagingService, mock_bot: M
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.services.telegram_service.httpx.AsyncClient")
+@patch("backend.app.channels.telegram.httpx.AsyncClient")
 async def test_send_media_image(
     mock_client_class: MagicMock,
-    telegram_service: TelegramMessagingService,
+    telegram_service: TelegramChannel,
     mock_bot: MagicMock,
 ) -> None:
     """send_media with an image URL should call bot.send_photo."""
@@ -84,10 +84,10 @@ async def test_send_media_image(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.services.telegram_service.httpx.AsyncClient")
+@patch("backend.app.channels.telegram.httpx.AsyncClient")
 async def test_send_media_document(
     mock_client_class: MagicMock,
-    telegram_service: TelegramMessagingService,
+    telegram_service: TelegramChannel,
     mock_bot: MagicMock,
 ) -> None:
     """send_media with a PDF URL should call bot.send_document."""
@@ -113,7 +113,7 @@ async def test_send_media_document(
 
 @pytest.mark.asyncio()
 async def test_send_message_text_only(
-    telegram_service: TelegramMessagingService, mock_bot: MagicMock
+    telegram_service: TelegramChannel, mock_bot: MagicMock
 ) -> None:
     """send_message without media_urls should send text."""
     msg_id = await telegram_service.send_message(to="123456789", body="Hello")
@@ -122,10 +122,10 @@ async def test_send_message_text_only(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.services.telegram_service.httpx.AsyncClient")
+@patch("backend.app.channels.telegram.httpx.AsyncClient")
 async def test_send_message_multi_media_caption_once(
     mock_client_class: MagicMock,
-    telegram_service: TelegramMessagingService,
+    telegram_service: TelegramChannel,
     mock_bot: MagicMock,
 ) -> None:
     """send_message with multiple media URLs should only caption the first."""
@@ -159,7 +159,7 @@ async def test_send_message_multi_media_caption_once(
 
 @pytest.mark.asyncio()
 async def test_send_typing_indicator(
-    telegram_service: TelegramMessagingService, mock_bot: MagicMock
+    telegram_service: TelegramChannel, mock_bot: MagicMock
 ) -> None:
     """send_typing_indicator should call bot.send_chat_action with 'typing'."""
     from telegram.constants import ChatAction
@@ -170,7 +170,7 @@ async def test_send_typing_indicator(
 
 @pytest.mark.asyncio()
 async def test_send_typing_indicator_failure_does_not_raise(
-    telegram_service: TelegramMessagingService, mock_bot: MagicMock
+    telegram_service: TelegramChannel, mock_bot: MagicMock
 ) -> None:
     """send_typing_indicator should swallow exceptions and not raise."""
     mock_bot.send_chat_action.side_effect = RuntimeError("Telegram API error")

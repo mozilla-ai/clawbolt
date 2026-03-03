@@ -82,19 +82,19 @@ def _make_client(
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_webhook_secret",
+            "backend.app.channels.telegram.settings.telegram_webhook_secret",
             webhook_secret,
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_bot_token",
+            "backend.app.channels.telegram.settings.telegram_bot_token",
             bot_token,
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "*",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
         patch(

@@ -3,7 +3,6 @@
 from collections.abc import Generator
 from typing import Protocol, runtime_checkable
 
-from backend.app.config import settings
 from backend.app.media.download import DownloadedMedia
 
 
@@ -33,14 +32,10 @@ class MessagingService(Protocol):
 
 
 def _build_messaging_service() -> MessagingService:
-    """Build the configured messaging service."""
-    provider = settings.messaging_provider.lower()
-    if provider == "telegram":
-        from backend.app.services.telegram_service import TelegramMessagingService
+    """Build the configured messaging service from the channel registry."""
+    from backend.app.channels import get_default_channel
 
-        return TelegramMessagingService(bot_token=settings.telegram_bot_token)
-    msg = f"Unknown messaging provider: {provider}"
-    raise ValueError(msg)
+    return get_default_channel()
 
 
 def get_messaging_service() -> Generator[MessagingService]:

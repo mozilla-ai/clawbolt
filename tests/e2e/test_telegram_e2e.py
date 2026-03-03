@@ -16,10 +16,10 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
+from backend.app.channels.telegram import TelegramChannel
 from backend.app.database import Base, get_db
 from backend.app.main import app
 from backend.app.services.messaging import MessagingService, get_messaging_service
-from backend.app.services.telegram_service import TelegramMessagingService
 from tests.mocks.llm import make_text_response
 from tests.mocks.telegram import make_telegram_update_payload
 
@@ -48,7 +48,7 @@ def e2e_db_session() -> Generator[Session]:
 @pytest.fixture()
 def e2e_client(
     e2e_db_session: Session,
-    telegram_service: TelegramMessagingService,
+    telegram_service: TelegramChannel,
 ) -> Generator[TestClient]:
     """FastAPI TestClient wired to real Telegram but in-memory DB."""
 
@@ -71,10 +71,10 @@ def e2e_client(
         patch("backend.app.agent.ingestion.SessionLocal", test_session_factory),
         # Disable webhook secret validation so e2e tests don't need to derive
         # and send the secret header (the e2e focus is Telegram round-trip).
-        patch("backend.app.routers.telegram_webhook.settings.telegram_bot_token", ""),
+        patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
         # Allow all chat IDs through so the allowlist doesn't block e2e messages.
-        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids", "*"),
-        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames", ""),
+        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_ids", "*"),
+        patch("backend.app.channels.telegram.settings.telegram_allowed_usernames", ""),
         TestClient(app) as c,
     ):
         yield c
@@ -86,7 +86,7 @@ def e2e_client(
 
 @pytest.mark.asyncio()
 async def test_send_text_message(
-    telegram_service: TelegramMessagingService,
+    telegram_service: TelegramChannel,
     test_chat_id: str,
 ) -> None:
     """Send a real text message via Telegram and verify message_id returned."""
