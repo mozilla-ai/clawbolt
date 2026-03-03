@@ -14,6 +14,7 @@ dependencies = [
     "python-multipart>=0.0.9",
     "httpx>=0.27",
     "any-llm-sdk[anthropic]>=1.8",
+    "json-repair>=0.30",
     "python-telegram-bot>=22.0",
     "reportlab>=4.0",
     "dropbox>=12.0",

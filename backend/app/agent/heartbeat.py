@@ -11,12 +11,12 @@ from __future__ import annotations
 
 import asyncio
 import datetime
-import json
 import logging
 import re
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import json_repair
 from any_llm import acompletion
 from any_llm.types.completion import ChatCompletion
 from sqlalchemy.orm import Session
@@ -408,8 +408,10 @@ def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
         )
 
     try:
-        data = json.loads(func.arguments)
-    except (json.JSONDecodeError, TypeError):
+        data = json_repair.loads(func.arguments)
+        if not isinstance(data, dict):
+            raise ValueError(f"Expected dict, got {type(data).__name__}")
+    except (ValueError, TypeError):
         logger.warning(
             "Heartbeat tool call had malformed arguments: %s", (func.arguments or "")[:200]
         )
