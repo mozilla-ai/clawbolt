@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.config import settings
 from backend.app.enums import EstimateStatus
@@ -67,12 +67,17 @@ def create_estimate_tools(
                 qty = float(item.get("quantity", 1))
                 price = float(item.get("unit_price", 0))
             except (ValueError, TypeError) as exc:
-                return ToolResult(content=f"Error: invalid line item values: {exc}", is_error=True)
+                return ToolResult(
+                    content=f"Error: invalid line item values: {exc}",
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
 
             if qty < 0 or price < 0:
                 return ToolResult(
                     content="Error: quantity and unit_price must not be negative.",
                     is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
                 )
 
             total = qty * price

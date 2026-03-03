@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.enums import ChecklistSchedule, ChecklistStatus
 from backend.app.models import HeartbeatChecklistItem
 
@@ -42,6 +42,7 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             return ToolResult(
                 content=f"Invalid schedule '{schedule}'. Use: daily, weekdays, or once.",
                 is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
             )
         item = HeartbeatChecklistItem(
             contractor_id=contractor_id,
@@ -80,7 +81,11 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             .first()
         )
         if not item:
-            return ToolResult(content=f"Checklist item #{item_id} not found.", is_error=True)
+            return ToolResult(
+                content=f"Checklist item #{item_id} not found.",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
         db.delete(item)
         db.commit()
         return ToolResult(content=f"Removed checklist item #{item_id}: {item.description}")

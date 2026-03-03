@@ -11,7 +11,7 @@ import re
 
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
@@ -75,6 +75,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
                 return ToolResult(
                     content=f"Could not parse hourly rate from: {hourly_rate}",
                     is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
                 )
 
         if business_hours is not None:
@@ -95,6 +96,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             return ToolResult(
                 content="No fields provided to update.",
                 is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
             )
 
         # Apply updates directly to the contractor record
