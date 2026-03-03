@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -19,7 +19,7 @@ class AddChecklistItemParams(BaseModel):
     """Parameters for the add_checklist_item tool."""
 
     description: str = Field(description="What to check or remind about")
-    schedule: Literal["daily", "weekdays", "once"] = Field(
+    schedule: ChecklistSchedule = Field(
         default=ChecklistSchedule.DAILY,
         description="How often to check (default: daily)",
     )
