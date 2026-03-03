@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 from sqlalchemy.orm import Session
 
@@ -204,9 +204,10 @@ def extract_profile_updates_from_tool_calls(
             continue
         if tc.get("is_error"):
             continue
-        args = tc.get("args", {})
-        if not isinstance(args, dict):
+        args_raw = tc.get("args", {})
+        if not isinstance(args_raw, dict):
             continue
+        args = cast(dict[str, object], args_raw)
 
         for field in ("name", "trade", "location", "business_hours", "soul_text"):
             val = args.get(field)

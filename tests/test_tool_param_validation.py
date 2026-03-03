@@ -14,7 +14,10 @@ from backend.app.agent.tools.checklist_tools import (
     ListChecklistItemsParams,
     RemoveChecklistItemParams,
 )
-from backend.app.agent.tools.estimate_tools import GenerateEstimateParams
+from backend.app.agent.tools.estimate_tools import (
+    EstimateLineItemParams,
+    GenerateEstimateParams,
+)
 from backend.app.agent.tools.file_tools import OrganizeFileParams, UploadToStorageParams
 from backend.app.agent.tools.memory_tools import (
     ForgetFactParams,
@@ -137,7 +140,7 @@ def test_save_fact_params_default_category() -> None:
 def test_save_fact_params_rejects_invalid_category() -> None:
     """SaveFactParams should reject invalid category values."""
     with pytest.raises(Exception):  # noqa: B017
-        SaveFactParams(key="note", value="test", category="invalid")
+        SaveFactParams(key="note", value="test", category="invalid")  # type: ignore[invalid-argument-type]
 
 
 def test_remove_checklist_item_coerces_string_to_int() -> None:
@@ -156,7 +159,7 @@ def test_generate_estimate_params_accepts_valid_input() -> None:
     """GenerateEstimateParams should accept valid arguments with line items."""
     p = GenerateEstimateParams(
         description="Deck work",
-        line_items=[{"description": "Materials", "unit_price": 100.0, "quantity": 2}],
+        line_items=[EstimateLineItemParams(description="Materials", unit_price=100.0, quantity=2)],
     )
     assert p.description == "Deck work"
     assert len(p.line_items) == 1

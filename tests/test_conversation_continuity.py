@@ -101,7 +101,9 @@ async def test_load_history_prefers_processed_context(
     db_session.commit()
 
     history = await load_conversation_history(db_session, conversation.id)
-    assert "damaged deck railing" in history[0].content
+    content = history[0].content
+    assert content is not None
+    assert "damaged deck railing" in content
 
 
 @pytest.mark.asyncio()
