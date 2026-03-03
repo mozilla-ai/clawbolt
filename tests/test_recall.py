@@ -198,7 +198,7 @@ async def test_system_prompt_includes_recall_guidance(
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
     system_msg = call_args.kwargs["messages"][0]["content"]
     assert "Recall Behavior" in system_msg
-    assert "recall_facts" in system_msg
+    assert "search your memory" in system_msg.lower()
     assert "don't make things up" in system_msg
 
 

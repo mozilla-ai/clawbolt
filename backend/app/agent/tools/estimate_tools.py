@@ -182,6 +182,7 @@ def create_estimate_tools(
             ),
             function=generate_estimate,
             params_model=GenerateEstimateParams,
+            usage_hint=("When asked for an estimate, gather the details and generate the PDF."),
         ),
     ]
 

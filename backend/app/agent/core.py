@@ -166,11 +166,10 @@ SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contracto
 
 ## Instructions
 - Be concise and practical. Contractors are busy.
-- When you learn new information (rates, clients, preferences), save it using the save_fact tool.
-- When asked for an estimate, gather the details, generate the PDF, and send it back using send_media_reply.
 - You can ONLY communicate via this chat. You cannot send emails, make phone calls, or contact clients directly.
 - Always be helpful, friendly, and professional.
 - Keep replies concise. Contractors are on the job site.
+{tool_instructions}
 
 ## Proactive Messaging
 You will proactively reach out during business hours when something needs attention:
@@ -181,7 +180,7 @@ You will proactively reach out during business hours when something needs attent
 
 ## Recall Behavior
 When the contractor asks a question about their business, clients, or past work:
-1. Use recall_facts to search your memory for relevant information.
+1. Search your memory for relevant information.
 2. If you find relevant facts, use them to answer clearly and concisely.
 3. If you don't find anything, say so honestly -- don't make things up.
 4. If the question is about general knowledge (not their specific business), answer from your training.
@@ -216,18 +215,28 @@ class BackshopAgent:
                 logger.warning("Duplicate tool name registered: %s", tool.name)
             self._tools_by_name[tool.name] = tool
 
+    def _build_tool_instructions(self) -> str:
+        """Generate tool usage instructions from registered tools."""
+        hints = [tool.usage_hint for tool in self.tools if tool.usage_hint]
+        if not hints:
+            return ""
+        lines = "\n".join(f"- {hint}" for hint in hints)
+        return f"\n## Tool Guidelines\n{lines}"
+
     async def _build_system_prompt(self, message_context: str) -> str:
-        """Build the full system prompt with soul + memory."""
+        """Build the full system prompt with soul + memory + tool instructions."""
         soul_prompt = build_soul_prompt(self.contractor)
         memory_context = await build_memory_context(
             self.db,
             self.contractor.id,
             query=message_context[:CONTEXT_QUERY_MAX_LENGTH] if message_context else None,
         )
+        tool_instructions = self._build_tool_instructions()
         prompt = SYSTEM_PROMPT_TEMPLATE.format(
             contractor_name=self.contractor.name or "Contractor",
             soul_prompt=soul_prompt,
             memory_context=memory_context or "(No memories saved yet)",
+            tool_instructions=tool_instructions,
         )
 
         missing = get_missing_optional_fields(self.contractor)
