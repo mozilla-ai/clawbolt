@@ -150,7 +150,6 @@ async def build_message_context(
     return combined_context
 
 
-
 async def run_agent(
     db: Session,
     contractor: Contractor,

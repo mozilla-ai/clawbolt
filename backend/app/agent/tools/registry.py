@@ -40,11 +40,11 @@ _ALWAYS_INCLUDE: frozenset[str] = frozenset({"memory", "messaging", "profile"})
 # Each entry maps a factory name to a compiled regex of trigger words.
 _KEYWORD_RULES: dict[str, re.Pattern[str]] = {
     "estimate": re.compile(
-        r"\b(estimate|quote|bid|price|cost|how\s+much|invoice)\b",
+        r"\b(estimates?|quotes?|bids?|prices?|pricing|costs?|costing|invoices?|how\s+much)\b",
         re.IGNORECASE,
     ),
     "checklist": re.compile(
-        r"\b(checklist|reminder|todo|task|to-do)\b",
+        r"\b(checklists?|reminders?|todos?|tasks?|to-dos?)\b",
         re.IGNORECASE,
     ),
 }
@@ -121,10 +121,11 @@ def select_tools(
             selected.add(name)
             specialized_matched = True
 
-    # Include file tools when media is present and storage is available
+    # Include file tools when media is present and storage is available.
+    # Media presence is orthogonal to keyword matching: it adds file tools
+    # but does not count as a "specialized match" for fallback purposes.
     if has_media and has_storage and "file" in all_names:
         selected.add("file")
-        specialized_matched = True
 
     # Fallback: when no specialized keywords matched, include everything
     # so the model has full capability for ambiguous or general messages

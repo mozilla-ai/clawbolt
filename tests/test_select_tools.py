@@ -192,12 +192,66 @@ class TestWordBoundaries:
         # 'estimated' does NOT match \bestimate\b, so no specialized match, fallback
         assert result == set(ALL_FACTORIES)
 
-    def test_costing_does_not_match_cost(self) -> None:
+    def test_costing_matches_estimate(self) -> None:
         result = select_tools("The costing method is simple", factory_names=ALL_FACTORIES)
-        # 'costing' does NOT match \bcost\b, fallback to all
-        assert result == set(ALL_FACTORIES)
+        # 'costing' matches the estimate regex as a verb form
+        assert "estimate" in result
 
     def test_priceless_does_not_match_price(self) -> None:
         result = select_tools("That view is priceless", factory_names=ALL_FACTORIES)
         # 'priceless' does NOT match \bprice\b, fallback to all
         assert result == set(ALL_FACTORIES)
+
+
+class TestPluralForms:
+    """Plural and verb forms of keywords trigger tool selection."""
+
+    @pytest.mark.parametrize(
+        "keyword",
+        ["estimates", "quotes", "bids", "prices", "pricing", "costs", "costing", "invoices"],
+    )
+    def test_estimate_plural_and_verb_forms(self, keyword: str) -> None:
+        result = select_tools(
+            f"Send me the {keyword} for this job",
+            factory_names=ALL_FACTORIES,
+        )
+        assert "estimate" in result
+
+    @pytest.mark.parametrize(
+        "keyword",
+        ["checklists", "reminders", "todos", "tasks", "to-dos"],
+    )
+    def test_checklist_plural_forms(self, keyword: str) -> None:
+        result = select_tools(
+            f"Show me my {keyword}",
+            factory_names=ALL_FACTORIES,
+        )
+        assert "checklist" in result
+
+
+class TestMediaOrthogonality:
+    """Media presence adds file tools but does not suppress fallback."""
+
+    def test_media_without_keywords_still_falls_back_to_all(self) -> None:
+        """When media is present but no keywords match, all tools are included."""
+        result = select_tools(
+            "Here is the photo",
+            has_media=True,
+            has_storage=True,
+            factory_names=ALL_FACTORIES,
+        )
+        # No keyword matched, so fallback includes all tools
+        assert result == set(ALL_FACTORIES)
+
+    def test_media_with_keywords_does_not_include_unmatched(self) -> None:
+        """When media is present and keywords match, only matched + file + always tools."""
+        result = select_tools(
+            "Here is the estimate photo",
+            has_media=True,
+            has_storage=True,
+            factory_names=ALL_FACTORIES,
+        )
+        assert "estimate" in result
+        assert "file" in result
+        assert "memory" in result
+        assert "checklist" not in result
