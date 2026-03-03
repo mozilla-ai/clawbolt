@@ -11,7 +11,7 @@ from any_llm import (
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import (
-    CONTEXT_TRIM_KEEP_RECENT,
+    CONTEXT_TRIM_TARGET_TOKENS,
     MAX_INPUT_TOKENS,
     BackshopAgent,
     _estimate_tokens,
@@ -447,29 +447,99 @@ async def test_agent_rate_limit_retry_failure_propagates(
 
 
 def test_estimate_tokens_returns_reasonable_estimate() -> None:
-    """_estimate_tokens should return a rough char-based token count."""
+    """_estimate_tokens should return a char-based token count with per-message overhead."""
     messages = [
-        {"role": "system", "content": "Hello world"},  # 11 chars -> 2 tokens
-        {"role": "user", "content": "How are you?"},  # 12 chars -> 3 tokens
+        {"role": "system", "content": "Hello world"},  # 11 chars / 3.5 = 3 + 4 overhead = 7
+        {"role": "user", "content": "How are you?"},  # 12 chars / 3.5 = 3 + 4 overhead = 7
     ]
     result = _estimate_tokens(messages)
-    # 11 // 4 + 12 // 4 = 2 + 3 = 5
-    assert result == 5
+    # int(11/3.5) + 4 + int(12/3.5) + 4 = 3 + 4 + 3 + 4 = 14
+    assert result == 14
 
 
 def test_estimate_tokens_handles_empty_messages() -> None:
-    """_estimate_tokens should handle empty content gracefully."""
+    """_estimate_tokens should handle empty content, counting only overhead."""
     messages: list[dict[str, object]] = [
         {"role": "system", "content": ""},
         {"role": "user"},  # no content key at all
     ]
     result = _estimate_tokens(messages)
-    assert result == 0
+    # 2 messages x 4 overhead tokens each = 8
+    assert result == 8
 
 
 def test_estimate_tokens_handles_empty_list() -> None:
     """_estimate_tokens should return 0 for an empty message list."""
     assert _estimate_tokens([]) == 0
+
+
+def test_estimate_tokens_counts_tool_call_content() -> None:
+    """_estimate_tokens should include tool_calls function names and arguments."""
+    messages: list[dict[str, object]] = [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_1",
+                    "function": {
+                        "name": "save_fact",
+                        "arguments": '{"key": "rate", "value": "$75/hr"}',
+                    },
+                }
+            ],
+        },
+    ]
+    result = _estimate_tokens(messages)
+
+    # Overhead: 4 tokens
+    # content is None -> 0
+    # tool_calls: "save_fact" = 9 chars -> int(9/3.5) = 2
+    #   arguments = 34 chars -> int(34/3.5) = 9
+    # Total = 4 + 0 + 2 + 9 = 15
+    assert result == 15
+
+    # Compare with a message that has no tool_calls -- should be less
+    plain = [{"role": "assistant", "content": None}]
+    assert _estimate_tokens(plain) < result
+
+
+def test_trim_messages_preserves_tool_call_result_pairs() -> None:
+    """Trimming should never orphan a tool result by removing its tool_call."""
+    system = {"role": "system", "content": "x" * 3500}
+    user1 = {"role": "user", "content": "x" * 3500}
+    assistant_tc = {
+        "role": "assistant",
+        "content": None,
+        "tool_calls": [
+            {
+                "id": "call_1",
+                "function": {"name": "save_fact", "arguments": "{}"},
+            }
+        ],
+    }
+    tool_result = {"role": "tool", "tool_call_id": "call_1", "content": "x" * 3500}
+    user2 = {"role": "user", "content": "Final question"}
+
+    messages: list[dict[str, object]] = [
+        system,
+        user1,
+        assistant_tc,
+        tool_result,
+        user2,
+    ]
+
+    # Use a small budget that forces trimming of some messages
+    trimmed = BackshopAgent._trim_messages(messages, target_tokens=5000)
+
+    # The trimmed result should never contain tool_result without assistant_tc
+    has_tool_msg = any(m.get("role") == "tool" for m in trimmed)
+    has_tc_msg = any(m.get("role") == "assistant" and m.get("tool_calls") for m in trimmed)
+
+    if has_tool_msg:
+        assert has_tc_msg, "Tool result present without its tool_call assistant message"
+    if has_tc_msg:
+        assert has_tool_msg, "Tool call assistant message present without its tool result"
 
 
 @pytest.mark.asyncio()
@@ -497,11 +567,12 @@ async def test_agent_trims_context_on_context_length_exceeded(
     assert response.reply_text == "Trimmed and retried!"
     assert mock_acompletion.call_count == 2
 
-    # Verify the retry call used trimmed messages
+    # Verify the retry call used trimmed messages within the token budget
     retry_call = mock_acompletion.call_args_list[1]
     retry_messages = retry_call.kwargs["messages"]
-    # Should be system + CONTEXT_TRIM_KEEP_RECENT messages
-    assert len(retry_messages) == CONTEXT_TRIM_KEEP_RECENT + 1
+    assert _estimate_tokens(retry_messages) <= CONTEXT_TRIM_TARGET_TOKENS
+    # System prompt should always be preserved
+    assert retry_messages[0]["role"] == "system"
 
 
 @pytest.mark.asyncio()
@@ -617,19 +688,26 @@ def test_trim_messages_preserves_short_conversation() -> None:
 
 
 def test_trim_messages_keeps_system_and_recent() -> None:
-    """Long conversations should be trimmed to system + most recent N messages."""
+    """Long conversations should be trimmed to fit within the token budget."""
+    # Each message: ~1143 content tokens + 4 overhead = ~1147 tokens
+    # With a small budget, most messages should be trimmed
+    big_content = "x" * 4000
     messages: list[dict[str, object]] = [
         {"role": "system", "content": "System prompt"},
         *[
-            {"role": "user" if i % 2 == 0 else "assistant", "content": f"Msg {i}"}
+            {"role": "user" if i % 2 == 0 else "assistant", "content": big_content}
             for i in range(20)
         ],
     ]
-    trimmed = BackshopAgent._trim_messages(messages)
-    assert len(trimmed) == CONTEXT_TRIM_KEEP_RECENT + 1
+    # Use a small token budget to force trimming
+    trimmed = BackshopAgent._trim_messages(messages, target_tokens=5000)
     assert trimmed[0]["role"] == "system"
+    # Should have been trimmed significantly
+    assert len(trimmed) < len(messages)
     # Last message should be the most recent one
     assert trimmed[-1] == messages[-1]
+    # Should fit within the target budget
+    assert _estimate_tokens(trimmed) <= 5000
 
 
 @pytest.mark.asyncio()
