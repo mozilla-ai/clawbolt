@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
 from backend.app.models import Contractor, MediaFile
 from backend.app.services.storage_service import StorageBackend
@@ -384,7 +385,7 @@ def create_file_tools(
 
     return [
         Tool(
-            name="upload_to_storage",
+            name=ToolName.UPLOAD_TO_STORAGE,
             description=(
                 "Upload a file to the contractor's cloud storage. "
                 "Files are organized by client: when you know the client name or job address, "
@@ -397,7 +398,7 @@ def create_file_tools(
             usage_hint="Upload and organize files into the contractor's cloud storage.",
         ),
         Tool(
-            name="organize_file",
+            name=ToolName.ORGANIZE_FILE,
             description=(
                 "Move an auto-saved file from the Unsorted folder into the correct "
                 "client folder. Use this when you learn which client a previously "
