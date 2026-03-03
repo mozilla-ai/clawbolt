@@ -1,9 +1,11 @@
 """Estimate generation tools for the agent."""
 
+from __future__ import annotations
+
 import datetime
 import logging
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -15,6 +17,9 @@ from backend.app.enums import EstimateStatus
 from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
 from backend.app.services.storage_service import StorageBackend
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.registry import ToolContext
 
 PDF_BASE_DIR = Path(settings.pdf_storage_dir)
 ESTIMATE_NUMBER_FORMAT = "EST-{:04d}"
@@ -179,3 +184,17 @@ def create_estimate_tools(
             params_model=GenerateEstimateParams,
         ),
     ]
+
+
+def _estimate_factory(ctx: ToolContext) -> list[Tool]:
+    """Factory for estimate tools, used by the registry."""
+    return create_estimate_tools(ctx.db, ctx.contractor, ctx.storage)
+
+
+def _register() -> None:
+    from backend.app.agent.tools.registry import default_registry
+
+    default_registry.register("estimate", _estimate_factory)
+
+
+_register()
