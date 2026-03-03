@@ -78,7 +78,11 @@ class ToolRegistry:
         )
 
     def create_tools(self, context: ToolContext) -> list[Tool]:
-        """Create all tools whose dependencies are satisfied by the context."""
+        """Create all tools whose dependencies are satisfied by the context.
+
+        Every tool must have a ``params_model`` set so that Pydantic
+        validation runs on all arguments before execution.
+        """
         tools: list[Tool] = []
         for name, factory in self._factories.items():
             if factory.requires_storage and context.storage is None:
@@ -87,7 +91,15 @@ class ToolRegistry:
             if factory.requires_messaging and context.messaging_service is None:
                 logger.debug("Skipping %s: no messaging service", name)
                 continue
-            tools.extend(factory.create(context))
+            created = factory.create(context)
+            for tool in created:
+                if tool.params_model is None:
+                    raise ValueError(
+                        f"Tool '{tool.name}' from factory '{name}' is missing "
+                        f"a params_model. All tools must define a Pydantic "
+                        f"BaseModel for parameter validation."
+                    )
+            tools.extend(created)
         return tools
 
     @property

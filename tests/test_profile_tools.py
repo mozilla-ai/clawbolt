@@ -351,12 +351,14 @@ def test_extract_all_fields() -> None:
 
 
 def test_update_profile_tool_schema(db_session: Session, test_contractor: Contractor) -> None:
-    """update_profile tool should have correct name and parameter schema."""
+    """update_profile tool should have correct name and params_model schema."""
     tools = create_profile_tools(db_session, test_contractor)
     assert len(tools) == 1
     tool = tools[0]
     assert tool.name == "update_profile"
-    props = tool.parameters["properties"]
+    assert tool.params_model is not None
+    schema = tool.params_model.model_json_schema()
+    props = schema["properties"]
     assert "name" in props
     assert "trade" in props
     assert "location" in props
@@ -365,4 +367,4 @@ def test_update_profile_tool_schema(db_session: Session, test_contractor: Contra
     assert "communication_style" in props
     assert "soul_text" in props
     # No required fields since all are optional
-    assert "required" not in tool.parameters
+    assert "required" not in schema
