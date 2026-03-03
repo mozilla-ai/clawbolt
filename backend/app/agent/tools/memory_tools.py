@@ -1,31 +1,31 @@
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
-from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.base import Tool, ToolResult
 
 
 def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
     """Create memory-related tools for the agent."""
 
-    async def save_fact(key: str, value: str, category: str = "general") -> str:
+    async def save_fact(key: str, value: str, category: str = "general") -> ToolResult:
         """Save a fact to memory."""
         memory = await save_memory(db, contractor_id, key=key, value=value, category=category)
-        return f"Saved: {memory.key} = {memory.value}"
+        return ToolResult(content=f"Saved: {memory.key} = {memory.value}")
 
-    async def recall_facts(query: str, category: str | None = None) -> str:
+    async def recall_facts(query: str, category: str | None = None) -> ToolResult:
         """Search memory for facts matching a query."""
         memories = await recall_memories(db, contractor_id, query=query, category=category)
         if not memories:
-            return "No matching facts found."
+            return ToolResult(content="No matching facts found.")
         lines = [f"- {m.key}: {m.value}" for m in memories]
-        return "\n".join(lines)
+        return ToolResult(content="\n".join(lines))
 
-    async def forget_fact(key: str) -> str:
+    async def forget_fact(key: str) -> ToolResult:
         """Delete a fact from memory."""
         deleted = await delete_memory(db, contractor_id, key=key)
         if deleted:
-            return f"Deleted: {key}"
-        return f"Not found: {key}"
+            return ToolResult(content=f"Deleted: {key}")
+        return ToolResult(content=f"Not found: {key}", is_error=True)
 
     return [
         Tool(

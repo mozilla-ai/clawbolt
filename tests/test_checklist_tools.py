@@ -13,9 +13,10 @@ async def test_add_checklist_item(db_session: Session, test_contractor: Contract
     tools = create_checklist_tools(db_session, test_contractor.id)
     add_item = tools[0].function
     result = await add_item(description="Check material prices", schedule="daily")
-    assert "Added to checklist" in result
-    assert "material prices" in result
-    assert "daily" in result
+    assert "Added to checklist" in result.content
+    assert "material prices" in result.content
+    assert "daily" in result.content
+    assert result.is_error is False
 
     # Verify in DB
     items = db_session.query(HeartbeatChecklistItem).all()
@@ -47,7 +48,8 @@ async def test_add_checklist_item_invalid_schedule(
     tools = create_checklist_tools(db_session, test_contractor.id)
     add_item = tools[0].function
     result = await add_item(description="Bad schedule", schedule="hourly")
-    assert "Invalid schedule" in result
+    assert "Invalid schedule" in result.content
+    assert result.is_error is True
 
     items = db_session.query(HeartbeatChecklistItem).all()
     assert len(items) == 0
@@ -64,10 +66,10 @@ async def test_list_checklist_items(db_session: Session, test_contractor: Contra
     await add_item(description="Review quotes", schedule="weekdays")
 
     result = await list_items()
-    assert "Check inbox" in result
-    assert "Review quotes" in result
-    assert "daily" in result
-    assert "weekdays" in result
+    assert "Check inbox" in result.content
+    assert "Review quotes" in result.content
+    assert "daily" in result.content
+    assert "weekdays" in result.content
 
 
 @pytest.mark.asyncio()
@@ -76,7 +78,7 @@ async def test_list_checklist_items_empty(db_session: Session, test_contractor: 
     tools = create_checklist_tools(db_session, test_contractor.id)
     list_items = tools[1].function
     result = await list_items()
-    assert "No active checklist items" in result
+    assert "No active checklist items" in result.content
 
 
 @pytest.mark.asyncio()
@@ -94,7 +96,7 @@ async def test_list_excludes_paused(db_session: Session, test_contractor: Contra
     tools = create_checklist_tools(db_session, test_contractor.id)
     list_items = tools[1].function
     result = await list_items()
-    assert "No active checklist items" in result
+    assert "No active checklist items" in result.content
 
 
 @pytest.mark.asyncio()
@@ -110,8 +112,9 @@ async def test_remove_checklist_item(db_session: Session, test_contractor: Contr
     assert item is not None
 
     result = await remove_item(item_id=item.id)
-    assert "Removed" in result
-    assert "To remove" in result
+    assert "Removed" in result.content
+    assert "To remove" in result.content
+    assert result.is_error is False
 
     items = db_session.query(HeartbeatChecklistItem).all()
     assert len(items) == 0
@@ -125,7 +128,8 @@ async def test_remove_checklist_item_not_found(
     tools = create_checklist_tools(db_session, test_contractor.id)
     remove_item = tools[2].function
     result = await remove_item(item_id=999)
-    assert "not found" in result
+    assert "not found" in result.content
+    assert result.is_error is True
 
 
 @pytest.mark.asyncio()
@@ -150,7 +154,8 @@ async def test_remove_scoped_to_contractor(
     tools = create_checklist_tools(db_session, test_contractor.id)
     remove_item = tools[2].function
     result = await remove_item(item_id=item.id)
-    assert "not found" in result
+    assert "not found" in result.content
+    assert result.is_error is True
 
     # Item should still exist
     remaining = db_session.query(HeartbeatChecklistItem).all()

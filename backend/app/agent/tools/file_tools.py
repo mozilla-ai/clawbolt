@@ -6,7 +6,7 @@ import re
 
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
 from backend.app.models import Contractor, MediaFile
 from backend.app.services.storage_service import StorageBackend
@@ -173,7 +173,7 @@ def create_file_tools(
         client_address: str | None = None,
         original_url: str | None = None,
         mime_type: str = "image/jpeg",
-    ) -> str:
+    ) -> ToolResult:
         """Upload a file to the contractor's cloud storage."""
         # Determine file content
         file_bytes = b""
@@ -187,7 +187,7 @@ def create_file_tools(
 
         if not file_bytes:
             logger.warning("upload_to_storage called but no file content available")
-            return "No file content available to upload."
+            return ToolResult(content="No file content available to upload.", is_error=True)
 
         logger.info(
             "Cataloging file: category=%s, mime=%s, size=%d bytes",
@@ -231,7 +231,7 @@ def create_file_tools(
         db.commit()
 
         logger.info("File cataloged: %s/%s -> %s", folder_path, filename, storage_url)
-        return f"Uploaded {filename} to {folder_path}/ ({storage_url})"
+        return ToolResult(content=f"Uploaded {filename} to {folder_path}/ ({storage_url})")
 
     async def organize_file(
         original_url: str,
@@ -239,7 +239,7 @@ def create_file_tools(
         client_name: str | None = None,
         client_address: str | None = None,
         description: str = "",
-    ) -> str:
+    ) -> ToolResult:
         """Move an auto-saved file from Unsorted into the correct client folder."""
         # Look up the MediaFile record
         media_file = (
@@ -251,26 +251,29 @@ def create_file_tools(
             .first()
         )
         if media_file is None:
-            return f"File not found for URL: {original_url}"
+            return ToolResult(content=f"File not found for URL: {original_url}", is_error=True)
 
         current_path = media_file.storage_path  # e.g. /Unsorted/2026-03-02/file_001.jpg
         new_folder = build_folder_path(file_category, client_name, client_address)
 
         # Guard: without client context the file would just move within Unsorted
         if new_folder.startswith("/Unsorted"):
-            return (
-                "Error: client_name or client_address is required to organize a file. "
-                "Please provide at least one so the file can be moved to a client folder."
+            return ToolResult(
+                content=(
+                    "Error: client_name or client_address is required to organize a file. "
+                    "Please provide at least one so the file can be moved to a client folder."
+                ),
+                is_error=True,
             )
 
         # Check if already in a client folder (not Unsorted)
         if not current_path.startswith("/Unsorted/"):
-            return f"File is already organized at {current_path}"
+            return ToolResult(content=f"File is already organized at {current_path}")
 
         # Parse current path into folder and filename
         parts = current_path.rsplit("/", 1)
         if len(parts) != 2:
-            return f"Cannot parse storage path: {current_path}"
+            return ToolResult(content=f"Cannot parse storage path: {current_path}", is_error=True)
         old_folder, old_filename = parts
 
         # Build new filename
@@ -304,7 +307,7 @@ def create_file_tools(
             new_folder,
             new_filename,
         )
-        return f"Moved {old_filename} to {new_folder}/{new_filename}"
+        return ToolResult(content=f"Moved {old_filename} to {new_folder}/{new_filename}")
 
     return [
         Tool(

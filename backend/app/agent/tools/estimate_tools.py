@@ -7,7 +7,7 @@ from typing import Any
 
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.config import settings
 from backend.app.models import Contractor, Estimate, EstimateLineItem
@@ -38,7 +38,7 @@ def create_estimate_tools(
         client_name: str | None = None,
         client_address: str | None = None,
         terms: str | None = None,
-    ) -> str:
+    ) -> ToolResult:
         """Generate a professional estimate PDF and return summary."""
         today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
 
@@ -50,10 +50,13 @@ def create_estimate_tools(
                 qty = float(item.get("quantity", 1))
                 price = float(item.get("unit_price", 0))
             except (ValueError, TypeError) as exc:
-                return f"Error: invalid line item values — {exc}"
+                return ToolResult(content=f"Error: invalid line item values: {exc}", is_error=True)
 
             if qty < 0 or price < 0:
-                return "Error: quantity and unit_price must not be negative."
+                return ToolResult(
+                    content="Error: quantity and unit_price must not be negative.",
+                    is_error=True,
+                )
 
             total = qty * price
             subtotal += total
@@ -133,11 +136,13 @@ def create_estimate_tools(
         estimate.pdf_url = str(pdf_path)
         db.commit()
 
-        return (
-            f"Estimate {estimate_number} generated for ${total_amount:,.2f}. "
-            f"{len(processed_items)} line item(s). "
-            f"PDF saved at {pdf_path}. "
-            f"Use send_media_reply to send it to the contractor."
+        return ToolResult(
+            content=(
+                f"Estimate {estimate_number} generated for ${total_amount:,.2f}. "
+                f"{len(processed_items)} line item(s). "
+                f"PDF saved at {pdf_path}. "
+                f"Use send_media_reply to send it to the contractor."
+            )
         )
 
     return [

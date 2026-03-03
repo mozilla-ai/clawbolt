@@ -4,6 +4,14 @@ from typing import Any
 
 
 @dataclass
+class ToolResult:
+    """Structured result from a tool execution."""
+
+    content: str
+    is_error: bool = False
+
+
+@dataclass
 class Tool:
     """A tool that the agent can call."""
 
