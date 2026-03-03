@@ -6,11 +6,12 @@ from typing import Any
 from pydantic import BaseModel
 
 
-class ToolTags:
-    """Constants for cross-cutting tool metadata tags."""
+class ToolTags(StrEnum):
+    """Cross-cutting tool metadata tags."""
 
     SENDS_REPLY = "sends_reply"
     SAVES_MEMORY = "saves_memory"
+    MODIFIES_PROFILE = "modifies_profile"
 
 
 class ToolErrorKind(StrEnum):
@@ -42,7 +43,7 @@ class Tool:
     function: Callable[..., Awaitable[ToolResult]]
     parameters: dict[str, Any] = field(default_factory=dict)
     params_model: type[BaseModel] | None = None
-    tags: set[str] = field(default_factory=set)
+    tags: set[ToolTags] = field(default_factory=set)
     usage_hint: str = ""
 
 

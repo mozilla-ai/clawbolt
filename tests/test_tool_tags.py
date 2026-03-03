@@ -16,15 +16,32 @@ from tests.mocks.llm import make_text_response, make_tool_call_response
 # --- ToolTags constants ---
 
 
-def test_tool_tags_constants_are_strings() -> None:
-    """ToolTags constants should be plain strings for JSON serialization."""
+def test_tool_tags_is_str_enum() -> None:
+    """ToolTags should be a StrEnum for type safety with string backward compat."""
+    from enum import StrEnum
+
+    assert issubclass(ToolTags, StrEnum)
     assert isinstance(ToolTags.SENDS_REPLY, str)
     assert isinstance(ToolTags.SAVES_MEMORY, str)
+    assert isinstance(ToolTags.MODIFIES_PROFILE, str)
 
 
 def test_tool_tags_constants_are_distinct() -> None:
     """Each tag constant should be unique."""
     assert ToolTags.SENDS_REPLY != ToolTags.SAVES_MEMORY
+
+
+def test_tool_tags_values_equal_plain_strings() -> None:
+    """StrEnum values should compare equal to plain strings for backward compat."""
+    assert ToolTags.SENDS_REPLY == "sends_reply"
+    assert ToolTags.SAVES_MEMORY == "saves_memory"
+    assert ToolTags.MODIFIES_PROFILE == "modifies_profile"
+
+
+def test_tool_tags_membership_with_plain_strings() -> None:
+    """StrEnum values should be found in sets of plain strings and vice versa."""
+    assert ToolTags.SENDS_REPLY in {"sends_reply"}
+    assert "sends_reply" in {ToolTags.SENDS_REPLY}
 
 
 # --- Tool dataclass tags field ---
@@ -216,3 +233,30 @@ async def test_agent_untagged_tool_has_empty_tags(
     assert len(response.tool_calls) == 1
     assert response.tool_calls[0]["tags"] == set()
     assert len(response.memories_saved) == 0
+
+
+# --- Profile tools tags ---
+
+
+def test_update_profile_has_modifies_profile_tag() -> None:
+    """update_profile tool from create_profile_tools should have MODIFIES_PROFILE tag."""
+    from backend.app.agent.tools.profile_tools import create_profile_tools
+
+    db = MagicMock()
+    contractor = MagicMock()
+    contractor.id = 1
+    tools = create_profile_tools(db, contractor)
+    update_profile = next(t for t in tools if t.name == "update_profile")
+    assert ToolTags.MODIFIES_PROFILE in update_profile.tags
+
+
+def test_view_profile_has_no_modifies_profile_tag() -> None:
+    """view_profile should not have MODIFIES_PROFILE tag."""
+    from backend.app.agent.tools.profile_tools import create_profile_tools
+
+    db = MagicMock()
+    contractor = MagicMock()
+    contractor.id = 1
+    tools = create_profile_tools(db, contractor)
+    view_profile = next(t for t in tools if t.name == "view_profile")
+    assert ToolTags.MODIFIES_PROFILE not in view_profile.tags

@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING, cast
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.models import Contractor
 
@@ -248,6 +248,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             ),
             function=update_profile,
             params_model=UpdateProfileParams,
+            tags={ToolTags.MODIFIES_PROFILE},
             usage_hint=("Use this to update known contractor details (name, trade, rates, etc.)."),
         ),
     ]
