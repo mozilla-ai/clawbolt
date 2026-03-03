@@ -121,11 +121,37 @@ class TestSectionBuilders:
             result = await build_memory_section(MagicMock(), contractor_id=1)
         assert result == "(No memories saved yet)"
 
-    def test_build_instructions_section(self) -> None:
-        """Should contain core behavioral rules."""
+    def test_build_instructions_section_no_contractor(self) -> None:
+        """Should contain core behavioral rules without contractor."""
         result = build_instructions_section()
         assert "concise" in result
         assert "ONLY communicate via this chat" in result
+
+    def test_build_instructions_section_with_contractor(self) -> None:
+        """Should contain core rules plus trade guidance with a contractor."""
+        contractor = MagicMock()
+        contractor.trade = "electrician"
+        result = build_instructions_section(contractor)
+        assert "concise" in result
+        assert "ONLY communicate via this chat" in result
+        assert "Trade guidance" in result
+        assert "electrician" in result
+
+    def test_build_instructions_section_unknown_trade(self) -> None:
+        """Should contain only core rules when trade has no defaults."""
+        contractor = MagicMock()
+        contractor.trade = "chimney sweep"
+        result = build_instructions_section(contractor)
+        assert "concise" in result
+        assert "Trade guidance" not in result
+
+    def test_build_instructions_section_empty_trade(self) -> None:
+        """Should contain only core rules when trade is empty."""
+        contractor = MagicMock()
+        contractor.trade = ""
+        result = build_instructions_section(contractor)
+        assert "concise" in result
+        assert "Trade guidance" not in result
 
     def test_build_tool_guidelines_empty(self) -> None:
         """Should return empty string when no tools have usage hints."""
@@ -210,6 +236,61 @@ class TestBuildAgentSystemPrompt:
         assert "save_fact" in result
         assert "Proactive Messaging" in result
         assert "Recall Behavior" in result
+
+    @pytest.mark.asyncio
+    async def test_assembles_trade_guidance_in_instructions(self) -> None:
+        """Agent prompt should include trade-specific guidance in instructions."""
+        contractor = MagicMock()
+        contractor.name = "Sparky"
+        contractor.trade = "electrician"
+        contractor.location = None
+        contractor.hourly_rate = None
+        contractor.business_hours = None
+        contractor.soul_text = None
+        contractor.preferences_json = None
+        contractor.id = 1
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                db=MagicMock(),
+                contractor=contractor,
+                tools=[],
+                message_context="hello",
+            )
+
+        assert "Trade guidance" in result
+        assert "electrician" in result
+
+    @pytest.mark.asyncio
+    async def test_no_trade_guidance_for_unknown_trade(self) -> None:
+        """Agent prompt should omit trade guidance for unrecognized trades."""
+        contractor = MagicMock()
+        contractor.name = "Bob"
+        contractor.trade = "chimney sweep"
+        contractor.location = None
+        contractor.hourly_rate = None
+        contractor.business_hours = None
+        contractor.soul_text = None
+        contractor.preferences_json = None
+        contractor.id = 1
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                db=MagicMock(),
+                contractor=contractor,
+                tools=[],
+                message_context="hello",
+            )
+
+        assert "Trade guidance" not in result
 
     @pytest.mark.asyncio
     async def test_curly_braces_in_contractor_name(self) -> None:

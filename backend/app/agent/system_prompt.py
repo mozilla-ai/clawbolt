@@ -13,7 +13,11 @@ import logging
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
-from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
+from backend.app.agent.profile import (
+    build_soul_prompt,
+    get_missing_optional_fields,
+    get_trade_defaults,
+)
 from backend.app.agent.tools.base import Tool
 from backend.app.models import Contractor
 
@@ -83,15 +87,33 @@ async def build_memory_section(
     return ctx or "(No memories saved yet)"
 
 
-def build_instructions_section() -> str:
-    """Build the behavioral instructions section content."""
-    return (
+def build_instructions_section(contractor: Contractor | None = None) -> str:
+    """Build the behavioral instructions section content.
+
+    The base instructions apply to every contractor. When a contractor is
+    provided and has a known trade, trade-specific behavioral guidance is
+    appended to give the assistant domain-relevant context.
+    """
+    base = (
         "- Be concise and practical. Contractors are busy.\n"
         "- You can ONLY communicate via this chat. You cannot send emails, "
         "make phone calls, or contact clients directly.\n"
         "- Always be helpful, friendly, and professional.\n"
         "- Keep replies concise. Contractors are on the job site."
     )
+
+    if contractor is None:
+        return base
+
+    parts: list[str] = [base]
+
+    # Append trade-specific guidance when available
+    trade = contractor.trade or ""
+    trade_guidance = get_trade_defaults(trade)
+    if trade_guidance:
+        parts.append(f"- Trade guidance ({trade}): {trade_guidance}")
+
+    return "\n".join(parts)
 
 
 def build_tool_guidelines_section(tools: list[Tool]) -> str:
@@ -165,10 +187,13 @@ async def build_agent_system_prompt(
     tool_guidelines = build_tool_guidelines_section(tools)
     if tool_guidelines:
         instructions = (
-            build_instructions_section() + "\n" + "\n## Tool Guidelines\n" + tool_guidelines
+            build_instructions_section(contractor)
+            + "\n"
+            + "\n## Tool Guidelines\n"
+            + tool_guidelines
         )
     else:
-        instructions = build_instructions_section()
+        instructions = build_instructions_section(contractor)
     builder.add_section("Instructions", instructions)
 
     builder.add_section("Proactive Messaging", build_proactive_section())
