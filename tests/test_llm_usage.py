@@ -10,7 +10,7 @@ from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.database import Base
 from backend.app.models import Contractor, LLMUsageLog
 from backend.app.services.llm_usage import log_llm_usage
@@ -164,11 +164,11 @@ async def test_agent_process_message_logs_usage(
     db: Session,
     contractor: Contractor,
 ) -> None:
-    """BackshopAgent.process_message should call log_llm_usage after acompletion."""
+    """ClawboltAgent.process_message should call log_llm_usage after acompletion."""
     response = _make_response_with_usage(prompt_tokens=300, completion_tokens=120, total_tokens=420)
     mock_acompletion.return_value = response
 
-    agent = BackshopAgent(db=db, contractor=contractor)
+    agent = ClawboltAgent(db=db, contractor=contractor)
     await agent.process_message("What is my schedule today?")
 
     rows = db.query(LLMUsageLog).filter(LLMUsageLog.contractor_id == contractor.id).all()

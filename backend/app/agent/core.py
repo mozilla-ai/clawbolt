@@ -256,7 +256,7 @@ class AgentResponse:
     is_error_fallback: bool = False
 
 
-class BackshopAgent:
+class ClawboltAgent:
     """Main agent that processes contractor messages and produces actions."""
 
     def __init__(

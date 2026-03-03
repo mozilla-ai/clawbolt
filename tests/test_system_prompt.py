@@ -207,7 +207,7 @@ class TestBuildAgentSystemPrompt:
                 message_context="how much for a roof repair?",
             )
 
-        assert "Backshop" in result
+        assert "Clawbolt" in result
         assert "Jake" in result
         assert "electrician" in result
         assert "Jane" in result

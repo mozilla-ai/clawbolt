@@ -1,6 +1,6 @@
 def make_telegram_update_payload(
     chat_id: int = 123456789,
-    text: str = "Hello Backshop",
+    text: str = "Hello Clawbolt",
     message_id: int = 42,
     update_id: int = 100,
     photo_file_id: str | None = None,
@@ -59,7 +59,7 @@ def make_telegram_update_payload(
     # Telegram uses "text" for plain messages and "caption" for media.
     # When media is present and text was not explicitly provided, omit
     # the text key to match real payloads.
-    if has_media and text == "Hello Backshop":
+    if has_media and text == "Hello Clawbolt":
         # Default text with media: omit text, use caption if provided
         if caption is not None:
             msg["caption"] = caption

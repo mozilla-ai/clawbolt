@@ -31,8 +31,8 @@ htmlcov/
 .coverage
 
 # Nested repos and local data
-backshop-premium/
-backshop-infra/
+clawbolt-premium/
+clawbolt-infra/
 data/
 
 # OS

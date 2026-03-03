@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import Contractor
@@ -14,7 +14,7 @@ from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
-# BackshopAgent typing indicator tests
+# ClawboltAgent typing indicator tests
 # ---------------------------------------------------------------------------
 
 
@@ -29,7 +29,7 @@ async def test_agent_sends_typing_indicator_before_llm_call(
     mock_messaging = MagicMock(spec=MessagingService)
     mock_messaging.send_typing_indicator = AsyncMock()
 
-    agent = BackshopAgent(
+    agent = ClawboltAgent(
         db=db_session,
         contractor=test_contractor,
         messaging_service=mock_messaging,
@@ -75,7 +75,7 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
     mock_messaging = MagicMock(spec=MessagingService)
     mock_messaging.send_typing_indicator = AsyncMock()
 
-    agent = BackshopAgent(
+    agent = ClawboltAgent(
         db=db_session,
         contractor=test_contractor,
         messaging_service=mock_messaging,
@@ -98,7 +98,7 @@ async def test_agent_works_without_messaging_service(
     """Agent should work correctly when no messaging_service is provided."""
     mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     response = await agent.process_message("Hi there")
 
     assert response.reply_text == "Hello!"
@@ -116,7 +116,7 @@ async def test_agent_typing_indicator_failure_does_not_break_agent(
     mock_messaging = MagicMock(spec=MessagingService)
     mock_messaging.send_typing_indicator = AsyncMock(side_effect=RuntimeError("API down"))
 
-    agent = BackshopAgent(
+    agent = ClawboltAgent(
         db=db_session,
         contractor=test_contractor,
         messaging_service=mock_messaging,
@@ -139,7 +139,7 @@ async def test_agent_no_typing_indicator_without_chat_id(
     mock_messaging = MagicMock(spec=MessagingService)
     mock_messaging.send_typing_indicator = AsyncMock()
 
-    agent = BackshopAgent(
+    agent = ClawboltAgent(
         db=db_session,
         contractor=test_contractor,
         messaging_service=mock_messaging,

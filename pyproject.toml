@@ -1,5 +1,5 @@
 [project]
-name = "backshop"
+name = "clawbolt"
 version = "0.1.0"
 description = "AI assistant for solo blue-collar contractors"
 requires-python = ">=3.11"

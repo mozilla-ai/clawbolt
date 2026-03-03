@@ -179,7 +179,7 @@ def get_missing_optional_fields(contractor: Contractor) -> list[str]:
 def build_onboarding_prompt() -> str:
     """Build the system prompt for the onboarding conversation."""
     return (
-        "You are Backshop, an AI assistant for solo contractors. "
+        "You are Clawbolt, an AI assistant for solo contractors. "
         "This is a new contractor texting you for the first time. "
         "Your job is to have a friendly conversation to learn about them.\n\n"
         "Naturally collect the following information through conversation:\n"

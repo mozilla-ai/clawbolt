@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.models import Contractor, Memory
 
@@ -32,7 +32,7 @@ async def test_memory_save_via_llm(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = BackshopAgent(db=integration_db, contractor=integration_contractor)
+        agent = ClawboltAgent(db=integration_db, contractor=integration_contractor)
         tools = create_memory_tools(integration_db, integration_contractor.id)
         agent.register_tools(tools)
 
@@ -68,7 +68,7 @@ async def test_memory_save_then_recall(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = BackshopAgent(db=integration_db, contractor=integration_contractor)
+        agent = ClawboltAgent(db=integration_db, contractor=integration_contractor)
         tools = create_memory_tools(integration_db, integration_contractor.id)
         agent.register_tools(tools)
 
@@ -86,7 +86,7 @@ async def test_memory_save_then_recall(
         assert len(memories) >= 1
 
         # Step 2: Ask about it in a new agent call
-        agent2 = BackshopAgent(db=integration_db, contractor=integration_contractor)
+        agent2 = ClawboltAgent(db=integration_db, contractor=integration_contractor)
         tools2 = create_memory_tools(integration_db, integration_contractor.id)
         agent2.register_tools(tools2)
 

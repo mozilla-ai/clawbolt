@@ -64,7 +64,7 @@ def test_full_message_round_trip_new_contractor(
     with patch(
         "backend.app.agent.core.acompletion",
         new_callable=AsyncMock,
-        return_value=make_text_response("Welcome to Backshop! What's your name?"),
+        return_value=make_text_response("Welcome to Clawbolt! What's your name?"),
     ):
         payload = make_telegram_update_payload(
             chat_id=777888999,
