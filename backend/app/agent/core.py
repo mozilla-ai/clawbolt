@@ -41,7 +41,7 @@ from backend.app.agent.tools.base import (
     ToolErrorKind,
     ToolResult,
     ToolTags,
-    tool_to_openai_schema,
+    tool_to_function_schema,
 )
 from backend.app.config import settings
 from backend.app.models import Contractor
@@ -513,7 +513,7 @@ class ClawboltAgent:
                 MAX_INPUT_TOKENS,
             )
 
-        tool_schemas = [tool_to_openai_schema(t) for t in self.tools] if self.tools else None
+        tool_schemas = [tool_to_function_schema(t) for t in self.tools] if self.tools else None
 
         llm_kwargs: dict[str, Any] = {}
         if temperature is not None:

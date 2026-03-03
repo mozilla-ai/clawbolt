@@ -73,11 +73,11 @@ def test_log_llm_usage_saves_to_db(db: Session, contractor: Contractor) -> None:
     """log_llm_usage should persist token counts to the database."""
     response = _make_response_with_usage(prompt_tokens=200, completion_tokens=80, total_tokens=280)
 
-    entry = log_llm_usage(db, contractor.id, "gpt-4o", response, "agent_main")
+    entry = log_llm_usage(db, contractor.id, "test-model", response, "agent_main")
 
     assert entry is not None
     assert entry.contractor_id == contractor.id
-    assert entry.model == "gpt-4o"
+    assert entry.model == "test-model"
     assert entry.prompt_tokens == 200
     assert entry.completion_tokens == 80
     assert entry.total_tokens == 280
@@ -94,7 +94,7 @@ def test_log_llm_usage_no_usage_data(db: Session, contractor: Contractor) -> Non
     # MagicMock attributes auto-create, so explicitly set usage to None
     response.usage = None
 
-    entry = log_llm_usage(db, contractor.id, "gpt-4o", response, "agent_main")
+    entry = log_llm_usage(db, contractor.id, "test-model", response, "agent_main")
 
     assert entry is None
     rows = db.query(LLMUsageLog).filter(LLMUsageLog.contractor_id == contractor.id).all()
@@ -105,7 +105,7 @@ def test_log_llm_usage_zero_tokens(db: Session, contractor: Contractor) -> None:
     """log_llm_usage should handle zero token counts gracefully."""
     response = _make_response_with_usage(prompt_tokens=0, completion_tokens=0, total_tokens=0)
 
-    entry = log_llm_usage(db, contractor.id, "gpt-4o", response, "heartbeat")
+    entry = log_llm_usage(db, contractor.id, "test-model", response, "heartbeat")
 
     assert entry is not None
     assert entry.prompt_tokens == 0
@@ -117,7 +117,7 @@ def test_log_llm_usage_computes_total_when_missing(db: Session, contractor: Cont
     """log_llm_usage should compute total_tokens when it is 0 or None."""
     response = _make_response_with_usage(prompt_tokens=100, completion_tokens=50, total_tokens=0)
 
-    entry = log_llm_usage(db, contractor.id, "gpt-4o", response, "agent_main")
+    entry = log_llm_usage(db, contractor.id, "test-model", response, "agent_main")
 
     assert entry is not None
     # total_tokens should be computed as prompt + completion
@@ -132,7 +132,7 @@ def test_log_llm_usage_multiple_entries(db: Session, contractor: Contractor) -> 
             completion_tokens=50 * (i + 1),
             total_tokens=150 * (i + 1),
         )
-        log_llm_usage(db, contractor.id, "gpt-4o", response, f"purpose_{i}")
+        log_llm_usage(db, contractor.id, "test-model", response, f"purpose_{i}")
 
     rows = db.query(LLMUsageLog).filter(LLMUsageLog.contractor_id == contractor.id).all()
     assert len(rows) == 3
@@ -143,13 +143,13 @@ def test_log_llm_usage_multiple_entries(db: Session, contractor: Contractor) -> 
 
 def test_log_llm_usage_different_models(db: Session, contractor: Contractor) -> None:
     """log_llm_usage should correctly record different model names."""
-    for model_name in ["gpt-4o", "gpt-4o-mini", "claude-3-haiku"]:
+    for model_name in ["model-a", "model-b", "model-c"]:
         response = _make_response_with_usage()
         log_llm_usage(db, contractor.id, model_name, response, "agent_main")
 
     rows = db.query(LLMUsageLog).filter(LLMUsageLog.contractor_id == contractor.id).all()
     models = {r.model for r in rows}
-    assert models == {"gpt-4o", "gpt-4o-mini", "claude-3-haiku"}
+    assert models == {"model-a", "model-b", "model-c"}
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.tools.base import Tool, ToolResult, tool_to_openai_schema
+from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
 from backend.app.agent.tools.checklist_tools import (
     AddChecklistItemParams,
     ListChecklistItemsParams,
@@ -41,7 +41,7 @@ class SampleParams(BaseModel):
     count: int = Field(default=1, description="A count")
 
 
-def test_tool_to_openai_schema_uses_params_model() -> None:
+def test_tool_to_function_schema_uses_params_model() -> None:
     """When params_model is set, schema should be auto-generated from the model."""
 
     async def dummy(**kwargs: object) -> ToolResult:
@@ -53,7 +53,7 @@ def test_tool_to_openai_schema_uses_params_model() -> None:
         function=dummy,
         params_model=SampleParams,
     )
-    schema = tool_to_openai_schema(tool)
+    schema = tool_to_function_schema(tool)
     params = schema["function"]["parameters"]
 
     # Should have properties from the Pydantic model
@@ -66,7 +66,7 @@ def test_tool_to_openai_schema_uses_params_model() -> None:
     assert "count" not in params.get("required", [])
 
 
-def test_tool_to_openai_schema_falls_back_to_raw_dict() -> None:
+def test_tool_to_function_schema_falls_back_to_raw_dict() -> None:
     """When no params_model is set, raw parameters dict should be used."""
 
     async def dummy(**kwargs: object) -> ToolResult:
@@ -79,7 +79,7 @@ def test_tool_to_openai_schema_falls_back_to_raw_dict() -> None:
         function=dummy,
         parameters=raw_params,
     )
-    schema = tool_to_openai_schema(tool)
+    schema = tool_to_function_schema(tool)
     assert schema["function"]["parameters"] is raw_params
 
 
