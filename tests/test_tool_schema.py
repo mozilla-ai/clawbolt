@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, ValidationError
 
 from backend.app.agent.tools.base import (
     Tool,
+    ToolResult,
     _inline_refs,
     _strip_titles,
     tool_to_openai_schema,
@@ -126,8 +127,8 @@ def test_strip_titles_preserves_non_title_keys() -> None:
 # --- tool_to_openai_schema with nested Pydantic model ---
 
 
-def _dummy_func() -> None:
-    pass
+async def _dummy_func() -> ToolResult:
+    return ToolResult(content="ok")
 
 
 def test_tool_to_openai_schema_flat_for_estimate_params() -> None:
