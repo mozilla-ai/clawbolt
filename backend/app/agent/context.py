@@ -6,6 +6,7 @@ import json
 import logging
 from typing import Any
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.compaction import compact_session
@@ -28,6 +29,16 @@ DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 # Strong references to fire-and-forget background tasks so they are not
 # garbage-collected before completion.
 _background_tasks: set[asyncio.Task[None]] = set()
+
+
+class StoredToolInteraction(BaseModel):
+    """Schema for tool interaction records stored in Message.tool_interactions_json."""
+
+    tool_call_id: str = ""
+    name: str = ""
+    args: dict[str, Any] = Field(default_factory=dict)
+    result: str = ""
+    is_error: bool = False
 
 
 async def _run_compaction_in_background(
@@ -65,21 +76,38 @@ async def _run_compaction_in_background(
         )
 
 
-def _parse_tool_interactions(raw: str) -> list[dict[str, Any]]:
-    """Parse tool_interactions_json, returning an empty list on failure."""
+def _parse_tool_interactions(raw: str) -> list[StoredToolInteraction]:
+    """Parse tool_interactions_json, returning validated models.
+
+    Each item is validated against ``StoredToolInteraction``. Missing fields
+    receive defaults (backward compatible). Items that fail validation
+    entirely are logged and skipped so corrupt data never crashes loading.
+    """
     if not raw:
         return []
     try:
         parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return parsed
+        if not isinstance(parsed, list):
+            return []
     except (json.JSONDecodeError, TypeError):
         logger.debug("Could not parse tool_interactions_json, falling back to flat text")
-    return []
+        return []
+
+    validated: list[StoredToolInteraction] = []
+    for i, item in enumerate(parsed):
+        try:
+            validated.append(StoredToolInteraction.model_validate(item))
+        except Exception:
+            logger.warning(
+                "Skipping invalid tool interaction record at index %d: %r",
+                i,
+                item,
+            )
+    return validated
 
 
 def _expand_outbound_with_tools(
-    tool_interactions: list[dict[str, Any]],
+    tool_interactions: list[StoredToolInteraction],
     reply_text: str,
 ) -> list[AgentMessage]:
     """Expand an outbound message with tool interactions into typed messages.
@@ -96,9 +124,9 @@ def _expand_outbound_with_tools(
     for tc in tool_interactions:
         tool_call_requests.append(
             ToolCallRequest(
-                id=tc.get("tool_call_id", ""),
-                name=tc.get("name", ""),
-                arguments=tc.get("args", {}),
+                id=tc.tool_call_id,
+                name=tc.name,
+                arguments=tc.args,
             )
         )
 
@@ -109,8 +137,8 @@ def _expand_outbound_with_tools(
     for tc in tool_interactions:
         messages.append(
             ToolResultMessage(
-                tool_call_id=tc.get("tool_call_id", ""),
-                content=tc.get("result", ""),
+                tool_call_id=tc.tool_call_id,
+                content=tc.result,
             )
         )
 
