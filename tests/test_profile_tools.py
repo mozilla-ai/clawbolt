@@ -310,6 +310,31 @@ async def test_update_profile_business_hours(
 
 
 @pytest.mark.asyncio()
+async def test_update_profile_valid_timezone(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """update_profile should accept valid IANA timezones."""
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
+    result = await update_fn(timezone="America/New_York")
+    assert "timezone" in result.content
+    assert result.is_error is False
+    db_session.refresh(test_contractor)
+    assert test_contractor.timezone == "America/New_York"
+
+
+@pytest.mark.asyncio()
+async def test_update_profile_invalid_timezone(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """update_profile should reject invalid timezone strings."""
+    update_fn = _get_tool_fn(db_session, test_contractor, "update_profile")
+    result = await update_fn(timezone="asdf")
+    assert result.is_error is True
+    assert "Invalid timezone" in result.content
+    assert "IANA" in result.content
+
+
+@pytest.mark.asyncio()
 async def test_update_profile_communication_style(
     db_session: Session, test_contractor: Contractor
 ) -> None:

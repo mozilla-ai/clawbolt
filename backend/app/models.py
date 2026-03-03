@@ -19,6 +19,7 @@ class Contractor(Base):
     hourly_rate: Mapped[float | None] = mapped_column(Float, nullable=True)
     soul_text: Mapped[str] = mapped_column(Text, default="")
     business_hours: Mapped[str] = mapped_column(String(255), default="")
+    timezone: Mapped[str] = mapped_column(String(50), default="")
     preferred_channel: Mapped[str] = mapped_column(String(20), default="telegram")
     channel_identifier: Mapped[str] = mapped_column(String(255), default="")
     onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False)

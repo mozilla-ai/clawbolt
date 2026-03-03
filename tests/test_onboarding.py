@@ -115,6 +115,7 @@ def test_get_missing_optional_fields_none_missing(db_session: Session) -> None:
         location="Denver, CO",
         hourly_rate=85.0,
         business_hours="Mon-Fri 8-5",
+        timezone="America/Denver",
     )
     db_session.add(contractor)
     db_session.commit()
@@ -139,7 +140,8 @@ def test_get_missing_optional_fields_partial(db_session: Session) -> None:
     db_session.refresh(contractor)
 
     missing = get_missing_optional_fields(contractor)
-    assert missing == ["business hours"]
+    assert "business hours" in missing
+    assert "timezone" in missing
 
 
 @pytest.mark.asyncio()
@@ -206,6 +208,7 @@ async def test_normal_prompt_no_nudge_when_optional_fields_filled(
         location="Seattle, WA",
         hourly_rate=90.0,
         business_hours="Mon-Fri 7-4",
+        timezone="America/Los_Angeles",
         onboarding_complete=True,
     )
     db_session.add(contractor)

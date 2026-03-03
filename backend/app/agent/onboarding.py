@@ -55,6 +55,8 @@ def build_onboarding_system_prompt(contractor: Contractor) -> str:
         known.append(f"- Rate: ${contractor.hourly_rate:.0f}/hour")
     if contractor.business_hours and contractor.business_hours.strip():
         known.append(f"- Business hours: {contractor.business_hours}")
+    if contractor.timezone and contractor.timezone.strip():
+        known.append(f"- Timezone: {contractor.timezone}")
     if contractor.preferences_json and contractor.preferences_json != "{}":
         try:
             prefs = json.loads(contractor.preferences_json)
