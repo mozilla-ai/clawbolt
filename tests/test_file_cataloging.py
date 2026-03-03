@@ -209,13 +209,14 @@ async def test_upload_no_media_returns_error(
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
-    """Upload with no pending media should return error message."""
+    """Upload with no pending media should return error guiding to organize_file."""
     storage = MockStorageBackend()
     tools = create_file_tools(db_session, test_contractor, storage, pending_media={})
     upload = tools[0].function
 
     result = await upload(file_category="job_photo")
     assert "No file content" in result.content
+    assert "organize_file" in result.content
     assert result.is_error is True
 
 
