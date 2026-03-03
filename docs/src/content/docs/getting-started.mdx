@@ -1,0 +1,62 @@
+---
+title: Getting Started
+description: Get Clawbolt up and running with Docker in minutes.
+---
+
+The fastest way to run Clawbolt is with Docker Compose. This starts PostgreSQL and the app together.
+
+## Prerequisites
+
+- [Docker](https://docs.docker.com/get-docker/) and Docker Compose
+- A Telegram bot token (see [Telegram Setup](/deployment/telegram-setup/))
+- An LLM provider API key (OpenAI, Anthropic, etc.)
+
+## 1. Clone the repository
+
+```bash
+git clone https://github.com/mozilla-ai/clawbolt.git
+cd clawbolt
+```
+
+## 2. Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` and fill in the required credentials. See [Configuration](/configuration/) for full details.
+
+At minimum you need:
+- `TELEGRAM_BOT_TOKEN` -- your Telegram bot token
+- An LLM API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
+
+## 3. Start the services
+
+```bash
+docker compose up --build
+```
+
+This will:
+- Start a PostgreSQL 16 database
+- Build the app image (Python 3.11, ffmpeg for audio processing)
+- Run Alembic migrations to create the database schema
+- Start the FastAPI server on port 8000
+
+## 4. Verify it's running
+
+```bash
+curl http://localhost:8000/api/health
+# {"status":"ok"}
+```
+
+## 5. Start chatting
+
+The Telegram webhook is registered automatically: Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app and calls `setWebhook` on startup. No Cloudflare account or auth token required.
+
+Send a message to your bot on Telegram and Clawbolt will respond.
+
+## Next steps
+
+- [Configuration](/configuration/) -- full list of environment variables
+- [Features](/features/estimates/) -- explore what Clawbolt can do
+- [Local Setup](/development/local-setup/) -- develop without Docker

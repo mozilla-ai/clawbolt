@@ -1,0 +1,60 @@
+---
+title: Contributing
+description: How to contribute to Clawbolt.
+---
+
+Clawbolt is open source and contributions are welcome.
+
+## Getting started
+
+1. Fork the repository on [GitHub](https://github.com/mozilla-ai/clawbolt)
+2. Clone your fork and set up [local development](/development/local-setup/)
+3. Create a branch for your changes
+4. Make your changes and ensure all checks pass
+5. Open a pull request
+
+## Code standards
+
+- **Type annotations** required on all functions
+- **Ruff** for linting and formatting (rules: `E, F, I, UP, B, SIM, ANN, RUF`)
+- **Line length**: 100 characters
+- **SQLAlchemy 2.0** `mapped_column` style
+- **Pydantic v2** for all request/response schemas
+- **Async routes**: all route handlers use `async def`
+- **LLM calls**: all LLM calls via any-llm `acompletion` (async)
+
+## Commit messages
+
+Use [conventional commit](https://www.conventionalcommits.org/) prefixes:
+
+| Prefix | Use for |
+|--------|---------|
+| `feat:` | New features |
+| `fix:` | Bug fixes |
+| `docs:` | Documentation changes |
+| `refactor:` | Code refactoring |
+| `test:` | Adding or updating tests |
+| `ci:` | CI/CD changes |
+| `chore:` | Maintenance tasks |
+
+## Pull request checklist
+
+Before submitting, make sure:
+
+```bash
+uv run pytest -v                                  # tests pass
+uv run ruff check backend/ tests/                 # lint passes
+uv run ruff format --check backend/ tests/        # format passes
+uv run ty check --python .venv backend/ tests/    # type checking passes
+```
+
+- Bug fixes include regression tests
+- New features include appropriate tests
+- Documentation is updated if needed
+
+## Architecture notes
+
+- See [Architecture](/architecture/) for system design overview
+- Every model and endpoint uses `user_id` scoping
+- External services are abstracted behind service classes in `backend/app/services/`
+- Config uses Pydantic `BaseSettings` with `extra="ignore"`

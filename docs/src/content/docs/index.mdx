@@ -1,0 +1,51 @@
+---
+title: Clawbolt
+description: AI assistant for solo blue-collar contractors. Built by Mozilla.ai.
+template: splash
+hero:
+  tagline: AI assistant for solo blue-collar contractors. Estimates, memory, photos, voice memos, and more, all through Telegram.
+  image:
+    file: ../../assets/clawbolt_text.png
+  actions:
+    - text: Get Started
+      link: /getting-started/
+      icon: right-arrow
+      variant: primary
+    - text: View on GitHub
+      link: https://github.com/mozilla-ai/clawbolt
+      icon: external
+      variant: minimal
+---
+
+import { Card, CardGrid } from "@astrojs/starlight/components";
+
+## What is Clawbolt?
+
+Clawbolt is a messaging-first AI assistant that helps contractors manage their business through Telegram. No app to install, no dashboard to learn. Just text.
+
+Built by [Mozilla.ai](https://mozilla.ai) using the open-core model.
+
+## Features
+
+<CardGrid stagger>
+  <Card title="Estimates" icon="document">
+    Describe a job, get a professional PDF estimate generated and sent back
+    instantly.
+  </Card>
+  <Card title="Memory" icon="star">
+    Clawbolt remembers your rates, clients, preferences, and past
+    conversations.
+  </Card>
+  <Card title="Photo Analysis" icon="sun">
+    Send a job site photo and get an AI description for documentation.
+  </Card>
+  <Card title="Voice Memos" icon="comment">
+    Send a voice note, get it transcribed and processed as a message.
+  </Card>
+  <Card title="File Cataloging" icon="folder">
+    Photos and documents auto-organized in Dropbox or Google Drive.
+  </Card>
+  <Card title="Proactive Heartbeat" icon="heart">
+    Periodic check-ins with reminders about stale drafts and follow-ups.
+  </Card>
+</CardGrid>

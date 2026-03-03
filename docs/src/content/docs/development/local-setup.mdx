@@ -1,0 +1,69 @@
+---
+title: Local Setup
+description: Set up Clawbolt for local development without Docker.
+---
+
+For development, you can run Clawbolt directly with Python and uv.
+
+## Prerequisites
+
+- Python 3.11+
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- PostgreSQL (or use SQLite for quick testing)
+
+## Install dependencies
+
+```bash
+pip install uv
+uv sync
+```
+
+## Configure environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` with your credentials. At minimum:
+- `TELEGRAM_BOT_TOKEN`
+- An LLM API key
+- `DATABASE_URL` pointing to your PostgreSQL instance
+
+## Run database migrations
+
+```bash
+uv run alembic upgrade head
+```
+
+## Start the server
+
+```bash
+uv run uvicorn backend.app.main:app --reload
+```
+
+The server starts on `http://localhost:8000`.
+
+## File storage in development
+
+The default storage provider is `local`, which saves files to `data/storage/` on disk. No cloud credentials needed.
+
+```bash
+# Uploaded files appear here:
+ls data/storage/
+```
+
+## Set up the Telegram webhook
+
+Without Docker, you need to set up a tunnel manually:
+
+```bash
+# Install cloudflared, then:
+cloudflared tunnel --url http://localhost:8000
+
+# Copy the tunnel URL and register the webhook:
+curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://<tunnel-url>/api/webhooks/telegram"}'
+```
+
+See [Telegram Setup](/deployment/telegram-setup/) for details.

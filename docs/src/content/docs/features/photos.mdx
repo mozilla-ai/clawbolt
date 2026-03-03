@@ -1,0 +1,33 @@
+---
+title: Photos
+description: Send job site photos for AI analysis and documentation.
+---
+
+Send a photo in the Telegram chat and Clawbolt will analyze it using vision AI, providing a description suitable for job documentation.
+
+## How it works
+
+1. **Send a photo**: Take a picture at the job site and send it to Clawbolt
+2. **AI analysis**: The image is processed by the LLM's vision capabilities
+3. **Description generated**: Clawbolt provides a text description of what it sees
+4. **Stored and organized**: The photo is uploaded to your [cloud storage](/deployment/storage/) and organized by date and client
+
+## Use cases
+
+- **Before/after documentation**: Capture the state of a job site before and after work
+- **Damage assessment**: Send photos of damage for AI-assisted evaluation
+- **Material identification**: Get help identifying materials, fixtures, or parts
+- **Progress tracking**: Document job progress with timestamped, described photos
+
+## Storage organization
+
+When [file cataloging](/features/file-cataloging/) is configured, photos are automatically organized:
+
+```
+Job Photos/
+├── 2026-02-28/
+│   ├── site-front.jpg
+│   └── site-back.jpg
+└── 2026-03-01/
+    └── kitchen-demo.jpg
+```

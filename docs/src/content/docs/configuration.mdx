@@ -1,0 +1,49 @@
+---
+title: Configuration
+description: Environment variables and settings for Clawbolt.
+---
+
+Clawbolt is configured via environment variables. Copy `.env.example` to `.env` and fill in the values.
+
+## Required variables
+
+| Variable | Description |
+|----------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token from [@BotFather](https://t.me/BotFather) |
+| LLM API key | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or the key for your chosen provider |
+
+## LLM configuration
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_PROVIDER` | `openai` | LLM provider name (any provider supported by [any-llm](https://github.com/mozilla-ai/any-llm)) |
+| `LLM_MODEL` | `gpt-4o` | Model to use for the agent loop |
+| `ANY_LLM_KEY` | | [any-llm.ai](https://any-llm.ai) managed platform key (replaces individual provider keys) |
+
+Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use the any-llm.ai managed platform as a key vault for all providers.
+
+## Telegram settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `TELEGRAM_BOT_TOKEN` | | Bot token from @BotFather |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | (empty) | Comma-separated allowlist of Telegram chat IDs. Empty = allow all |
+| `TELEGRAM_ALLOWED_USERNAMES` | (empty) | Comma-separated allowlist of Telegram usernames. Empty = allow all |
+
+## Storage settings
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `STORAGE_PROVIDER` | `local` | Storage backend: `local`, `dropbox`, or `google_drive` |
+| `DROPBOX_ACCESS_TOKEN` | | Dropbox access token (when using Dropbox) |
+| `GOOGLE_DRIVE_CREDENTIALS_JSON` | | Google Drive OAuth credentials JSON (when using Google Drive) |
+
+See [Storage Providers](/deployment/storage/) for setup instructions.
+
+## Database
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `DATABASE_URL` | | PostgreSQL connection string. Set automatically by Docker Compose |
+
+When running with Docker Compose, the `DATABASE_URL` is set automatically. You don't need to configure it.

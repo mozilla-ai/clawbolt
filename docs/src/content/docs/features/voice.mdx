@@ -1,0 +1,25 @@
+---
+title: Voice Memos
+description: Send voice notes and get them transcribed automatically.
+---
+
+Clawbolt supports voice messages in Telegram. Send a voice note and it gets transcribed and processed as if you typed the message.
+
+## How it works
+
+1. **Record a voice note**: Use Telegram's built-in voice message feature
+2. **Transcription**: The audio is processed by [faster-whisper](https://github.com/SYSTRAN/faster-whisper), a fast and accurate speech-to-text engine
+3. **Processing**: The transcribed text is fed into the agent loop just like a typed message
+4. **Response**: Clawbolt responds to the content of your voice note
+
+## When to use voice
+
+Voice memos are great for:
+- **On the job site**: When your hands are dirty or you're holding tools
+- **Driving between jobs**: Quickly capture thoughts or requests
+- **Detailed descriptions**: When typing would take too long
+- **Estimate requests**: Describe the job verbally and get a PDF estimate back
+
+## Requirements
+
+Voice transcription requires `ffmpeg` for audio processing. The Docker image includes ffmpeg by default. For local development, install it via your system package manager.
