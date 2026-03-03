@@ -122,7 +122,7 @@ async def test_pipeline_processes_real_image() -> None:
     assert len(result.media_results) == 1
     assert result.media_results[0].category == "image"
     # Vision should have produced real text, not the fallback
-    assert result.media_results[0].extracted_text != "[Photo — vision analysis not available]"
+    assert result.media_results[0].extracted_text != "[Photo - vision analysis not available]"
     assert len(result.media_results[0].extracted_text) > 0
     assert "Photo 1" in result.combined_context
 

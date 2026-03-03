@@ -429,7 +429,13 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
 def _register() -> None:
     from backend.app.agent.tools.registry import default_registry
 
-    default_registry.register("file", _file_factory, requires_storage=True)
+    default_registry.register(
+        "file",
+        _file_factory,
+        requires_storage=True,
+        core=False,
+        summary="Upload and organize files in cloud storage (Dropbox/Google Drive)",
+    )
 
 
 _register()

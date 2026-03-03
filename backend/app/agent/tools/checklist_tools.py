@@ -133,7 +133,12 @@ def _checklist_factory(ctx: ToolContext) -> list[Tool]:
 def _register() -> None:
     from backend.app.agent.tools.registry import default_registry
 
-    default_registry.register("checklist", _checklist_factory)
+    default_registry.register(
+        "checklist",
+        _checklist_factory,
+        core=False,
+        summary="Manage recurring reminders and task checklists",
+    )
 
 
 _register()
