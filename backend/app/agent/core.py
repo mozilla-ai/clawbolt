@@ -445,20 +445,16 @@ class BackshopAgent:
         messages.append(UserMessage(content=message_context))
 
         # Trim oldest conversation history if estimated tokens exceed the limit.
-        # Dropped messages are summarized so the LLM retains awareness of
-        # what was discussed even when the full text no longer fits.
-        estimated = _estimate_tokens(messages)
-        dropped: list[AgentMessage] = []
-        while estimated > MAX_INPUT_TOKENS and len(messages) > 2:
-            dropped.append(messages.pop(1))
-            estimated = _estimate_tokens(messages)
-        if dropped:
-            summary = _summarize_dropped_messages(dropped)
-            messages.insert(1, UserMessage(content=f"[Summary of earlier conversation: {summary}]"))
+        # Uses the block-based trimmer which preserves tool-call/result pairing
+        # and injects a summary of dropped messages.
+        original_count = len(messages)
+        messages = self._trim_messages(messages, target_tokens=MAX_INPUT_TOKENS)
+        trimmed_count = original_count - len(messages)
+        if trimmed_count > 0:
             logger.warning(
                 "Trimmed %d message(s) from conversation history, injected summary "
                 "(estimated %d tokens, limit %d)",
-                len(dropped),
+                trimmed_count,
                 _estimate_tokens(messages),
                 MAX_INPUT_TOKENS,
             )
