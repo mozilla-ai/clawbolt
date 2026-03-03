@@ -475,14 +475,18 @@ class BackshopAgent:
 
                     try:
                         result = await tool_func(**validated_args)
-                        if isinstance(result, ToolResult):
-                            result_str = result.content
-                            is_error = result.is_error
-                            if is_error:
-                                hint = _build_error_hint(result)
-                                result_str += "\n\n" + hint
-                        else:
-                            result_str = str(result)
+                        if not isinstance(result, ToolResult):
+                            logger.warning(
+                                "Tool %s returned %s instead of ToolResult",
+                                tool_name,
+                                type(result).__name__,
+                            )
+                            result = ToolResult(content=str(result))
+                        result_str = result.content
+                        is_error = result.is_error
+                        if is_error:
+                            hint = _build_error_hint(result)
+                            result_str += "\n\n" + hint
                         if is_error:
                             actions_taken.append(f"Failed: {tool_name}")
                         else:
