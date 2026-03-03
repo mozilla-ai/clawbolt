@@ -45,6 +45,7 @@ from backend.app.agent.tools.base import (
 )
 from backend.app.config import settings
 from backend.app.models import Contractor
+from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -473,6 +474,8 @@ class BackshopAgent:
         for _round in range(MAX_TOOL_ROUNDS):
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
+            purpose = "agent_main" if _round == 0 else "agent_followup"
+            log_llm_usage(self.db, self.contractor.id, settings.llm_model, response, purpose)
 
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)

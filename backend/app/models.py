@@ -211,3 +211,20 @@ class HeartbeatLog(Base):
     )
 
     contractor: Mapped["Contractor"] = relationship(back_populates="heartbeat_logs")
+
+
+class LLMUsageLog(Base):
+    __tablename__ = "llm_usage_logs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contractor_id: Mapped[int] = mapped_column(Integer, ForeignKey("contractors.id"), index=True)
+    model: Mapped[str] = mapped_column(String(100))
+    prompt_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    completion_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    total_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    purpose: Mapped[str] = mapped_column(String(50))
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    contractor: Mapped["Contractor"] = relationship()

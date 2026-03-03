@@ -127,6 +127,7 @@ def _make_tool_call_response(
     choice.message = msg
     resp = MagicMock()
     resp.choices = [choice]
+    resp.usage = None
     return resp
 
 
@@ -139,6 +140,7 @@ def _make_text_response(content: str) -> MagicMock:
     choice.message = msg
     resp = MagicMock()
     resp.choices = [choice]
+    resp.usage = None
     return resp
 
 
