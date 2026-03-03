@@ -79,6 +79,7 @@ def _make_client(
     app.dependency_overrides[check_webhook_rate_limit] = lambda: None
 
     with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch(
             "backend.app.routers.telegram_webhook.settings.telegram_webhook_secret",

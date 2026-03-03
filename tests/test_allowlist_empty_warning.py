@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import Generator
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -30,6 +30,7 @@ def test_warns_when_both_allowlists_empty(caplog: "pytest.LogCaptureFixture") ->
     app.dependency_overrides[get_db] = _override_get_db
 
     with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),
@@ -65,6 +66,7 @@ def test_no_warning_when_chat_ids_set(caplog: "pytest.LogCaptureFixture") -> Non
     app.dependency_overrides[get_db] = _override_get_db
 
     with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),
@@ -100,6 +102,7 @@ def test_no_warning_when_usernames_set(caplog: "pytest.LogCaptureFixture") -> No
     app.dependency_overrides[get_db] = _override_get_db
 
     with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),
@@ -137,6 +140,7 @@ def test_no_allowlist_warning_when_bot_token_not_set(
     app.dependency_overrides[get_db] = _override_get_db
 
     with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),

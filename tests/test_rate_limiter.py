@@ -91,7 +91,11 @@ def _rate_limited_client() -> Generator[TestClient]:
     # Explicitly remove rate limiter override so the real one is used
     app.dependency_overrides.pop(check_webhook_rate_limit, None)
 
-    with patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"), TestClient(app) as c:
+    with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
+        TestClient(app) as c,
+    ):
         yield c
 
     app.dependency_overrides.clear()
