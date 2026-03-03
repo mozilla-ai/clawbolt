@@ -755,6 +755,121 @@ async def test_typing_indicator_failure_does_not_block_processing(
 # ---------------------------------------------------------------------------
 
 
+# ---------------------------------------------------------------------------
+# Auto-save media tests (issue #270)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.get_storage_service")
+@patch("backend.app.agent.router.settings")
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
+async def test_auto_save_persists_media_to_storage(
+    mock_download: AsyncMock,
+    mock_settings: MagicMock,
+    mock_get_storage: MagicMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """Downloaded media should be auto-saved to storage before the agent loop."""
+    from backend.app.media.download import DownloadedMedia
+    from backend.app.models import MediaFile
+
+    mock_download.return_value = DownloadedMedia(
+        content=b"auto-saved-image",
+        mime_type="image/jpeg",
+        original_url="AgACAgIAAxkBAAI",
+        filename="photo.jpg",
+    )
+    mock_settings.storage_provider = "local"
+    mock_settings.dropbox_access_token = ""
+    mock_settings.google_drive_credentials_json = ""
+    mock_settings.llm_model = "gpt-4o"
+    mock_settings.llm_provider = "openai"
+    mock_storage = MockStorageBackend()
+    mock_get_storage.return_value = mock_storage
+    mock_acompletion.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
+
+    with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
+        mock_vision.return_value = "A photo."
+        await handle_inbound_message(
+            db=db_session,
+            contractor=test_contractor,
+            message=inbound_message,
+            media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
+            messaging_service=mock_messaging,
+        )
+
+    # Media should be auto-saved to storage
+    assert len(mock_storage.files) >= 1
+    # MediaFile record should exist
+    records = (
+        db_session.query(MediaFile).filter(MediaFile.contractor_id == test_contractor.id).all()
+    )
+    assert len(records) >= 1
+    auto_saved = [r for r in records if "/Unsorted/" in r.storage_path]
+    assert len(auto_saved) == 1
+    assert auto_saved[0].message_id == inbound_message.id
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.router.get_storage_service")
+@patch("backend.app.agent.router.settings")
+@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
+async def test_auto_save_failure_does_not_block_processing(
+    mock_download: AsyncMock,
+    mock_settings: MagicMock,
+    mock_get_storage: MagicMock,
+    mock_acompletion: object,
+    db_session: Session,
+    test_contractor: Contractor,
+    inbound_message: Message,
+    mock_messaging: MessagingService,
+) -> None:
+    """If auto-save fails, message processing should continue."""
+    from backend.app.media.download import DownloadedMedia
+
+    mock_download.return_value = DownloadedMedia(
+        content=b"image",
+        mime_type="image/jpeg",
+        original_url="AgACAgIAAxkBAAI",
+        filename="photo.jpg",
+    )
+    mock_settings.storage_provider = "local"
+    mock_settings.dropbox_access_token = ""
+    mock_settings.google_drive_credentials_json = ""
+    mock_settings.llm_model = "gpt-4o"
+    mock_settings.llm_provider = "openai"
+    # Make storage raise on upload to simulate auto-save failure
+    mock_storage = MagicMock(spec=MockStorageBackend)
+    mock_storage.create_folder = AsyncMock()
+    mock_storage.upload_file = AsyncMock(side_effect=RuntimeError("Storage down"))
+    mock_get_storage.return_value = mock_storage
+    mock_acompletion.return_value = make_text_response("Still works!")  # type: ignore[union-attr]
+
+    with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
+        mock_vision.return_value = "A photo."
+        response = await handle_inbound_message(
+            db=db_session,
+            contractor=test_contractor,
+            message=inbound_message,
+            media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
+            messaging_service=mock_messaging,
+        )
+
+    assert response.reply_text == "Still works!"
+
+
+# ---------------------------------------------------------------------------
+# Typed LLM exception handling in router (issue #173)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
 async def test_content_filter_error_returns_rephrasing_message(
