@@ -1,8 +1,8 @@
-"""Profile update tool for the agent.
+"""Profile introspection and update tools for the agent.
 
-Provides a dedicated update_profile tool with explicit typed fields,
-replacing the fragile fuzzy-matching approach that tried to infer
-profile fields from save_fact keys.
+Provides view_profile for introspection and update_profile for modification,
+enabling the agent to answer "what do you know about me?" and to update
+profile fields when the contractor corrects information.
 """
 
 from __future__ import annotations
@@ -22,6 +22,10 @@ if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
+
+
+class ViewProfileParams(BaseModel):
+    """Parameters for the view_profile tool (no parameters needed)."""
 
 
 class UpdateProfileParams(BaseModel):
@@ -74,8 +78,50 @@ def _parse_rate(value: str) -> float | None:
     return None
 
 
+def _format_profile(contractor: Contractor) -> str:
+    """Format the contractor's profile as a human-readable summary.
+
+    Returns a structured text block with all known profile fields.
+    Fields that are empty or unset are listed as "Not set".
+    """
+    lines: list[str] = []
+    lines.append("Contractor Profile:")
+    lines.append(f"  Name: {contractor.name or 'Not set'}")
+    lines.append(f"  Trade: {contractor.trade or 'Not set'}")
+    lines.append(f"  Location: {contractor.location or 'Not set'}")
+
+    if contractor.hourly_rate:
+        lines.append(f"  Hourly Rate: ${contractor.hourly_rate:.0f}/hr")
+    else:
+        lines.append("  Hourly Rate: Not set")
+
+    lines.append(f"  Business Hours: {contractor.business_hours or 'Not set'}")
+    lines.append(f"  Phone: {contractor.phone or 'Not set'}")
+
+    # Communication style from preferences_json
+    communication_style = None
+    if contractor.preferences_json and contractor.preferences_json != "{}":
+        try:
+            prefs = json.loads(contractor.preferences_json)
+            if isinstance(prefs, dict):
+                communication_style = prefs.get("communication_style")
+        except (json.JSONDecodeError, TypeError):
+            pass
+    lines.append(f"  Communication Style: {communication_style or 'Not set'}")
+
+    lines.append(f"  Soul/Bio: {contractor.soul_text or 'Not set'}")
+    lines.append(f"  Onboarding Complete: {'Yes' if contractor.onboarding_complete else 'No'}")
+
+    return "\n".join(lines)
+
+
 def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
-    """Create profile update tools for the agent."""
+    """Create profile introspection and update tools for the agent."""
+
+    async def view_profile() -> ToolResult:
+        """View the contractor's current profile information."""
+        db.refresh(contractor)
+        return ToolResult(content=_format_profile(contractor))
 
     async def update_profile(
         name: str | None = None,
@@ -157,6 +203,20 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
         return ToolResult(content=f"Profile updated: {summary}")
 
     return [
+        Tool(
+            name="view_profile",
+            description=(
+                "View the contractor's current profile information. "
+                "Use when the contractor asks what you know about them, "
+                "or when you need to check their current profile details."
+            ),
+            function=view_profile,
+            params_model=ViewProfileParams,
+            usage_hint=(
+                "When asked 'what do you know about me?' or needing to check "
+                "the contractor's profile, use this tool first."
+            ),
+        ),
         Tool(
             name="update_profile",
             description=(
