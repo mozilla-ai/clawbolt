@@ -38,6 +38,9 @@ class Settings(BaseSettings):
     whisper_device: str = "cpu"
     whisper_compute_type: str = "int8"
 
+    # Agent loop
+    max_tool_rounds: int = 10
+
     # Conversation & memory
     conversation_timeout_hours: int = 4
     conversation_history_limit: int = 20
