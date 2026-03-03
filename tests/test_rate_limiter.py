@@ -151,26 +151,40 @@ class TestInMemoryRateLimiter:
         # IP B should still be allowed
         limiter.check(Request(_make_scope(client_ip="10.0.0.2")))  # Should not raise
 
-    def test_x_forwarded_for_header(self) -> None:
-        """Should use X-Forwarded-For header when present."""
+    def test_x_forwarded_for_trusted_when_trust_proxy_enabled(self) -> None:
+        """When trust_proxy is True, X-Forwarded-For should be used for rate limiting."""
         limiter = InMemoryRateLimiter(max_requests=2, window_seconds=60)
 
-        # Requests from different socket IPs but same X-Forwarded-For
-        for i in range(2):
+        with patch("backend.app.services.rate_limiter.settings.rate_limit_trust_proxy", True):
+            # Requests from different socket IPs but same X-Forwarded-For
+            for i in range(2):
+                scope = _make_scope(
+                    client_ip=f"10.0.0.{i}",
+                    headers=[(b"x-forwarded-for", b"203.0.113.50, 70.41.3.18")],
+                )
+                limiter.check(Request(scope))
+
+            # 3rd request from same forwarded IP should be blocked
             scope = _make_scope(
-                client_ip=f"10.0.0.{i}",
+                client_ip="10.0.0.99",
                 headers=[(b"x-forwarded-for", b"203.0.113.50, 70.41.3.18")],
             )
-            limiter.check(Request(scope))
+            with pytest.raises(HTTPException) as exc_info:
+                limiter.check(Request(scope))
+            assert exc_info.value.status_code == 429
 
-        # 3rd request from same forwarded IP should be blocked
-        scope = _make_scope(
-            client_ip="10.0.0.99",
-            headers=[(b"x-forwarded-for", b"203.0.113.50, 70.41.3.18")],
-        )
-        with pytest.raises(HTTPException) as exc_info:
-            limiter.check(Request(scope))
-        assert exc_info.value.status_code == 429
+    def test_x_forwarded_for_ignored_when_trust_proxy_disabled(self) -> None:
+        """When trust_proxy is False, X-Forwarded-For should be ignored."""
+        limiter = InMemoryRateLimiter(max_requests=2, window_seconds=60)
+
+        with patch("backend.app.services.rate_limiter.settings.rate_limit_trust_proxy", False):
+            # Requests from different socket IPs with same X-Forwarded-For
+            for i in range(3):
+                scope = _make_scope(
+                    client_ip=f"10.0.0.{i}",
+                    headers=[(b"x-forwarded-for", b"203.0.113.50, 70.41.3.18")],
+                )
+                limiter.check(Request(scope))  # Should not raise: each socket IP is independent
 
     def test_expired_keys_removed_from_dict(self) -> None:
         """After all timestamps expire and the key is pruned, it should be removed."""

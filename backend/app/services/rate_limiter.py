@@ -29,11 +29,15 @@ class InMemoryRateLimiter:
         self._requests: dict[str, list[float]] = defaultdict(list)
 
     def _get_client_ip(self, request: Request) -> str:
-        """Extract client IP from request, respecting X-Forwarded-For."""
-        forwarded = request.headers.get("X-Forwarded-For")
-        if forwarded:
-            # First IP in the chain is the original client
-            return forwarded.split(",")[0].strip()
+        """Extract client IP from request.
+
+        Only trusts X-Forwarded-For when rate_limit_trust_proxy is enabled.
+        """
+        if settings.rate_limit_trust_proxy:
+            forwarded = request.headers.get("X-Forwarded-For")
+            if forwarded:
+                # First IP in the chain is the original client
+                return forwarded.split(",")[0].strip()
         client = request.client
         if client:
             return client.host
