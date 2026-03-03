@@ -1180,11 +1180,12 @@ class TestBuildHeartbeatContext:
         db.commit()
 
         flags = ["Stale draft estimate: Kitchen remodel"]
-        ctx = await build_heartbeat_context(db, contractor, flags)
+        prompt = await build_heartbeat_context(db, contractor, flags)
 
-        assert "Plumber" in ctx["soul_prompt"]
-        assert "Kitchen remodel" in ctx["flags"]
-        assert "I need a quote" in ctx["recent_messages"]
+        # build_heartbeat_context now returns a full prompt string
+        assert "Plumber" in prompt
+        assert "Kitchen remodel" in prompt
+        assert "I need a quote" in prompt
 
 
 # ---------------------------------------------------------------------------
