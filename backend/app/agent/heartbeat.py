@@ -22,8 +22,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.llm_parsing import parse_tool_calls
-from backend.app.agent.memory import build_memory_context
-from backend.app.agent.profile import build_soul_prompt
+from backend.app.agent.system_prompt import build_heartbeat_system_prompt
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import (
@@ -47,36 +46,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # Data structures
 # ---------------------------------------------------------------------------
-
-HEARTBEAT_SYSTEM_PROMPT = """\
-You are Backshop's heartbeat evaluator. Your job is to compose a short, \
-actionable message for the contractor based on the flags below.
-
-## About the contractor
-{soul_prompt}
-
-## Contractor's memory
-{memory_context}
-
-## Recent conversation (last 5 messages)
-{recent_messages}
-
-## Flags raised by pre-checks
-{flags}
-
-## Current time
-{current_time}
-
-## Rules
-- The pre-checks already decided something needs attention. Your job is to \
-compose one concise, helpful message.
-- Combine multiple flags into a single message when possible.
-- Keep the message under 160 characters.
-- Be direct and actionable, no fluff.
-- If after reviewing the flags you believe none actually warrant a message \
-right now, you may still choose "no_action".
-- Use the compose_message tool to return your decision.
-"""
 
 # Tool schema for the heartbeat compose_message tool
 COMPOSE_MESSAGE_TOOL: dict[str, Any] = {
@@ -340,17 +309,20 @@ def _is_checklist_item_due(
 # ---------------------------------------------------------------------------
 
 
-async def build_heartbeat_context(
-    db: Session,
-    contractor: Contractor,
-    flags: list[str],
-) -> dict[str, str]:
-    """Gather all context needed for the heartbeat LLM evaluation."""
-    soul_prompt = build_soul_prompt(contractor)
-    memory_context = await build_memory_context(db, contractor.id)
+def _load_recent_messages(db: Session, contractor: Contractor) -> str:
+    """Load recent messages as formatted text for heartbeat context."""
+    conv = (
+        db.query(Conversation)
+        .filter(
+            Conversation.contractor_id == contractor.id,
+            Conversation.is_active.is_(True),
+        )
+        .order_by(Conversation.last_message_at.desc())
+        .first()
+    )
+    if conv is None:
+        return "(no recent messages)"
 
-    # Recent messages (last 5)
-    conv, _ = await get_or_create_conversation(db, contractor.id)
     recent = (
         db.query(Message)
         .filter(Message.conversation_id == conv.id)
@@ -358,18 +330,21 @@ async def build_heartbeat_context(
         .limit(HEARTBEAT_RECENT_MESSAGES_COUNT)
         .all()
     )
-    recent_lines: list[str] = []
+    lines: list[str] = []
     for msg in reversed(recent):
         direction = "Contractor" if msg.direction == MessageDirection.INBOUND else "Backshop"
-        recent_lines.append(f"[{direction}] {msg.body}")
+        lines.append(f"[{direction}] {msg.body}")
+    return "\n".join(lines) or "(no recent messages)"
 
-    return {
-        "soul_prompt": soul_prompt,
-        "memory_context": memory_context or "(none)",
-        "recent_messages": "\n".join(recent_lines) or "(no recent messages)",
-        "flags": "\n".join(f"- {f}" for f in flags),
-        "current_time": datetime.datetime.now(datetime.UTC).isoformat(),
-    }
+
+async def build_heartbeat_context(
+    db: Session,
+    contractor: Contractor,
+    flags: list[str],
+) -> str:
+    """Build the full heartbeat system prompt via the composable builder."""
+    recent_messages = _load_recent_messages(db, contractor)
+    return await build_heartbeat_system_prompt(db, contractor, flags, recent_messages)
 
 
 # ---------------------------------------------------------------------------
@@ -445,8 +420,7 @@ async def evaluate_heartbeat_need(
     Uses the compose_message tool calling protocol instead of raw JSON parsing.
     If the LLM does not call the tool, defaults to no_action.
     """
-    ctx = await build_heartbeat_context(db, contractor, flags)
-    prompt = HEARTBEAT_SYSTEM_PROMPT.format(**ctx)
+    prompt = await build_heartbeat_context(db, contractor, flags)
 
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
