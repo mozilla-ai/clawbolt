@@ -1,4 +1,25 @@
+import hashlib
+import hmac
+
 from pydantic_settings import BaseSettings
+
+
+def _derive_webhook_secret(bot_token: str) -> str:
+    """Derive a deterministic webhook secret from the bot token via HMAC-SHA256."""
+    return hmac.new(
+        key=b"backshop-telegram-webhook-secret",
+        msg=bot_token.encode(),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+
+
+def get_effective_webhook_secret(s: "Settings") -> str:
+    """Return the explicit secret if set, otherwise derive one from the bot token."""
+    if s.telegram_webhook_secret:
+        return s.telegram_webhook_secret
+    if s.telegram_bot_token:
+        return _derive_webhook_secret(s.telegram_bot_token)
+    return ""
 
 
 class Settings(BaseSettings):
@@ -57,6 +78,7 @@ class Settings(BaseSettings):
     # Rate limiting
     webhook_rate_limit_max_requests: int = 30
     webhook_rate_limit_window_seconds: int = 60
+    rate_limit_trust_proxy: bool = False
 
     # Media
     max_media_size_bytes: int = 20_971_520  # 20 MB

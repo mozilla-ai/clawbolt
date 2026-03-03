@@ -88,6 +88,9 @@ def client(
         # Prevent .env allowlist settings from leaking into tests
         patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids", ""),
         patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames", ""),
+        # Clear bot token so auto-derived webhook secret is empty for tests that
+        # don't send a secret header
+        patch("backend.app.routers.telegram_webhook.settings.telegram_bot_token", ""),
         TestClient(app) as c,
     ):
         yield c
