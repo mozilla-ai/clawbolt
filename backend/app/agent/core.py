@@ -62,6 +62,52 @@ _MESSAGE_OVERHEAD_TOKENS = 4
 _CHARS_PER_TOKEN = 3.5
 
 
+_SUMMARY_MAX_CHARS = 500
+
+
+def _summarize_dropped_messages(dropped: list[AgentMessage]) -> str:
+    """Build a deterministic summary of messages that were trimmed from context.
+
+    Extracts message count, tool calls made, and key topics (first line of
+    each user/assistant message). Fast and deterministic: no LLM call needed.
+    """
+    user_snippets: list[str] = []
+    assistant_snippets: list[str] = []
+    tool_calls_made: list[str] = []
+
+    for msg in dropped:
+        if isinstance(msg, UserMessage) and msg.content:
+            first_line = msg.content.split("\n", 1)[0][:80]
+            user_snippets.append(first_line)
+        elif isinstance(msg, AssistantMessage):
+            if msg.tool_calls:
+                for tc in msg.tool_calls:
+                    tool_calls_made.append(tc.name)
+            if msg.content:
+                first_line = msg.content.split("\n", 1)[0][:80]
+                assistant_snippets.append(first_line)
+        # ToolResultMessages are covered by the tool_calls_made list
+
+    parts: list[str] = [f"{len(dropped)} earlier message(s) were trimmed from context."]
+
+    if user_snippets:
+        topics = "; ".join(user_snippets[:5])
+        if len(user_snippets) > 5:
+            topics += f" (and {len(user_snippets) - 5} more)"
+        parts.append(f"User topics: {topics}")
+
+    if assistant_snippets:
+        topics = "; ".join(assistant_snippets[:3])
+        parts.append(f"Assistant discussed: {topics}")
+
+    if tool_calls_made:
+        unique_tools = sorted(set(tool_calls_made))
+        parts.append(f"Tools used: {', '.join(unique_tools)}")
+
+    summary = " ".join(parts)
+    return summary[:_SUMMARY_MAX_CHARS]
+
+
 def _estimate_tokens(messages: list[AgentMessage]) -> int:
     """Estimate token count from typed messages, including tool call content.
 
@@ -297,6 +343,9 @@ class BackshopAgent:
         units: an ``AssistantMessage`` with ``tool_calls`` is never removed
         without also removing the ``ToolResultMessage`` entries that follow it
         (and vice-versa).
+
+        Dropped messages are summarized and injected as a context note so
+        the LLM retains awareness of what was discussed.
         """
         if len(messages) <= 2:
             return messages
@@ -329,15 +378,20 @@ class BackshopAgent:
 
         # Remove blocks from the front (oldest) until we fit the budget,
         # but always keep at least the last block.
+        dropped: list[AgentMessage] = []
         while len(blocks) > 1:
             remaining: list[AgentMessage] = [system]
             for blk in blocks:
                 remaining.extend(blk)
             if _estimate_tokens(remaining) <= target_tokens:
                 break
-            blocks.pop(0)
+            removed_block = blocks.pop(0)
+            dropped.extend(removed_block)
 
         result: list[AgentMessage] = [system]
+        if dropped:
+            summary = _summarize_dropped_messages(dropped)
+            result.append(UserMessage(content=f"[Summary of earlier conversation: {summary}]"))
         for blk in blocks:
             result.extend(blk)
         return result
@@ -390,16 +444,15 @@ class BackshopAgent:
 
         messages.append(UserMessage(content=message_context))
 
-        # Trim oldest conversation history if estimated tokens exceed the limit
+        # Trim oldest conversation history if estimated tokens exceed the limit.
+        # Uses the block-based trimmer which preserves tool-call/result pairing
+        # and injects a summary of dropped messages.
         original_count = len(messages)
-        estimated = _estimate_tokens(messages)
-        while estimated > MAX_INPUT_TOKENS and len(messages) > 2:
-            messages.pop(1)
-            estimated = _estimate_tokens(messages)
+        messages = self._trim_messages(messages, target_tokens=MAX_INPUT_TOKENS)
         trimmed_count = original_count - len(messages)
         if trimmed_count > 0:
             logger.warning(
-                "Trimmed %d message(s) from conversation history to fit context window "
+                "Trimmed %d message(s) from conversation history, injected summary "
                 "(estimated %d tokens, limit %d)",
                 trimmed_count,
                 _estimate_tokens(messages),
