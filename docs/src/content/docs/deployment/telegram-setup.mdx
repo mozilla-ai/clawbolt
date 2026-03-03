@@ -47,7 +47,7 @@ curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
 
 ## Access control
 
-You can restrict which Telegram users can interact with Clawbolt:
+Clawbolt rejects all incoming messages by default. You must configure at least one allowlist:
 
 ```bash
 # Allow only specific chat IDs
@@ -55,9 +55,12 @@ TELEGRAM_ALLOWED_CHAT_IDS=123456789,987654321
 
 # Allow only specific usernames
 TELEGRAM_ALLOWED_USERNAMES=johndoe,janedoe
+
+# Or allow all users explicitly
+TELEGRAM_ALLOWED_CHAT_IDS=*
 ```
 
-Leave both empty to allow all users.
+If both are set, a message is allowed when EITHER the chat ID or username matches.
 
 ## Verify the webhook
 

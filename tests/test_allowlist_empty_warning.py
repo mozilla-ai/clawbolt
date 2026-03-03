@@ -43,7 +43,7 @@ def test_warns_when_both_allowlists_empty(caplog: "pytest.LogCaptureFixture") ->
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
             pass
 
-    assert any("No Telegram allowlist configured" in msg for msg in caplog.messages)
+    assert any("All messages will be rejected" in msg for msg in caplog.messages)
 
     session.close()
     app.dependency_overrides.clear()
@@ -78,7 +78,7 @@ def test_no_warning_when_chat_ids_set(caplog: "pytest.LogCaptureFixture") -> Non
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
             pass
 
-    assert not any("No Telegram allowlist configured" in msg for msg in caplog.messages)
+    assert not any("All messages will be rejected" in msg for msg in caplog.messages)
 
     session.close()
     app.dependency_overrides.clear()
@@ -113,7 +113,7 @@ def test_no_warning_when_usernames_set(caplog: "pytest.LogCaptureFixture") -> No
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
             pass
 
-    assert not any("No Telegram allowlist configured" in msg for msg in caplog.messages)
+    assert not any("All messages will be rejected" in msg for msg in caplog.messages)
 
     session.close()
     app.dependency_overrides.clear()
@@ -150,7 +150,7 @@ def test_no_allowlist_warning_when_bot_token_not_set(
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
             pass
 
-    assert not any("No Telegram allowlist configured" in msg for msg in caplog.messages)
+    assert not any("All messages will be rejected" in msg for msg in caplog.messages)
 
     session.close()
     app.dependency_overrides.clear()

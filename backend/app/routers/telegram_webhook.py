@@ -105,25 +105,32 @@ def _extract_telegram_media(
 def _check_allowlist(chat_id: str, username: str) -> bool:
     """Return True if the sender passes the allowlist gate.
 
-    If no allowlist is configured, all senders are allowed.
+    Both lists default to empty, which rejects all senders (deny by default).
+    Set a list to "*" to explicitly allow everyone through that check.
     """
+    ids_raw = settings.telegram_allowed_chat_ids.strip()
+    users_raw = settings.telegram_allowed_usernames.strip()
+
+    # Neither allowlist configured: deny all
+    if not ids_raw and not users_raw:
+        return False
+
     chat_id_match = False
     username_match = False
 
-    if settings.telegram_allowed_chat_ids:
-        allowed_ids = {cid.strip() for cid in settings.telegram_allowed_chat_ids.split(",")}
+    if ids_raw == "*":
+        chat_id_match = True
+    elif ids_raw:
+        allowed_ids = {cid.strip() for cid in ids_raw.split(",")}
         chat_id_match = chat_id in allowed_ids
 
-    if settings.telegram_allowed_usernames:
-        allowed_users = {
-            u.strip().lstrip("@").lower() for u in settings.telegram_allowed_usernames.split(",")
-        }
+    if users_raw == "*":
+        username_match = True
+    elif users_raw:
+        allowed_users = {u.strip().lstrip("@").lower() for u in users_raw.split(",")}
         username_match = username.lower() in allowed_users if username else False
 
-    any_allowlist_configured = bool(
-        settings.telegram_allowed_chat_ids or settings.telegram_allowed_usernames
-    )
-    return not any_allowlist_configured or chat_id_match or username_match
+    return chat_id_match or username_match
 
 
 def _parse_telegram_update(update: dict) -> InboundMessage | None:
