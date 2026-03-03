@@ -8,7 +8,7 @@ Clawbolt is open source and contributions are welcome.
 ## Getting started
 
 1. Fork the repository on [GitHub](https://github.com/mozilla-ai/clawbolt)
-2. Clone your fork and set up [local development](/development/local-setup/)
+2. Clone your fork and set up [local development](../local-setup/)
 3. Create a branch for your changes
 4. Make your changes and ensure all checks pass
 5. Open a pull request
@@ -54,7 +54,7 @@ uv run ty check --python .venv backend/ tests/    # type checking passes
 
 ## Architecture notes
 
-- See [Architecture](/architecture/) for system design overview
+- See [Architecture](../../architecture/) for system design overview
 - Every model and endpoint uses `user_id` scoping
 - External services are abstracted behind service classes in `backend/app/services/`
 - Config uses Pydantic `BaseSettings` with `extra="ignore"`

@@ -8,7 +8,7 @@ The fastest way to run Clawbolt is with Docker Compose. This starts PostgreSQL a
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- A Telegram bot token (see [Telegram Setup](/deployment/telegram-setup/))
+- A Telegram bot token (see [Telegram Setup](../../deployment/telegram-setup/))
 - An LLM provider API key (OpenAI, Anthropic, etc.)
 
 ## 1. Clone the repository
@@ -24,7 +24,7 @@ cd clawbolt
 cp .env.example .env
 ```
 
-Edit `.env` and fill in the required credentials. See [Configuration](/configuration/) for full details.
+Edit `.env` and fill in the required credentials. See [Configuration](../configuration/) for full details.
 
 At minimum you need:
 - `TELEGRAM_BOT_TOKEN` -- your Telegram bot token
@@ -57,6 +57,6 @@ Send a message to your bot on Telegram and Clawbolt will respond.
 
 ## Next steps
 
-- [Configuration](/configuration/) -- full list of environment variables
-- [Features](/features/estimates/) -- explore what Clawbolt can do
-- [Local Setup](/development/local-setup/) -- develop without Docker
+- [Configuration](../configuration/) -- full list of environment variables
+- [Features](../features/estimates/) -- explore what Clawbolt can do
+- [Local Setup](../development/local-setup/) -- develop without Docker
