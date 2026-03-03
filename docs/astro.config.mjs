@@ -2,7 +2,8 @@ import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
 export default defineConfig({
-  site: "https://clawbolt.ai",
+  site: "https://mozilla-ai.github.io",
+  base: "/clawbolt",
   integrations: [
     starlight({
       title: "Clawbolt",
