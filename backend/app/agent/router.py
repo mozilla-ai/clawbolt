@@ -233,7 +233,10 @@ async def dispatch_reply(
     message_id: int,
 ) -> None:
     """Send reply to the contractor unless the agent already sent one via a tool."""
-    sent_reply = any(ToolTags.SENDS_REPLY in tc.get("tags", set()) for tc in response.tool_calls)
+    sent_reply = any(
+        ToolTags.SENDS_REPLY in tc.get("tags", set()) and not tc.get("is_error", False)
+        for tc in response.tool_calls
+    )
     if not sent_reply and response.reply_text:
         try:
             await messaging_service.send_text(to=to_address, body=response.reply_text)
