@@ -10,6 +10,7 @@
 <p align="center">
   <a href="https://github.com/mozilla-ai/clawbolt/actions/workflows/ci.yml"><img src="https://github.com/mozilla-ai/clawbolt/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
+  <a href="https://github.com/mozilla-ai/any-llm"><img src="https://img.shields.io/badge/LLM-any--llm-blueviolet" alt="any-llm"></a>
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT">
   <img src="https://img.shields.io/badge/messaging-Telegram-26A5E4?logo=telegram&logoColor=white" alt="Telegram">
 </p>
@@ -47,6 +48,17 @@ Contractor sends a Telegram message
 ```
 
 The agent uses an LLM (configurable via [any-llm](https://github.com/mozilla-ai/any-llm)) to understand messages, call tools, and generate replies. A background heartbeat evaluates each contractor periodically and sends proactive messages when genuinely useful.
+
+## Tech Stack
+
+| Layer | Technology |
+|-------|------------|
+| LLM orchestration | [any-llm](https://github.com/mozilla-ai/any-llm) -- provider-agnostic LLM calls via `acompletion` (supports OpenAI, Anthropic, Groq, Gemini, local models, and more) |
+| Backend | [FastAPI](https://fastapi.tiangolo.com/) + [SQLAlchemy 2.0](https://www.sqlalchemy.org/) + [Pydantic v2](https://docs.pydantic.dev/) |
+| Messaging | [Telegram Bot API](https://core.telegram.org/bots/api) via python-telegram-bot |
+| Speech-to-text | [faster-whisper](https://github.com/SYSTRAN/faster-whisper) (optional) |
+| PDF generation | [ReportLab](https://www.reportlab.com/) |
+| Database | PostgreSQL (production), SQLite (tests) |
 
 ## Quick Start (Docker)
 
