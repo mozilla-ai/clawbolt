@@ -1,9 +1,11 @@
 """File cataloging tools for the agent."""
 
+from __future__ import annotations
+
 import datetime
 import logging
 import re
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -12,6 +14,9 @@ from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
 from backend.app.models import Contractor, MediaFile
 from backend.app.services.storage_service import StorageBackend
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -403,3 +408,19 @@ def create_file_tools(
             params_model=OrganizeFileParams,
         ),
     ]
+
+
+def _file_factory(ctx: ToolContext) -> list[Tool]:
+    """Factory for file tools, used by the registry."""
+    assert ctx.storage is not None
+    pending_media = {m.original_url: m.content for m in ctx.downloaded_media if m.content}
+    return create_file_tools(ctx.db, ctx.contractor, ctx.storage, pending_media)
+
+
+def _register() -> None:
+    from backend.app.agent.tools.registry import default_registry
+
+    default_registry.register("file", _file_factory, requires_storage=True)
+
+
+_register()

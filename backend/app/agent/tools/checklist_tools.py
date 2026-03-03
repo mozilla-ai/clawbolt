@@ -1,6 +1,8 @@
 """Heartbeat checklist management tools for the agent."""
 
-from typing import Literal
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
@@ -8,6 +10,9 @@ from sqlalchemy.orm import Session
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.enums import ChecklistSchedule, ChecklistStatus
 from backend.app.models import HeartbeatChecklistItem
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.registry import ToolContext
 
 
 class AddChecklistItemParams(BaseModel):
@@ -114,3 +119,17 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             params_model=RemoveChecklistItemParams,
         ),
     ]
+
+
+def _checklist_factory(ctx: ToolContext) -> list[Tool]:
+    """Factory for checklist tools, used by the registry."""
+    return create_checklist_tools(ctx.db, ctx.contractor.id)
+
+
+def _register() -> None:
+    from backend.app.agent.tools.registry import default_registry
+
+    default_registry.register("checklist", _checklist_factory)
+
+
+_register()

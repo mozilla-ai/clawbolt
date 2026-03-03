@@ -18,6 +18,7 @@ from backend.app.agent.core import (
 )
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.models import Contractor
+from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -1301,3 +1302,150 @@ async def test_unhandled_exception_uses_internal_hint(
     content = tool_msg["content"]
 
     assert "[An internal error occurred" in content
+
+
+# ---- Tool Registry Tests ----
+
+
+class TestToolRegistry:
+    """Tests for the ToolRegistry and related helpers."""
+
+    def test_register_and_create_tools(
+        self, db_session: Session, test_contractor: Contractor
+    ) -> None:
+        """Registry should create tools from registered factories."""
+        from backend.app.agent.tools.registry import ToolContext, ToolRegistry
+
+        registry = ToolRegistry()
+
+        def dummy_factory(ctx: ToolContext) -> list[Tool]:
+            async def noop() -> ToolResult:
+                return ToolResult(content="ok")
+
+            return [Tool(name="dummy", description="test tool", function=noop)]
+
+        registry.register("dummy", dummy_factory)
+        ctx = ToolContext(db=db_session, contractor=test_contractor)
+        tools = registry.create_tools(ctx)
+        assert len(tools) == 1
+        assert tools[0].name == "dummy"
+
+    def test_skips_factory_when_storage_missing(
+        self, db_session: Session, test_contractor: Contractor
+    ) -> None:
+        """Factories requiring storage should be skipped when storage is None."""
+        from backend.app.agent.tools.registry import ToolContext, ToolRegistry
+
+        registry = ToolRegistry()
+
+        def storage_factory(ctx: ToolContext) -> list[Tool]:
+            return [Tool(name="needs_storage", description="test", function=lambda: None)]
+
+        registry.register("storage_tool", storage_factory, requires_storage=True)
+        ctx = ToolContext(db=db_session, contractor=test_contractor, storage=None)
+        tools = registry.create_tools(ctx)
+        assert len(tools) == 0
+
+    def test_skips_factory_when_messaging_missing(
+        self, db_session: Session, test_contractor: Contractor
+    ) -> None:
+        """Factories requiring messaging should be skipped when messaging is None."""
+        from backend.app.agent.tools.registry import ToolContext, ToolRegistry
+
+        registry = ToolRegistry()
+
+        def msg_factory(ctx: ToolContext) -> list[Tool]:
+            return [Tool(name="needs_messaging", description="test", function=lambda: None)]
+
+        registry.register("msg_tool", msg_factory, requires_messaging=True)
+        ctx = ToolContext(db=db_session, contractor=test_contractor, messaging_service=None)
+        tools = registry.create_tools(ctx)
+        assert len(tools) == 0
+
+    def test_includes_factory_when_deps_satisfied(
+        self,
+        db_session: Session,
+        test_contractor: Contractor,
+        mock_messaging_service: MessagingService,
+    ) -> None:
+        """Factories should produce tools when required dependencies are present."""
+        from unittest.mock import MagicMock
+
+        from backend.app.agent.tools.registry import ToolContext, ToolRegistry
+
+        registry = ToolRegistry()
+
+        def storage_factory(ctx: ToolContext) -> list[Tool]:
+            return [Tool(name="with_storage", description="test", function=lambda: None)]
+
+        def msg_factory(ctx: ToolContext) -> list[Tool]:
+            return [Tool(name="with_msg", description="test", function=lambda: None)]
+
+        registry.register("s", storage_factory, requires_storage=True)
+        registry.register("m", msg_factory, requires_messaging=True)
+
+        mock_storage = MagicMock()
+        ctx = ToolContext(
+            db=db_session,
+            contractor=test_contractor,
+            storage=mock_storage,
+            messaging_service=mock_messaging_service,
+        )
+        tools = registry.create_tools(ctx)
+        names = {t.name for t in tools}
+        assert "with_storage" in names
+        assert "with_msg" in names
+
+    def test_factory_names_sorted(self) -> None:
+        """factory_names property should return sorted list of registered names."""
+        from backend.app.agent.tools.registry import ToolRegistry
+
+        registry = ToolRegistry()
+        registry.register("zebra", lambda ctx: [])
+        registry.register("alpha", lambda ctx: [])
+        registry.register("middle", lambda ctx: [])
+        assert registry.factory_names == ["alpha", "middle", "zebra"]
+
+    def test_default_registry_has_all_modules(self) -> None:
+        """The default_registry should have all tool modules registered."""
+        from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
+
+        ensure_tool_modules_imported()
+        names = default_registry.factory_names
+        assert "memory" in names
+        assert "messaging" in names
+        assert "estimate" in names
+        assert "checklist" in names
+        assert "profile" in names
+        assert "file" in names
+
+    def test_ensure_tool_modules_imported_idempotent(self) -> None:
+        """Calling ensure_tool_modules_imported() multiple times should be safe."""
+        from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
+
+        ensure_tool_modules_imported()
+        count1 = len(default_registry.factory_names)
+        ensure_tool_modules_imported()
+        count2 = len(default_registry.factory_names)
+        assert count1 == count2
+
+    def test_overwrite_warns(self, db_session: Session, test_contractor: Contractor) -> None:
+        """Registering the same name twice should overwrite (with a warning)."""
+        from backend.app.agent.tools.registry import ToolContext, ToolRegistry
+
+        registry = ToolRegistry()
+
+        def factory_a(ctx: ToolContext) -> list[Tool]:
+            return [Tool(name="a", description="first", function=lambda: None)]
+
+        def factory_b(ctx: ToolContext) -> list[Tool]:
+            return [Tool(name="b", description="second", function=lambda: None)]
+
+        registry.register("same_name", factory_a)
+        registry.register("same_name", factory_b)
+
+        ctx = ToolContext(db=db_session, contractor=test_contractor)
+        tools = registry.create_tools(ctx)
+        # The second factory should win
+        assert len(tools) == 1
+        assert tools[0].name == "b"

@@ -10,14 +10,12 @@ from backend.app.agent.onboarding import (
     is_onboarding_needed,
 )
 from backend.app.agent.tools.base import ToolTags
-from backend.app.agent.tools.checklist_tools import create_checklist_tools
-from backend.app.agent.tools.estimate_tools import create_estimate_tools
-from backend.app.agent.tools.file_tools import auto_save_media, create_file_tools
-from backend.app.agent.tools.memory_tools import create_memory_tools
-from backend.app.agent.tools.messaging_tools import create_messaging_tools
-from backend.app.agent.tools.profile_tools import (
-    create_profile_tools,
-    extract_profile_updates_from_tool_calls,
+from backend.app.agent.tools.file_tools import auto_save_media
+from backend.app.agent.tools.profile_tools import extract_profile_updates_from_tool_calls
+from backend.app.agent.tools.registry import (
+    ToolContext,
+    default_registry,
+    ensure_tool_modules_imported,
 )
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
@@ -46,6 +44,9 @@ VISION_UNAVAILABLE_NOTE = (
     "and ask them to describe what the attachment shows."
 )
 
+# Ensure all tool modules have self-registered with the default registry.
+ensure_tool_modules_imported()
+
 
 async def handle_inbound_message(
     db: Session,
@@ -67,7 +68,7 @@ async def handle_inbound_message(
     to_address = contractor.channel_identifier or contractor.phone
     if not to_address:
         logger.error(
-            "Contractor %d has no channel_identifier or phone — cannot send replies",
+            "Contractor %d has no channel_identifier or phone -- cannot send replies",
             contractor.id,
         )
         return AgentResponse(reply_text="")
@@ -133,22 +134,21 @@ async def handle_inbound_message(
     # Step 4: Load conversation history
     conversation_history = await load_conversation_history(db, message.conversation_id)
 
-    # Step 5: Initialize agent with tools
+    # Step 5: Initialize agent with tools via registry
     was_onboarding = is_onboarding_needed(contractor)
     system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
 
     agent = BackshopAgent(db=db, contractor=contractor)
-    tools = create_memory_tools(db, contractor.id)
-    tools.extend(create_messaging_tools(messaging_service, to_address=to_address))
-    tools.extend(create_estimate_tools(db, contractor, storage))
-    tools.extend(create_checklist_tools(db, contractor.id))
-    tools.extend(create_profile_tools(db, contractor))
 
-    # Wire file tools if storage is available
-    if storage:
-        pending_media = {m.original_url: m.content for m in downloaded_media if m.content}
-        tools.extend(create_file_tools(db, contractor, storage, pending_media))
-
+    tool_context = ToolContext(
+        db=db,
+        contractor=contractor,
+        storage=storage,
+        messaging_service=messaging_service,
+        to_address=to_address,
+        downloaded_media=downloaded_media,
+    )
+    tools = default_registry.create_tools(tool_context)
     agent.register_tools(tools)
 
     # Send typing indicator while processing (non-blocking on failure)

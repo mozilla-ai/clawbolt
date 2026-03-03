@@ -5,14 +5,20 @@ replacing the fragile fuzzy-matching approach that tried to infer
 profile fields from save_fact keys.
 """
 
+from __future__ import annotations
+
 import json
 import logging
 import re
+from typing import TYPE_CHECKING
 
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.models import Contractor
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -154,16 +160,30 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
                     },
                     "communication_style": {
                         "type": "string",
-                        "description": "Preferred communication style (e.g. 'casual', 'formal')",
+                        "description": ("Preferred communication style (e.g. 'casual', 'formal')"),
                     },
                     "soul_text": {
                         "type": "string",
-                        "description": "Bio or personality description for the assistant",
+                        "description": ("Bio or personality description for the assistant"),
                     },
                 },
             },
         ),
     ]
+
+
+def _profile_factory(ctx: ToolContext) -> list[Tool]:
+    """Factory for profile tools, used by the registry."""
+    return create_profile_tools(ctx.db, ctx.contractor)
+
+
+def _register() -> None:
+    from backend.app.agent.tools.registry import default_registry
+
+    default_registry.register("profile", _profile_factory)
+
+
+_register()
 
 
 def extract_profile_updates_from_tool_calls(
