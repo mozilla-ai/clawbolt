@@ -434,7 +434,7 @@ class BackshopAgent:
         except ValidationError as exc:
             return tool_args, _format_validation_error(tool.name, exc, tool)
 
-    def _get_tool_tags(self, tool_name: str) -> set[str]:
+    def _get_tool_tags(self, tool_name: str) -> set[ToolTags]:
         """Look up the tags for a registered tool by name."""
         tool = self._tools_by_name.get(tool_name)
         return tool.tags if tool else set()
