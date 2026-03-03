@@ -43,6 +43,7 @@ class Tool:
     parameters: dict[str, Any] = field(default_factory=dict)
     params_model: type[BaseModel] | None = None
     tags: set[str] = field(default_factory=set)
+    usage_hint: str = ""
 
 
 def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:

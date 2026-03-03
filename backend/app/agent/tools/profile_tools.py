@@ -135,6 +135,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
                 "Only include fields you want to change."
             ),
             function=update_profile,
+            usage_hint=("Use this to update known contractor details (name, trade, rates, etc.)."),
             parameters={
                 "type": "object",
                 "properties": {

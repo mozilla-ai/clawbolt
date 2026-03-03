@@ -394,6 +394,7 @@ def create_file_tools(
             ),
             function=upload_to_storage,
             params_model=UploadToStorageParams,
+            usage_hint="Upload and organize files into the contractor's cloud storage.",
         ),
         Tool(
             name="organize_file",
@@ -406,6 +407,7 @@ def create_file_tools(
             ),
             function=organize_file,
             params_model=OrganizeFileParams,
+            usage_hint="Move an unsorted file into the correct client folder.",
         ),
     ]
 
