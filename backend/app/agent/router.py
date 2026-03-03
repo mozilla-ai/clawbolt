@@ -7,15 +7,17 @@ from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, BackshopAgent
 from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
-    extract_profile_updates,
     is_onboarding_needed,
 )
-from backend.app.agent.profile import update_contractor_profile
 from backend.app.agent.tools.checklist_tools import create_checklist_tools
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.agent.tools.file_tools import auto_save_media, create_file_tools
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.messaging_tools import create_messaging_tools
+from backend.app.agent.tools.profile_tools import (
+    create_profile_tools,
+    extract_profile_updates_from_tool_calls,
+)
 from backend.app.config import settings
 from backend.app.media.download import DownloadedMedia, download_telegram_media
 from backend.app.media.pipeline import process_message_media
@@ -140,6 +142,7 @@ async def handle_inbound_message(
     tools.extend(create_messaging_tools(messaging_service, to_address=to_address))
     tools.extend(create_estimate_tools(db, contractor, storage))
     tools.extend(create_checklist_tools(db, contractor.id))
+    tools.extend(create_profile_tools(db, contractor))
 
     # Wire file tools if storage is available
     if storage:
@@ -183,13 +186,12 @@ async def handle_inbound_message(
         )
         response = AgentResponse(reply_text=AGENT_ERROR_FALLBACK, is_error_fallback=True)
 
-    # Step 6b: Always extract profile updates from tool calls (not just during
-    # onboarding).  This keeps contractor profile fields in sync with memory
-    # facts when contractors update their info post-onboarding (e.g., "I moved
-    # to Denver", "my new rate is $100/hr").  Fixes #186 / #183.
-    profile_updates = extract_profile_updates(response)
+    # Step 6b: The update_profile tool directly updates the contractor record
+    # in the DB during execution. We just need to check if any profile updates
+    # happened (by inspecting tool call records) so we can detect onboarding
+    # completion. Refresh the contractor to pick up any changes made by the tool.
+    profile_updates = extract_profile_updates_from_tool_calls(response.tool_calls)
     if profile_updates:
-        await update_contractor_profile(db, contractor, profile_updates)
         db.refresh(contractor)
 
     # If still onboarding, check whether the required fields are now complete
