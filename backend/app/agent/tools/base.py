@@ -1,6 +1,13 @@
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
+
+
+class ToolTags:
+    """Constants for cross-cutting tool metadata tags."""
+
+    SENDS_REPLY = "sends_reply"
+    SAVES_MEMORY = "saves_memory"
 
 
 @dataclass
@@ -19,6 +26,7 @@ class Tool:
     description: str
     function: Callable[..., Any]
     parameters: dict[str, Any]
+    tags: set[str] = field(default_factory=set)
 
 
 def tool_to_openai_schema(tool: Tool) -> dict[str, Any]:
