@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
+from backend.app.agent.tools.names import ToolName
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -66,7 +67,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
 
     return [
         Tool(
-            name="save_fact",
+            name=ToolName.SAVE_FACT,
             description=(
                 "Save a key-value fact to the contractor's memory. "
                 "Use for pricing, client info, preferences, etc."
@@ -77,7 +78,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
             usage_hint=("When you learn new information (rates, clients, preferences), save it."),
         ),
         Tool(
-            name="recall_facts",
+            name=ToolName.RECALL_FACTS,
             description="Search the contractor's memory for facts matching a query.",
             function=recall_facts,
             params_model=RecallFactsParams,
@@ -87,7 +88,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
             ),
         ),
         Tool(
-            name="forget_fact",
+            name=ToolName.FORGET_FACT,
             description="Delete a fact from memory by key.",
             function=forget_fact,
             params_model=ForgetFactParams,

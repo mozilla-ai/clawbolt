@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
+from backend.app.agent.tools.names import ToolName
 from backend.app.services.messaging import MessagingService
 
 if TYPE_CHECKING:
@@ -53,7 +54,7 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
 
     return [
         Tool(
-            name="send_reply",
+            name=ToolName.SEND_REPLY,
             description="Send a text reply to the contractor.",
             function=send_reply,
             params_model=SendReplyParams,
@@ -61,7 +62,7 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
             usage_hint="Use this to send a text message to the contractor.",
         ),
         Tool(
-            name="send_media_reply",
+            name=ToolName.SEND_MEDIA_REPLY,
             description="Send a reply with a media attachment (e.g., PDF estimate).",
             function=send_media_reply,
             params_model=SendMediaReplyParams,

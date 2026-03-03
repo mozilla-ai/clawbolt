@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 
 from backend.app.agent.events import AgentEndEvent, AgentEvent
 from backend.app.agent.profile import build_onboarding_prompt
+from backend.app.agent.tools.names import ToolName
 from backend.app.models import Contractor
 
 if TYPE_CHECKING:
@@ -110,7 +111,7 @@ class OnboardingSubscriber:
         """Process onboarding state after the agent finishes."""
         # Refresh contractor if a profile update was made (the tool already
         # committed, but the ORM object may be stale in this session).
-        if any(a == "Called update_profile" for a in event.actions_taken):
+        if any(a == f"Called {ToolName.UPDATE_PROFILE}" for a in event.actions_taken):
             self._db.refresh(self._contractor)
 
         # Transition: was onboarding and required fields are now complete

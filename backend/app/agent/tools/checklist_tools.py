@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.names import ToolName
 from backend.app.enums import ChecklistSchedule, ChecklistStatus
 from backend.app.models import HeartbeatChecklistItem
 
@@ -97,7 +98,7 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
 
     return [
         Tool(
-            name="add_checklist_item",
+            name=ToolName.ADD_CHECKLIST_ITEM,
             description=(
                 "Add an item to the contractor's heartbeat checklist. "
                 "The heartbeat will proactively check this item and remind "
@@ -108,14 +109,14 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             usage_hint="When the contractor wants a recurring reminder, add it to the checklist.",
         ),
         Tool(
-            name="list_checklist_items",
+            name=ToolName.LIST_CHECKLIST_ITEMS,
             description="List all active items on the contractor's heartbeat checklist.",
             function=list_checklist_items,
             params_model=ListChecklistItemsParams,
             usage_hint="When asked about active reminders or checklist items, list them.",
         ),
         Tool(
-            name="remove_checklist_item",
+            name=ToolName.REMOVE_CHECKLIST_ITEM,
             description="Remove an item from the contractor's heartbeat checklist by its ID.",
             function=remove_checklist_item,
             params_model=RemoveChecklistItemParams,

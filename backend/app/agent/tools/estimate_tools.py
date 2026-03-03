@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
+from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.enums import EstimateStatus
 from backend.app.models import Contractor, Estimate, EstimateLineItem
@@ -174,7 +175,7 @@ def create_estimate_tools(
 
     return [
         Tool(
-            name="generate_estimate",
+            name=ToolName.GENERATE_ESTIMATE,
             description=(
                 "Generate a professional estimate PDF. Use when the contractor asks for "
                 "an estimate, quote, or bid. Include line items with description, quantity, "

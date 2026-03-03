@@ -17,6 +17,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.names import ToolName
 from backend.app.models import Contractor
 
 if TYPE_CHECKING:
@@ -224,7 +225,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
 
     return [
         Tool(
-            name="view_profile",
+            name=ToolName.VIEW_PROFILE,
             description=(
                 "View the contractor's current profile information. "
                 "Use when the contractor asks what you know about them, "
@@ -238,7 +239,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             ),
         ),
         Tool(
-            name="update_profile",
+            name=ToolName.UPDATE_PROFILE,
             description=(
                 "Update the contractor's profile information. "
                 "Use when you learn their name, trade, location, rate, "
@@ -279,7 +280,7 @@ def extract_profile_updates_from_tool_calls(
     updates: dict[str, object] = {}
 
     for tc in tool_calls:
-        if tc.get("name") != "update_profile":
+        if tc.get("name") != ToolName.UPDATE_PROFILE:
             continue
         if tc.get("is_error"):
             continue
