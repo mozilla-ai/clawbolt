@@ -27,16 +27,52 @@ logger = logging.getLogger(__name__)
 MAX_TOOL_ROUNDS = 5
 CONTEXT_QUERY_MAX_LENGTH = 100
 RATE_LIMIT_RETRY_DELAY = 2.0
-# Keep the most recent N messages (plus system prompt) when trimming for context length
-CONTEXT_TRIM_KEEP_RECENT = 4
+# Target token budget when trimming for context length (leave room for output tokens)
+CONTEXT_TRIM_TARGET_TOKENS = 80_000
 
 # Conservative default; most models support 128K+ but we leave room for output
 MAX_INPUT_TOKENS = 120_000
 
+# Per-message overhead tokens for role/delimiters/structural framing
+_MESSAGE_OVERHEAD_TOKENS = 4
+# Characters per token ratio for English text (slightly more accurate than 4.0)
+_CHARS_PER_TOKEN = 3.5
+
 
 def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
-    """Rough token estimate: ~4 chars per token for English text."""
-    return sum(len(str(m.get("content", ""))) // 4 for m in messages)
+    """Estimate token count from messages, including tool call content and overhead.
+
+    Counts content from the ``content`` field and from any ``tool_calls`` entries
+    (function name + serialized arguments). Adds a small per-message overhead for
+    role and delimiter tokens.
+    """
+    total = 0
+    for m in messages:
+        # Per-message overhead (role, delimiters, structural tokens)
+        total += _MESSAGE_OVERHEAD_TOKENS
+
+        # Content field
+        content = m.get("content", "")
+        if content:
+            total += int(len(str(content)) / _CHARS_PER_TOKEN)
+
+        # Tool calls (assistant messages requesting tool use)
+        tool_calls = m.get("tool_calls")
+        if tool_calls and isinstance(tool_calls, list):
+            for tc in tool_calls:
+                func = tc.get("function") if isinstance(tc, dict) else getattr(tc, "function", None)
+                if func is None:
+                    continue
+                name = func.get("name", "") if isinstance(func, dict) else getattr(func, "name", "")
+                args = (
+                    func.get("arguments", "")
+                    if isinstance(func, dict)
+                    else getattr(func, "arguments", "")
+                )
+                total += int(len(str(name)) / _CHARS_PER_TOKEN)
+                total += int(len(str(args)) / _CHARS_PER_TOKEN)
+
+    return total
 
 
 def _format_validation_error(tool_name: str, exc: ValidationError, tool: Tool | None = None) -> str:
@@ -235,15 +271,78 @@ class BackshopAgent:
     @staticmethod
     def _trim_messages(
         messages: list[Any],
+        target_tokens: int = CONTEXT_TRIM_TARGET_TOKENS,
     ) -> list[Any]:
-        """Trim conversation messages to fit within context limits.
+        """Trim conversation messages to fit within a token budget.
 
-        Keeps the system prompt (first message) and the most recent messages.
+        Keeps the system prompt (first message) and removes the oldest
+        conversation messages until the estimated token count is at or below
+        *target_tokens*. Tool-call / tool-result pairs are treated as atomic
+        units: an assistant message containing ``tool_calls`` is never removed
+        without also removing the corresponding ``tool`` role messages that
+        follow it (and vice-versa).
         """
-        if len(messages) <= CONTEXT_TRIM_KEEP_RECENT + 1:
+        if len(messages) <= 2:
             return messages
-        # system prompt + last N messages
-        return [messages[0], *messages[-(CONTEXT_TRIM_KEEP_RECENT):]]
+
+        if _estimate_tokens(messages) <= target_tokens:
+            return messages
+
+        # Separate the system prompt from the conversation body.
+        system = messages[0]
+        body = list(messages[1:])
+
+        # Group the body into "blocks" that must be removed together.
+        # A block is either:
+        #   - A single message (user or assistant without tool_calls)
+        #   - An assistant message with tool_calls + all immediately following
+        #     tool-role messages (the paired results)
+        blocks: list[list[Any]] = []
+        i = 0
+        while i < len(body):
+            msg = body[i]
+            tc = (
+                msg.get("tool_calls") if isinstance(msg, dict) else getattr(msg, "tool_calls", None)
+            )
+            has_tool_calls = bool(tc)
+            role = msg.get("role") if isinstance(msg, dict) else getattr(msg, "role", None)
+            if role == "assistant" and has_tool_calls:
+                # Collect this assistant message and all consecutive tool results
+                block: list[Any] = [msg]
+                j = i + 1
+                while j < len(body):
+                    next_msg = body[j]
+                    next_role = (
+                        next_msg.get("role")
+                        if isinstance(next_msg, dict)
+                        else getattr(next_msg, "role", None)
+                    )
+                    if next_role == "tool":
+                        block.append(next_msg)
+                        j += 1
+                    else:
+                        break
+                blocks.append(block)
+                i = j
+            else:
+                blocks.append([msg])
+                i += 1
+
+        # Remove blocks from the front (oldest) until we fit the budget,
+        # but always keep at least the last block so we never return only the
+        # system prompt.
+        while len(blocks) > 1:
+            remaining = [system]
+            for blk in blocks:
+                remaining.extend(blk)
+            if _estimate_tokens(remaining) <= target_tokens:
+                break
+            blocks.pop(0)
+
+        result: list[Any] = [system]
+        for blk in blocks:
+            result.extend(blk)
+        return result
 
     def _validate_tool_args(
         self, tool: Tool, tool_args: dict[str, Any]
