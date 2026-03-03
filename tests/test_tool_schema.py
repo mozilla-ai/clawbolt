@@ -1,4 +1,4 @@
-"""Tests for tool_to_openai_schema with Pydantic model-based parameters."""
+"""Tests for tool_to_function_schema with Pydantic model-based parameters."""
 
 import json
 from typing import Any
@@ -10,7 +10,7 @@ from backend.app.agent.tools.base import (
     ToolResult,
     _inline_refs,
     _strip_titles,
-    tool_to_openai_schema,
+    tool_to_function_schema,
 )
 from backend.app.agent.tools.estimate_tools import (
     EstimateLineItemParams,
@@ -124,14 +124,14 @@ def test_strip_titles_preserves_non_title_keys() -> None:
     assert result == {"type": "object", "description": "A foo object"}
 
 
-# --- tool_to_openai_schema with nested Pydantic model ---
+# --- tool_to_function_schema with nested Pydantic model ---
 
 
 async def _dummy_func() -> ToolResult:
     return ToolResult(content="ok")
 
 
-def test_tool_to_openai_schema_flat_for_estimate_params() -> None:
+def test_tool_to_function_schema_flat_for_estimate_params() -> None:
     """Schema for GenerateEstimateParams (nested model) should have no $defs/$ref."""
     tool = Tool(
         name="generate_estimate",
@@ -139,7 +139,7 @@ def test_tool_to_openai_schema_flat_for_estimate_params() -> None:
         function=_dummy_func,
         params_model=GenerateEstimateParams,
     )
-    schema = tool_to_openai_schema(tool)
+    schema = tool_to_function_schema(tool)
     schema_json = json.dumps(schema)
 
     assert "$defs" not in schema_json
@@ -158,7 +158,7 @@ def test_tool_to_openai_schema_flat_for_estimate_params() -> None:
     assert "unit_price" in item_schema["properties"]
 
 
-def test_tool_to_openai_schema_no_titles() -> None:
+def test_tool_to_function_schema_no_titles() -> None:
     """Schema should not contain any 'title' keys at any level."""
     tool = Tool(
         name="generate_estimate",
@@ -166,12 +166,12 @@ def test_tool_to_openai_schema_no_titles() -> None:
         function=_dummy_func,
         params_model=GenerateEstimateParams,
     )
-    schema = tool_to_openai_schema(tool)
+    schema = tool_to_function_schema(tool)
     schema_json = json.dumps(schema)
     assert '"title"' not in schema_json
 
 
-def test_tool_to_openai_schema_simple_model() -> None:
+def test_tool_to_function_schema_simple_model() -> None:
     """Simple model (no nesting) should also produce clean schema."""
 
     class SimpleParams(BaseModel):
@@ -186,7 +186,7 @@ def test_tool_to_openai_schema_simple_model() -> None:
         function=_dummy_func,
         params_model=SimpleParams,
     )
-    schema = tool_to_openai_schema(tool)
+    schema = tool_to_function_schema(tool)
     params = schema["function"]["parameters"]
     assert params["type"] == "object"
     assert "name" in params["properties"]
@@ -195,7 +195,7 @@ def test_tool_to_openai_schema_simple_model() -> None:
     assert '"title"' not in json.dumps(schema)
 
 
-def test_tool_to_openai_schema_fallback_to_raw_parameters() -> None:
+def test_tool_to_function_schema_fallback_to_raw_parameters() -> None:
     """When no params_model, should use raw parameters dict as-is."""
     raw_params: dict[str, Any] = {
         "type": "object",
@@ -208,7 +208,7 @@ def test_tool_to_openai_schema_fallback_to_raw_parameters() -> None:
         function=_dummy_func,
         parameters=raw_params,
     )
-    schema = tool_to_openai_schema(tool)
+    schema = tool_to_function_schema(tool)
     assert schema["function"]["parameters"] == raw_params
 
 

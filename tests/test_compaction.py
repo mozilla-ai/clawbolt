@@ -337,17 +337,17 @@ async def test_compact_session_uses_configured_model(
         patch("backend.app.agent.compaction.settings") as mock_settings,
     ):
         mock_settings.compaction_enabled = True
-        mock_settings.compaction_model = "gpt-4o-mini"
-        mock_settings.compaction_provider = "openai"
+        mock_settings.compaction_model = "test-compact-model"
+        mock_settings.compaction_provider = "test-provider"
         mock_settings.compaction_max_tokens = 300
-        mock_settings.llm_model = "gpt-4o"
-        mock_settings.llm_provider = "openai"
+        mock_settings.llm_model = "test-model"
+        mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
         await compact_session(db_session, test_contractor.id, messages)
 
     mock_llm.assert_called_once()
     call_kwargs = mock_llm.call_args
-    assert call_kwargs.kwargs.get("model") == "gpt-4o-mini"
+    assert call_kwargs.kwargs.get("model") == "test-compact-model"
 
 
 @pytest.mark.asyncio()
@@ -369,14 +369,14 @@ async def test_compact_session_falls_back_to_llm_model(
         mock_settings.compaction_model = ""
         mock_settings.compaction_provider = ""
         mock_settings.compaction_max_tokens = 500
-        mock_settings.llm_model = "gpt-4o"
-        mock_settings.llm_provider = "openai"
+        mock_settings.llm_model = "test-model"
+        mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
         await compact_session(db_session, test_contractor.id, messages)
 
     call_kwargs = mock_llm.call_args
-    assert call_kwargs.kwargs.get("model") == "gpt-4o"
-    assert call_kwargs.kwargs.get("provider") == "openai"
+    assert call_kwargs.kwargs.get("model") == "test-model"
+    assert call_kwargs.kwargs.get("provider") == "test-provider"
 
 
 # --- Integration: load_conversation_history with compaction ---

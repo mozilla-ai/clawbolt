@@ -268,8 +268,8 @@ async def test_file_tools_wired_when_storage_configured(
     mock_settings.storage_provider = "dropbox"
     mock_settings.dropbox_access_token = "test-token"
     mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "gpt-4o"
-    mock_settings.llm_provider = "openai"
+    mock_settings.llm_model = "test-model"
+    mock_settings.llm_provider = "test-provider"
     mock_get_storage.return_value = MockStorageBackend()
     mock_acompletion.return_value = make_text_response("File saved!")  # type: ignore[union-attr]
 
@@ -300,8 +300,8 @@ async def test_file_tools_skipped_when_no_storage(
     mock_settings.storage_provider = "dropbox"
     mock_settings.dropbox_access_token = ""
     mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "gpt-4o"
-    mock_settings.llm_provider = "openai"
+    mock_settings.llm_model = "test-model"
+    mock_settings.llm_provider = "test-provider"
     mock_acompletion.return_value = make_text_response("No file tools!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -507,8 +507,8 @@ async def test_storage_exception_skips_file_tools(
     mock_settings.storage_provider = "dropbox"
     mock_settings.dropbox_access_token = "some-token"
     mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "gpt-4o"
-    mock_settings.llm_provider = "openai"
+    mock_settings.llm_model = "test-model"
+    mock_settings.llm_provider = "test-provider"
     mock_get_storage.side_effect = RuntimeError("Storage backend init failed")
     mock_acompletion.return_value = make_text_response("No file tools due to error!")  # type: ignore[union-attr]
 
@@ -837,8 +837,8 @@ async def test_auto_save_persists_media_to_storage(
     mock_settings.storage_provider = "local"
     mock_settings.dropbox_access_token = ""
     mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "gpt-4o"
-    mock_settings.llm_provider = "openai"
+    mock_settings.llm_model = "test-model"
+    mock_settings.llm_provider = "test-provider"
     mock_storage = MockStorageBackend()
     mock_get_storage.return_value = mock_storage
     mock_acompletion.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
@@ -890,8 +890,8 @@ async def test_auto_save_failure_does_not_block_processing(
     mock_settings.storage_provider = "local"
     mock_settings.dropbox_access_token = ""
     mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "gpt-4o"
-    mock_settings.llm_provider = "openai"
+    mock_settings.llm_model = "test-model"
+    mock_settings.llm_provider = "test-provider"
     # Make storage raise on upload to simulate auto-save failure
     mock_storage = MagicMock(spec=MockStorageBackend)
     mock_storage.create_folder = AsyncMock()

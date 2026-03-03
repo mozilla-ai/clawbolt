@@ -42,8 +42,8 @@ class Settings(BaseSettings):
     )
 
     # LLM
-    llm_provider: str = "openai"
-    llm_model: str = "gpt-4o"
+    llm_provider: str = ""
+    llm_model: str = ""
     llm_api_base: str | None = None
     vision_model: str = ""  # empty = fall back to llm_model
     llm_max_tokens_agent: int = 500
