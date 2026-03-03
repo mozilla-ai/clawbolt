@@ -1,10 +1,10 @@
 import asyncio
-import json
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
+import json_repair
 from any_llm import (
     AuthenticationError,
     ContentFilterError,
@@ -305,8 +305,10 @@ class BackshopAgent:
                     continue
                 tool_name = func.name
                 try:
-                    tool_args = json.loads(func.arguments)
-                except json.JSONDecodeError:
+                    tool_args = json_repair.loads(func.arguments)
+                    if not isinstance(tool_args, dict):
+                        raise ValueError(f"Expected dict, got {type(tool_args).__name__}")
+                except (ValueError, TypeError):
                     logger.warning(
                         "Malformed tool arguments for %s: %s",
                         tool_name,

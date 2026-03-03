@@ -383,6 +383,43 @@ async def test_agent_handles_malformed_tool_arguments(
     assert any("bad args" in a for a in response.actions_taken)
 
 
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_agent_repairs_slightly_malformed_json(
+    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Agent should repair common LLM JSON mistakes like trailing commas."""
+    # LLM returns a tool call with a trailing comma (common LLM mistake)
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_repair",
+                "name": "save_fact",
+                "arguments": '{"key": "hourly_rate", "value": "$75/hr",}',
+            }
+        ]
+    )
+    followup_response = make_text_response("Got it!")
+
+    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+
+    mock_save = AsyncMock(return_value="Saved hourly_rate = $75/hr")
+    tool = Tool(
+        name="save_fact",
+        description="Save a fact",
+        function=mock_save,
+        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+    )
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("My rate is $75/hour")
+
+    # Tool SHOULD have been called despite the trailing comma
+    mock_save.assert_called_once_with(key="hourly_rate", value="$75/hr")
+    assert any("Called save_fact" in a for a in response.actions_taken)
+
+
 # ---------------------------------------------------------------------------
 # Typed LLM exception handling tests (issue #173)
 # ---------------------------------------------------------------------------
