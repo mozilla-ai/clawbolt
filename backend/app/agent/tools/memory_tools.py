@@ -1,10 +1,15 @@
-from typing import Literal
+from __future__ import annotations
+
+from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.registry import ToolContext
 
 
 class SaveFactParams(BaseModel):
@@ -83,3 +88,17 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
             params_model=ForgetFactParams,
         ),
     ]
+
+
+def _memory_factory(ctx: ToolContext) -> list[Tool]:
+    """Factory for memory tools, used by the registry."""
+    return create_memory_tools(ctx.db, ctx.contractor.id)
+
+
+def _register() -> None:
+    from backend.app.agent.tools.registry import default_registry
+
+    default_registry.register("memory", _memory_factory)
+
+
+_register()

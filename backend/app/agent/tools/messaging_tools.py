@@ -1,7 +1,14 @@
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
 from pydantic import BaseModel, Field
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.services.messaging import MessagingService
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.registry import ToolContext
 
 
 class SendReplyParams(BaseModel):
@@ -60,3 +67,18 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
             tags={ToolTags.SENDS_REPLY},
         ),
     ]
+
+
+def _messaging_factory(ctx: ToolContext) -> list[Tool]:
+    """Factory for messaging tools, used by the registry."""
+    assert ctx.messaging_service is not None
+    return create_messaging_tools(ctx.messaging_service, to_address=ctx.to_address)
+
+
+def _register() -> None:
+    from backend.app.agent.tools.registry import default_registry
+
+    default_registry.register("messaging", _messaging_factory, requires_messaging=True)
+
+
+_register()
