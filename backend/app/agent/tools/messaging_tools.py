@@ -1,4 +1,4 @@
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 from backend.app.services.messaging import MessagingService
 
 
@@ -33,6 +33,7 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
                 },
                 "required": ["message"],
             },
+            tags={ToolTags.SENDS_REPLY},
         ),
         Tool(
             name="send_media_reply",
@@ -49,5 +50,6 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
                 },
                 "required": ["message", "media_url"],
             },
+            tags={ToolTags.SENDS_REPLY},
         ),
     ]
