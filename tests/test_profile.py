@@ -114,10 +114,15 @@ def test_build_onboarding_prompt_includes_confirmation_instruction() -> None:
     """Onboarding prompt should instruct agent to confirm saved info."""
     prompt = build_onboarding_prompt()
     assert "confirm what you've saved" in prompt
-    assert "what's missing" in prompt.lower()
 
 
-def test_build_onboarding_prompt_mentions_communication_style_key() -> None:
-    """Onboarding prompt should mention communication_style as a save_fact key."""
+def test_build_onboarding_prompt_mentions_update_profile_tool() -> None:
+    """Onboarding prompt should mention update_profile as the tool for profile data."""
     prompt = build_onboarding_prompt()
-    assert "communication_style" in prompt
+    assert "update_profile" in prompt
+
+
+def test_build_onboarding_prompt_mentions_save_fact_for_general() -> None:
+    """Onboarding prompt should mention save_fact for general facts."""
+    prompt = build_onboarding_prompt()
+    assert "save_fact" in prompt

@@ -1,7 +1,7 @@
 """Integration tests for the onboarding flow via a real LLM.
 
 Verifies that a new contractor's first message triggers onboarding,
-the agent extracts profile fields via save_fact, and the profile
+the agent extracts profile fields via update_profile, and the profile
 is updated in the database.
 
 Requires ANTHROPIC_API_KEY set in environment:
@@ -16,10 +16,13 @@ from sqlalchemy.orm import Session
 from backend.app.agent.core import BackshopAgent
 from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
-    extract_profile_updates,
     is_onboarding_needed,
 )
 from backend.app.agent.tools.memory_tools import create_memory_tools
+from backend.app.agent.tools.profile_tools import (
+    create_profile_tools,
+    extract_profile_updates_from_tool_calls,
+)
 from backend.app.models import Contractor
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
@@ -51,6 +54,7 @@ async def test_onboarding_extracts_profile_from_intro(
 
         agent = BackshopAgent(db=integration_db, contractor=contractor)
         tools = create_memory_tools(integration_db, contractor.id)
+        tools.extend(create_profile_tools(integration_db, contractor))
         agent.register_tools(tools)
 
         system_prompt = build_onboarding_system_prompt(contractor)
@@ -60,12 +64,12 @@ async def test_onboarding_extracts_profile_from_intro(
             temperature=0,
         )
 
-    # Agent should have called save_fact for name and trade
+    # Agent should have called update_profile for name and trade
     tool_names = [tc["name"] for tc in response.tool_calls]
-    saved_facts = "save_fact" in tool_names
+    used_profile_tool = "update_profile" in tool_names
 
-    # Extract profile updates using the onboarding logic
-    updates = extract_profile_updates(response)
+    # Extract profile updates using the new extraction logic
+    updates = extract_profile_updates_from_tool_calls(response.tool_calls)
     extracted_profile = "name" in updates or "trade" in updates
 
     # Reply should be friendly and acknowledge the info
@@ -73,10 +77,12 @@ async def test_onboarding_extracts_profile_from_intro(
     reply_lower = response.reply_text.lower()
     acknowledged = "jake" in reply_lower or "plumb" in reply_lower
 
-    # Primary check: agent saved facts. Fallback: agent at least acknowledged the info.
-    assert saved_facts or acknowledged, (
-        f"Expected save_fact calls or acknowledgment in reply. "
+    # Primary check: agent used update_profile. Fallback: agent at least acknowledged the info.
+    assert used_profile_tool or acknowledged, (
+        f"Expected update_profile calls or acknowledgment in reply. "
         f"Tool calls: {tool_names}, reply: {response.reply_text[:200]}"
     )
-    if saved_facts:
-        assert extracted_profile, f"save_fact called but no profile updates extracted: {updates}"
+    if used_profile_tool:
+        assert extracted_profile, (
+            f"update_profile called but no profile updates extracted: {updates}"
+        )
