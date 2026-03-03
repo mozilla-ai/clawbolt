@@ -2,8 +2,10 @@ import { defineConfig } from "astro/config";
 import starlight from "@astrojs/starlight";
 
 export default defineConfig({
-  site: "https://mozilla-ai.github.io",
-  base: "/clawbolt",
+  site: process.env.CI
+    ? "https://mozilla-ai.github.io"
+    : "http://localhost:4321",
+  base: process.env.CI ? "/clawbolt" : "/",
   integrations: [
     starlight({
       title: "Clawbolt",

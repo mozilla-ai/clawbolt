@@ -34,6 +34,8 @@ jobs:
       - name: Build docs
         working-directory: docs
         run: npm run build
+        env:
+          CI: true
 
       - uses: actions/upload-pages-artifact@v3
         with:
