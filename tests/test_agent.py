@@ -8,6 +8,7 @@ from any_llm import (
     ContextLengthExceededError,
     RateLimitError,
 )
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import (
@@ -28,6 +29,10 @@ from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.models import Contractor
 from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
+
+
+class _EmptyParams(BaseModel):
+    """Minimal params model used by registry tests that need a valid tool."""
 
 
 @pytest.mark.asyncio()
@@ -1384,7 +1389,14 @@ class TestToolRegistry:
             async def noop() -> ToolResult:
                 return ToolResult(content="ok")
 
-            return [Tool(name="dummy", description="test tool", function=noop)]
+            return [
+                Tool(
+                    name="dummy",
+                    description="test tool",
+                    function=noop,
+                    params_model=_EmptyParams,
+                )
+            ]
 
         registry.register("dummy", dummy_factory)
         ctx = ToolContext(db=db_session, contractor=test_contractor)
@@ -1438,10 +1450,24 @@ class TestToolRegistry:
         registry = ToolRegistry()
 
         def storage_factory(ctx: ToolContext) -> list[Tool]:
-            return [Tool(name="with_storage", description="test", function=lambda: None)]
+            return [
+                Tool(
+                    name="with_storage",
+                    description="test",
+                    function=lambda: None,
+                    params_model=_EmptyParams,
+                )
+            ]
 
         def msg_factory(ctx: ToolContext) -> list[Tool]:
-            return [Tool(name="with_msg", description="test", function=lambda: None)]
+            return [
+                Tool(
+                    name="with_msg",
+                    description="test",
+                    function=lambda: None,
+                    params_model=_EmptyParams,
+                )
+            ]
 
         registry.register("s", storage_factory, requires_storage=True)
         registry.register("m", msg_factory, requires_messaging=True)
@@ -1498,10 +1524,24 @@ class TestToolRegistry:
         registry = ToolRegistry()
 
         def factory_a(ctx: ToolContext) -> list[Tool]:
-            return [Tool(name="a", description="first", function=lambda: None)]
+            return [
+                Tool(
+                    name="a",
+                    description="first",
+                    function=lambda: None,
+                    params_model=_EmptyParams,
+                )
+            ]
 
         def factory_b(ctx: ToolContext) -> list[Tool]:
-            return [Tool(name="b", description="second", function=lambda: None)]
+            return [
+                Tool(
+                    name="b",
+                    description="second",
+                    function=lambda: None,
+                    params_model=_EmptyParams,
+                )
+            ]
 
         registry.register("same_name", factory_a)
         registry.register("same_name", factory_b)

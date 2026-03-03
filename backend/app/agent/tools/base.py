@@ -77,8 +77,11 @@ def _strip_titles(obj: Any) -> Any:
 def tool_to_openai_schema(tool: Tool) -> dict[str, Any]:
     """Convert a Tool to OpenAI function calling schema.
 
-    When a params_model is set, the JSON Schema is generated from the Pydantic
-    model (single source of truth). Otherwise falls back to the raw dict.
+    The JSON Schema is generated from the tool's ``params_model``
+    (Pydantic BaseModel), which is the single source of truth for
+    parameter definitions.  Falls back to the raw ``parameters`` dict
+    only for backward compatibility with tests that create tools
+    without a ``params_model``.
     """
     if tool.params_model is not None:
         schema = tool.params_model.model_json_schema()

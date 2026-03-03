@@ -25,6 +25,7 @@ from backend.app.agent.tools.memory_tools import (
     SaveFactParams,
 )
 from backend.app.agent.tools.messaging_tools import SendMediaReplyParams, SendReplyParams
+from backend.app.agent.tools.profile_tools import UpdateProfileParams
 from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
@@ -110,6 +111,11 @@ def test_checklist_tool_param_models_exist() -> None:
     assert issubclass(AddChecklistItemParams, BaseModel)
     assert issubclass(ListChecklistItemsParams, BaseModel)
     assert issubclass(RemoveChecklistItemParams, BaseModel)
+
+
+def test_profile_tool_param_models_exist() -> None:
+    """Profile tool param models should be importable and valid BaseModels."""
+    assert issubclass(UpdateProfileParams, BaseModel)
 
 
 def test_file_tool_param_models_exist() -> None:
@@ -357,3 +363,58 @@ async def test_agent_validation_wrong_type_returns_field_error(
     error_result = response.tool_calls[0]["result"]
     assert "value" in error_result
     assert "Validation error for typed_tool" in error_result
+
+
+# ---------------------------------------------------------------------------
+# Registry enforcement: tools without params_model are rejected
+# ---------------------------------------------------------------------------
+
+
+def test_registry_rejects_tool_without_params_model() -> None:
+    """Registry should raise ValueError for tools without params_model."""
+    from unittest.mock import MagicMock
+
+    from backend.app.agent.tools.registry import ToolContext, ToolRegistry
+
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    def bad_factory(ctx: ToolContext) -> list[Tool]:
+        return [
+            Tool(
+                name="legacy_tool",
+                description="No params_model",
+                function=dummy,
+                parameters={"type": "object", "properties": {}},
+            )
+        ]
+
+    registry = ToolRegistry()
+    registry.register("bad", bad_factory)
+
+    ctx = ToolContext(db=MagicMock(), contractor=MagicMock())
+    with pytest.raises(ValueError, match="missing a params_model"):
+        registry.create_tools(ctx)
+
+
+def test_update_profile_params_accepts_partial_update() -> None:
+    """UpdateProfileParams should accept partial updates with all fields optional."""
+    p = UpdateProfileParams(name="Jane Doe")
+    assert p.name == "Jane Doe"
+    assert p.trade is None
+    assert p.location is None
+
+
+def test_update_profile_params_accepts_all_fields() -> None:
+    """UpdateProfileParams should accept all fields together."""
+    p = UpdateProfileParams(
+        name="Jane Doe",
+        trade="electrician",
+        location="Portland, OR",
+        hourly_rate="$85/hr",
+        business_hours="Mon-Fri 7am-5pm",
+        communication_style="casual",
+        soul_text="Friendly and efficient",
+    )
+    assert p.name == "Jane Doe"
+    assert p.hourly_rate == "$85/hr"
