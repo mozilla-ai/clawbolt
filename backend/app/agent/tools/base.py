@@ -1,5 +1,6 @@
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from enum import StrEnum
 from typing import Any
 
 from pydantic import BaseModel
@@ -12,12 +13,24 @@ class ToolTags:
     SAVES_MEMORY = "saves_memory"
 
 
+class ToolErrorKind(StrEnum):
+    """Classification of tool errors to guide LLM self-correction."""
+
+    VALIDATION = "validation"
+    SERVICE = "service"
+    NOT_FOUND = "not_found"
+    PERMISSION = "permission"
+    INTERNAL = "internal"
+
+
 @dataclass
 class ToolResult:
     """Structured result from a tool execution."""
 
     content: str
     is_error: bool = False
+    error_kind: ToolErrorKind | None = None
+    hint: str = ""
 
 
 @dataclass

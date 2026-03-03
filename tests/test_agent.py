@@ -16,7 +16,7 @@ from backend.app.agent.core import (
     BackshopAgent,
     _estimate_tokens,
 )
-from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
@@ -960,4 +960,283 @@ async def test_validation_error_includes_expected_schema(
     assert '"key": string (required)' in content
     assert '"value": string (required)' in content
     assert '"category": string (optional, default: general)' in content
-    assert "[Analyze the error" in content
+    assert "[Check the expected parameter format" in content
+
+
+# ---------------------------------------------------------------------------
+# Structured error taxonomy tests (issue #299)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_error_kind_not_found_produces_specific_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """NOT_FOUND error kind should produce a resource-not-found hint."""
+
+    async def missing_tool(**kwargs: object) -> ToolResult:
+        return ToolResult(
+            content="Error: item #42 not found",
+            is_error=True,
+            error_kind=ToolErrorKind.NOT_FOUND,
+        )
+
+    tool = Tool(name="find_item", description="test", function=missing_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "find_item", "arguments": json.dumps({})}]
+        ),
+        make_text_response("That item doesn't exist."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    result_content = response.tool_calls[0]["result"]
+    assert "not found" in result_content.lower()
+    assert "[The requested resource was not found" in result_content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_error_kind_service_produces_specific_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """SERVICE error kind should produce an external-service hint."""
+
+    async def failing_service(**kwargs: object) -> ToolResult:
+        return ToolResult(
+            content="Error: Dropbox API unavailable",
+            is_error=True,
+            error_kind=ToolErrorKind.SERVICE,
+        )
+
+    tool = Tool(name="upload", description="test", function=failing_service, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "upload", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Storage is down."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    result_content = response.tool_calls[0]["result"]
+    assert "[An external service is temporarily unavailable" in result_content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_error_kind_validation_produces_specific_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """VALIDATION error kind should produce a parameter-check hint."""
+
+    async def bad_args_tool(**kwargs: object) -> ToolResult:
+        return ToolResult(
+            content="Error: quantity must be positive",
+            is_error=True,
+            error_kind=ToolErrorKind.VALIDATION,
+        )
+
+    tool = Tool(name="create_thing", description="test", function=bad_args_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "create_thing", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Let me fix that."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    result_content = response.tool_calls[0]["result"]
+    assert "[Check the expected parameter format" in result_content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_error_kind_internal_produces_specific_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """INTERNAL error kind should produce a do-not-retry hint."""
+
+    async def buggy_tool(**kwargs: object) -> ToolResult:
+        return ToolResult(
+            content="Error: unexpected None in config",
+            is_error=True,
+            error_kind=ToolErrorKind.INTERNAL,
+        )
+
+    tool = Tool(name="broken_tool", description="test", function=buggy_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "broken_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Something went wrong."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    result_content = response.tool_calls[0]["result"]
+    assert "[An internal error occurred" in result_content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_error_with_no_kind_uses_default_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """ToolResult with is_error=True but no error_kind should use the default hint."""
+
+    async def legacy_error_tool(**kwargs: object) -> ToolResult:
+        return ToolResult(content="Error: something went wrong", is_error=True)
+
+    tool = Tool(name="legacy_tool", description="test", function=legacy_error_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "legacy_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("I'll try another way."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    result_content = response.tool_calls[0]["result"]
+    assert "[Analyze the error above and try a different approach.]" in result_content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_error_with_custom_hint_overrides_kind_default(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """ToolResult with a custom hint should use it instead of the error_kind default."""
+
+    async def custom_hint_tool(**kwargs: object) -> ToolResult:
+        return ToolResult(
+            content="Error: estimate #99 not found",
+            is_error=True,
+            error_kind=ToolErrorKind.NOT_FOUND,
+            hint="Ask the user for the correct estimate number.",
+        )
+
+    tool = Tool(name="get_estimate", description="test", function=custom_hint_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "get_estimate", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Which estimate?"),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    result_content = response.tool_calls[0]["result"]
+    # Custom hint should appear, not the default NOT_FOUND hint
+    assert "[Ask the user for the correct estimate number.]" in result_content
+    assert "requested resource was not found" not in result_content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_different_error_kinds_produce_different_hints(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Each error kind should produce a distinct guidance message."""
+    collected_hints: dict[str, str] = {}
+
+    for kind in ToolErrorKind:
+
+        async def make_tool(error_kind: ToolErrorKind = kind, **kwargs: object) -> ToolResult:
+            return ToolResult(
+                content=f"Error: {error_kind.value} failure",
+                is_error=True,
+                error_kind=error_kind,
+            )
+
+        tool = Tool(name="test_tool", description="test", function=make_tool, parameters={})
+
+        mock_acompletion.reset_mock()
+        mock_acompletion.side_effect = [
+            make_tool_call_response(
+                tool_calls=[{"id": "call_1", "name": "test_tool", "arguments": json.dumps({})}]
+            ),
+            make_text_response("ok"),
+        ]
+
+        agent = BackshopAgent(db=db_session, contractor=test_contractor)
+        agent.register_tools([tool])
+        response = await agent.process_message("test", system_prompt_override="system")
+
+        collected_hints[kind.value] = response.tool_calls[0]["result"]
+
+    # All hints should be different from each other
+    hint_values = list(collected_hints.values())
+    assert len(set(hint_values)) == len(hint_values), (
+        f"Expected all error kinds to produce unique hints, got: {collected_hints}"
+    )
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_unhandled_exception_uses_internal_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Unhandled tool exceptions should produce INTERNAL error kind hint."""
+
+    async def crashing_tool(**kwargs: object) -> ToolResult:
+        raise RuntimeError("Unexpected crash")
+
+    tool = Tool(name="crash_tool", description="test", function=crashing_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "crash_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Something went wrong."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    await agent.process_message("test", system_prompt_override="system")
+
+    # Check the tool result sent back to the LLM
+    followup_call = mock_acompletion.call_args_list[1]
+    messages = followup_call.kwargs["messages"]
+    tool_msg = next(m for m in messages if m.get("role") == "tool")
+    content = tool_msg["content"]
+
+    assert "[An internal error occurred" in content
