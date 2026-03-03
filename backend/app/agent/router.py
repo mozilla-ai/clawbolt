@@ -13,7 +13,7 @@ from collections.abc import Awaitable, Callable
 from any_llm import AuthenticationError, ContentFilterError
 from sqlalchemy.orm import Session
 
-from backend.app.agent.context import load_conversation_history
+from backend.app.agent.context import StoredToolInteraction, load_conversation_history
 from backend.app.agent.core import AgentResponse, BackshopAgent
 from backend.app.agent.events import AgentEvent
 from backend.app.agent.messages import AgentMessage
@@ -261,11 +261,15 @@ def persist_outbound(
         return
 
     # Serialize tool interactions for conversation history reconstruction.
-    # Strip non-serializable 'tags' (sets) before JSON encoding.
+    # Validate each record via StoredToolInteraction, which also strips
+    # runtime-only fields like 'tags' (sets) that are not JSON-serializable.
     tool_interactions = ""
     if response.tool_calls:
-        serializable = [{k: v for k, v in tc.items() if k != "tags"} for tc in response.tool_calls]
-        tool_interactions = json.dumps(serializable)
+        validated = [
+            StoredToolInteraction.model_validate({k: v for k, v in tc.items() if k != "tags"})
+            for tc in response.tool_calls
+        ]
+        tool_interactions = json.dumps([v.model_dump() for v in validated])
 
     outbound = Message(
         conversation_id=conversation_id,
