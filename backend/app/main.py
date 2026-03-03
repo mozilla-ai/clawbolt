@@ -124,6 +124,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
     if channel_task and not channel_task.done():
         channel_task.cancel()
+    await _telegram_channel.stop()
     heartbeat_scheduler.stop()
 
 
