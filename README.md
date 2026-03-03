@@ -18,6 +18,8 @@
 
 Clawbolt is a messaging-first AI assistant that helps contractors manage their business: estimates, client records, job photos, voice memos, and more, all through Telegram. No app to install, no dashboard to learn. Just text.
 
+**[Read the full documentation](https://mozilla-ai.github.io/clawbolt)**
+
 ## Features
 
 - **Estimates** -- Describe a job, get a professional PDF estimate generated and sent back instantly
@@ -28,134 +30,27 @@ Clawbolt is a messaging-first AI assistant that helps contractors manage their b
 - **Proactive heartbeat** -- Clawbolt checks in periodically with reminders about stale drafts and follow-ups
 - **Onboarding** -- First-time contractors get a friendly conversation to set up their profile
 
-## How It Works
-
-```
-Contractor sends a Telegram message
-        |
-        v
-  Telegram webhook  -->  Media pipeline (photos, voice, docs)
-        |                        |
-        v                        v
-  Agent loop (any-llm)  <--  Processed context
-        |
-        v
-  Tool execution (memory, estimates, file upload)
-        |
-        v
-  Reply sent via Telegram
-```
-
-The agent uses an LLM (configurable via [any-llm](https://github.com/mozilla-ai/any-llm)) to understand messages, call tools, and generate replies. A background heartbeat evaluates each contractor periodically and sends proactive messages when genuinely useful.
-
-## Quick Start (Docker)
-
-The fastest way to run Clawbolt is with Docker Compose. This starts PostgreSQL and the app together.
-
-### 1. Configure environment
+## Quick Start
 
 ```bash
+git clone https://github.com/mozilla-ai/clawbolt.git
+cd clawbolt
 cp .env.example .env
-```
-
-Edit `.env` and fill in the required credentials:
-
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `OPENAI_API_KEY` | Yes* | OpenAI API key (or set the key for your chosen provider) |
-| `TELEGRAM_BOT_TOKEN` | Yes | Telegram bot token from @BotFather |
-| `LLM_PROVIDER` | No | LLM provider name (default: `openai`) |
-| `LLM_MODEL` | No | Model to use (default: `gpt-4o`) |
-| `STORAGE_PROVIDER` | No | `local` (default), `dropbox`, or `google_drive` for file cataloging |
-| `DROPBOX_ACCESS_TOKEN` | No | Dropbox token (if using Dropbox storage) |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | No | Comma-separated allowlist of Telegram chat IDs (empty = allow all) |
-| `TELEGRAM_ALLOWED_USERNAMES` | No | Comma-separated allowlist of Telegram usernames (empty = allow all) |
-| `ANY_LLM_KEY` | No | any-llm.ai managed platform key (replaces individual provider keys) |
-
-*Set the API key env var for your chosen provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) or set `ANY_LLM_KEY` to use the [any-llm.ai](https://any-llm.ai) managed platform as a key vault for all providers.
-
-The `DATABASE_URL` is set automatically by Docker Compose: you don't need to change it.
-
-### 2. Start the services
-
-```bash
+# Edit .env with your TELEGRAM_BOT_TOKEN and LLM API key
 docker compose up --build
 ```
 
-This will:
-- Start a PostgreSQL 16 database
-- Build the app image (Python 3.11, ffmpeg for audio processing)
-- Run Alembic migrations to create the database schema
-- Start the FastAPI server on port 8000
-
-### 3. Verify it's running
+Verify it's running:
 
 ```bash
 curl http://localhost:8000/api/health
 # {"status":"ok"}
 ```
 
-### 4. Test it
+The Telegram webhook is registered automatically via a Cloudflare Tunnel. Send a message to your bot and Clawbolt will respond.
 
-The Telegram webhook is registered automatically: Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app and calls `setWebhook` on startup. No account or auth token required. Just send a message to your bot on Telegram and Clawbolt will respond.
-
-> **Manual fallback**: If you need to register the webhook manually (e.g. when running without Docker), start a tunnel yourself and call `setWebhook`:
-> ```bash
-> cloudflared tunnel --url http://localhost:8000
-> # Copy the https://*.trycloudflare.com URL from the output, then:
-> curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
->   -H "Content-Type: application/json" \
->   -d '{"url": "https://<your-tunnel-url>/api/webhooks/telegram"}'
-> ```
-
-## File Storage Setup
-
-Clawbolt can catalog job photos, estimates, and documents to a storage backend. Three providers are supported:
-
-### Local (default)
-
-Works out of the box: no configuration needed. Files are saved to `data/storage/` on disk.
-
-```
-data/storage/
-├── Job Photos/
-│   └── 2026-02-28/
-│       ├── site-front.jpg
-│       └── site-back.jpg
-└── Estimates/
-    └── EST-001.pdf
-```
-
-This is ideal for development and demos. Set `STORAGE_PROVIDER=local` (or leave it unset: it's the default).
-
-### Dropbox
-
-1. Go to the [Dropbox App Console](https://www.dropbox.com/developers/apps) and create a new app
-2. Choose **Scoped access** and **Full Dropbox** (or **App folder** for sandboxed access)
-3. Under **Permissions**, enable: `files.content.write`, `files.content.read`, `sharing.write`, `sharing.read`
-4. Generate an **access token** on the app's settings page
-5. Set environment variables:
-
-```bash
-STORAGE_PROVIDER=dropbox
-DROPBOX_ACCESS_TOKEN=sl.xxxxx...
-```
-
-### Google Drive
-
-1. Go to the [Google Cloud Console](https://console.cloud.google.com/) and create a project
-2. Enable the **Google Drive API**
-3. Create **OAuth 2.0 credentials** (Desktop app type)
-4. Complete the OAuth flow to get a credentials JSON
-5. Set environment variables:
-
-```bash
-STORAGE_PROVIDER=google_drive
-GOOGLE_DRIVE_CREDENTIALS_JSON='{"token": "...", "refresh_token": "...", ...}'
-```
-
-> **Multi-tenant note**: Storage is currently global: one storage account per deployment. Future versions will support per-contractor storage credentials so each contractor's files go to their own cloud account.
+See the docs for [full configuration options](https://mozilla-ai.github.io/clawbolt/configuration/), [storage setup](https://mozilla-ai.github.io/clawbolt/deployment/storage/), and [Telegram bot setup](https://mozilla-ai.github.io/clawbolt/deployment/telegram-setup/).
 
 ## Contributing
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for local setup, running tests, and troubleshooting.
+See [DEVELOPMENT.md](DEVELOPMENT.md) for local setup and running tests, or read the [full contributing guide](https://mozilla-ai.github.io/clawbolt/development/contributing/).
