@@ -461,13 +461,24 @@ async def evaluate_heartbeat_need(
     db: Session,
     contractor: Contractor,
     flags: list[str],
+    messaging_service: MessagingService | None = None,
 ) -> HeartbeatAction:
     """Ask the LLM to compose a message based on flagged items.
 
     Uses the compose_message tool calling protocol instead of raw JSON parsing.
     If the LLM does not call the tool, defaults to no_action.
+    Sends a typing indicator before the LLM call when a messaging_service is provided.
     """
     prompt = await build_heartbeat_context(db, contractor, flags)
+
+    # Send typing indicator before LLM call
+    if messaging_service:
+        to_address = contractor.channel_identifier or contractor.phone
+        if to_address:
+            try:
+                await messaging_service.send_typing_indicator(to=to_address)
+            except Exception:
+                logger.debug("Failed to send heartbeat typing indicator to %s", to_address)
 
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
@@ -584,7 +595,9 @@ async def run_heartbeat_for_contractor(
         )
 
     # Something was flagged -- escalate to LLM for message composition
-    action = await evaluate_heartbeat_need(db, contractor, check_result.flags)
+    action = await evaluate_heartbeat_need(
+        db, contractor, check_result.flags, messaging_service=messaging_service
+    )
 
     if action.action_type != "send_message" or not action.message:
         return action
