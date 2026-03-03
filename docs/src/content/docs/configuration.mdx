@@ -5,12 +5,15 @@ description: Environment variables and settings for Clawbolt.
 
 Clawbolt is configured via environment variables. Copy `.env.example` to `.env` and fill in the values.
 
+All available settings are listed in `.env.example` with defaults and comments. This page covers the most important ones by category.
+
 ## Required variables
 
 | Variable | Description |
 |----------|-------------|
 | `TELEGRAM_BOT_TOKEN` | Telegram bot token from [@BotFather](https://t.me/BotFather) |
 | LLM API key | `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, or the key for your chosen provider |
+| `TELEGRAM_ALLOWED_CHAT_IDS` or `TELEGRAM_ALLOWED_USERNAMES` | Who can message the bot. Set to `*` to allow everyone, or a comma-separated list. **Empty = deny all** |
 
 ## LLM configuration
 
@@ -48,3 +51,72 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | `DATABASE_URL` | | PostgreSQL connection string. Set automatically by Docker Compose |
 
 When running with Docker Compose, the `DATABASE_URL` is set automatically. You don't need to configure it.
+
+## LLM token limits
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LLM_MAX_TOKENS_AGENT` | `500` | Max tokens per agent loop LLM response |
+| `LLM_MAX_TOKENS_HEARTBEAT` | `300` | Max tokens per heartbeat LLM response |
+| `LLM_MAX_TOKENS_VISION` | `1000` | Max tokens per vision/image analysis response |
+
+## Whisper (audio transcription)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WHISPER_MODEL_SIZE` | `base` | faster-whisper model size (`tiny`, `base`, `small`, `medium`, `large`) |
+| `WHISPER_DEVICE` | `cpu` | Device for inference (`cpu` or `cuda`) |
+| `WHISPER_COMPUTE_TYPE` | `int8` | Quantization type (`int8`, `float16`, `float32`) |
+
+## Agent loop
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAX_TOOL_ROUNDS` | `10` | Maximum tool-calling rounds per agent invocation |
+| `MAX_INPUT_TOKENS` | `120000` | Max input token budget before context trimming |
+| `CONTEXT_TRIM_TARGET_TOKENS` | `80000` | Target token count after trimming |
+
+## Conversation and memory
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `CONVERSATION_TIMEOUT_HOURS` | `4` | Hours of inactivity before starting a new conversation |
+| `CONVERSATION_HISTORY_LIMIT` | `20` | Max messages included in LLM context |
+| `MEMORY_RECALL_LIMIT` | `20` | Max memory facts recalled per query |
+| `COMPACTION_ENABLED` | `true` | Enable automatic conversation compaction |
+| `COMPACTION_MODEL` | (same as `LLM_MODEL`) | Model used for compaction |
+| `COMPACTION_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for compaction |
+
+## Rate limiting
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WEBHOOK_RATE_LIMIT_MAX_REQUESTS` | `30` | Max webhook requests per window |
+| `WEBHOOK_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window in seconds |
+| `RATE_LIMIT_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for client IP (set `true` behind a reverse proxy) |
+
+## Heartbeat (proactive check-ins)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HEARTBEAT_ENABLED` | `true` | Enable proactive check-in messages |
+| `HEARTBEAT_INTERVAL_MINUTES` | `30` | Minutes between heartbeat evaluation ticks |
+| `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per contractor per day |
+| `HEARTBEAT_QUIET_HOURS_START` | `20` | Hour (24h) to stop sending heartbeats |
+| `HEARTBEAT_QUIET_HOURS_END` | `7` | Hour (24h) to resume sending heartbeats |
+| `HEARTBEAT_IDLE_DAYS` | `3` | Days of inactivity before flagging a contractor |
+| `HEARTBEAT_MODEL` | (same as `LLM_MODEL`) | Model used for heartbeat messages |
+| `HEARTBEAT_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for heartbeat messages |
+
+## HTTP timeouts
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `HTTP_TIMEOUT_SECONDS` | `30.0` | Default timeout for outbound HTTP requests |
+| `TELEGRAM_WEBHOOK_TIMEOUT_SECONDS` | `10.0` | Timeout for Telegram webhook registration |
+
+## Media
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `MAX_MEDIA_SIZE_BYTES` | `20971520` | Max upload size (20 MB default) |
