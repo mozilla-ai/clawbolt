@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <strong>AI assistant for solo blue-collar contractors</strong><br>
+  <strong>AI assistant for the trades</strong><br>
   Built by <a href="https://mozilla.ai">Mozilla.ai</a>
 </p>
 
