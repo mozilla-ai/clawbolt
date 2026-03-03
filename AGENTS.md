@@ -1,6 +1,6 @@
 # Clawbolt
 
-Clawbolt is an AI assistant for solo blue-collar contractors. FastAPI backend with a Telegram messaging interface and a custom tool-calling agent loop built on any-llm. Built by Mozilla.ai using the open-core model.
+Clawbolt is an AI assistant for the trades. FastAPI backend with a Telegram messaging interface and a custom tool-calling agent loop built on any-llm. Built by Mozilla.ai using the open-core model.
 
 ## Build & Run Commands
 
