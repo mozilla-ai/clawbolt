@@ -115,7 +115,6 @@ def test_full_message_agent_failure_still_returns_200(
     inbound = db_session.query(Message).filter(Message.direction == "inbound").first()
     assert inbound is not None
 
-    # Fallback reply sent
+    # Fallback reply is NOT stored (avoids poisoning conversation context)
     outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
-    assert outbound is not None
-    assert "trouble" in outbound.body.lower()
+    assert outbound is None
