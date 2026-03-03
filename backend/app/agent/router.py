@@ -318,7 +318,9 @@ async def handle_inbound_message(
     )
 
     # 3. Load history and run agent (with onboarding subscriber)
-    conversation_history = await load_conversation_history(db, message.conversation_id)
+    conversation_history = await load_conversation_history(
+        db, message.conversation_id, contractor_id=contractor.id
+    )
     was_onboarding = is_onboarding_needed(contractor)
     system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
     onboarding_sub = OnboardingSubscriber(db, contractor, was_onboarding)

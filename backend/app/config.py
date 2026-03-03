@@ -45,6 +45,10 @@ class Settings(BaseSettings):
     conversation_timeout_hours: int = 4
     conversation_history_limit: int = 20
     memory_recall_limit: int = 20
+    compaction_enabled: bool = True
+    compaction_model: str = ""  # empty = fall back to llm_model
+    compaction_provider: str = ""  # empty = fall back to llm_provider
+    compaction_max_tokens: int = 500
     heartbeat_stale_estimate_hours: int = 24
 
     # Rate limiting
