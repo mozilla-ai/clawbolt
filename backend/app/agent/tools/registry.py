@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import pkgutil
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -22,16 +23,6 @@ from backend.app.services.messaging import MessagingService
 from backend.app.services.storage_service import StorageBackend
 
 logger = logging.getLogger(__name__)
-
-# All tool modules that should be imported to trigger self-registration.
-_TOOL_MODULES: list[str] = [
-    "backend.app.agent.tools.memory_tools",
-    "backend.app.agent.tools.messaging_tools",
-    "backend.app.agent.tools.estimate_tools",
-    "backend.app.agent.tools.checklist_tools",
-    "backend.app.agent.tools.profile_tools",
-    "backend.app.agent.tools.file_tools",
-]
 
 # Factory names that are always included regardless of message content.
 _ALWAYS_INCLUDE: frozenset[str] = frozenset({"memory", "messaging", "profile"})
@@ -205,10 +196,12 @@ default_registry = ToolRegistry()
 
 
 def ensure_tool_modules_imported() -> None:
-    """Import all tool modules so they self-register with ``default_registry``.
+    """Auto-discover and import all tool modules that end with ``_tools``.
 
     This is idempotent: Python's import system caches modules, so repeated
     calls are essentially free.
     """
-    for module_path in _TOOL_MODULES:
-        importlib.import_module(module_path)
+    package = importlib.import_module("backend.app.agent.tools")
+    for _, name, _ in pkgutil.iter_modules(package.__path__, package.__name__ + "."):
+        if name.endswith("_tools"):
+            importlib.import_module(name)
