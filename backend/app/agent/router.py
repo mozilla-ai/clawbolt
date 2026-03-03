@@ -20,6 +20,7 @@ from backend.app.agent.tools.profile_tools import (
     extract_profile_updates_from_tool_calls,
 )
 from backend.app.config import settings
+from backend.app.enums import MessageDirection
 from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
 from backend.app.models import Contractor, Message
@@ -239,7 +240,7 @@ async def handle_inbound_message(
     if response.reply_text and not response.is_error_fallback:
         outbound = Message(
             conversation_id=message.conversation_id,
-            direction="outbound",
+            direction=MessageDirection.OUTBOUND,
             body=response.reply_text,
         )
         db.add(outbound)

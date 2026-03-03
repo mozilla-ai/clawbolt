@@ -4,6 +4,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Te
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.database import Base
+from backend.app.enums import ChecklistSchedule, ChecklistStatus, EstimateStatus
 
 
 class Contractor(Base):
@@ -125,7 +126,7 @@ class Estimate(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     total_amount: Mapped[float] = mapped_column(Float, default=0.0)
     status: Mapped[str] = mapped_column(
-        String(20), default="draft"
+        String(20), default=EstimateStatus.DRAFT
     )  # draft, sent, accepted, rejected
     pdf_url: Mapped[str] = mapped_column(String(500), default="")
     created_at: Mapped[datetime.datetime] = mapped_column(
@@ -177,12 +178,16 @@ class HeartbeatChecklistItem(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     contractor_id: Mapped[int] = mapped_column(Integer, ForeignKey("contractors.id"), index=True)
     description: Mapped[str] = mapped_column(Text)
-    schedule: Mapped[str] = mapped_column(String(50), default="daily")  # daily, weekdays, once
+    schedule: Mapped[str] = mapped_column(
+        String(50), default=ChecklistSchedule.DAILY
+    )  # daily, weekdays, once
     active_hours: Mapped[str] = mapped_column(String(255), default="")  # e.g. "7am-5pm"
     last_triggered_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
-    status: Mapped[str] = mapped_column(String(20), default="active")  # active, paused, completed
+    status: Mapped[str] = mapped_column(
+        String(20), default=ChecklistStatus.ACTIVE
+    )  # active, paused, completed
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
