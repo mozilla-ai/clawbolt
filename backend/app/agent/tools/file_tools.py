@@ -3,7 +3,9 @@
 import datetime
 import logging
 import re
+from typing import Literal
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
@@ -23,6 +25,59 @@ CATEGORY_SUBFOLDERS: dict[str, str] = {
     "document": "documents",
     "voice_note": "voice_notes",
 }
+
+FileCategory = Literal["job_photo", "estimate", "document", "voice_note"]
+
+
+class UploadToStorageParams(BaseModel):
+    """Parameters for the upload_to_storage tool."""
+
+    file_category: FileCategory = Field(
+        description="Category for organizing the file",
+    )
+    description: str = Field(
+        default="",
+        description="Brief description for the filename",
+    )
+    client_name: str | None = Field(
+        default=None,
+        description="Client name for folder organization",
+    )
+    client_address: str | None = Field(
+        default=None,
+        description="Client or job address for folder organization",
+    )
+    original_url: str | None = Field(
+        default=None,
+        description="Original URL of the media to upload",
+    )
+    mime_type: str = Field(
+        default="image/jpeg",
+        description="MIME type of the file (default: image/jpeg)",
+    )
+
+
+class OrganizeFileParams(BaseModel):
+    """Parameters for the organize_file tool."""
+
+    original_url: str = Field(
+        description="Original URL/file_id of the media to move",
+    )
+    file_category: FileCategory = Field(
+        description="Category for organizing the file",
+    )
+    client_name: str | None = Field(
+        default=None,
+        description="Client name for folder organization",
+    )
+    client_address: str | None = Field(
+        default=None,
+        description="Client or job address for folder organization",
+    )
+    description: str = Field(
+        default="",
+        description="Brief description for the filename",
+    )
 
 
 def _slugify(text: str, max_length: int = DESCRIPTION_SLUG_MAX_LENGTH) -> str:
@@ -320,37 +375,7 @@ def create_file_tools(
                 "the right client folder with a descriptive filename."
             ),
             function=upload_to_storage,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "file_category": {
-                        "type": "string",
-                        "enum": ["job_photo", "estimate", "document", "voice_note"],
-                        "description": "Category for organizing the file",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Brief description for the filename",
-                    },
-                    "client_name": {
-                        "type": "string",
-                        "description": "Client name for folder organization",
-                    },
-                    "client_address": {
-                        "type": "string",
-                        "description": "Client or job address for folder organization",
-                    },
-                    "original_url": {
-                        "type": "string",
-                        "description": "Original URL of the media to upload",
-                    },
-                    "mime_type": {
-                        "type": "string",
-                        "description": "MIME type of the file (default: image/jpeg)",
-                    },
-                },
-                "required": ["file_category"],
-            },
+            params_model=UploadToStorageParams,
         ),
         Tool(
             name="organize_file",
@@ -362,32 +387,6 @@ def create_file_tools(
                 "client_address to build the destination folder."
             ),
             function=organize_file,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "original_url": {
-                        "type": "string",
-                        "description": "Original URL/file_id of the media to move",
-                    },
-                    "file_category": {
-                        "type": "string",
-                        "enum": ["job_photo", "estimate", "document", "voice_note"],
-                        "description": "Category for organizing the file",
-                    },
-                    "client_name": {
-                        "type": "string",
-                        "description": "Client name for folder organization",
-                    },
-                    "client_address": {
-                        "type": "string",
-                        "description": "Client or job address for folder organization",
-                    },
-                    "description": {
-                        "type": "string",
-                        "description": "Brief description for the filename",
-                    },
-                },
-                "required": ["original_url", "file_category"],
-            },
+            params_model=OrganizeFileParams,
         ),
     ]

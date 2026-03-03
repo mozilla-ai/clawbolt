@@ -13,6 +13,7 @@ from any_llm import (
     acompletion,
 )
 from any_llm.types.completion import ChatCompletion
+from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
@@ -36,6 +37,15 @@ MAX_INPUT_TOKENS = 120_000
 def _estimate_tokens(messages: list[dict[str, Any]]) -> int:
     """Rough token estimate: ~4 chars per token for English text."""
     return sum(len(str(m.get("content", ""))) // 4 for m in messages)
+
+
+def _format_validation_error(tool_name: str, exc: ValidationError) -> str:
+    """Format a Pydantic ValidationError into a structured message for the LLM."""
+    error_lines: list[str] = [f"Validation error for {tool_name}:"]
+    for err in exc.errors():
+        loc = " -> ".join(str(part) for part in err["loc"])
+        error_lines.append(f"  {loc}: {err['msg']} (type={err['type']})")
+    return "\n".join(error_lines)
 
 
 SYSTEM_PROMPT_TEMPLATE = """You are Backshop, an AI assistant for solo contractors.
@@ -65,7 +75,7 @@ You will proactively reach out during business hours when something needs attent
 When the contractor asks a question about their business, clients, or past work:
 1. Use recall_facts to search your memory for relevant information.
 2. If you find relevant facts, use them to answer clearly and concisely.
-3. If you don't find anything, say so honestly — don't make things up.
+3. If you don't find anything, say so honestly -- don't make things up.
 4. If the question is about general knowledge (not their specific business), answer from your training.
 5. For "what do you know about me?" questions, summarize key facts by category.
 """
@@ -187,7 +197,7 @@ class BackshopAgent:
             logger.warning("Content blocked by provider safety filter")
             raise
         except AuthenticationError:
-            logger.critical("LLM authentication failed — check API key configuration")
+            logger.critical("LLM authentication failed -- check API key configuration")
             raise
 
     @staticmethod
@@ -202,6 +212,25 @@ class BackshopAgent:
             return messages
         # system prompt + last N messages
         return [messages[0], *messages[-(CONTEXT_TRIM_KEEP_RECENT):]]
+
+    def _validate_tool_args(
+        self, tool: Tool, tool_args: dict[str, Any]
+    ) -> tuple[dict[str, Any], str | None]:
+        """Validate tool arguments against the tool's params_model if present.
+
+        Returns a tuple of (validated_args, error_message). When validation
+        succeeds, error_message is None and validated_args contains the
+        coerced values. When validation fails, error_message contains a
+        structured description of the field errors.
+        """
+        if tool.params_model is None:
+            return tool_args, None
+
+        try:
+            validated = tool.params_model.model_validate(tool_args)
+            return validated.model_dump(), None
+        except ValidationError as exc:
+            return tool_args, _format_validation_error(tool.name, exc)
 
     def _get_tool_tags(self, tool_name: str) -> set[str]:
         """Look up the tags for a registered tool by name."""
@@ -293,13 +322,46 @@ class BackshopAgent:
                     actions_taken.append(f"Failed: {tool_name} (bad args)")
                     continue
 
-                tool_func = self._find_tool(tool_name)
+                tool_obj = self._tools_by_name.get(tool_name)
+                tool_func = tool_obj.function if tool_obj else None
                 tool_tags = self._get_tool_tags(tool_name)
                 result_str = ""
                 is_error = False
-                if tool_func:
+                if tool_func and tool_obj:
+                    # Validate arguments against Pydantic model if present
+                    validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
+                    if validation_error is not None:
+                        logger.warning(
+                            "Validation failed for %s: %s",
+                            tool_name,
+                            validation_error,
+                        )
+                        result_str = (
+                            validation_error
+                            + "\n\n[Analyze the error above and try a different approach.]"
+                        )
+                        is_error = True
+                        actions_taken.append(f"Failed: {tool_name} (validation)")
+                        tool_call_records.append(
+                            {
+                                "name": tool_name,
+                                "args": tool_args,
+                                "result": result_str,
+                                "is_error": True,
+                                "tags": tool_tags,
+                            }
+                        )
+                        tool_results.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call.id,
+                                "content": result_str,
+                            }
+                        )
+                        continue
+
                     try:
-                        result = await tool_func(**tool_args)
+                        result = await tool_func(**validated_args)
                         if isinstance(result, ToolResult):
                             result_str = result.content
                             is_error = result.is_error
@@ -315,14 +377,14 @@ class BackshopAgent:
                         tool_call_records.append(
                             {
                                 "name": tool_name,
-                                "args": tool_args,
+                                "args": validated_args,
                                 "result": result_str,
                                 "is_error": is_error,
                                 "tags": tool_tags,
                             }
                         )
                         if ToolTags.SAVES_MEMORY in tool_tags:
-                            memories_saved.append(tool_args)
+                            memories_saved.append(validated_args)
                     except Exception:
                         logger.exception("Tool call failed: %s", tool_name)
                         result_str = (

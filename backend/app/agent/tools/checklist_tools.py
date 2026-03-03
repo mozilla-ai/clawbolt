@@ -1,11 +1,34 @@
 """Heartbeat checklist management tools for the agent."""
 
+from typing import Literal
+
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import HeartbeatChecklistItem
 
 VALID_CHECKLIST_SCHEDULES = ("daily", "weekdays", "once")
+
+
+class AddChecklistItemParams(BaseModel):
+    """Parameters for the add_checklist_item tool."""
+
+    description: str = Field(description="What to check or remind about")
+    schedule: Literal["daily", "weekdays", "once"] = Field(
+        default="daily",
+        description="How often to check (default: daily)",
+    )
+
+
+class ListChecklistItemsParams(BaseModel):
+    """Parameters for the list_checklist_items tool (no parameters)."""
+
+
+class RemoveChecklistItemParams(BaseModel):
+    """Parameters for the remove_checklist_item tool."""
+
+    item_id: int = Field(description="ID of the checklist item to remove")
 
 
 def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
@@ -72,44 +95,18 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
                 "the contractor when it's due."
             ),
             function=add_checklist_item,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "description": {
-                        "type": "string",
-                        "description": "What to check or remind about",
-                    },
-                    "schedule": {
-                        "type": "string",
-                        "enum": list(VALID_CHECKLIST_SCHEDULES),
-                        "description": "How often to check (default: daily)",
-                    },
-                },
-                "required": ["description"],
-            },
+            params_model=AddChecklistItemParams,
         ),
         Tool(
             name="list_checklist_items",
             description="List all active items on the contractor's heartbeat checklist.",
             function=list_checklist_items,
-            parameters={
-                "type": "object",
-                "properties": {},
-            },
+            params_model=ListChecklistItemsParams,
         ),
         Tool(
             name="remove_checklist_item",
             description="Remove an item from the contractor's heartbeat checklist by its ID.",
             function=remove_checklist_item,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "item_id": {
-                        "type": "integer",
-                        "description": "ID of the checklist item to remove",
-                    },
-                },
-                "required": ["item_id"],
-            },
+            params_model=RemoveChecklistItemParams,
         ),
     ]
