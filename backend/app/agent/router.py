@@ -119,7 +119,6 @@ async def handle_inbound_message(
     tools.extend(create_checklist_tools(db, contractor.id))
 
     # Wire file tools if storage is configured
-    # TODO(multi-tenant): pass contractor to get_storage_service()
     try:
         has_storage = (
             settings.storage_provider == "local"
@@ -130,7 +129,7 @@ async def handle_inbound_message(
             )
         )
         if has_storage:
-            storage = get_storage_service()
+            storage = get_storage_service(contractor=contractor)
             pending_media = {m.original_url: m.content for m in downloaded_media if m.content}
             tools.extend(create_file_tools(db, contractor, storage, pending_media))
     except Exception:
