@@ -11,6 +11,7 @@ from sqlalchemy.orm import Session
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.config import settings
+from backend.app.enums import EstimateStatus
 from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
 from backend.app.services.storage_service import StorageBackend
@@ -19,11 +20,6 @@ PDF_BASE_DIR = Path(settings.pdf_storage_dir)
 ESTIMATE_NUMBER_FORMAT = "EST-{:04d}"
 
 logger = logging.getLogger(__name__)
-
-
-class EstimateStatus:
-    DRAFT = "draft"
-    SENT = "sent"
 
 
 class EstimateLineItemParams(BaseModel):

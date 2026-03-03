@@ -24,9 +24,14 @@ from sqlalchemy.orm import Session
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt
-from backend.app.agent.tools.estimate_tools import EstimateStatus
 from backend.app.config import settings
 from backend.app.database import SessionLocal
+from backend.app.enums import (
+    ChecklistSchedule,
+    ChecklistStatus,
+    EstimateStatus,
+    MessageDirection,
+)
 from backend.app.models import (
     Contractor,
     Conversation,
@@ -258,7 +263,7 @@ def run_cheap_checks(
         db.query(HeartbeatChecklistItem)
         .filter(
             HeartbeatChecklistItem.contractor_id == contractor.id,
-            HeartbeatChecklistItem.status == "active",
+            HeartbeatChecklistItem.status == ChecklistStatus.ACTIVE,
         )
         .all()
     )
@@ -282,7 +287,7 @@ def run_cheap_checks(
         .join(Conversation, Message.conversation_id == Conversation.id)
         .filter(
             Conversation.contractor_id == contractor.id,
-            Message.direction == "inbound",
+            Message.direction == MessageDirection.INBOUND,
         )
         .order_by(Message.created_at.desc())
         .first()
@@ -311,7 +316,7 @@ def _is_checklist_item_due(
 ) -> bool:
     """Determine whether a checklist item should fire on this tick."""
     # Weekday gate applies regardless of trigger history
-    if item.schedule == "weekdays" and now.weekday() > WEEKDAY_FRIDAY:
+    if item.schedule == ChecklistSchedule.WEEKDAYS and now.weekday() > WEEKDAY_FRIDAY:
         return False
 
     # Never triggered -> due (for daily/weekdays/once)
@@ -323,7 +328,7 @@ def _is_checklist_item_due(
         last = last.replace(tzinfo=datetime.UTC)
     elapsed = now - last
 
-    if item.schedule == "once":
+    if item.schedule == ChecklistSchedule.ONCE:
         # Already triggered once -> not due again
         return False
     # Default: "daily" or "weekdays" (weekday gate already passed above)
@@ -355,7 +360,7 @@ async def build_heartbeat_context(
     )
     recent_lines: list[str] = []
     for msg in reversed(recent):
-        direction = "Contractor" if msg.direction == "inbound" else "Backshop"
+        direction = "Contractor" if msg.direction == MessageDirection.INBOUND else "Backshop"
         recent_lines.append(f"[{direction}] {msg.body}")
 
     return {
@@ -538,7 +543,7 @@ async def run_heartbeat_for_contractor(
     conv, _ = await get_or_create_conversation(db, contractor.id)
     outbound = Message(
         conversation_id=conv.id,
-        direction="outbound",
+        direction=MessageDirection.OUTBOUND,
         body=action.message,
     )
     db.add(outbound)
@@ -548,8 +553,8 @@ async def run_heartbeat_for_contractor(
     now = datetime.datetime.now(datetime.UTC)
     for item in check_result.due_checklist_items:
         item.last_triggered_at = now
-        if item.schedule == "once":
-            item.status = "completed"
+        if item.schedule == ChecklistSchedule.ONCE:
+            item.status = ChecklistStatus.COMPLETED
     if check_result.due_checklist_items:
         db.commit()
 
