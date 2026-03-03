@@ -1,5 +1,6 @@
 """Conversation context loading and session management."""
 
+import asyncio
 import datetime
 import json
 import logging
@@ -23,6 +24,45 @@ logger = logging.getLogger(__name__)
 
 CONVERSATION_TIMEOUT_HOURS = settings.conversation_timeout_hours
 DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
+
+# Strong references to fire-and-forget background tasks so they are not
+# garbage-collected before completion.
+_background_tasks: set[asyncio.Task[None]] = set()
+
+
+async def _run_compaction_in_background(
+    db: Session,
+    conversation: Conversation,
+    contractor_id: int,
+    trimmed_agent_messages: list[AgentMessage],
+    max_message_id: int,
+) -> None:
+    """Run compaction and update the conversation's tracking field.
+
+    This is designed to be fired as a background task via asyncio.create_task
+    so it does not block message processing.
+    """
+    try:
+        saved, compacted_id = await compact_session(
+            db, contractor_id, trimmed_agent_messages, max_message_id=max_message_id
+        )
+        if compacted_id is not None:
+            conversation.last_compacted_message_id = compacted_id
+            db.commit()
+        if saved:
+            logger.info(
+                "Session compaction extracted %d fact(s) from %d trimmed message(s) "
+                "for contractor %d",
+                len(saved),
+                len(trimmed_agent_messages),
+                contractor_id,
+            )
+    except Exception:
+        logger.exception(
+            "Session compaction failed for conversation %d, contractor %d",
+            conversation.id,
+            contractor_id,
+        )
 
 
 def _parse_tool_interactions(raw: str) -> list[dict[str, Any]]:
@@ -99,7 +139,9 @@ async def load_conversation_history(
     When the conversation has more messages than *limit* and a *contractor_id*
     is provided, the messages that are about to age out are passed through
     session compaction to extract durable facts before they leave the context
-    window.
+    window. Compaction runs as a background task to avoid blocking message
+    processing, and only processes messages not already compacted (tracked via
+    ``Conversation.last_compacted_message_id``).
     """
     # Count total messages in this conversation to detect overflow
     total_count = db.query(Message).filter(Message.conversation_id == conversation_id).count()
@@ -117,7 +159,11 @@ async def load_conversation_history(
     # If messages were trimmed and we have a contractor_id, run compaction
     # on the messages that are aging out of the window.
     if contractor_id is not None and total_count > limit:
+        conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
+
         trimmed_count = total_count - limit
+
+        # Get the oldest messages that have been trimmed from the context window
         trimmed_db_messages = (
             db.query(Message)
             .filter(Message.conversation_id == conversation_id)
@@ -125,6 +171,12 @@ async def load_conversation_history(
             .limit(trimmed_count)
             .all()
         )
+
+        # Filter out messages that have already been compacted
+        if conversation and conversation.last_compacted_message_id is not None:
+            trimmed_db_messages = [
+                m for m in trimmed_db_messages if m.id > conversation.last_compacted_message_id
+            ]
 
         trimmed_agent_messages: list[AgentMessage] = []
         for msg in trimmed_db_messages:
@@ -134,23 +186,19 @@ async def load_conversation_history(
             else:
                 trimmed_agent_messages.append(AssistantMessage(content=content))
 
-        if trimmed_agent_messages:
-            try:
-                saved = await compact_session(db, contractor_id, trimmed_agent_messages)
-                if saved:
-                    logger.info(
-                        "Session compaction extracted %d fact(s) from %d trimmed message(s) "
-                        "for contractor %d",
-                        len(saved),
-                        len(trimmed_agent_messages),
-                        contractor_id,
-                    )
-            except Exception:
-                logger.exception(
-                    "Session compaction failed for conversation %d, contractor %d",
-                    conversation_id,
+        if trimmed_agent_messages and trimmed_db_messages and conversation:
+            max_message_id = max(m.id for m in trimmed_db_messages)
+            task = asyncio.create_task(
+                _run_compaction_in_background(
+                    db,
+                    conversation,
                     contractor_id,
+                    trimmed_agent_messages,
+                    max_message_id,
                 )
+            )
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
 
     history: list[AgentMessage] = []
     for msg in messages:

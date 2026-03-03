@@ -97,7 +97,8 @@ async def compact_session(
     db: Session,
     contractor_id: int,
     trimmed_messages: list[AgentMessage],
-) -> list[dict[str, str]]:
+    max_message_id: int | None = None,
+) -> tuple[list[dict[str, str]], int | None]:
     """Extract durable facts from messages about to leave the context window.
 
     Uses a lightweight LLM call to identify facts worth persisting, then saves
@@ -107,20 +108,23 @@ async def compact_session(
         db: Database session.
         contractor_id: The contractor whose session is being compacted.
         trimmed_messages: Messages that are about to be dropped from context.
+        max_message_id: The highest message ID among the trimmed messages,
+            used to track compaction progress. Passed through to the return value.
 
     Returns:
-        A list of dicts representing the facts that were saved, each with
-        "key", "value", and "category" fields.
+        A tuple of (saved_facts, max_message_id) where saved_facts is a list of
+        dicts with "key", "value", and "category" fields, and max_message_id is
+        the highest compacted message ID (for tracking).
     """
     if not trimmed_messages:
-        return []
+        return [], None
 
     if not settings.compaction_enabled:
-        return []
+        return [], None
 
     conversation_text = _format_messages_for_compaction(trimmed_messages)
     if not conversation_text.strip():
-        return []
+        return [], None
 
     model = settings.compaction_model or settings.llm_model
     provider = settings.compaction_provider or settings.llm_provider
@@ -143,7 +147,7 @@ async def compact_session(
         )
     except Exception:
         logger.exception("Compaction LLM call failed for contractor %d", contractor_id)
-        return []
+        return [], None
 
     raw_content = response.choices[0].message.content or ""
     facts = _parse_compaction_response(raw_content)
@@ -173,4 +177,4 @@ async def compact_session(
                 contractor_id,
             )
 
-    return saved_facts
+    return saved_facts, max_message_id
