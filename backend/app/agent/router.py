@@ -1,3 +1,9 @@
+"""Inbound message processing pipeline.
+
+Each step is an independent function with clear inputs/outputs.
+``handle_inbound_message`` orchestrates them in sequence.
+"""
+
 import json
 import logging
 
@@ -6,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, BackshopAgent
+from backend.app.agent.messages import AgentMessage
 from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
     is_onboarding_needed,
@@ -49,32 +56,23 @@ VISION_UNAVAILABLE_NOTE = (
 ensure_tool_modules_imported()
 
 
-async def handle_inbound_message(
+# ---------------------------------------------------------------------------
+# Pipeline steps
+# ---------------------------------------------------------------------------
+
+
+async def prepare_media(
     db: Session,
     contractor: Contractor,
-    message: Message,
+    message_id: int,
     media_urls: list[tuple[str, str]],
     messaging_service: MessagingService,
-) -> AgentResponse:
-    """Full message processing pipeline.
+) -> tuple[list[DownloadedMedia], StorageBackend | None]:
+    """Download media and initialize storage backend.
 
-    1. Download media (if any)
-    2. Run media pipeline (vision, audio, PDF extraction)
-    3. Build combined context (text + processed media)
-    4. Load conversation history
-    5. Initialize agent with tools
-    6. Process message through agent
-    7. Agent sends reply via tools or returns reply text
+    Returns (downloaded_media, storage_backend).
+    Also auto-saves downloaded media to storage when available.
     """
-    to_address = contractor.channel_identifier or contractor.phone
-    if not to_address:
-        logger.error(
-            "Contractor %d has no channel_identifier or phone -- cannot send replies",
-            contractor.id,
-        )
-        return AgentResponse(reply_text="")
-
-    # Step 1: Download media
     downloaded_media: list[DownloadedMedia] = []
     for file_id, _mime_type in media_urls:
         try:
@@ -99,14 +97,27 @@ async def handle_inbound_message(
     except Exception:
         logger.debug("Storage not configured, skipping file features")
 
-    # Step 1.5: Auto-save inbound media to storage
+    # Auto-save inbound media to storage
     if storage and downloaded_media:
         try:
-            await auto_save_media(db, contractor, storage, downloaded_media, message_id=message.id)
+            await auto_save_media(db, contractor, storage, downloaded_media, message_id=message_id)
         except Exception:
             logger.debug("Auto-save to storage failed, continuing")
 
-    # Step 2: Run media pipeline
+    return downloaded_media, storage
+
+
+async def build_message_context(
+    db: Session,
+    message: Message,
+    contractor: Contractor,
+    media_urls: list[tuple[str, str]],
+    downloaded_media: list[DownloadedMedia],
+) -> str:
+    """Run media pipeline and build combined context string.
+
+    Persists the processed context on the message record and returns it.
+    """
     media_notes: list[str] = []
     if media_urls and not downloaded_media:
         media_notes.append(MEDIA_DOWNLOAD_ERROR)
@@ -123,7 +134,6 @@ async def handle_inbound_message(
         if downloaded_media:
             media_notes.append(VISION_UNAVAILABLE_NOTE)
 
-    # Step 3: Combined context (with any media failure notes)
     combined_context = pipeline_result.combined_context
     if media_notes:
         combined_context += "\n\n[System note: " + " ".join(media_notes) + "]"
@@ -132,10 +142,25 @@ async def handle_inbound_message(
     message.processed_context = combined_context
     db.commit()
 
-    # Step 4: Load conversation history
-    conversation_history = await load_conversation_history(db, message.conversation_id)
+    return combined_context
 
-    # Step 5: Initialize agent with tools via registry
+
+async def run_agent(
+    db: Session,
+    contractor: Contractor,
+    message: Message,
+    combined_context: str,
+    conversation_history: list[AgentMessage],
+    storage: StorageBackend | None,
+    messaging_service: MessagingService,
+    to_address: str,
+    downloaded_media: list[DownloadedMedia],
+) -> AgentResponse:
+    """Initialize agent with tools and process the message.
+
+    Handles LLM-level errors (content filter, auth, unexpected) by returning
+    an error fallback AgentResponse.
+    """
     was_onboarding = is_onboarding_needed(contractor)
     system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
 
@@ -158,9 +183,8 @@ async def handle_inbound_message(
     except Exception:
         logger.debug("Failed to send typing indicator to %s", to_address)
 
-    # Step 6: Process message through agent (with LLM failure fallback)
     try:
-        response = await agent.process_message(
+        return await agent.process_message(
             message_context=combined_context,
             conversation_history=conversation_history,
             system_prompt_override=system_prompt_override,
@@ -171,26 +195,33 @@ async def handle_inbound_message(
             message.id,
             contractor.id,
         )
-        response = AgentResponse(reply_text=CONTENT_FILTER_FALLBACK, is_error_fallback=True)
+        return AgentResponse(reply_text=CONTENT_FILTER_FALLBACK, is_error_fallback=True)
     except AuthenticationError:
         logger.critical(
             "LLM authentication failed processing message %d for contractor %d",
             message.id,
             contractor.id,
         )
-        response = AgentResponse(reply_text=AUTH_ERROR_FALLBACK, is_error_fallback=True)
+        return AgentResponse(reply_text=AUTH_ERROR_FALLBACK, is_error_fallback=True)
     except Exception:
         logger.exception(
             "Agent processing failed for message %d, contractor %d",
             message.id,
             contractor.id,
         )
-        response = AgentResponse(reply_text=AGENT_ERROR_FALLBACK, is_error_fallback=True)
+        return AgentResponse(reply_text=AGENT_ERROR_FALLBACK, is_error_fallback=True)
 
-    # Step 6b: The update_profile tool directly updates the contractor record
-    # in the DB during execution. We just need to check if any profile updates
-    # happened (by inspecting tool call records) so we can detect onboarding
-    # completion. Refresh the contractor to pick up any changes made by the tool.
+
+def post_process(
+    db: Session,
+    contractor: Contractor,
+    response: AgentResponse,
+    was_onboarding: bool,
+) -> None:
+    """Handle profile updates and onboarding completion detection.
+
+    Mutates *response.reply_text* in-place when onboarding completes.
+    """
     profile_updates = extract_profile_updates_from_tool_calls(response.tool_calls)
     if profile_updates:
         db.refresh(contractor)
@@ -216,13 +247,20 @@ async def handle_inbound_message(
             if response.reply_text:
                 response.reply_text += completion_note
 
-    # Step 6c: Ensure onboarding_complete is set when required fields are already satisfied
+    # Ensure onboarding_complete is set when required fields are already satisfied
     # (e.g. pre-populated contractors that skipped the onboarding flow)
     if not contractor.onboarding_complete and not is_onboarding_needed(contractor):
         contractor.onboarding_complete = True
         db.commit()
 
-    # Step 7: If agent didn't explicitly call a reply tool, send the reply text
+
+async def dispatch_reply(
+    response: AgentResponse,
+    messaging_service: MessagingService,
+    to_address: str,
+    message_id: int,
+) -> None:
+    """Send reply to the contractor unless the agent already sent one via a tool."""
     sent_reply = any(ToolTags.SENDS_REPLY in tc.get("tags", set()) for tc in response.tool_calls)
     if not sent_reply and response.reply_text:
         try:
@@ -231,28 +269,101 @@ async def handle_inbound_message(
             logger.exception(
                 "Failed to send reply to %s for message %d",
                 to_address,
-                message.id,
+                message_id,
             )
 
-    # Store outbound message (skip error fallbacks to avoid poisoning
-    # conversation history -- the LLM would see the error on subsequent turns)
-    if response.reply_text and not response.is_error_fallback:
-        # Serialize tool interactions for conversation history reconstruction.
-        # Strip non-serializable 'tags' (sets) before JSON encoding.
-        tool_interactions = ""
-        if response.tool_calls:
-            serializable = [
-                {k: v for k, v in tc.items() if k != "tags"} for tc in response.tool_calls
-            ]
-            tool_interactions = json.dumps(serializable)
 
-        outbound = Message(
-            conversation_id=message.conversation_id,
-            direction=MessageDirection.OUTBOUND,
-            body=response.reply_text,
-            tool_interactions_json=tool_interactions,
+def persist_outbound(
+    db: Session,
+    conversation_id: int,
+    response: AgentResponse,
+) -> None:
+    """Store the outbound message record.
+
+    Skips error fallbacks to avoid poisoning conversation history.
+    """
+    if not response.reply_text or response.is_error_fallback:
+        return
+
+    # Serialize tool interactions for conversation history reconstruction.
+    # Strip non-serializable 'tags' (sets) before JSON encoding.
+    tool_interactions = ""
+    if response.tool_calls:
+        serializable = [{k: v for k, v in tc.items() if k != "tags"} for tc in response.tool_calls]
+        tool_interactions = json.dumps(serializable)
+
+    outbound = Message(
+        conversation_id=conversation_id,
+        direction=MessageDirection.OUTBOUND,
+        body=response.reply_text,
+        tool_interactions_json=tool_interactions,
+    )
+    db.add(outbound)
+    db.commit()
+
+
+# ---------------------------------------------------------------------------
+# Orchestrator
+# ---------------------------------------------------------------------------
+
+
+async def handle_inbound_message(
+    db: Session,
+    contractor: Contractor,
+    message: Message,
+    media_urls: list[tuple[str, str]],
+    messaging_service: MessagingService,
+) -> AgentResponse:
+    """Full message processing pipeline.
+
+    Orchestrates discrete pipeline steps:
+    1. prepare_media   - download and auto-save media
+    2. build_message_context - run media pipeline, build combined context
+    3. run_agent       - initialize agent with tools, process message
+    4. post_process    - onboarding completion, profile update detection
+    5. dispatch_reply  - send reply to contractor
+    6. persist_outbound - store outbound message record
+    """
+    to_address = contractor.channel_identifier or contractor.phone
+    if not to_address:
+        logger.error(
+            "Contractor %d has no channel_identifier or phone -- cannot send replies",
+            contractor.id,
         )
-        db.add(outbound)
-        db.commit()
+        return AgentResponse(reply_text="")
+
+    # 1. Download and auto-save media
+    downloaded_media, storage = await prepare_media(
+        db, contractor, message.id, media_urls, messaging_service
+    )
+
+    # 2. Build combined context from text + media
+    combined_context = await build_message_context(
+        db, message, contractor, media_urls, downloaded_media
+    )
+
+    # 3. Load history and run agent
+    conversation_history = await load_conversation_history(db, message.conversation_id)
+    was_onboarding = is_onboarding_needed(contractor)
+    response = await run_agent(
+        db=db,
+        contractor=contractor,
+        message=message,
+        combined_context=combined_context,
+        conversation_history=conversation_history,
+        storage=storage,
+        messaging_service=messaging_service,
+        to_address=to_address,
+        downloaded_media=downloaded_media,
+    )
+
+    # 4. Post-process (onboarding, profile updates)
+    post_process(db, contractor, response, was_onboarding)
+
+    # 5. Send reply
+    await dispatch_reply(response, messaging_service, to_address, message.id)
+
+    # 6. Persist outbound message
+    persist_outbound(db, message.conversation_id, response)
 
     return response
