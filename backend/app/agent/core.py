@@ -51,12 +51,12 @@ from backend.app.services.messaging import MessagingService
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = settings.max_tool_rounds
-RATE_LIMIT_RETRY_DELAY = 2.0
+RATE_LIMIT_RETRY_DELAY = settings.rate_limit_retry_delay
 # Target token budget when trimming for context length (leave room for output tokens)
-CONTEXT_TRIM_TARGET_TOKENS = 80_000
+CONTEXT_TRIM_TARGET_TOKENS = settings.context_trim_target_tokens
 
 # Conservative default; most models support 128K+ but we leave room for output
-MAX_INPUT_TOKENS = 120_000
+MAX_INPUT_TOKENS = settings.max_input_tokens
 
 # Per-message overhead tokens for role/delimiters/structural framing
 _MESSAGE_OVERHEAD_TOKENS = 4
