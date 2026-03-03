@@ -46,6 +46,7 @@ from backend.app.agent.tools.base import (
 from backend.app.config import settings
 from backend.app.models import Contractor
 from backend.app.services.llm_usage import log_llm_usage
+from backend.app.services.messaging import MessagingService
 
 logger = logging.getLogger(__name__)
 
@@ -223,9 +224,17 @@ class AgentResponse:
 class BackshopAgent:
     """Main agent that processes contractor messages and produces actions."""
 
-    def __init__(self, db: Session, contractor: Contractor) -> None:
+    def __init__(
+        self,
+        db: Session,
+        contractor: Contractor,
+        messaging_service: MessagingService | None = None,
+        chat_id: str | None = None,
+    ) -> None:
         self.db = db
         self.contractor = contractor
+        self._messaging_service = messaging_service
+        self._chat_id = chat_id
         self.tools: list[Tool] = []
         self._tools_by_name: dict[str, Tool] = {}
         self._subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = []
@@ -245,6 +254,14 @@ class BackshopAgent:
                 await cb(event)
             except Exception:
                 logger.exception("Event subscriber error for %s", type(event).__name__)
+
+    async def _send_typing_indicator(self) -> None:
+        """Send a typing indicator if a messaging service and chat_id are available."""
+        if self._messaging_service and self._chat_id:
+            try:
+                await self._messaging_service.send_typing_indicator(to=self._chat_id)
+            except Exception:
+                logger.debug("Failed to send typing indicator to %s", self._chat_id)
 
     def register_tools(self, tools: list[Tool]) -> None:
         """Register available tools for this agent session."""
@@ -275,6 +292,7 @@ class BackshopAgent:
         ContentFilterError and AuthenticationError are re-raised with
         appropriate logging so the caller can produce a user-facing message.
         """
+        await self._send_typing_indicator()
         msg_dicts = messages_to_dicts(messages)
         try:
             return cast(
