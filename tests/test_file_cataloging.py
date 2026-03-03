@@ -137,8 +137,9 @@ async def test_upload_creates_media_file_record(
         original_url="https://example.com/media/photo.jpg",
     )
 
-    assert "Uploaded" in result
-    assert "damaged_deck_railing_001.jpg" in result
+    assert "Uploaded" in result.content
+    assert "damaged_deck_railing_001.jpg" in result.content
+    assert result.is_error is False
 
     media_file = (
         db_session.query(MediaFile).filter(MediaFile.contractor_id == test_contractor.id).first()
@@ -214,7 +215,8 @@ async def test_upload_no_media_returns_error(
     upload = tools[0].function
 
     result = await upload(file_category="job_photo")
-    assert "No file content" in result
+    assert "No file content" in result.content
+    assert result.is_error is True
 
 
 @pytest.mark.asyncio()
@@ -233,7 +235,8 @@ async def test_upload_uses_first_media_if_no_url(
     upload = tools[0].function
 
     result = await upload(file_category="job_photo", description="Auto selected")
-    assert "Uploaded" in result
+    assert "Uploaded" in result.content
+    assert result.is_error is False
     assert len(storage.files) == 1
 
 
@@ -266,8 +269,8 @@ async def test_upload_sequential_indexing(
         client_name="Test Client",
     )
 
-    assert "_001." in result1
-    assert "_002." in result2
+    assert "_001." in result1.content
+    assert "_002." in result2.content
 
 
 @pytest.mark.asyncio()
@@ -423,9 +426,10 @@ async def test_organize_file_moves_to_client_folder(
         description="Front porch damage",
     )
 
-    assert "Moved" in result
-    assert "John Smith - 116 Virginia Ave" in result
-    assert "front_porch_damage_001.jpg" in result
+    assert "Moved" in result.content
+    assert "John Smith - 116 Virginia Ave" in result.content
+    assert "front_porch_damage_001.jpg" in result.content
+    assert result.is_error is False
 
     # Verify DB record updated
     db_session.refresh(media_file)
@@ -453,7 +457,8 @@ async def test_organize_file_not_found(
         file_category="job_photo",
         client_name="Jane",
     )
-    assert "File not found" in result
+    assert "File not found" in result.content
+    assert result.is_error is True
 
 
 @pytest.mark.asyncio()
@@ -481,7 +486,7 @@ async def test_organize_file_already_in_client_folder(
         file_category="job_photo",
         client_name="Jane",
     )
-    assert "already organized" in result
+    assert "already organized" in result.content
 
 
 @pytest.mark.asyncio()
@@ -508,5 +513,6 @@ async def test_organize_file_without_client_returns_error(
         original_url="tg_file_id_789",
         file_category="job_photo",
     )
-    assert "Error" in result
-    assert "client_name or client_address is required" in result
+    assert "Error" in result.content
+    assert "client_name or client_address is required" in result.content
+    assert result.is_error is True

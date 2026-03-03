@@ -2,7 +2,7 @@
 
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import HeartbeatChecklistItem
 
 VALID_CHECKLIST_SCHEDULES = ("daily", "weekdays", "once")
@@ -14,10 +14,13 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
     async def add_checklist_item(
         description: str,
         schedule: str = "daily",
-    ) -> str:
+    ) -> ToolResult:
         """Add an item to the contractor's heartbeat checklist."""
         if schedule not in VALID_CHECKLIST_SCHEDULES:
-            return f"Invalid schedule '{schedule}'. Use: daily, weekdays, or once."
+            return ToolResult(
+                content=f"Invalid schedule '{schedule}'. Use: daily, weekdays, or once.",
+                is_error=True,
+            )
         item = HeartbeatChecklistItem(
             contractor_id=contractor_id,
             description=description,
@@ -26,9 +29,9 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
         db.add(item)
         db.commit()
         db.refresh(item)
-        return f"Added to checklist (#{item.id}, {schedule}): {description}"
+        return ToolResult(content=f"Added to checklist (#{item.id}, {schedule}): {description}")
 
-    async def list_checklist_items() -> str:
+    async def list_checklist_items() -> ToolResult:
         """List all active checklist items."""
         items = (
             db.query(HeartbeatChecklistItem)
@@ -40,11 +43,11 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             .all()
         )
         if not items:
-            return "No active checklist items."
+            return ToolResult(content="No active checklist items.")
         lines = [f"- #{item.id}: {item.description} ({item.schedule})" for item in items]
-        return "\n".join(lines)
+        return ToolResult(content="\n".join(lines))
 
-    async def remove_checklist_item(item_id: int) -> str:
+    async def remove_checklist_item(item_id: int) -> ToolResult:
         """Remove a checklist item by ID."""
         item = (
             db.query(HeartbeatChecklistItem)
@@ -55,10 +58,10 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             .first()
         )
         if not item:
-            return f"Checklist item #{item_id} not found."
+            return ToolResult(content=f"Checklist item #{item_id} not found.", is_error=True)
         db.delete(item)
         db.commit()
-        return f"Removed checklist item #{item_id}: {item.description}"
+        return ToolResult(content=f"Removed checklist item #{item_id}: {item.description}")
 
     return [
         Tool(

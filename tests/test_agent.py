@@ -16,7 +16,7 @@ from backend.app.agent.core import (
     BackshopAgent,
     _estimate_tokens,
 )
-from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
@@ -728,3 +728,126 @@ def test_register_tools_warns_on_duplicate_name(
         agent.register_tools(tools)
 
     assert any("Duplicate tool name" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Structured ToolResult tests (issue #280)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_tool_result_error_appends_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """When a tool returns ToolResult(is_error=True), a hint is appended."""
+
+    async def failing_tool(**kwargs: object) -> ToolResult:
+        return ToolResult(content="Error: item not found", is_error=True)
+
+    tool = Tool(name="do_thing", description="test", function=failing_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "do_thing", "arguments": json.dumps({})}]
+        ),
+        make_text_response("I'll try something else."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    # The hint should have been appended to the error result
+    assert any("Failed: do_thing" in a for a in response.actions_taken)
+    assert response.tool_calls[0]["is_error"] is True
+    assert "[Analyze the error" in response.tool_calls[0]["result"]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_tool_result_success_no_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """When a tool returns ToolResult(is_error=False), no hint is appended."""
+
+    async def ok_tool(**kwargs: object) -> ToolResult:
+        return ToolResult(content="Done!")
+
+    tool = Tool(name="do_thing", description="test", function=ok_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "do_thing", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Great!"),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    assert any("Called do_thing" in a for a in response.actions_taken)
+    assert response.tool_calls[0]["is_error"] is False
+    assert "[Analyze the error" not in response.tool_calls[0]["result"]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_plain_string_return_backward_compat(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Tools returning plain strings should still work (backward compatibility)."""
+
+    async def legacy_tool(**kwargs: object) -> str:
+        return "Legacy result"
+
+    tool = Tool(name="old_tool", description="test", function=legacy_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "old_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Ok!"),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    assert any("Called old_tool" in a for a in response.actions_taken)
+    assert response.tool_calls[0]["result"] == "Legacy result"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_tool_exception_appends_hint(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """When a tool raises an exception, a self-correction hint is appended."""
+
+    async def crashing_tool(**kwargs: object) -> ToolResult:
+        raise RuntimeError("Something broke")
+
+    tool = Tool(name="bad_tool", description="test", function=crashing_tool, parameters={})
+
+    mock_acompletion.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "bad_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Let me try another way."),
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    assert any("Failed: bad_tool" in a for a in response.actions_taken)

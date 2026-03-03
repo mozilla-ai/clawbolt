@@ -40,8 +40,9 @@ async def test_generate_estimate_creates_records(
         ],
     )
 
-    assert "EST-0001" in result
-    assert "$4,200.00" in result
+    assert "EST-0001" in result.content
+    assert "$4,200.00" in result.content
+    assert result.is_error is False
 
     estimate = (
         db_session.query(Estimate).filter(Estimate.contractor_id == test_contractor.id).first()
@@ -73,8 +74,8 @@ async def test_generate_estimate_with_client_info(
         client_address="123 Oak St, Portland, OR",
     )
 
-    assert "EST-0001" in result
-    assert "$8,500.00" in result
+    assert "EST-0001" in result.content
+    assert "$8,500.00" in result.content
 
 
 @pytest.mark.asyncio()
@@ -92,7 +93,7 @@ async def test_generate_estimate_pdf_generated(
         line_items=[{"description": "Service call", "quantity": 1, "unit_price": 150.00}],
     )
 
-    assert ".pdf" in result
+    assert ".pdf" in result.content
 
     # Verify PDF file was actually written in the temp directory (per-contractor subdir)
     estimate = db_session.query(Estimate).first()
@@ -120,8 +121,8 @@ async def test_generate_estimate_sequential_numbers(
         line_items=[{"description": "Work", "quantity": 1, "unit_price": 200.00}],
     )
 
-    assert "EST-0001" in result1
-    assert "EST-0002" in result2
+    assert "EST-0001" in result1.content
+    assert "EST-0002" in result2.content
 
 
 @pytest.mark.asyncio()
@@ -138,8 +139,8 @@ async def test_generate_estimate_single_line_item(
         line_items=[{"description": "Fix leaking pipe", "quantity": 1, "unit_price": 350.00}],
     )
 
-    assert "$350.00" in result
-    assert "1 line item" in result
+    assert "$350.00" in result.content
+    assert "1 line item" in result.content
 
 
 @pytest.mark.asyncio()
@@ -157,7 +158,7 @@ async def test_generate_estimate_custom_terms(
         terms="50% upfront, 50% on completion",
     )
 
-    assert "EST-0001" in result
+    assert "EST-0001" in result.content
 
 
 @pytest.mark.asyncio()
@@ -174,8 +175,9 @@ async def test_generate_estimate_rejects_negative_quantity(
         line_items=[{"description": "Work", "quantity": -5, "unit_price": 100.00}],
     )
 
-    assert "Error" in result
-    assert "negative" in result.lower()
+    assert "Error" in result.content
+    assert "negative" in result.content.lower()
+    assert result.is_error is True
     assert db_session.query(Estimate).count() == 0
 
 
@@ -193,8 +195,9 @@ async def test_generate_estimate_rejects_negative_price(
         line_items=[{"description": "Work", "quantity": 1, "unit_price": -50.00}],
     )
 
-    assert "Error" in result
-    assert "negative" in result.lower()
+    assert "Error" in result.content
+    assert "negative" in result.content.lower()
+    assert result.is_error is True
     assert db_session.query(Estimate).count() == 0
 
 
@@ -212,7 +215,8 @@ async def test_generate_estimate_rejects_non_numeric_values(
         line_items=[{"description": "Work", "quantity": "abc", "unit_price": 100.00}],
     )
 
-    assert "Error" in result
+    assert "Error" in result.content
+    assert result.is_error is True
     assert db_session.query(Estimate).count() == 0
 
 
@@ -343,7 +347,7 @@ async def test_generate_estimate_no_storage_still_saves_locally(
         line_items=[{"description": "Work", "quantity": 1, "unit_price": 100.00}],
     )
 
-    assert "EST-0001" in result
+    assert "EST-0001" in result.content
     estimate = db_session.query(Estimate).first()
     assert estimate is not None
     pdf_path = tmp_path / "estimates" / str(test_contractor.id) / f"{estimate.id}.pdf"
@@ -389,8 +393,8 @@ async def test_generate_estimate_cloud_upload_failure_does_not_kill_call(
     )
 
     # The estimate should still succeed with the local PDF
-    assert "EST-0001" in result
-    assert "$2,000.00" in result
+    assert "EST-0001" in result.content
+    assert "$2,000.00" in result.content
 
     # Verify local PDF was saved
     estimate = db_session.query(Estimate).first()

@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt, get_missing_optional_fields
-from backend.app.agent.tools.base import Tool, tool_to_openai_schema
+from backend.app.agent.tools.base import Tool, ToolResult, tool_to_openai_schema
 from backend.app.config import settings
 from backend.app.models import Contractor
 
@@ -290,23 +290,38 @@ class BackshopAgent:
 
                 tool_func = self._find_tool(tool_name)
                 result_str = ""
+                is_error = False
                 if tool_func:
                     try:
                         result = await tool_func(**tool_args)
-                        result_str = str(result)
-                        actions_taken.append(f"Called {tool_name}")
+                        if isinstance(result, ToolResult):
+                            result_str = result.content
+                            is_error = result.is_error
+                        else:
+                            result_str = str(result)
+                        if is_error:
+                            result_str += (
+                                "\n\n[Analyze the error above and try a different approach.]"
+                            )
+                            actions_taken.append(f"Failed: {tool_name}")
+                        else:
+                            actions_taken.append(f"Called {tool_name}")
                         tool_call_records.append(
                             {
                                 "name": tool_name,
                                 "args": tool_args,
                                 "result": result_str,
+                                "is_error": is_error,
                             }
                         )
                         if tool_name == "save_fact":
                             memories_saved.append(tool_args)
                     except Exception:
                         logger.exception("Tool call failed: %s", tool_name)
-                        result_str = f"Error: tool {tool_name} failed"
+                        result_str = (
+                            f"Error: tool {tool_name} failed"
+                            "\n\n[Analyze the error above and try a different approach.]"
+                        )
                         actions_taken.append(f"Failed: {tool_name}")
                 else:
                     result_str = f"Error: unknown tool {tool_name}"
