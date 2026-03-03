@@ -45,8 +45,13 @@ def log_llm_usage(
         total_tokens=total_tokens,
         purpose=purpose,
     )
-    db.add(log_entry)
-    db.commit()
+    try:
+        db.add(log_entry)
+        db.flush()
+    except Exception:
+        logger.exception("Failed to log LLM usage for contractor %d", contractor_id)
+        db.rollback()
+        return None
 
     logger.info(
         "LLM usage logged: contractor=%d model=%s purpose=%s tokens=%d",
