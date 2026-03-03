@@ -11,6 +11,7 @@ def mock_messaging_service() -> MessagingService:
     service = MagicMock(spec=MessagingService)
     service.send_text = AsyncMock(return_value="msg_42")
     service.send_media = AsyncMock(return_value="msg_43")
+    service.download_media = AsyncMock()
     return service
 
 

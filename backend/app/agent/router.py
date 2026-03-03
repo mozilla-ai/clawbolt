@@ -21,7 +21,7 @@ from backend.app.agent.tools.profile_tools import (
 )
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
-from backend.app.media.download import DownloadedMedia, download_telegram_media
+from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
 from backend.app.models import Contractor, Message
 from backend.app.services.messaging import MessagingService
@@ -76,7 +76,7 @@ async def handle_inbound_message(
     downloaded_media: list[DownloadedMedia] = []
     for file_id, _mime_type in media_urls:
         try:
-            media = await download_telegram_media(file_id)
+            media = await messaging_service.download_media(file_id)
             downloaded_media.append(media)
         except Exception:
             logger.exception("Failed to download media: %s", file_id)

@@ -4,6 +4,7 @@ from collections.abc import Generator
 from typing import Protocol, runtime_checkable
 
 from backend.app.config import settings
+from backend.app.media.download import DownloadedMedia
 
 
 @runtime_checkable
@@ -24,6 +25,10 @@ class MessagingService(Protocol):
 
     async def send_typing_indicator(self, to: str) -> None:
         """Send a typing indicator to show the bot is processing."""
+        ...
+
+    async def download_media(self, file_id: str) -> DownloadedMedia:
+        """Download media by channel-specific file identifier."""
         ...
 
 

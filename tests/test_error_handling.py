@@ -38,6 +38,7 @@ def mock_messaging() -> MessagingService:
     service.send_media = AsyncMock(return_value="msg_43")
     service.send_message = AsyncMock(return_value="msg_42")
     service.send_typing_indicator = AsyncMock()
+    service.download_media = AsyncMock()
     return service
 
 
@@ -67,9 +68,7 @@ async def test_agent_llm_failure_returns_friendly_message(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_all_media_download_failure_adds_note(
-    mock_download: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
     test_contractor: Contractor,
@@ -77,7 +76,7 @@ async def test_all_media_download_failure_adds_note(
     mock_messaging: MessagingService,
 ) -> None:
     """When all media downloads fail, context should include a note."""
-    mock_download.side_effect = Exception("Download failed")
+    mock_messaging.download_media.side_effect = Exception("Download failed")  # type: ignore[union-attr]
     mock_acompletion.return_value = make_text_response("Got your message!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -99,9 +98,7 @@ async def test_all_media_download_failure_adds_note(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_partial_media_success(
-    mock_download: AsyncMock,
     mock_vision: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
@@ -113,7 +110,7 @@ async def test_partial_media_success(
     from backend.app.media.download import DownloadedMedia
 
     # First download succeeds, second fails
-    mock_download.side_effect = [
+    mock_messaging.download_media.side_effect = [  # type: ignore[union-attr]
         DownloadedMedia(
             content=b"good-image",
             mime_type="image/jpeg",
@@ -174,9 +171,7 @@ async def test_messaging_send_failure_still_stores_message(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
 @patch("backend.app.agent.router.process_message_media", new_callable=AsyncMock)
-@patch("backend.app.agent.router.download_telegram_media", new_callable=AsyncMock)
 async def test_media_pipeline_failure_falls_back_to_text(
-    mock_download: AsyncMock,
     mock_pipeline: AsyncMock,
     mock_acompletion: object,
     db_session: Session,
@@ -188,7 +183,7 @@ async def test_media_pipeline_failure_falls_back_to_text(
     from backend.app.media.download import DownloadedMedia
     from backend.app.media.pipeline import PipelineResult
 
-    mock_download.return_value = DownloadedMedia(
+    mock_messaging.download_media.return_value = DownloadedMedia(  # type: ignore[union-attr]
         content=b"image",
         mime_type="image/jpeg",
         original_url="AgACAgIAAxkBAAI",

@@ -75,6 +75,7 @@ def _rate_limited_client() -> Generator[TestClient]:
     mock_messaging.send_media = AsyncMock(return_value="mock_msg_id")
     mock_messaging.send_message = AsyncMock(return_value="mock_msg_id")
     mock_messaging.send_typing_indicator = AsyncMock()
+    mock_messaging.download_media = AsyncMock()
 
     def _override_get_messaging_service() -> Generator[MessagingService]:
         yield mock_messaging
