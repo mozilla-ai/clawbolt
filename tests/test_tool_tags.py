@@ -88,8 +88,8 @@ def test_tool_tags_do_not_leak_between_instances() -> None:
     """Each Tool instance should have its own tags set (no shared default)."""
     tool_a = Tool(name="a", description="A", function=lambda: None, parameters={})
     tool_b = Tool(name="b", description="B", function=lambda: None, parameters={})
-    tool_a.tags.add("custom")
-    assert "custom" not in tool_b.tags
+    tool_a.tags.add(ToolTags.SAVES_MEMORY)
+    assert ToolTags.SAVES_MEMORY not in tool_b.tags
 
 
 # --- Tool factory tags ---
