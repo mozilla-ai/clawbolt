@@ -20,6 +20,10 @@ Clawbolt is a messaging-first AI assistant that helps contractors manage their b
 
 **[Read the full documentation](https://mozilla-ai.github.io/clawbolt)**
 
+## Demo
+
+[![Clawbolt Demo](https://img.youtube.com/vi/Tp4nS8CapD4/maxresdefault.jpg)](https://www.youtube.com/watch?v=Tp4nS8CapD4)
+
 ## Features
 
 - **Estimates** -- Describe a job, get a professional PDF estimate generated and sent back instantly
