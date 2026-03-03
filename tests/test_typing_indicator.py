@@ -165,8 +165,8 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     test_contractor: Contractor,
 ) -> None:
     """Heartbeat should send typing indicator before calling the LLM."""
-    mock_settings.llm_model = "gpt-4o"
-    mock_settings.llm_provider = "openai"
+    mock_settings.llm_model = "test-model"
+    mock_settings.llm_provider = "test-provider"
     mock_settings.llm_api_base = None
     mock_settings.heartbeat_model = ""
     mock_settings.heartbeat_provider = ""
@@ -230,8 +230,8 @@ async def test_heartbeat_works_without_messaging_service(
     test_contractor: Contractor,
 ) -> None:
     """Heartbeat should work when no messaging_service is provided."""
-    mock_settings.llm_model = "gpt-4o"
-    mock_settings.llm_provider = "openai"
+    mock_settings.llm_model = "test-model"
+    mock_settings.llm_provider = "test-provider"
     mock_settings.llm_api_base = None
     mock_settings.heartbeat_model = ""
     mock_settings.heartbeat_provider = ""

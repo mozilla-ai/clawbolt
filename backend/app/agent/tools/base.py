@@ -75,8 +75,8 @@ def _strip_titles(obj: Any) -> Any:
     return obj
 
 
-def tool_to_openai_schema(tool: Tool) -> dict[str, Any]:
-    """Convert a Tool to OpenAI function calling schema.
+def tool_to_function_schema(tool: Tool) -> dict[str, Any]:
+    """Convert a Tool to the function-calling schema expected by LLM providers.
 
     The JSON Schema is generated from the tool's ``params_model``
     (Pydantic BaseModel), which is the single source of truth for
