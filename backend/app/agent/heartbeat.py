@@ -460,7 +460,7 @@ def get_daily_heartbeat_count(db: Session, contractor_id: int) -> int:
     workers.
     """
     today_start = datetime.datetime.combine(
-        datetime.date.today(), datetime.time.min, tzinfo=datetime.UTC
+        datetime.datetime.now(datetime.UTC).date(), datetime.time.min, tzinfo=datetime.UTC
     )
     count: int = (
         db.query(HeartbeatLog)
