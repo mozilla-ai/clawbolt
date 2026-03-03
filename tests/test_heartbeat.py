@@ -765,7 +765,9 @@ class TestParseToolCallResponse:
 
         action = _parse_tool_call_response(resp)
         assert action.action_type == "no_action"
-        assert "unexpected tool" in action.reasoning
+        # Shared parser skips tool calls with no function, so heartbeat
+        # sees an empty parsed list and reports "did not call compose_message"
+        assert "did not call compose_message" in action.reasoning
 
 
 # ---------------------------------------------------------------------------

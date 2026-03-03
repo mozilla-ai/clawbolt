@@ -4,7 +4,6 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-import json_repair
 from any_llm import (
     AuthenticationError,
     ContentFilterError,
@@ -16,6 +15,7 @@ from any_llm.types.completion import ChatCompletion
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from backend.app.agent.llm_parsing import parse_tool_calls
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.messages import (
     AgentMessage,
@@ -457,53 +457,38 @@ class BackshopAgent:
         for _round in range(MAX_TOOL_ROUNDS):
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
 
-            choice = response.choices[0]
-
-            raw_tool_calls = getattr(choice.message, "tool_calls", None)
-            if not raw_tool_calls:
-                reply_text = choice.message.content or ""
+            # Parse tool calls via shared parser
+            parsed_raw = parse_tool_calls(response)
+            if not parsed_raw:
+                reply_text = response.choices[0].message.content or ""
                 break
 
-            # Parse LLM tool calls into typed objects
+            # Convert to typed ToolCallRequest objects
             parsed_calls: list[ToolCallRequest] = []
-            for raw_tc in raw_tool_calls:
-                func = getattr(raw_tc, "function", None)
-                if func is None:
-                    continue
-                try:
-                    args = json_repair.loads(func.arguments)
-                    if not isinstance(args, dict):
-                        raise ValueError(f"Expected dict, got {type(args).__name__}")
-                except (ValueError, TypeError):
-                    args = None
+            for ptc in parsed_raw:
                 parsed_calls.append(
                     ToolCallRequest(
-                        id=raw_tc.id,
-                        name=func.name,
-                        arguments=args if args is not None else {},
+                        id=ptc.id,
+                        name=ptc.name,
+                        arguments=ptc.arguments if ptc.arguments is not None else {},
                     )
                 )
 
             # Append the assistant message (with tool_calls) to conversation
             messages.append(
                 AssistantMessage(
-                    content=choice.message.content,
+                    content=response.choices[0].message.content,
                     tool_calls=parsed_calls,
                 )
             )
 
             tool_results: list[ToolResultMessage] = []
-            for tc_req in parsed_calls:
+            for i, tc_req in enumerate(parsed_calls):
                 tool_name = tc_req.name
                 tool_args = tc_req.arguments
 
-                # Handle malformed arguments (args was None before, stored as {})
-                if not tool_args and any(
-                    getattr(raw, "function", None)
-                    and raw.id == tc_req.id
-                    and _is_malformed_args(getattr(raw, "function", None))
-                    for raw in raw_tool_calls
-                ):
+                # Handle malformed arguments (arguments was None in ParsedToolCall)
+                if not tool_args and parsed_raw[i].arguments is None:
                     logger.warning(
                         "Malformed tool arguments for %s",
                         tool_name,
@@ -599,7 +584,7 @@ class BackshopAgent:
             messages.extend(tool_results)
         else:
             # Max rounds reached -- use last response content
-            reply_text = choice.message.content or ""
+            reply_text = response.choices[0].message.content or ""
 
         return AgentResponse(
             reply_text=reply_text,
@@ -628,15 +613,3 @@ def _dict_to_message(d: dict[str, Any]) -> AgentMessage:
             content=content,
         )
     return UserMessage(content=content)
-
-
-def _is_malformed_args(func: object) -> bool:
-    """Check whether a raw LLM function object has unparseable arguments."""
-    args_str = getattr(func, "arguments", "")
-    if not args_str:
-        return True
-    try:
-        parsed = json_repair.loads(args_str)
-        return not isinstance(parsed, dict)
-    except (ValueError, TypeError):
-        return True
