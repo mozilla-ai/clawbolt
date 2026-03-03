@@ -112,7 +112,7 @@ async def load_conversation_history(
             history.append(UserMessage(content=content))
         else:
             # Check for stored tool interactions
-            tool_interactions = _parse_tool_interactions(getattr(msg, "tool_interactions_json", ""))
+            tool_interactions = _parse_tool_interactions(msg.tool_interactions_json)
             if tool_interactions:
                 history.extend(_expand_outbound_with_tools(tool_interactions, content))
             else:
