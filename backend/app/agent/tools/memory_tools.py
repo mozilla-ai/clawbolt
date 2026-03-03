@@ -1,7 +1,37 @@
+from typing import Literal
+
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
 from backend.app.agent.tools.base import Tool, ToolResult
+
+
+class SaveFactParams(BaseModel):
+    """Parameters for the save_fact tool."""
+
+    key: str = Field(description="Short identifier for the fact")
+    value: str = Field(description="The fact value to remember")
+    category: Literal["pricing", "client", "job", "general"] = Field(
+        default="general",
+        description="Category for the fact",
+    )
+
+
+class RecallFactsParams(BaseModel):
+    """Parameters for the recall_facts tool."""
+
+    query: str = Field(description="Search query")
+    category: Literal["pricing", "client", "job", "general"] | None = Field(
+        default=None,
+        description="Optional category filter",
+    )
+
+
+class ForgetFactParams(BaseModel):
+    """Parameters for the forget_fact tool."""
+
+    key: str = Field(description="Key of the fact to delete")
 
 
 def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
@@ -32,47 +62,18 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
             name="save_fact",
             description="Save a key-value fact to the contractor's memory. Use for pricing, client info, preferences, etc.",
             function=save_fact,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "key": {"type": "string", "description": "Short identifier for the fact"},
-                    "value": {"type": "string", "description": "The fact value to remember"},
-                    "category": {
-                        "type": "string",
-                        "enum": ["pricing", "client", "job", "general"],
-                        "description": "Category for the fact",
-                    },
-                },
-                "required": ["key", "value"],
-            },
+            params_model=SaveFactParams,
         ),
         Tool(
             name="recall_facts",
             description="Search the contractor's memory for facts matching a query.",
             function=recall_facts,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "query": {"type": "string", "description": "Search query"},
-                    "category": {
-                        "type": "string",
-                        "enum": ["pricing", "client", "job", "general"],
-                        "description": "Optional category filter",
-                    },
-                },
-                "required": ["query"],
-            },
+            params_model=RecallFactsParams,
         ),
         Tool(
             name="forget_fact",
             description="Delete a fact from memory by key.",
             function=forget_fact,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "key": {"type": "string", "description": "Key of the fact to delete"},
-                },
-                "required": ["key"],
-            },
+            params_model=ForgetFactParams,
         ),
     ]

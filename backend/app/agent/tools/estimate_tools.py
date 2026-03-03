@@ -5,6 +5,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
@@ -23,6 +24,26 @@ logger = logging.getLogger(__name__)
 class EstimateStatus:
     DRAFT = "draft"
     SENT = "sent"
+
+
+class EstimateLineItemParams(BaseModel):
+    """A single line item in an estimate."""
+
+    description: str = Field(description="Description of the line item")
+    quantity: float = Field(default=1, description="Quantity")
+    unit_price: float = Field(description="Price per unit")
+
+
+class GenerateEstimateParams(BaseModel):
+    """Parameters for the generate_estimate tool."""
+
+    description: str = Field(description="Brief description of the work")
+    line_items: list[EstimateLineItemParams] = Field(
+        description="Line items for the estimate",
+    )
+    client_name: str | None = Field(default=None, description="Client name (optional)")
+    client_address: str | None = Field(default=None, description="Client address (optional)")
+    terms: str | None = Field(default=None, description="Payment terms (optional)")
 
 
 def create_estimate_tools(
@@ -132,7 +153,7 @@ def create_estimate_tools(
                     estimate_number,
                 )
 
-        # Update estimate with PDF path — stays as DRAFT until actually sent
+        # Update estimate with PDF path - stays as DRAFT until actually sent
         estimate.pdf_url = str(pdf_path)
         db.commit()
 
@@ -154,40 +175,6 @@ def create_estimate_tools(
                 "and unit_price."
             ),
             function=generate_estimate,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "description": {
-                        "type": "string",
-                        "description": "Brief description of the work",
-                    },
-                    "line_items": {
-                        "type": "array",
-                        "items": {
-                            "type": "object",
-                            "properties": {
-                                "description": {"type": "string"},
-                                "quantity": {"type": "number", "default": 1},
-                                "unit_price": {"type": "number"},
-                            },
-                            "required": ["description", "unit_price"],
-                        },
-                        "description": "Line items for the estimate",
-                    },
-                    "client_name": {
-                        "type": "string",
-                        "description": "Client name (optional)",
-                    },
-                    "client_address": {
-                        "type": "string",
-                        "description": "Client address (optional)",
-                    },
-                    "terms": {
-                        "type": "string",
-                        "description": "Payment terms (optional)",
-                    },
-                },
-                "required": ["description", "line_items"],
-            },
+            params_model=GenerateEstimateParams,
         ),
     ]

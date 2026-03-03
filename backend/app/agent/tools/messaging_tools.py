@@ -1,5 +1,20 @@
+from pydantic import BaseModel, Field
+
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.services.messaging import MessagingService
+
+
+class SendReplyParams(BaseModel):
+    """Parameters for the send_reply tool."""
+
+    message: str = Field(description="The message text to send")
+
+
+class SendMediaReplyParams(BaseModel):
+    """Parameters for the send_media_reply tool."""
+
+    message: str = Field(description="The message text")
+    media_url: str = Field(description="URL of the media to attach")
 
 
 def create_messaging_tools(messaging_service: MessagingService, to_address: str) -> list[Tool]:
@@ -26,28 +41,12 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
             name="send_reply",
             description="Send a text reply to the contractor.",
             function=send_reply,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string", "description": "The message text to send"},
-                },
-                "required": ["message"],
-            },
+            params_model=SendReplyParams,
         ),
         Tool(
             name="send_media_reply",
             description="Send a reply with a media attachment (e.g., PDF estimate).",
             function=send_media_reply,
-            parameters={
-                "type": "object",
-                "properties": {
-                    "message": {"type": "string", "description": "The message text"},
-                    "media_url": {
-                        "type": "string",
-                        "description": "URL of the media to attach",
-                    },
-                },
-                "required": ["message", "media_url"],
-            },
+            params_model=SendMediaReplyParams,
         ),
     ]
