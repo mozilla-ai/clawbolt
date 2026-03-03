@@ -95,8 +95,8 @@ _TIME_KEYWORDS = re.compile(
 
 STALE_ESTIMATE_HOURS = settings.heartbeat_stale_estimate_hours
 IDLE_DAYS = settings.heartbeat_idle_days
-CHECKLIST_DAILY_INTERVAL_HOURS = 20
-HEARTBEAT_RECENT_MESSAGES_COUNT = 5
+CHECKLIST_DAILY_INTERVAL_HOURS = settings.checklist_daily_interval_hours
+HEARTBEAT_RECENT_MESSAGES_COUNT = settings.heartbeat_recent_messages_count
 WEEKDAY_FRIDAY = 4  # Monday=0 ... Friday=4
 
 _FREQ_RE = re.compile(r"^(\d+)\s*(m|h|d)(?:in(?:utes?)?|ours?|ays?)?$", re.IGNORECASE)
