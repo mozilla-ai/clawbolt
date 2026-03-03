@@ -275,8 +275,8 @@ def test_allowlist_accepts_listed_chat_id(
     assert db_session.query(Message).count() == 1
 
 
-def test_allowlist_empty_allows_all(client: TestClient, db_session: Session) -> None:
-    """Empty allowlist (default) should allow all chat IDs."""
+def test_allowlist_empty_denies_all(client: TestClient, db_session: Session) -> None:
+    """Empty allowlist (default) should deny all chat IDs."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
         patch(
@@ -286,6 +286,47 @@ def test_allowlist_empty_allows_all(client: TestClient, db_session: Session) -> 
         patch(
             "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
             "",
+        ),
+    ):
+        payload = make_telegram_update_payload(chat_id=777777, text="Hi")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_not_called()
+    assert db_session.query(Message).count() == 0
+
+
+def test_allowlist_wildcard_allows_all(client: TestClient, db_session: Session) -> None:
+    """Setting TELEGRAM_ALLOWED_CHAT_IDS to '*' should allow all chat IDs."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "*",
+        ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "",
+        ),
+    ):
+        payload = make_telegram_update_payload(chat_id=777777, text="Hi")
+        response = client.post("/api/webhooks/telegram", json=payload)
+
+    assert response.status_code == 200
+    mock_h.assert_called_once()
+
+
+def test_username_wildcard_allows_all(client: TestClient, db_session: Session) -> None:
+    """Setting TELEGRAM_ALLOWED_USERNAMES to '*' should allow all users."""
+    with (
+        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "",
+        ),
+        patch(
+            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "*",
         ),
     ):
         payload = make_telegram_update_payload(chat_id=777777, text="Hi")

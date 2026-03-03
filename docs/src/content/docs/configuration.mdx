@@ -18,6 +18,7 @@ Clawbolt is configured via environment variables. Copy `.env.example` to `.env` 
 |----------|---------|-------------|
 | `LLM_PROVIDER` | `openai` | LLM provider name (any provider supported by [any-llm](https://github.com/mozilla-ai/any-llm)) |
 | `LLM_MODEL` | `gpt-4o` | Model to use for the agent loop |
+| `VISION_MODEL` | (same as `LLM_MODEL`) | Model to use for image/document analysis. Falls back to `LLM_MODEL` if not set |
 | `ANY_LLM_KEY` | | [any-llm.ai](https://any-llm.ai) managed platform key (replaces individual provider keys) |
 
 Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use the any-llm.ai managed platform as a key vault for all providers.
@@ -27,8 +28,8 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `TELEGRAM_BOT_TOKEN` | | Bot token from @BotFather |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | (empty) | Comma-separated allowlist of Telegram chat IDs. Empty = allow all |
-| `TELEGRAM_ALLOWED_USERNAMES` | (empty) | Comma-separated allowlist of Telegram usernames. Empty = allow all |
+| `TELEGRAM_ALLOWED_CHAT_IDS` | (empty) | Comma-separated allowlist of Telegram chat IDs, or `*` to allow all. Empty = deny all |
+| `TELEGRAM_ALLOWED_USERNAMES` | (empty) | Comma-separated allowlist of Telegram usernames, or `*` to allow all. Empty = deny all |
 
 ## Storage settings
 

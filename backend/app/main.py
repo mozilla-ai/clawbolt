@@ -77,7 +77,8 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     ):
         logger.warning(
             "No Telegram allowlist configured (TELEGRAM_ALLOWED_CHAT_IDS / "
-            "TELEGRAM_ALLOWED_USERNAMES) — bot will respond to all users."
+            "TELEGRAM_ALLOWED_USERNAMES). All messages will be rejected. "
+            'Set to "*" to allow all users, or provide a comma-separated list of IDs/usernames.'
         )
 
     # Fire-and-forget: register webhook after the server is ready.

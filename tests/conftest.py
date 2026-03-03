@@ -85,8 +85,9 @@ def client(
     with (
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.ingestion.SessionLocal", test_session_factory),
-        # Prevent .env allowlist settings from leaking into tests
-        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids", ""),
+        # Default allowlist to "*" (allow all) so tests are not blocked.
+        # Individual allowlist tests override these values.
+        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids", "*"),
         patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames", ""),
         # Clear bot token so auto-derived webhook secret is empty for tests that
         # don't send a secret header

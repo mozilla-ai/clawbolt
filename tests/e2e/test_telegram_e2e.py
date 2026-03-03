@@ -71,6 +71,9 @@ def e2e_client(
         # Disable webhook secret validation so e2e tests don't need to derive
         # and send the secret header (the e2e focus is Telegram round-trip).
         patch("backend.app.routers.telegram_webhook.settings.telegram_bot_token", ""),
+        # Allow all chat IDs through so the allowlist doesn't block e2e messages.
+        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids", "*"),
+        patch("backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames", ""),
         TestClient(app) as c,
     ):
         yield c

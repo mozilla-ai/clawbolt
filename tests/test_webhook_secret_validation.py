@@ -90,7 +90,7 @@ def _make_client(
         ),
         patch(
             "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
-            "",
+            "*",
         ),
         patch(
             "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
