@@ -681,3 +681,50 @@ async def test_agent_logs_warning_when_trimming(
         )
 
     assert any("Trimmed" in record.message for record in caplog.records)
+
+
+# ---------------------------------------------------------------------------
+# Dict-based tool registry tests (issue #282)
+# ---------------------------------------------------------------------------
+
+
+def test_register_tools_builds_dict_lookup(
+    db_session: Session, test_contractor: Contractor
+) -> None:
+    """register_tools should build a dict for O(1) lookup by name."""
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+
+    async def dummy(**kwargs: object) -> str:
+        return "ok"
+
+    tools = [
+        Tool(name="tool_a", description="A", function=dummy, parameters={}),
+        Tool(name="tool_b", description="B", function=dummy, parameters={}),
+    ]
+    agent.register_tools(tools)
+
+    assert agent._find_tool("tool_a") is not None
+    assert agent._find_tool("tool_b") is not None
+    assert agent._find_tool("nonexistent") is None
+
+
+def test_register_tools_warns_on_duplicate_name(
+    db_session: Session,
+    test_contractor: Contractor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Registering tools with duplicate names should log a warning."""
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+
+    async def dummy(**kwargs: object) -> str:
+        return "ok"
+
+    tools = [
+        Tool(name="dupe", description="First", function=dummy, parameters={}),
+        Tool(name="dupe", description="Second", function=dummy, parameters={}),
+    ]
+
+    with caplog.at_level("WARNING", logger="backend.app.agent.core"):
+        agent.register_tools(tools)
+
+    assert any("Duplicate tool name" in record.message for record in caplog.records)

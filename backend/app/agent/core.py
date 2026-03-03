@@ -86,10 +86,16 @@ class BackshopAgent:
         self.db = db
         self.contractor = contractor
         self.tools: list[Tool] = []
+        self._tools_by_name: dict[str, Tool] = {}
 
     def register_tools(self, tools: list[Tool]) -> None:
         """Register available tools for this agent session."""
         self.tools = tools
+        self._tools_by_name = {}
+        for tool in tools:
+            if tool.name in self._tools_by_name:
+                logger.warning("Duplicate tool name registered: %s", tool.name)
+            self._tools_by_name[tool.name] = tool
 
     async def _build_system_prompt(self, message_context: str) -> str:
         """Build the full system prompt with soul + memory."""
@@ -326,7 +332,5 @@ class BackshopAgent:
 
     def _find_tool(self, name: str) -> Callable[..., Any] | None:
         """Find a registered tool by name."""
-        for tool in self.tools:
-            if tool.name == name:
-                return tool.function
-        return None
+        tool = self._tools_by_name.get(name)
+        return tool.function if tool else None
