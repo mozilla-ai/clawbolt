@@ -73,16 +73,10 @@ async def test_analyze_image_does_not_pass_api_key(mock_acompletion: object) -> 
 
 @pytest.mark.asyncio()
 @patch("backend.app.media.vision.acompletion")
-@patch("backend.app.media.vision.settings")
-async def test_analyze_image_passes_user_for_openai(
-    mock_settings: object, mock_acompletion: object
+async def test_analyze_image_always_passes_user_when_provided(
+    mock_acompletion: object,
 ) -> None:
-    """When provider is openai and user is set, user should be passed to acompletion."""
-    mock_settings.vision_model = "gpt-4o"  # type: ignore[attr-defined]
-    mock_settings.llm_model = "gpt-4o"  # type: ignore[attr-defined]
-    mock_settings.llm_provider = "openai"  # type: ignore[attr-defined]
-    mock_settings.llm_api_base = None  # type: ignore[attr-defined]
-    mock_settings.llm_max_tokens_vision = 1024  # type: ignore[attr-defined]
+    """When user is provided, it should always be passed to acompletion regardless of provider."""
     mock_acompletion.return_value = make_vision_response("Test.")  # type: ignore[union-attr]
 
     await analyze_image(b"fake-jpeg-bytes", "image/jpeg", user="42")
@@ -93,19 +87,13 @@ async def test_analyze_image_passes_user_for_openai(
 
 @pytest.mark.asyncio()
 @patch("backend.app.media.vision.acompletion")
-@patch("backend.app.media.vision.settings")
-async def test_analyze_image_omits_user_for_non_openai(
-    mock_settings: object, mock_acompletion: object
+async def test_analyze_image_omits_user_when_not_provided(
+    mock_acompletion: object,
 ) -> None:
-    """When provider is not openai, user should NOT be passed."""
-    mock_settings.vision_model = ""  # type: ignore[attr-defined]
-    mock_settings.llm_model = "claude-haiku-4-5-20251001"  # type: ignore[attr-defined]
-    mock_settings.llm_provider = "anthropic"  # type: ignore[attr-defined]
-    mock_settings.llm_api_base = None  # type: ignore[attr-defined]
-    mock_settings.llm_max_tokens_vision = 1024  # type: ignore[attr-defined]
+    """When user is not provided, user should NOT be passed to acompletion."""
     mock_acompletion.return_value = make_vision_response("Test.")  # type: ignore[union-attr]
 
-    await analyze_image(b"fake-jpeg-bytes", "image/jpeg", user="42")
+    await analyze_image(b"fake-jpeg-bytes", "image/jpeg")
 
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
     assert "user" not in call_args.kwargs

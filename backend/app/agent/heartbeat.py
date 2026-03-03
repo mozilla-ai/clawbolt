@@ -456,9 +456,7 @@ async def evaluate_heartbeat_need(
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
 
-    llm_kwargs: dict[str, Any] = {}
-    if provider == "openai":
-        llm_kwargs["user"] = str(contractor.id)
+    llm_kwargs: dict[str, Any] = {"user": str(contractor.id)}
 
     response = cast(
         ChatCompletion,

@@ -37,7 +37,7 @@ async def analyze_image(
     logger.info("Using vision model: %s (provider=%s)", model, settings.llm_provider)
 
     llm_kwargs: dict[str, Any] = {}
-    if user is not None and settings.llm_provider == "openai":
+    if user is not None:
         llm_kwargs["user"] = user
 
     response = cast(
