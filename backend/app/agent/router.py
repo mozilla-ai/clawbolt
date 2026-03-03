@@ -4,22 +4,26 @@ Each step is an independent function with clear inputs/outputs.
 ``handle_inbound_message`` orchestrates them in sequence.
 """
 
+from __future__ import annotations
+
 import json
 import logging
+from collections.abc import Awaitable, Callable
 
 from any_llm import AuthenticationError, ContentFilterError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, BackshopAgent
+from backend.app.agent.events import AgentEvent
 from backend.app.agent.messages import AgentMessage
 from backend.app.agent.onboarding import (
+    OnboardingSubscriber,
     build_onboarding_system_prompt,
     is_onboarding_needed,
 )
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
-from backend.app.agent.tools.profile_tools import extract_profile_updates_from_tool_calls
 from backend.app.agent.tools.registry import (
     ToolContext,
     default_registry,
@@ -156,6 +160,7 @@ async def run_agent(
     to_address: str,
     downloaded_media: list[DownloadedMedia],
     system_prompt_override: str | None = None,
+    event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] | None = None,
 ) -> AgentResponse:
     """Initialize agent with tools and process the message.
 
@@ -174,6 +179,9 @@ async def run_agent(
     )
     tools = default_registry.create_tools(tool_context)
     agent.register_tools(tools)
+
+    for subscriber in event_subscribers or []:
+        agent.subscribe(subscriber)
 
     # Send typing indicator while processing (non-blocking on failure)
     try:
@@ -208,48 +216,6 @@ async def run_agent(
             contractor.id,
         )
         return AgentResponse(reply_text=AGENT_ERROR_FALLBACK, is_error_fallback=True)
-
-
-def post_process(
-    db: Session,
-    contractor: Contractor,
-    response: AgentResponse,
-    was_onboarding: bool,
-) -> None:
-    """Handle profile updates and onboarding completion detection.
-
-    Mutates *response.reply_text* in-place when onboarding completes.
-    """
-    profile_updates = extract_profile_updates_from_tool_calls(response.tool_calls)
-    if profile_updates:
-        db.refresh(contractor)
-
-    # If still onboarding, check whether the required fields are now complete
-    if was_onboarding and not is_onboarding_needed(contractor):
-        contractor.onboarding_complete = True
-        db.commit()
-
-        # Append completion summary when onboarding transitions to complete
-        if contractor.onboarding_complete:
-            parts = [f"Name: {contractor.name}", f"Trade: {contractor.trade}"]
-            if contractor.location:
-                parts.append(f"Location: {contractor.location}")
-            if contractor.hourly_rate:
-                parts.append(f"Rate: ${contractor.hourly_rate:.0f}/hour")
-            summary = "\n".join(f"- {p}" for p in parts)
-            completion_note = (
-                "\n\nSetup complete! Here's what I know about you:\n"
-                f"{summary}\n\n"
-                "You can update any of this anytime. I'm ready to help!"
-            )
-            if response.reply_text:
-                response.reply_text += completion_note
-
-    # Ensure onboarding_complete is set when required fields are already satisfied
-    # (e.g. pre-populated contractors that skipped the onboarding flow)
-    if not contractor.onboarding_complete and not is_onboarding_needed(contractor):
-        contractor.onboarding_complete = True
-        db.commit()
 
 
 async def dispatch_reply(
@@ -315,12 +281,12 @@ async def handle_inbound_message(
     """Full message processing pipeline.
 
     Orchestrates discrete pipeline steps:
-    1. prepare_media   - download and auto-save media
+    1. prepare_media        - download and auto-save media
     2. build_message_context - run media pipeline, build combined context
-    3. run_agent       - initialize agent with tools, process message
-    4. post_process    - onboarding completion, profile update detection
-    5. dispatch_reply  - send reply to contractor
-    6. persist_outbound - store outbound message record
+    3. run_agent            - initialize agent with tools and event subscribers
+    4. finalize_onboarding  - append completion note if onboarding just finished
+    5. dispatch_reply       - send reply to contractor
+    6. persist_outbound     - store outbound message record
     """
     to_address = contractor.channel_identifier or contractor.phone
     if not to_address:
@@ -340,10 +306,11 @@ async def handle_inbound_message(
         db, message, contractor, media_urls, downloaded_media
     )
 
-    # 3. Load history and run agent
+    # 3. Load history and run agent (with onboarding subscriber)
     conversation_history = await load_conversation_history(db, message.conversation_id)
     was_onboarding = is_onboarding_needed(contractor)
     system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
+    onboarding_sub = OnboardingSubscriber(db, contractor, was_onboarding)
     response = await run_agent(
         db=db,
         contractor=contractor,
@@ -355,10 +322,11 @@ async def handle_inbound_message(
         to_address=to_address,
         downloaded_media=downloaded_media,
         system_prompt_override=system_prompt_override,
+        event_subscribers=[onboarding_sub],
     )
 
-    # 4. Post-process (onboarding, profile updates)
-    post_process(db, contractor, response, was_onboarding)
+    # 4. Finalize onboarding (append completion note if applicable)
+    onboarding_sub.finalize(response)
 
     # 5. Send reply
     await dispatch_reply(response, messaging_service, to_address, message.id)
