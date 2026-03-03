@@ -104,6 +104,7 @@ async def update_contractor_profile(
         "hourly_rate",
         "soul_text",
         "business_hours",
+        "timezone",
         "preferences_json",
     }
     for field, value in updates.items():
@@ -138,6 +139,9 @@ def build_soul_prompt(contractor: Contractor) -> str:
     if contractor.business_hours:
         lines.append(f"Business hours: {contractor.business_hours}.")
 
+    if contractor.timezone:
+        lines.append(f"Timezone: {contractor.timezone}.")
+
     # Layer 2: trade-specific defaults (only when no custom soul_text)
     if not contractor.soul_text:
         trade_guidance = get_trade_defaults(trade)
@@ -167,6 +171,7 @@ def get_missing_optional_fields(contractor: Contractor) -> list[str]:
     optional: dict[str, str] = {
         "hourly_rate": "rates",
         "business_hours": "business hours",
+        "timezone": "timezone",
     }
     return [label for field, label in optional.items() if not getattr(contractor, field, None)]
 
@@ -183,6 +188,7 @@ def build_onboarding_prompt() -> str:
         "- Where they're based (city/region)\n"
         "- Their typical rates (hourly or per-project)\n"
         "- Their business hours\n"
+        "- Their timezone (e.g. America/New_York, America/Los_Angeles)\n"
         "- How they'd like you to communicate (formal, casual, brief, detailed)\n\n"
         "IMPORTANT: As soon as the contractor shares any of the above information, "
         "immediately save it using the update_profile tool. For example, if they say "

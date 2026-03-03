@@ -20,6 +20,7 @@ from backend.app.agent.heartbeat import (
     _is_checklist_item_due,
     _parse_business_hours,
     _parse_tool_call_response,
+    _to_local_time,
     build_heartbeat_context,
     evaluate_heartbeat_need,
     get_daily_heartbeat_count,
@@ -83,6 +84,24 @@ def contractor_no_hours(db: Session) -> Contractor:
         trade="Electrician",
         onboarding_complete=True,
         business_hours="",
+    )
+    db.add(c)
+    db.commit()
+    db.refresh(c)
+    return c
+
+
+@pytest.fixture()
+def contractor_with_timezone(db: Session) -> Contractor:
+    c = Contractor(
+        user_id="hb-user-003",
+        name="Carlos Roofing",
+        phone="+15559990002",
+        trade="Roofer",
+        location="Los Angeles, CA",
+        business_hours="7am-5pm",
+        timezone="America/Los_Angeles",
+        onboarding_complete=True,
     )
     db.add(c)
     db.commit()
@@ -218,6 +237,82 @@ class TestIsWithinBusinessHours:
         # 3 AM -- inside quiet hours, should be False
         now = datetime.datetime(2025, 6, 15, 3, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor_no_hours, now) is False
+
+
+class TestToLocalTime:
+    """Tests for the _to_local_time helper."""
+
+    def test_converts_utc_to_pacific(self) -> None:
+        utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        local = _to_local_time(utc_time, "America/Los_Angeles")
+        # UTC 17:00 in June (PDT, UTC-7) -> 10:00 local
+        assert local.hour == 10
+
+    def test_converts_utc_to_eastern(self) -> None:
+        utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        local = _to_local_time(utc_time, "America/New_York")
+        # UTC 17:00 in June (EDT, UTC-4) -> 13:00 local
+        assert local.hour == 13
+
+    def test_empty_timezone_returns_unchanged(self) -> None:
+        utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        result = _to_local_time(utc_time, "")
+        assert result.hour == 17
+
+    def test_invalid_timezone_returns_unchanged(self) -> None:
+        utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        result = _to_local_time(utc_time, "Not/A_Real_Zone")
+        assert result.hour == 17
+
+
+class TestIsWithinBusinessHoursTimezone:
+    """Tests for timezone-correct business hour checks."""
+
+    def test_utc_afternoon_is_morning_in_pacific(
+        self, contractor_with_timezone: Contractor
+    ) -> None:
+        # 2 PM UTC -> 7 AM Pacific (PDT). Business hours are 7am-5pm, so within.
+        now = datetime.datetime(2025, 6, 15, 14, 0, tzinfo=datetime.UTC)
+        assert is_within_business_hours(contractor_with_timezone, now) is True
+
+    def test_utc_evening_is_afternoon_in_pacific(
+        self, contractor_with_timezone: Contractor
+    ) -> None:
+        # 11 PM UTC -> 4 PM Pacific (PDT). Business hours 7am-5pm, so within.
+        now = datetime.datetime(2025, 6, 15, 23, 0, tzinfo=datetime.UTC)
+        assert is_within_business_hours(contractor_with_timezone, now) is True
+
+    def test_utc_midnight_is_evening_in_pacific(self, contractor_with_timezone: Contractor) -> None:
+        # 1 AM UTC (next day) -> 6 PM Pacific (PDT). After 5pm, so outside.
+        now = datetime.datetime(2025, 6, 16, 1, 0, tzinfo=datetime.UTC)
+        assert is_within_business_hours(contractor_with_timezone, now) is False
+
+    def test_utc_morning_is_night_in_pacific(self, contractor_with_timezone: Contractor) -> None:
+        # 5 AM UTC -> 10 PM Pacific (PDT, previous day). Outside 7am-5pm.
+        now = datetime.datetime(2025, 6, 15, 5, 0, tzinfo=datetime.UTC)
+        assert is_within_business_hours(contractor_with_timezone, now) is False
+
+    def test_no_timezone_uses_utc(self, contractor: Contractor) -> None:
+        # Contractor without timezone field set uses UTC directly.
+        # 10 AM UTC, business hours 7am-5pm -> within.
+        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
+        assert is_within_business_hours(contractor, now) is True
+
+    def test_invalid_timezone_falls_back_to_utc(self, db: Session) -> None:
+        c = Contractor(
+            user_id="hb-user-bad-tz",
+            name="Bad TZ",
+            trade="Plumber",
+            business_hours="7am-5pm",
+            timezone="Invalid/Timezone",
+            onboarding_complete=True,
+        )
+        db.add(c)
+        db.commit()
+        db.refresh(c)
+        # 10 AM UTC -> falls back to UTC -> within 7am-5pm
+        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
+        assert is_within_business_hours(c, now) is True
 
 
 # ---------------------------------------------------------------------------

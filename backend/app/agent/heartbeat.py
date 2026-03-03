@@ -13,6 +13,7 @@ import asyncio
 import datetime
 import logging
 import re
+import zoneinfo
 from dataclasses import dataclass, field
 from typing import Any, cast
 
@@ -190,17 +191,33 @@ def _parse_business_hours(hours_str: str) -> tuple[int, int] | None:
     return None
 
 
+def _to_local_time(
+    now: datetime.datetime,
+    tz_name: str,
+) -> datetime.datetime:
+    """Convert *now* to the given IANA timezone, returning *now* unchanged on error."""
+    if not tz_name:
+        return now
+    try:
+        return now.astimezone(zoneinfo.ZoneInfo(tz_name))
+    except (zoneinfo.ZoneInfoNotFoundError, KeyError, ValueError):
+        logger.warning("Invalid timezone %r, falling back to UTC", tz_name)
+        return now
+
+
 def is_within_business_hours(
     contractor: Contractor,
     now: datetime.datetime | None = None,
 ) -> bool:
     """Return *True* if *now* falls within the contractor's business hours.
 
-    Falls back to the global quiet-hours window from settings when the
-    contractor has not set ``business_hours``.
+    When the contractor has a ``timezone`` set, *now* is converted to their
+    local time before comparing against business hours or the global quiet
+    hours window.  Falls back to UTC when the timezone is empty or invalid.
     """
     now = now or datetime.datetime.now(datetime.UTC)
-    current_hour = now.hour
+    local_now = _to_local_time(now, contractor.timezone)
+    current_hour = local_now.hour
 
     if contractor.business_hours:
         parsed = _parse_business_hours(contractor.business_hours)
