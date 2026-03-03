@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import importlib
 import logging
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
@@ -32,6 +33,22 @@ _TOOL_MODULES: list[str] = [
     "backend.app.agent.tools.file_tools",
 ]
 
+# Factory names that are always included regardless of message content.
+_ALWAYS_INCLUDE: frozenset[str] = frozenset({"memory", "messaging", "profile"})
+
+# Keyword patterns that trigger inclusion of specific tool factories.
+# Each entry maps a factory name to a compiled regex of trigger words.
+_KEYWORD_RULES: dict[str, re.Pattern[str]] = {
+    "estimate": re.compile(
+        r"\b(estimate|quote|bid|price|cost|how\s+much|invoice)\b",
+        re.IGNORECASE,
+    ),
+    "checklist": re.compile(
+        r"\b(checklist|reminder|todo|task|to-do)\b",
+        re.IGNORECASE,
+    ),
+}
+
 
 @dataclass
 class ToolContext:
@@ -52,6 +69,69 @@ class ToolFactory:
     create: Callable[[ToolContext], list[Tool]]
     requires_storage: bool = False
     requires_messaging: bool = False
+
+
+def select_tools(
+    message: str,
+    *,
+    has_media: bool = False,
+    has_storage: bool = False,
+    factory_names: list[str] | None = None,
+) -> set[str]:
+    """Select which tool factories to include based on message context.
+
+    Returns a set of factory names that should be activated for the given
+    message. The selection logic is:
+
+    - Always include: memory, messaging, profile tools
+    - Include estimate tools when: message mentions pricing keywords
+    - Include file tools when: media is present AND storage is configured
+    - Include checklist tools when: message mentions task/checklist keywords
+    - Fallback: when no specialized keywords match, include all tools
+
+    Args:
+        message: The inbound message text (may be empty).
+        has_media: Whether the message includes media attachments.
+        has_storage: Whether a storage backend is configured.
+        factory_names: Available factory names. When ``None``, uses the
+            default set of known factories.
+
+    Returns:
+        Set of factory names to include.
+    """
+    all_names = (
+        set(factory_names)
+        if factory_names is not None
+        else {
+            "memory",
+            "messaging",
+            "estimate",
+            "checklist",
+            "profile",
+            "file",
+        }
+    )
+
+    selected: set[str] = set(_ALWAYS_INCLUDE & all_names)
+
+    # Check keyword rules for specialized tools
+    specialized_matched = False
+    for name, pattern in _KEYWORD_RULES.items():
+        if name in all_names and pattern.search(message):
+            selected.add(name)
+            specialized_matched = True
+
+    # Include file tools when media is present and storage is available
+    if has_media and has_storage and "file" in all_names:
+        selected.add("file")
+        specialized_matched = True
+
+    # Fallback: when no specialized keywords matched, include everything
+    # so the model has full capability for ambiguous or general messages
+    if not specialized_matched:
+        selected = all_names.copy()
+
+    return selected
 
 
 class ToolRegistry:
@@ -77,14 +157,25 @@ class ToolRegistry:
             requires_messaging=requires_messaging,
         )
 
-    def create_tools(self, context: ToolContext) -> list[Tool]:
-        """Create all tools whose dependencies are satisfied by the context.
+    def create_tools(
+        self,
+        context: ToolContext,
+        *,
+        selected_factories: set[str] | None = None,
+    ) -> list[Tool]:
+        """Create tools whose dependencies are satisfied by the context.
+
+        When *selected_factories* is provided, only factories in that set are
+        considered. Otherwise all registered factories are eligible.
 
         Every tool must have a ``params_model`` set so that Pydantic
         validation runs on all arguments before execution.
         """
         tools: list[Tool] = []
         for name, factory in self._factories.items():
+            if selected_factories is not None and name not in selected_factories:
+                logger.debug("Skipping %s: not selected for this message", name)
+                continue
             if factory.requires_storage and context.storage is None:
                 logger.debug("Skipping %s: no storage backend", name)
                 continue

@@ -28,6 +28,7 @@ from backend.app.agent.tools.registry import (
     ToolContext,
     default_registry,
     ensure_tool_modules_imported,
+    select_tools,
 )
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
@@ -149,6 +150,7 @@ async def build_message_context(
     return combined_context
 
 
+
 async def run_agent(
     db: Session,
     contractor: Contractor,
@@ -177,7 +179,14 @@ async def run_agent(
         to_address=to_address,
         downloaded_media=downloaded_media,
     )
-    tools = default_registry.create_tools(tool_context)
+
+    selected_factories = select_tools(
+        message.body or "",
+        has_media=bool(downloaded_media),
+        has_storage=storage is not None,
+        factory_names=default_registry.factory_names,
+    )
+    tools = default_registry.create_tools(tool_context, selected_factories=selected_factories)
     agent.register_tools(tools)
 
     for subscriber in event_subscribers or []:
