@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -394,3 +395,99 @@ async def test_gdrive_list_folder(
     assert files[0] == {"name": "photo.jpg", "path": "https://drive.google.com/f1"}
     assert files[1] == {"name": "doc.pdf", "path": "https://drive.google.com/f2"}
     mock_drive_service.files.return_value.list.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Per-contractor isolation tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_local_storage_contractor_subdirectory(tmp_path: Path) -> None:
+    """LocalFileStorage with contractor_id should store files in a subdirectory."""
+    storage = LocalFileStorage(base_dir=str(tmp_path), contractor_id=42)
+    await storage.upload_file(b"photo", "/Job Photos", "site.jpg")
+    written = tmp_path / "42" / "Job Photos" / "site.jpg"
+    assert written.exists()
+    assert written.read_bytes() == b"photo"
+
+
+@pytest.mark.asyncio()
+async def test_local_storage_contractors_are_isolated(tmp_path: Path) -> None:
+    """Files from different contractors should not be visible to each other."""
+    s1 = LocalFileStorage(base_dir=str(tmp_path), contractor_id=1)
+    s2 = LocalFileStorage(base_dir=str(tmp_path), contractor_id=2)
+
+    await s1.upload_file(b"a", "/docs", "a.txt")
+    await s2.upload_file(b"b", "/docs", "b.txt")
+
+    files_1 = await s1.list_folder("/docs")
+    files_2 = await s2.list_folder("/docs")
+    assert [f["name"] for f in files_1] == ["a.txt"]
+    assert [f["name"] for f in files_2] == ["b.txt"]
+
+
+@pytest.mark.asyncio()
+async def test_local_storage_no_contractor_uses_base_dir(tmp_path: Path) -> None:
+    """LocalFileStorage without contractor_id should use the base dir directly."""
+    storage = LocalFileStorage(base_dir=str(tmp_path))
+    await storage.upload_file(b"data", "/docs", "file.txt")
+    written = tmp_path / "docs" / "file.txt"
+    assert written.exists()
+
+
+def test_factory_passes_contractor_id_to_local(tmp_path: Path) -> None:
+    """get_storage_service should pass contractor.id to LocalFileStorage."""
+    mock_settings = MagicMock()
+    mock_settings.storage_provider = "local"
+    mock_settings.file_storage_base_dir = str(tmp_path)
+
+    contractor = MagicMock()
+    contractor.id = 99
+
+    result = get_storage_service(mock_settings, contractor=contractor)
+    assert isinstance(result, LocalFileStorage)
+    assert result.base_dir == (tmp_path / "99").resolve()
+
+
+def test_factory_no_contractor_local(tmp_path: Path) -> None:
+    """get_storage_service without contractor should not add subdirectory."""
+    mock_settings = MagicMock()
+    mock_settings.storage_provider = "local"
+    mock_settings.file_storage_base_dir = str(tmp_path)
+
+    result = get_storage_service(mock_settings)
+    assert isinstance(result, LocalFileStorage)
+    assert result.base_dir == tmp_path.resolve()
+
+
+def test_dropbox_contractor_prefixes_paths(mock_dbx_client: MagicMock) -> None:
+    """DropboxStorage with contractor_id should prefix paths."""
+    with patch(
+        "backend.app.services.storage_service.dropbox.Dropbox", return_value=mock_dbx_client
+    ):
+        s = DropboxStorage(access_token="fake-token", contractor_id=42)
+    assert s._path_prefix == "/42"
+    assert s._prefixed("/docs") == "/42/docs"
+
+
+def test_dropbox_no_contractor_no_prefix(mock_dbx_client: MagicMock) -> None:
+    """DropboxStorage without contractor_id should not prefix paths."""
+    with patch(
+        "backend.app.services.storage_service.dropbox.Dropbox", return_value=mock_dbx_client
+    ):
+        s = DropboxStorage(access_token="fake-token")
+    assert s._path_prefix == ""
+    assert s._prefixed("/docs") == "/docs"
+
+
+def test_gdrive_contractor_path_prefix() -> None:
+    """GoogleDriveStorage with contractor_id should store a path prefix."""
+    s = GoogleDriveStorage(credentials_json='{"token": "fake"}', contractor_id=42)
+    assert s._path_prefix == "42/"
+
+
+def test_gdrive_no_contractor_no_prefix() -> None:
+    """GoogleDriveStorage without contractor_id should have empty prefix."""
+    s = GoogleDriveStorage(credentials_json='{"token": "fake"}')
+    assert s._path_prefix == ""

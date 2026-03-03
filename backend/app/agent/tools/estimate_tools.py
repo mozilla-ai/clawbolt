@@ -12,7 +12,7 @@ from backend.app.config import settings
 from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
 
-PDF_DIR = Path(settings.pdf_storage_dir)
+PDF_BASE_DIR = Path(settings.pdf_storage_dir)
 ESTIMATE_NUMBER_FORMAT = "EST-{:04d}"
 
 logger = logging.getLogger(__name__)
@@ -108,9 +108,10 @@ def create_estimate_tools(
 
         pdf_bytes = await generate_estimate_pdf(pdf_data)
 
-        # Save PDF to local storage
-        PDF_DIR.mkdir(parents=True, exist_ok=True)
-        pdf_path = PDF_DIR / f"{estimate.id}.pdf"
+        # Save PDF to local storage (per-contractor subdirectory)
+        pdf_dir = PDF_BASE_DIR / str(contractor.id)
+        pdf_dir.mkdir(parents=True, exist_ok=True)
+        pdf_path = pdf_dir / f"{estimate.id}.pdf"
         pdf_path.write_bytes(pdf_bytes)
 
         # Update estimate with PDF path — stays as DRAFT until actually sent
