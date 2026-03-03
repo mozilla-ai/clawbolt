@@ -17,7 +17,7 @@ from any_llm import AuthenticationError, ContentFilterError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import StoredToolInteraction, load_conversation_history
-from backend.app.agent.core import AgentResponse, BackshopAgent
+from backend.app.agent.core import AgentResponse, ClawboltAgent
 from backend.app.agent.events import AgentEvent
 from backend.app.agent.messages import AgentMessage
 from backend.app.agent.onboarding import (
@@ -199,7 +199,7 @@ async def run_agent(
     Handles LLM-level errors (content filter, auth, unexpected) by returning
     an error fallback AgentResponse.
     """
-    agent = BackshopAgent(
+    agent = ClawboltAgent(
         db=db,
         contractor=contractor,
         messaging_service=messaging_service,

@@ -379,7 +379,7 @@ def _load_recent_messages(db: Session, contractor: Contractor) -> str:
     )
     lines: list[str] = []
     for msg in reversed(recent):
-        direction = "Contractor" if msg.direction == MessageDirection.INBOUND else "Backshop"
+        direction = "Contractor" if msg.direction == MessageDirection.INBOUND else "Clawbolt"
         lines.append(f"[{direction}] {msg.body}")
     return "\n".join(lines) or "(no recent messages)"
 

@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.models import Contractor, Estimate, EstimateLineItem
@@ -33,7 +33,7 @@ async def test_estimate_generation_roundtrip(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = BackshopAgent(db=integration_db, contractor=integration_contractor)
+        agent = ClawboltAgent(db=integration_db, contractor=integration_contractor)
         tools = create_estimate_tools(integration_db, integration_contractor)
         tools.extend(create_memory_tools(integration_db, integration_contractor.id))
         agent.register_tools(tools)

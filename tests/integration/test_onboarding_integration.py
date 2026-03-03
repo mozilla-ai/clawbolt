@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
     is_onboarding_needed,
@@ -52,7 +52,7 @@ async def test_onboarding_extracts_profile_from_intro(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = BackshopAgent(db=integration_db, contractor=contractor)
+        agent = ClawboltAgent(db=integration_db, contractor=contractor)
         tools = create_memory_tools(integration_db, contractor.id)
         tools.extend(create_profile_tools(integration_db, contractor))
         agent.register_tools(tools)

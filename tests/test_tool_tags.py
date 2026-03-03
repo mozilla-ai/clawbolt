@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.messaging_tools import create_messaging_tools
@@ -158,7 +158,7 @@ async def test_agent_tool_call_records_include_tags(
         tags={ToolTags.SAVES_MEMORY},
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("My rate is $50/hour")
 
@@ -193,7 +193,7 @@ async def test_agent_memories_saved_uses_tags_not_name(
         tags={ToolTags.SAVES_MEMORY},
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("My favorite color is blue")
 
@@ -226,7 +226,7 @@ async def test_agent_untagged_tool_has_empty_tags(
         parameters={"type": "object", "properties": {"q": {}}},
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("hello")
 

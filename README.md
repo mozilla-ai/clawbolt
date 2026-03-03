@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="backshop.ai" width="360">
+  <img src="assets/clawbolt_text.png" alt="clawbolt.ai" width="360">
 </p>
 
 <p align="center">
@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/njbrake/backshop/actions/workflows/ci.yml"><img src="https://github.com/njbrake/backshop/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/mozilla-ai/clawbolt/actions/workflows/ci.yml"><img src="https://github.com/mozilla-ai/clawbolt/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
   <img src="https://img.shields.io/badge/license-MIT-green" alt="License: MIT">
   <img src="https://img.shields.io/badge/messaging-Telegram-26A5E4?logo=telegram&logoColor=white" alt="Telegram">
@@ -16,17 +16,17 @@
 
 ---
 
-Backshop is a messaging-first AI assistant that helps contractors manage their business — estimates, client records, job photos, voice memos, and more — all through Telegram. No app to install, no dashboard to learn. Just text.
+Clawbolt is a messaging-first AI assistant that helps contractors manage their business: estimates, client records, job photos, voice memos, and more, all through Telegram. No app to install, no dashboard to learn. Just text.
 
 ## Features
 
-- **Estimates** — Describe a job, get a professional PDF estimate generated and sent back instantly
-- **Memory** — Backshop remembers your rates, clients, preferences, and past conversations
-- **Photo analysis** — Send a job site photo and get an AI description for documentation
-- **Voice memos** — Send a voice note, get it transcribed and processed as a message
-- **File cataloging** — Photos and documents auto-organized in Dropbox or Google Drive
-- **Proactive heartbeat** — Backshop checks in periodically with reminders about stale drafts and follow-ups
-- **Onboarding** — First-time contractors get a friendly conversation to set up their profile
+- **Estimates** -- Describe a job, get a professional PDF estimate generated and sent back instantly
+- **Memory** -- Clawbolt remembers your rates, clients, preferences, and past conversations
+- **Photo analysis** -- Send a job site photo and get an AI description for documentation
+- **Voice memos** -- Send a voice note, get it transcribed and processed as a message
+- **File cataloging** -- Photos and documents auto-organized in Dropbox or Google Drive
+- **Proactive heartbeat** -- Clawbolt checks in periodically with reminders about stale drafts and follow-ups
+- **Onboarding** -- First-time contractors get a friendly conversation to set up their profile
 
 ## How It Works
 
@@ -50,7 +50,7 @@ The agent uses an LLM (configurable via [any-llm](https://github.com/mozilla-ai/
 
 ## Quick Start (Docker)
 
-The fastest way to run Backshop is with Docker Compose. This starts PostgreSQL and the app together.
+The fastest way to run Clawbolt is with Docker Compose. This starts PostgreSQL and the app together.
 
 ### 1. Configure environment
 
@@ -72,9 +72,9 @@ Edit `.env` and fill in the required credentials:
 | `TELEGRAM_ALLOWED_USERNAMES` | No | Comma-separated allowlist of Telegram usernames (empty = allow all) |
 | `ANY_LLM_KEY` | No | any-llm.ai managed platform key (replaces individual provider keys) |
 
-*Set the API key env var for your chosen provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) — or set `ANY_LLM_KEY` to use the [any-llm.ai](https://any-llm.ai) managed platform as a key vault for all providers.
+*Set the API key env var for your chosen provider (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.) or set `ANY_LLM_KEY` to use the [any-llm.ai](https://any-llm.ai) managed platform as a key vault for all providers.
 
-The `DATABASE_URL` is set automatically by Docker Compose — you don't need to change it.
+The `DATABASE_URL` is set automatically by Docker Compose: you don't need to change it.
 
 ### 2. Start the services
 
@@ -97,7 +97,7 @@ curl http://localhost:8000/api/health
 
 ### 4. Test it
 
-The Telegram webhook is registered automatically — Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app and calls `setWebhook` on startup. No account or auth token required. Just send a message to your bot on Telegram and Backshop will respond.
+The Telegram webhook is registered automatically: Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app and calls `setWebhook` on startup. No account or auth token required. Just send a message to your bot on Telegram and Clawbolt will respond.
 
 > **Manual fallback**: If you need to register the webhook manually (e.g. when running without Docker), start a tunnel yourself and call `setWebhook`:
 > ```bash
@@ -110,11 +110,11 @@ The Telegram webhook is registered automatically — Docker Compose starts a [Cl
 
 ## File Storage Setup
 
-Backshop can catalog job photos, estimates, and documents to a storage backend. Three providers are supported:
+Clawbolt can catalog job photos, estimates, and documents to a storage backend. Three providers are supported:
 
 ### Local (default)
 
-Works out of the box — no configuration needed. Files are saved to `data/storage/` on disk.
+Works out of the box: no configuration needed. Files are saved to `data/storage/` on disk.
 
 ```
 data/storage/
@@ -126,7 +126,7 @@ data/storage/
     └── EST-001.pdf
 ```
 
-This is ideal for development and demos. Set `STORAGE_PROVIDER=local` (or leave it unset — it's the default).
+This is ideal for development and demos. Set `STORAGE_PROVIDER=local` (or leave it unset: it's the default).
 
 ### Dropbox
 
@@ -154,7 +154,7 @@ STORAGE_PROVIDER=google_drive
 GOOGLE_DRIVE_CREDENTIALS_JSON='{"token": "...", "refresh_token": "...", ...}'
 ```
 
-> **Multi-tenant note**: Storage is currently global — one storage account per deployment. Future versions will support per-contractor storage credentials so each contractor's files go to their own cloud account.
+> **Multi-tenant note**: Storage is currently global: one storage account per deployment. Future versions will support per-contractor storage credentials so each contractor's files go to their own cloud account.
 
 ## Contributing
 

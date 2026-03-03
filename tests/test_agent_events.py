@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentStartEvent,
@@ -21,8 +21,8 @@ from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
 @pytest.fixture()
-def agent(db_session: Session, test_contractor: Contractor) -> BackshopAgent:
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+def agent(db_session: Session, test_contractor: Contractor) -> ClawboltAgent:
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     return agent
 
 
@@ -32,7 +32,7 @@ def agent(db_session: Session, test_contractor: Contractor) -> BackshopAgent:
 async def test_events_emitted_for_text_response(
     mock_prompt: AsyncMock,
     mock_llm: AsyncMock,
-    agent: BackshopAgent,
+    agent: ClawboltAgent,
 ) -> None:
     """Text-only response should emit start, turn_start, turn_end, and end events."""
     mock_prompt.return_value = "system prompt"
@@ -62,7 +62,7 @@ async def test_events_emitted_for_text_response(
 async def test_events_emitted_for_tool_call(
     mock_prompt: AsyncMock,
     mock_llm: AsyncMock,
-    agent: BackshopAgent,
+    agent: ClawboltAgent,
 ) -> None:
     """Tool call should emit tool execution start/end events."""
     mock_prompt.return_value = "system prompt"
@@ -119,7 +119,7 @@ async def test_events_emitted_for_tool_call(
 async def test_no_events_without_subscribers(
     mock_prompt: AsyncMock,
     mock_llm: AsyncMock,
-    agent: BackshopAgent,
+    agent: ClawboltAgent,
 ) -> None:
     """Without subscribers, no errors should occur."""
     mock_prompt.return_value = "system prompt"
@@ -136,7 +136,7 @@ async def test_no_events_without_subscribers(
 async def test_subscriber_error_does_not_crash_agent(
     mock_prompt: AsyncMock,
     mock_llm: AsyncMock,
-    agent: BackshopAgent,
+    agent: ClawboltAgent,
 ) -> None:
     """A failing subscriber should not crash the agent pipeline."""
     mock_prompt.return_value = "system prompt"
@@ -158,7 +158,7 @@ async def test_subscriber_error_does_not_crash_agent(
 async def test_multiple_subscribers(
     mock_prompt: AsyncMock,
     mock_llm: AsyncMock,
-    agent: BackshopAgent,
+    agent: ClawboltAgent,
 ) -> None:
     """Multiple subscribers should all receive events."""
     mock_prompt.return_value = "system prompt"

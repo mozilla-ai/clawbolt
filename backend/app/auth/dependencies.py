@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 from backend.app.database import get_db
 from backend.app.models import Contractor
 
-LOCAL_USER_ID = "local@backshop.local"
+LOCAL_USER_ID = "local@clawbolt.local"
 
 
 def _get_or_create_local_contractor(db: Session) -> Contractor:

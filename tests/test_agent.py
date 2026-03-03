@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 from backend.app.agent.core import (
     CONTEXT_TRIM_TARGET_TOKENS,
     MAX_INPUT_TOKENS,
-    BackshopAgent,
+    ClawboltAgent,
     _estimate_tokens,
     _log_token_estimation_drift,
 )
@@ -45,7 +45,7 @@ async def test_agent_responds_to_message(
     """Agent should produce a reply from LLM response."""
     mock_acompletion.return_value = make_text_response("Sure, I can help with that deck estimate!")  # type: ignore[union-attr]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     response = await agent.process_message("I need a quote for a 12x12 composite deck")
 
     assert response.reply_text == "Sure, I can help with that deck estimate!"
@@ -60,7 +60,7 @@ async def test_agent_includes_conversation_history(
     """Agent should include conversation history in LLM call."""
     mock_acompletion.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     history = [
         UserMessage(content="Hi, I need help"),
         AssistantMessage(content="Hello! How can I help?"),
@@ -84,7 +84,7 @@ async def test_agent_system_prompt_includes_soul(
     """Agent system prompt should include contractor profile info."""
     mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     await agent.process_message("Hello")
 
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
@@ -120,7 +120,7 @@ async def test_system_prompt_includes_tool_hints(
         ),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools(tools)
     await agent.process_message("Hello")
 
@@ -139,7 +139,7 @@ async def test_system_prompt_omits_tool_section_when_no_hints(
     """System prompt should not include tool guidelines when no tools have hints."""
     mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     # No tools registered
     await agent.process_message("Hello")
 
@@ -175,7 +175,7 @@ async def test_system_prompt_skips_tools_without_hints(
         ),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools(tools)
     await agent.process_message("Hello")
 
@@ -193,7 +193,7 @@ async def test_agent_does_not_pass_api_key(
     """acompletion should be called without api_key so the SDK resolves keys from env."""
     mock_acompletion.return_value = make_text_response("Hi!")  # type: ignore[union-attr]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     await agent.process_message("Hello")
 
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
@@ -229,7 +229,7 @@ async def test_agent_tool_loop_sends_results_back(
         parameters={"type": "object", "properties": {"key": {}, "value": {}}},
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("My rate is $75/hour")
 
@@ -272,7 +272,7 @@ async def test_agent_tool_loop_includes_tool_results_in_followup(
         parameters={"type": "object", "properties": {"query": {}}},
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     await agent.process_message("What's my rate?")
 
@@ -321,7 +321,7 @@ async def test_agent_multi_round_tool_calls(
     mock_recall = AsyncMock(return_value=ToolResult(content="deck: $45/sqft"))
     mock_estimate = AsyncMock(return_value=ToolResult(content="Estimate PDF generated"))
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools(
         [
             Tool(
@@ -383,7 +383,7 @@ async def test_agent_tool_loop_respects_max_rounds(
     mock_acompletion.side_effect = tool_responses  # type: ignore[union-attr]
 
     mock_recall = AsyncMock(return_value=ToolResult(content="some result"))
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools(
         [
             Tool(
@@ -432,7 +432,7 @@ async def test_agent_handles_malformed_tool_arguments(
         parameters={"type": "object", "properties": {"key": {}, "value": {}}},
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("My rate is $75/hour")
 
@@ -474,7 +474,7 @@ async def test_agent_repairs_slightly_malformed_json(
         parameters={"type": "object", "properties": {"key": {}, "value": {}}},
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("My rate is $75/hour")
 
@@ -503,7 +503,7 @@ async def test_agent_retries_on_rate_limit_error(
         make_text_response("Retry succeeded!"),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     response = await agent.process_message("Hello")
 
     assert response.reply_text == "Retry succeeded!"
@@ -526,7 +526,7 @@ async def test_agent_rate_limit_retry_failure_propagates(
         RateLimitError("Still rate limited"),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     with pytest.raises(RateLimitError):
         await agent.process_message("Hello")
 
@@ -683,7 +683,7 @@ def test_trim_messages_preserves_tool_call_result_pairs() -> None:
     messages = [system, user1, assistant_tc, tool_result, user2]
 
     # Use a small budget that forces trimming of some messages
-    trimmed = BackshopAgent._trim_messages(messages, target_tokens=5000)
+    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000)
 
     # The trimmed result should never contain tool_result without assistant_tc
     has_tool_msg = any(isinstance(m, ToolResultMessage) for m in trimmed)
@@ -716,7 +716,7 @@ async def test_agent_trims_context_on_context_length_exceeded(
         for i in range(20)
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     response = await agent.process_message("Current message", conversation_history=long_history)
 
     assert response.reply_text == "Trimmed and retried!"
@@ -748,7 +748,7 @@ async def test_agent_trims_history_when_exceeding_token_limit(
         for i in range(150)
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     response = await agent.process_message("Current message", conversation_history=long_history)
 
     assert response.reply_text == "Trimmed reply!"
@@ -770,7 +770,7 @@ async def test_agent_raises_content_filter_error(
     """ContentFilterError should be re-raised (handled by router)."""
     mock_acompletion.side_effect = ContentFilterError("Blocked by safety filter")
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     with pytest.raises(ContentFilterError):
         await agent.process_message("Something problematic")
 
@@ -794,7 +794,7 @@ async def test_agent_preserves_system_and_user_during_trimming(
         for i in range(150)
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     await agent.process_message(
         "My important question",
         conversation_history=long_history,
@@ -826,7 +826,7 @@ async def test_agent_raises_authentication_error(
     """AuthenticationError should be re-raised (handled by router)."""
     mock_acompletion.side_effect = AuthenticationError("Invalid API key")
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     with pytest.raises(AuthenticationError):
         await agent.process_message("Hello")
 
@@ -840,7 +840,7 @@ def test_trim_messages_preserves_short_conversation() -> None:
         UserMessage(content="Hello"),
         AssistantMessage(content="Hi there!"),
     ]
-    trimmed = BackshopAgent._trim_messages(messages)
+    trimmed = ClawboltAgent._trim_messages(messages)
     assert trimmed == messages
 
 
@@ -857,7 +857,7 @@ def test_trim_messages_keeps_system_and_recent() -> None:
         ],
     ]
     # Use a small token budget to force trimming
-    trimmed = BackshopAgent._trim_messages(messages, target_tokens=5000)
+    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000)
     assert isinstance(trimmed[0], SystemMessage)
     # Should have been trimmed significantly
     assert len(trimmed) < len(messages)
@@ -884,7 +884,7 @@ async def test_agent_does_not_trim_normal_conversations(
         AssistantMessage(content="Sure, what size?"),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     await agent.process_message(
         "12x12 composite deck",
         conversation_history=history,
@@ -915,7 +915,7 @@ async def test_agent_logs_warning_when_trimming(
         for i in range(150)
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
 
     with caplog.at_level("WARNING", logger="backend.app.agent.core"):
         await agent.process_message(
@@ -983,7 +983,7 @@ def test_trim_messages_injects_summary_when_trimming() -> None:
             for i in range(20)
         ],
     ]
-    trimmed = BackshopAgent._trim_messages(messages, target_tokens=5000)
+    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000)
     assert isinstance(trimmed[0], SystemMessage)
     # Second message should be the summary
     assert isinstance(trimmed[1], UserMessage)
@@ -998,7 +998,7 @@ def test_trim_messages_no_summary_when_not_trimmed() -> None:
         UserMessage(content="Hello"),
         AssistantMessage(content="Hi there!"),
     ]
-    trimmed = BackshopAgent._trim_messages(messages)
+    trimmed = ClawboltAgent._trim_messages(messages)
     assert trimmed == messages
     # No summary message should be present
     for msg in trimmed:
@@ -1024,7 +1024,7 @@ async def test_process_message_injects_summary_when_trimming(
         for i in range(150)
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
 
     await agent.process_message(
         "Current message",
@@ -1048,7 +1048,7 @@ def test_register_tools_builds_dict_lookup(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """register_tools should build a dict for O(1) lookup by name."""
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
 
     async def dummy(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
@@ -1070,7 +1070,7 @@ def test_register_tools_warns_on_duplicate_name(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Registering tools with duplicate names should log a warning."""
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
 
     async def dummy(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
@@ -1112,7 +1112,7 @@ async def test_tool_result_error_appends_hint(
         make_text_response("I'll try something else."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1143,7 +1143,7 @@ async def test_tool_result_success_no_hint(
         make_text_response("Great!"),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1173,7 +1173,7 @@ async def test_tool_exception_appends_hint(
         make_text_response("Let me try another way."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1212,7 +1212,7 @@ async def test_unknown_tool_error_lists_available_tools(
         make_text_response("Let me try again."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools(tools)
     await agent.process_message("test", system_prompt_override="system")
 
@@ -1264,7 +1264,7 @@ async def test_validation_error_includes_expected_schema(
         make_text_response("Let me fix that."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     await agent.process_message("test", system_prompt_override="system")
 
@@ -1312,7 +1312,7 @@ async def test_error_kind_not_found_produces_specific_hint(
         make_text_response("That item doesn't exist."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1346,7 +1346,7 @@ async def test_error_kind_service_produces_specific_hint(
         make_text_response("Storage is down."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1379,7 +1379,7 @@ async def test_error_kind_validation_produces_specific_hint(
         make_text_response("Let me fix that."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1412,7 +1412,7 @@ async def test_error_kind_internal_produces_specific_hint(
         make_text_response("Something went wrong."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1441,7 +1441,7 @@ async def test_error_with_no_kind_uses_default_hint(
         make_text_response("I'll try another way."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1475,7 +1475,7 @@ async def test_error_with_custom_hint_overrides_kind_default(
         make_text_response("Which estimate?"),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1514,7 +1514,7 @@ async def test_different_error_kinds_produce_different_hints(
             make_text_response("ok"),
         ]
 
-        agent = BackshopAgent(db=db_session, contractor=test_contractor)
+        agent = ClawboltAgent(db=db_session, contractor=test_contractor)
         agent.register_tools([tool])
         response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1548,7 +1548,7 @@ async def test_unhandled_exception_uses_internal_hint(
         make_text_response("Something went wrong."),
     ]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     await agent.process_message("test", system_prompt_override="system")
 

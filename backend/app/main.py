@@ -92,7 +92,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     heartbeat_scheduler.stop()
 
 
-app = FastAPI(title="Backshop", version="0.1.0", lifespan=lifespan)
+app = FastAPI(title="Clawbolt", version="0.1.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]

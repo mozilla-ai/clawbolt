@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import BackshopAgent
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_openai_schema
 from backend.app.agent.tools.checklist_tools import (
     AddChecklistItemParams,
@@ -228,7 +228,7 @@ async def test_agent_validation_failure_returns_error_result(
         params_model=TypedParams,
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -274,7 +274,7 @@ async def test_agent_validation_success_calls_tool(
         params_model=TypedParams,
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -315,7 +315,7 @@ async def test_agent_validation_coerces_types(
         params_model=TypedParams,
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     await agent.process_message("test", system_prompt_override="system")
 
@@ -355,7 +355,7 @@ async def test_agent_validation_wrong_type_returns_field_error(
         params_model=TypedParams,
     )
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -469,7 +469,7 @@ async def test_batch_validation_reports_all_errors_at_once(
     followup_response = make_text_response("I see both errors. Let me fix them.")
     mock_acompletion.side_effect = [tool_response, followup_response]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -531,7 +531,7 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
     followup_response = make_text_response("Done!")
     mock_acompletion.side_effect = [tool_response, followup_response]
 
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
