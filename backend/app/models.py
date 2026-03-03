@@ -23,6 +23,8 @@ class Contractor(Base):
     channel_identifier: Mapped[str] = mapped_column(String(255), default="")
     onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False)
     preferences_json: Mapped[str] = mapped_column(Text, default="{}")
+    heartbeat_opt_in: Mapped[bool] = mapped_column(Boolean, default=True)
+    heartbeat_frequency: Mapped[str] = mapped_column(String(20), default="")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now()
     )
