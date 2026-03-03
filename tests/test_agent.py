@@ -850,6 +850,118 @@ async def test_agent_logs_warning_when_trimming(
 
 
 # ---------------------------------------------------------------------------
+# Context compaction / summary injection tests
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_dropped_messages_includes_user_topics() -> None:
+    """Summary should include first lines from dropped user messages."""
+    from backend.app.agent.core import _summarize_dropped_messages
+
+    dropped = [
+        UserMessage(content="What did I quote for the Johnson deck?"),
+        AssistantMessage(content="You quoted $4,500 for the 12x12 composite deck."),
+    ]
+    summary = _summarize_dropped_messages(dropped)
+    assert "2 earlier message(s)" in summary
+    assert "Johnson deck" in summary
+
+
+def test_summarize_dropped_messages_includes_tool_calls() -> None:
+    """Summary should mention tools that were called in dropped messages."""
+    from backend.app.agent.core import _summarize_dropped_messages
+
+    dropped = [
+        UserMessage(content="Save my rate"),
+        AssistantMessage(
+            content=None,
+            tool_calls=[ToolCallRequest(id="call_1", name="save_fact", arguments={})],
+        ),
+        ToolResultMessage(tool_call_id="call_1", content="Saved"),
+        AssistantMessage(content="Done!"),
+    ]
+    summary = _summarize_dropped_messages(dropped)
+    assert "save_fact" in summary
+    assert "Tools used:" in summary
+
+
+def test_summarize_dropped_messages_empty_list() -> None:
+    """Empty dropped list should produce a zero-count summary."""
+    from backend.app.agent.core import _summarize_dropped_messages
+
+    summary = _summarize_dropped_messages([])
+    assert "0 earlier message(s)" in summary
+
+
+def test_trim_messages_injects_summary_when_trimming() -> None:
+    """When _trim_messages drops messages, a summary should be injected."""
+    big_content = "x" * 4000
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *[
+            UserMessage(content=f"Topic {i}: {big_content}")
+            if i % 2 == 0
+            else AssistantMessage(content=big_content)
+            for i in range(20)
+        ],
+    ]
+    trimmed = BackshopAgent._trim_messages(messages, target_tokens=5000)
+    assert isinstance(trimmed[0], SystemMessage)
+    # Second message should be the summary
+    assert isinstance(trimmed[1], UserMessage)
+    assert "[Summary of earlier conversation:" in trimmed[1].content
+    assert "earlier message(s)" in trimmed[1].content
+
+
+def test_trim_messages_no_summary_when_not_trimmed() -> None:
+    """No summary should be injected when messages fit within the budget."""
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        UserMessage(content="Hello"),
+        AssistantMessage(content="Hi there!"),
+    ]
+    trimmed = BackshopAgent._trim_messages(messages)
+    assert trimmed == messages
+    # No summary message should be present
+    for msg in trimmed:
+        if isinstance(msg, UserMessage):
+            assert "[Summary of earlier conversation:" not in msg.content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.acompletion")
+async def test_process_message_injects_summary_when_trimming(
+    mock_acompletion: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """process_message should inject a summary when history is trimmed."""
+    mock_acompletion.return_value = make_text_response("Ok!")
+
+    big_content = "x" * 4000
+    long_history: list[AgentMessage] = [
+        UserMessage(content=f"Topic {i}: {big_content}")
+        if i % 2 == 0
+        else AssistantMessage(content=big_content)
+        for i in range(150)
+    ]
+
+    agent = BackshopAgent(db=db_session, contractor=test_contractor)
+
+    await agent.process_message(
+        "Current message",
+        conversation_history=long_history,
+        system_prompt_override="Short system prompt",
+    )
+
+    # Check the messages sent to the LLM include a summary
+    call_args = mock_acompletion.call_args
+    sent_messages = call_args.kwargs.get("messages", call_args.args[0] if call_args.args else [])
+    # Second message should be the summary (after system)
+    assert "[Summary of earlier conversation:" in sent_messages[1]["content"]
+
+
+# ---------------------------------------------------------------------------
 # Dict-based tool registry tests (issue #282)
 # ---------------------------------------------------------------------------
 
