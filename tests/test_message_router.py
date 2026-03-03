@@ -107,9 +107,6 @@ async def test_message_with_photo(
     assert response.reply_text == "Looks like a great deck project!"
     mock_messaging.download_media.assert_called_once()  # type: ignore[union-attr]
     mock_vision.assert_called_once()
-    # Verify user (contractor ID) is passed for OpenAI tracking
-    call_kwargs = mock_vision.call_args
-    assert call_kwargs.kwargs.get("user") == str(test_contractor.id)
 
 
 @pytest.mark.asyncio()

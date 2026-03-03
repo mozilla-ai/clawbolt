@@ -461,8 +461,6 @@ async def evaluate_heartbeat_need(
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
 
-    llm_kwargs: dict[str, Any] = {"user": str(contractor.id)}
-
     response = cast(
         ChatCompletion,
         await acompletion(
@@ -478,7 +476,6 @@ async def evaluate_heartbeat_need(
             ],
             tools=[COMPOSE_MESSAGE_TOOL],
             max_tokens=settings.llm_max_tokens_heartbeat,
-            **llm_kwargs,
         ),
     )
 
