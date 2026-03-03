@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
+from backend.app.agent.concurrency import contractor_locks
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
@@ -66,32 +67,33 @@ async def _process_message_background(
     Creates its own DB session rather than sharing the request-scoped one,
     which would be closed by the time this task executes.
     """
-    db: Session = SessionLocal()
-    try:
-        contractor = db.get(Contractor, contractor_id)
-        message = db.get(Message, message_id)
-        if contractor is None or message is None:
-            logger.error(
-                "Background task: contractor %d or message %d not found",
-                contractor_id,
-                message_id,
+    async with contractor_locks.acquire(contractor_id):
+        db: Session = SessionLocal()
+        try:
+            contractor = db.get(Contractor, contractor_id)
+            message = db.get(Message, message_id)
+            if contractor is None or message is None:
+                logger.error(
+                    "Background task: contractor %d or message %d not found",
+                    contractor_id,
+                    message_id,
+                )
+                return
+            await handle_inbound_message(
+                db=db,
+                contractor=contractor,
+                message=message,
+                media_urls=media_urls,
+                messaging_service=messaging_service,
             )
-            return
-        await handle_inbound_message(
-            db=db,
-            contractor=contractor,
-            message=message,
-            media_urls=media_urls,
-            messaging_service=messaging_service,
-        )
-    except Exception:
-        logger.exception(
-            "Agent pipeline failed for message %d (contractor %d)",
-            message_id,
-            contractor_id,
-        )
-    finally:
-        db.close()
+        except Exception:
+            logger.exception(
+                "Agent pipeline failed for message %d (contractor %d)",
+                message_id,
+                contractor_id,
+            )
+        finally:
+            db.close()
 
 
 def _extract_telegram_media(
