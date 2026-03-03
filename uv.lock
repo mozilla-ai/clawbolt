@@ -155,6 +155,7 @@ dependencies = [
     { name = "google-api-python-client" },
     { name = "google-auth-oauthlib" },
     { name = "httpx" },
+    { name = "json-repair" },
     { name = "psycopg2-binary" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
@@ -188,6 +189,7 @@ requires-dist = [
     { name = "google-api-python-client", specifier = ">=2.0" },
     { name = "google-auth-oauthlib", specifier = ">=1.0" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "json-repair", specifier = ">=0.30" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.0" },
     { name = "psycopg2-binary", specifier = ">=2.9" },
     { name = "pydantic", specifier = ">=2.0" },
@@ -960,6 +962,15 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/d2/73/a009f41c5eed71c49bec53036c4b33555afcdee70682a18c6f66e396c039/jiter-0.13.0-graalpy312-graalpy250_312_native-macosx_11_0_arm64.whl", hash = "sha256:ff732bd0a0e778f43d5009840f20b935e79087b4dc65bd36f1cd0f9b04b8ff7f", size = 303808, upload-time = "2026-02-02T12:37:52.092Z" },
     { url = "https://files.pythonhosted.org/packages/c4/10/528b439290763bff3d939268085d03382471b442f212dca4ff5f12802d43/jiter-0.13.0-graalpy312-graalpy250_312_native-manylinux_2_17_aarch64.manylinux2014_aarch64.whl", hash = "sha256:ab44b178f7981fcaea7e0a5df20e773c663d06ffda0198f1a524e91b2fde7e59", size = 337384, upload-time = "2026-02-02T12:37:53.582Z" },
     { url = "https://files.pythonhosted.org/packages/67/8a/a342b2f0251f3dac4ca17618265d93bf244a2a4d089126e81e4c1056ac50/jiter-0.13.0-graalpy312-graalpy250_312_native-manylinux_2_17_x86_64.manylinux2014_x86_64.whl", hash = "sha256:7bb00b6d26db67a05fe3e12c76edc75f32077fb51deed13822dc648fa373bc19", size = 343768, upload-time = "2026-02-02T12:37:55.055Z" },
+]
+
+[[package]]
+name = "json-repair"
+version = "0.58.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/c8/50/6addf33a1827ee9ad9ce156cc1d48d5a69b975a9d49bd857a52cc9c121c2/json_repair-0.58.2.tar.gz", hash = "sha256:b88a4426436543d3d0952f4aad53de0402726ee928af88ce1f7106eab50484df", size = 59171, upload-time = "2026-03-02T14:55:14.215Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/d2/7be3ff7f3cd167028fa03bb29e8bbb9fda67f90b6afb4dd65976e000aa57/json_repair-0.58.2-py3-none-any.whl", hash = "sha256:720a1df3f5e33865e72b6b37667d34fbc55f548158973d36a5e5fc614bea1a10", size = 40843, upload-time = "2026-03-02T14:55:12.949Z" },
 ]
 
 [[package]]

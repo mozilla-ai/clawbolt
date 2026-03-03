@@ -445,7 +445,7 @@ class BackshopAgent:
 
         tool_schemas = [tool_to_openai_schema(t) for t in self.tools] if self.tools else None
 
-        llm_kwargs: dict[str, Any] = {"user": str(self.contractor.id)}
+        llm_kwargs: dict[str, Any] = {}
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
 

@@ -39,7 +39,7 @@ class PipelineResult:
 
 
 async def _process_single_media(
-    media: DownloadedMedia, index: int, context: str = "", user: str | None = None
+    media: DownloadedMedia, index: int, context: str = ""
 ) -> ProcessedMedia:
     """Process a single media item based on its type."""
     category = classify_media(media.mime_type)
@@ -48,9 +48,7 @@ async def _process_single_media(
 
     if category == "image":
         try:
-            extracted_text = await analyze_image(
-                media.content, media.mime_type, context=context, user=user
-            )
+            extracted_text = await analyze_image(media.content, media.mime_type, context=context)
         except Exception:
             logger.exception(
                 "Vision analysis failed for %s (mime_type=%s)", media.original_url, media.mime_type
@@ -87,13 +85,10 @@ async def _process_single_media(
 async def process_message_media(
     text_body: str,
     media_items: list[DownloadedMedia],
-    user: str | None = None,
 ) -> PipelineResult:
     """Process all media in a message and combine into unified context."""
     logger.info("Processing %d media item(s)", len(media_items))
-    tasks = [
-        _process_single_media(m, i, context=text_body, user=user) for i, m in enumerate(media_items)
-    ]
+    tasks = [_process_single_media(m, i, context=text_body) for i, m in enumerate(media_items)]
     media_results = await asyncio.gather(*tasks)
     media_results = list(media_results)
     logger.info(
