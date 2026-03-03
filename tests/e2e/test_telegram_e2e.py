@@ -66,6 +66,7 @@ def e2e_client(
     app.dependency_overrides[get_db] = _override_get_db
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
     with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.ingestion.SessionLocal", test_session_factory),
         # Disable webhook secret validation so e2e tests don't need to derive

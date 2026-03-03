@@ -3,6 +3,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
+from any_llm import acompletion
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -59,9 +60,73 @@ async def _auto_register_webhook() -> None:
         logger.warning("Failed to auto-register Telegram webhook")
 
 
+async def _verify_llm_settings() -> None:
+    """Verify LLM provider/model settings by making a minimal completion call.
+
+    Surfaces misconfigurations (bad provider, invalid model, missing API key)
+    at startup rather than at first user request.  The primary model is
+    required; failures for optional model overrides are logged as warnings.
+    """
+    configs: list[tuple[str, str, str]] = [
+        ("primary", settings.llm_provider, settings.llm_model),
+    ]
+    if settings.vision_model:
+        configs.append(("vision", settings.llm_provider, settings.vision_model))
+    if settings.compaction_model or settings.compaction_provider:
+        configs.append(
+            (
+                "compaction",
+                settings.compaction_provider or settings.llm_provider,
+                settings.compaction_model or settings.llm_model,
+            )
+        )
+    if settings.heartbeat_model or settings.heartbeat_provider:
+        configs.append(
+            (
+                "heartbeat",
+                settings.heartbeat_provider or settings.llm_provider,
+                settings.heartbeat_model or settings.llm_model,
+            )
+        )
+
+    # Deduplicate by (provider, model) to avoid redundant API calls.
+    seen: set[tuple[str, str]] = set()
+    unique: list[tuple[str, str, str]] = []
+    for label, provider, model in configs:
+        key = (provider, model)
+        if key not in seen:
+            seen.add(key)
+            unique.append((label, provider, model))
+
+    for label, provider, model in unique:
+        try:
+            await acompletion(
+                model=model,
+                provider=provider,
+                api_base=settings.llm_api_base,
+                messages=[{"role": "user", "content": "ping"}],
+                max_tokens=1,
+            )
+            logger.info("LLM verified (%s): provider=%s, model=%s", label, provider, model)
+        except Exception as exc:
+            if label == "primary":
+                raise RuntimeError(
+                    f"LLM startup check failed for {label} model "
+                    f"(LLM_PROVIDER={provider!r}, LLM_MODEL={model!r}): {exc}"
+                ) from exc
+            logger.warning(
+                "LLM startup check failed for %s model (provider=%r, model=%r): %s",
+                label,
+                provider,
+                model,
+                exc,
+            )
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
+    await _verify_llm_settings()
     heartbeat_scheduler.start()
 
     if settings.telegram_bot_token:

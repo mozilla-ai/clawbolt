@@ -83,6 +83,7 @@ def client(
     app.dependency_overrides[get_current_user] = _override_get_current_user
     app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
     with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.ingestion.SessionLocal", test_session_factory),
         # Default allowlist to "*" (allow all) so tests are not blocked.
