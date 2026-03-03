@@ -92,49 +92,20 @@ async def test_agent_does_not_pass_api_key(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.settings")
 @patch("backend.app.agent.core.acompletion")
-async def test_agent_passes_user_parameter(
+async def test_agent_always_passes_user_parameter(
     mock_acompletion: object,
-    mock_settings: object,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
-    """acompletion should be called with user=contractor.id when provider is openai."""
+    """acompletion should always be called with user=contractor.id regardless of provider."""
     mock_acompletion.return_value = make_text_response("Hi!")  # type: ignore[union-attr]
-    mock_settings.llm_provider = "openai"  # type: ignore[attr-defined]
-    mock_settings.llm_model = "gpt-4o"  # type: ignore[attr-defined]
-    mock_settings.llm_api_base = None  # type: ignore[attr-defined]
-    mock_settings.llm_max_tokens_agent = 500  # type: ignore[attr-defined]
 
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
     await agent.process_message("Hello")
 
     call_args = mock_acompletion.call_args  # type: ignore[union-attr]
     assert call_args.kwargs["user"] == str(test_contractor.id)
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.settings")
-@patch("backend.app.agent.core.acompletion")
-async def test_agent_omits_user_for_non_openai_provider(
-    mock_acompletion: object,
-    mock_settings: object,
-    db_session: Session,
-    test_contractor: Contractor,
-) -> None:
-    """acompletion should NOT pass user param when provider is not openai (e.g. anthropic)."""
-    mock_acompletion.return_value = make_text_response("Hi!")  # type: ignore[union-attr]
-    mock_settings.llm_provider = "anthropic"  # type: ignore[attr-defined]
-    mock_settings.llm_model = "claude-haiku-4-5-20251001"  # type: ignore[attr-defined]
-    mock_settings.llm_api_base = None  # type: ignore[attr-defined]
-    mock_settings.llm_max_tokens_agent = 500  # type: ignore[attr-defined]
-
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
-    await agent.process_message("Hello")
-
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    assert "user" not in call_args.kwargs
 
 
 @pytest.mark.asyncio()
