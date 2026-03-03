@@ -168,7 +168,12 @@ async def run_agent(
     Handles LLM-level errors (content filter, auth, unexpected) by returning
     an error fallback AgentResponse.
     """
-    agent = BackshopAgent(db=db, contractor=contractor)
+    agent = BackshopAgent(
+        db=db,
+        contractor=contractor,
+        messaging_service=messaging_service,
+        chat_id=to_address,
+    )
 
     tool_context = ToolContext(
         db=db,
@@ -191,12 +196,7 @@ async def run_agent(
     for subscriber in event_subscribers or []:
         agent.subscribe(subscriber)
 
-    # Send typing indicator while processing (non-blocking on failure)
-    try:
-        await messaging_service.send_typing_indicator(to=to_address)
-    except Exception:
-        logger.debug("Failed to send typing indicator to %s", to_address)
-
+    # Note: typing indicators are sent automatically by the agent before each LLM call
     try:
         return await agent.process_message(
             message_context=combined_context,

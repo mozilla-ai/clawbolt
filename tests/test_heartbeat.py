@@ -1153,7 +1153,9 @@ class TestRunHeartbeatForContractor:
         logs = db.query(HeartbeatLog).filter(HeartbeatLog.contractor_id == contractor.id).all()
         assert len(logs) == 1
         # LLM was called with the flags
-        mock_eval.assert_awaited_once_with(db, contractor, ["Stale draft estimate"])
+        mock_eval.assert_awaited_once_with(
+            db, contractor, ["Stale draft estimate"], messaging_service=mock_messaging
+        )
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
