@@ -30,8 +30,8 @@ class EstimateLineItemParams(BaseModel):
     """A single line item in an estimate."""
 
     description: str = Field(description="Description of the line item")
-    quantity: float = Field(default=1, description="Quantity")
-    unit_price: float = Field(description="Price per unit")
+    quantity: float = Field(default=1, ge=0, description="Quantity")
+    unit_price: float = Field(ge=0, description="Price per unit")
 
 
 class GenerateEstimateParams(BaseModel):

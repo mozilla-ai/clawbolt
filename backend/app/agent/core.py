@@ -329,9 +329,7 @@ class BackshopAgent:
                 is_error = False
                 if tool_func and tool_obj:
                     # Validate arguments against Pydantic model if present
-                    validated_args, validation_error = self._validate_tool_args(
-                        tool_obj, tool_args
-                    )
+                    validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
                     if validation_error is not None:
                         logger.warning(
                             "Validation failed for %s: %s",

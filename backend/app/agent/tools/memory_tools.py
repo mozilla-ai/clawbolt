@@ -61,7 +61,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
         Tool(
             name="save_fact",
             description=(
-                "Save a key-value fact to the contractor\'s memory. "
+                "Save a key-value fact to the contractor's memory. "
                 "Use for pricing, client info, preferences, etc."
             ),
             function=save_fact,
@@ -70,7 +70,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
         ),
         Tool(
             name="recall_facts",
-            description="Search the contractor\'s memory for facts matching a query.",
+            description="Search the contractor's memory for facts matching a query.",
             function=recall_facts,
             params_model=RecallFactsParams,
         ),
