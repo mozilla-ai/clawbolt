@@ -132,6 +132,19 @@ When running with Docker Compose, the `DATABASE_URL` is set automatically. You d
 | `HEARTBEAT_RECENT_MESSAGES_COUNT` | `5` | Number of recent messages included in heartbeat context |
 | `CHECKLIST_DAILY_INTERVAL_HOURS` | `20` | Hours between daily checklist heartbeat evaluations |
 
+## QuickBooks Online
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `QUICKBOOKS_CLIENT_ID` | | OAuth client ID from the Intuit developer console |
+| `QUICKBOOKS_CLIENT_SECRET` | | OAuth client secret from the Intuit developer console |
+| `QUICKBOOKS_REALM_ID` | | Company realm (company) ID from QuickBooks |
+| `QUICKBOOKS_ACCESS_TOKEN` | | Current OAuth access token (auto-refreshed at runtime) |
+| `QUICKBOOKS_REFRESH_TOKEN` | | OAuth refresh token for access token renewal |
+| `QUICKBOOKS_ENVIRONMENT` | `sandbox` | `sandbox` for testing or `production` for live data |
+
+When configured, the agent gains specialist tools to search items/customers, create invoices, and send them via email through QuickBooks Online.
+
 ## HTTP timeouts
 
 | Variable | Default | Description |

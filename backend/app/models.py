@@ -4,7 +4,7 @@ from sqlalchemy import Boolean, DateTime, Float, ForeignKey, Integer, String, Te
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.database import Base
-from backend.app.enums import ChecklistSchedule, ChecklistStatus, EstimateStatus
+from backend.app.enums import ChecklistSchedule, ChecklistStatus, EstimateStatus, QBEntityType
 
 
 class Contractor(Base):
@@ -213,6 +213,27 @@ class HeartbeatLog(Base):
     )
 
     contractor: Mapped["Contractor"] = relationship(back_populates="heartbeat_logs")
+
+
+class QuickBooksSync(Base):
+    __tablename__ = "quickbooks_syncs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contractor_id: Mapped[int] = mapped_column(Integer, ForeignKey("contractors.id"), index=True)
+    estimate_id: Mapped[int | None] = mapped_column(
+        Integer, ForeignKey("estimates.id"), nullable=True
+    )
+    qb_entity_type: Mapped[str] = mapped_column(
+        String(50), default=QBEntityType.INVOICE
+    )  # invoice, estimate
+    qb_entity_id: Mapped[str] = mapped_column(String(255), index=True)
+    synced_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    last_error: Mapped[str] = mapped_column(Text, default="")
+
+    contractor: Mapped["Contractor"] = relationship()
+    estimate: Mapped["Estimate | None"] = relationship()
 
 
 class LLMUsageLog(Base):

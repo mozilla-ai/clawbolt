@@ -14,6 +14,7 @@ EXPECTED_TOOL_MODULES: set[str] = {
     "backend.app.agent.tools.checklist_tools",
     "backend.app.agent.tools.profile_tools",
     "backend.app.agent.tools.file_tools",
+    "backend.app.agent.tools.quickbooks_tools",
 }
 
 

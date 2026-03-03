@@ -32,6 +32,12 @@ class ToolName:
     VIEW_PROFILE = "view_profile"
     UPDATE_PROFILE = "update_profile"
 
+    # QuickBooks
+    QB_SEARCH_ITEMS = "qb_search_items"
+    QB_SEARCH_CUSTOMERS = "qb_search_customers"
+    QB_CREATE_INVOICE = "qb_create_invoice"
+    QB_SEND_INVOICE = "qb_send_invoice"
+
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
 
