@@ -7,7 +7,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import BackshopAgent
-from backend.app.agent.tools.base import Tool, ToolTags
+from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.messaging_tools import create_messaging_tools
 from backend.app.models import Contractor
@@ -132,7 +132,7 @@ async def test_agent_tool_call_records_include_tags(
     followup_response = make_text_response("Got it!")
     mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
-    mock_save = AsyncMock(return_value="Saved rate = $50/hr")
+    mock_save = AsyncMock(return_value=ToolResult(content="Saved rate = $50/hr"))
     tool = Tool(
         name="save_fact",
         description="Save a fact",
@@ -167,7 +167,7 @@ async def test_agent_memories_saved_uses_tags_not_name(
     followup_response = make_text_response("Noted!")
     mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
-    mock_fn = AsyncMock(return_value="Saved")
+    mock_fn = AsyncMock(return_value=ToolResult(content="Saved"))
     tool = Tool(
         name="custom_memory_saver",
         description="Custom memory saver",
@@ -201,7 +201,7 @@ async def test_agent_untagged_tool_has_empty_tags(
     followup_response = make_text_response("Done!")
     mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
-    mock_fn = AsyncMock(return_value="ok")
+    mock_fn = AsyncMock(return_value=ToolResult(content="ok"))
     tool = Tool(
         name="some_tool",
         description="A tool",

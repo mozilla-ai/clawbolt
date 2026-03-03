@@ -23,7 +23,7 @@ async def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> 
 def _transcribe_sync(audio_bytes: bytes) -> str:
     """Synchronous transcription with faster-whisper."""
     try:
-        from faster_whisper import WhisperModel
+        from faster_whisper import WhisperModel  # type: ignore[unresolved-import]
     except ImportError:
         msg = (
             "faster-whisper is required for audio transcription. "

@@ -369,15 +369,11 @@ class BackshopAgent:
     async def process_message(
         self,
         message_context: str,
-        conversation_history: list[AgentMessage] | list[dict[str, str]] | None = None,
+        conversation_history: list[AgentMessage] | None = None,
         system_prompt_override: str | None = None,
         temperature: float | None = None,
     ) -> AgentResponse:
-        """Process a message through the agent loop.
-
-        *conversation_history* accepts both typed ``AgentMessage`` objects
-        (preferred) and legacy ``dict`` messages for backward compatibility.
-        """
+        """Process a message through the agent loop."""
         agent_start_time = time.monotonic()
         system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
         await self._emit(
@@ -390,11 +386,7 @@ class BackshopAgent:
         messages: list[AgentMessage] = [SystemMessage(content=system_prompt)]
 
         if conversation_history:
-            for entry in conversation_history:
-                if isinstance(entry, dict):
-                    messages.append(_dict_to_message(cast(dict[str, Any], entry)))
-                else:
-                    messages.append(entry)
+            messages.extend(conversation_history)
 
         messages.append(UserMessage(content=message_context))
 
@@ -515,13 +507,6 @@ class BackshopAgent:
                     tool_start = time.monotonic()
                     try:
                         result = await tool_func(**validated_args)
-                        if not isinstance(result, ToolResult):
-                            logger.warning(
-                                "Tool %s returned %s instead of ToolResult",
-                                tool_name,
-                                type(result).__name__,
-                            )
-                            result = ToolResult(content=str(result))
                         result_str = result.content
                         is_error = result.is_error
                         if is_error:
@@ -598,19 +583,3 @@ class BackshopAgent:
         """Find a registered tool by name."""
         tool = self._tools_by_name.get(name)
         return tool.function if tool else None
-
-
-def _dict_to_message(d: dict[str, Any]) -> AgentMessage:
-    """Convert a legacy dict message to a typed message object."""
-    role = d.get("role", "user")
-    content = d.get("content", "")
-    if role == "system":
-        return SystemMessage(content=content)
-    if role == "assistant":
-        return AssistantMessage(content=content)
-    if role == "tool":
-        return ToolResultMessage(
-            tool_call_id=d.get("tool_call_id", ""),
-            content=content,
-        )
-    return UserMessage(content=content)

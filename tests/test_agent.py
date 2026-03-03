@@ -17,6 +17,7 @@ from backend.app.agent.core import (
     _estimate_tokens,
 )
 from backend.app.agent.messages import (
+    AgentMessage,
     AssistantMessage,
     SystemMessage,
     ToolCallRequest,
@@ -54,8 +55,8 @@ async def test_agent_includes_conversation_history(
 
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
     history = [
-        {"role": "user", "content": "Hi, I need help"},
-        {"role": "assistant", "content": "Hello! How can I help?"},
+        UserMessage(content="Hi, I need help"),
+        AssistantMessage(content="Hello! How can I help?"),
     ]
     await agent.process_message("What about a deck?", conversation_history=history)
 
@@ -92,8 +93,8 @@ async def test_system_prompt_includes_tool_hints(
     """System prompt should include usage hints from registered tools."""
     mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
-    async def dummy(**kwargs: object) -> str:
-        return "ok"
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
 
     tools = [
         Tool(
@@ -148,8 +149,8 @@ async def test_system_prompt_skips_tools_without_hints(
     """Tools with empty usage_hint should not appear in the system prompt."""
     mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
-    async def dummy(**kwargs: object) -> str:
-        return "ok"
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
 
     tools = [
         Tool(
@@ -213,7 +214,7 @@ async def test_agent_tool_loop_sends_results_back(
     mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     # Register a mock save_fact tool
-    mock_save = AsyncMock(return_value="Saved hourly_rate = $75/hr")
+    mock_save = AsyncMock(return_value=ToolResult(content="Saved hourly_rate = $75/hr"))
     tool = Tool(
         name="save_fact",
         description="Save a fact",
@@ -256,7 +257,7 @@ async def test_agent_tool_loop_includes_tool_results_in_followup(
 
     mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
-    mock_recall = AsyncMock(return_value="hourly_rate: $75/hr")
+    mock_recall = AsyncMock(return_value=ToolResult(content="hourly_rate: $75/hr"))
     tool = Tool(
         name="recall_facts",
         description="Recall facts",
@@ -310,8 +311,8 @@ async def test_agent_multi_round_tool_calls(
 
     mock_acompletion.side_effect = [round1_response, round2_response, final_response]  # type: ignore[union-attr]
 
-    mock_recall = AsyncMock(return_value="deck: $45/sqft")
-    mock_estimate = AsyncMock(return_value="Estimate PDF generated")
+    mock_recall = AsyncMock(return_value=ToolResult(content="deck: $45/sqft"))
+    mock_estimate = AsyncMock(return_value=ToolResult(content="Estimate PDF generated"))
 
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
     agent.register_tools(
@@ -374,7 +375,7 @@ async def test_agent_tool_loop_respects_max_rounds(
 
     mock_acompletion.side_effect = tool_responses  # type: ignore[union-attr]
 
-    mock_recall = AsyncMock(return_value="some result")
+    mock_recall = AsyncMock(return_value=ToolResult(content="some result"))
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
     agent.register_tools(
         [
@@ -416,7 +417,7 @@ async def test_agent_handles_malformed_tool_arguments(
 
     mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
-    mock_save = AsyncMock(return_value="saved")
+    mock_save = AsyncMock(return_value=ToolResult(content="saved"))
     tool = Tool(
         name="save_fact",
         description="Save a fact",
@@ -458,7 +459,7 @@ async def test_agent_repairs_slightly_malformed_json(
 
     mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
-    mock_save = AsyncMock(return_value="Saved hourly_rate = $75/hr")
+    mock_save = AsyncMock(return_value=ToolResult(content="Saved hourly_rate = $75/hr"))
     tool = Tool(
         name="save_fact",
         description="Save a fact",
@@ -625,8 +626,10 @@ async def test_agent_trims_context_on_context_length_exceeded(
     ]
 
     # Supply a long conversation history to verify trimming
-    long_history = [
-        {"role": "user" if i % 2 == 0 else "assistant", "content": f"Message {i}"}
+    long_history: list[AgentMessage] = [
+        UserMessage(content=f"Message {i}")
+        if i % 2 == 0
+        else AssistantMessage(content=f"Message {i}")
         for i in range(20)
     ]
 
@@ -657,8 +660,9 @@ async def test_agent_trims_history_when_exceeding_token_limit(
     # Create a huge conversation history that exceeds MAX_INPUT_TOKENS
     # Each message ~4000 chars = ~1000 tokens; need >120K tokens = >120 messages
     big_content = "x" * 4000
-    long_history = [
-        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    long_history: list[AgentMessage] = [
+        UserMessage(content=big_content) if i % 2 == 0 else AssistantMessage(content=big_content)
+        for i in range(150)
     ]
 
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
@@ -702,8 +706,9 @@ async def test_agent_preserves_system_and_user_during_trimming(
 
     # Create history that will trigger trimming
     big_content = "x" * 4000
-    long_history = [
-        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    long_history: list[AgentMessage] = [
+        UserMessage(content=big_content) if i % 2 == 0 else AssistantMessage(content=big_content)
+        for i in range(150)
     ]
 
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
@@ -789,11 +794,11 @@ async def test_agent_does_not_trim_normal_conversations(
     """Normal-sized conversations should not be trimmed."""
     mock_acompletion.return_value = make_text_response("Got it!")
 
-    history = [
-        {"role": "user", "content": "Hi, I need help"},
-        {"role": "assistant", "content": "Hello! How can I help?"},
-        {"role": "user", "content": "Can you estimate a deck?"},
-        {"role": "assistant", "content": "Sure, what size?"},
+    history: list[AgentMessage] = [
+        UserMessage(content="Hi, I need help"),
+        AssistantMessage(content="Hello! How can I help?"),
+        UserMessage(content="Can you estimate a deck?"),
+        AssistantMessage(content="Sure, what size?"),
     ]
 
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
@@ -822,8 +827,9 @@ async def test_agent_logs_warning_when_trimming(
     mock_acompletion.return_value = make_text_response("Ok!")
 
     big_content = "x" * 4000
-    long_history = [
-        {"role": "user" if i % 2 == 0 else "assistant", "content": big_content} for i in range(150)
+    long_history: list[AgentMessage] = [
+        UserMessage(content=big_content) if i % 2 == 0 else AssistantMessage(content=big_content)
+        for i in range(150)
     ]
 
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
@@ -849,8 +855,8 @@ def test_register_tools_builds_dict_lookup(
     """register_tools should build a dict for O(1) lookup by name."""
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
 
-    async def dummy(**kwargs: object) -> str:
-        return "ok"
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
 
     tools = [
         Tool(name="tool_a", description="A", function=dummy, parameters={}),
@@ -871,8 +877,8 @@ def test_register_tools_warns_on_duplicate_name(
     """Registering tools with duplicate names should log a warning."""
     agent = BackshopAgent(db=db_session, contractor=test_contractor)
 
-    async def dummy(**kwargs: object) -> str:
-        return "ok"
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
 
     tools = [
         Tool(name="dupe", description="First", function=dummy, parameters={}),
@@ -953,35 +959,6 @@ async def test_tool_result_success_no_hint(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.acompletion")
-async def test_plain_string_return_backward_compat(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
-) -> None:
-    """Tools returning plain strings should still work (backward compatibility)."""
-
-    async def legacy_tool(**kwargs: object) -> str:
-        return "Legacy result"
-
-    tool = Tool(name="old_tool", description="test", function=legacy_tool, parameters={})
-
-    mock_acompletion.side_effect = [
-        make_tool_call_response(
-            tool_calls=[{"id": "call_1", "name": "old_tool", "arguments": json.dumps({})}]
-        ),
-        make_text_response("Ok!"),
-    ]
-
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
-    agent.register_tools([tool])
-    response = await agent.process_message("test", system_prompt_override="system")
-
-    assert any("Called old_tool" in a for a in response.actions_taken)
-    assert response.tool_calls[0]["result"] == "Legacy result"
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
 async def test_tool_exception_appends_hint(
     mock_acompletion: AsyncMock,
     db_session: Session,
@@ -1022,8 +999,8 @@ async def test_unknown_tool_error_lists_available_tools(
 ) -> None:
     """Unknown tool error should list all registered tool names."""
 
-    async def dummy(**kwargs: object) -> str:
-        return "ok"
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
 
     tools = [
         Tool(name="save_fact", description="Save a fact", function=dummy, parameters={}),
@@ -1071,8 +1048,8 @@ async def test_validation_error_includes_expected_schema(
         value: str
         category: str = "general"
 
-    async def save_fact(**kwargs: object) -> str:
-        return "saved"
+    async def save_fact(**kwargs: object) -> ToolResult:
+        return ToolResult(content="saved")
 
     tool = Tool(
         name="save_fact",

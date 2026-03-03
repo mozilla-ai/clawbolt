@@ -13,6 +13,7 @@ import pytest
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import BackshopAgent
+from backend.app.agent.messages import AssistantMessage, UserMessage
 from backend.app.models import Contractor
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
@@ -56,8 +57,8 @@ async def test_agent_message_format_accepted(
 
         agent = BackshopAgent(db=integration_db, contractor=integration_contractor)
         history = [
-            {"role": "user", "content": "Hi there"},
-            {"role": "assistant", "content": "Hello! How can I help?"},
+            UserMessage(content="Hi there"),
+            AssistantMessage(content="Hello! How can I help?"),
         ]
         response = await agent.process_message(
             "What's a fair price for a 10x10 deck?",

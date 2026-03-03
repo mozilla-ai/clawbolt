@@ -43,8 +43,8 @@ class SampleParams(BaseModel):
 def test_tool_to_openai_schema_uses_params_model() -> None:
     """When params_model is set, schema should be auto-generated from the model."""
 
-    async def dummy(**kwargs: object) -> str:
-        return "ok"
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
 
     tool = Tool(
         name="sample",
@@ -68,8 +68,8 @@ def test_tool_to_openai_schema_uses_params_model() -> None:
 def test_tool_to_openai_schema_falls_back_to_raw_dict() -> None:
     """When no params_model is set, raw parameters dict should be used."""
 
-    async def dummy(**kwargs: object) -> str:
-        return "ok"
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
 
     raw_params = {"type": "object", "properties": {"x": {"type": "string"}}}
     tool = Tool(
@@ -315,42 +315,6 @@ async def test_agent_validation_coerces_types(
 
     # Should be called with coerced int, not string
     mock_func.assert_called_once_with(name="test", value=42)
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_agent_no_params_model_skips_validation(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
-) -> None:
-    """Tools without params_model should skip validation (backward compat)."""
-    tool_response = make_tool_call_response(
-        tool_calls=[
-            {
-                "id": "call_1",
-                "name": "legacy_tool",
-                "arguments": json.dumps({"anything": "goes"}),
-            }
-        ]
-    )
-    followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
-
-    mock_func = AsyncMock(return_value=ToolResult(content="ok"))
-    tool = Tool(
-        name="legacy_tool",
-        description="No params_model",
-        function=mock_func,
-        parameters={"type": "object", "properties": {}},
-    )
-
-    agent = BackshopAgent(db=db_session, contractor=test_contractor)
-    agent.register_tools([tool])
-    await agent.process_message("test", system_prompt_override="system")
-
-    # Should be called with raw args, no validation
-    mock_func.assert_called_once_with(anything="goes")
 
 
 @pytest.mark.asyncio()
