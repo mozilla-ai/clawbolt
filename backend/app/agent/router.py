@@ -1,7 +1,9 @@
 """Inbound message processing pipeline.
 
 Each step is an independent function with clear inputs/outputs.
-``handle_inbound_message`` orchestrates them in sequence.
+``handle_inbound_message`` orchestrates them via a composable pipeline
+of ``PipelineStep`` callables, making it easy to add, remove, or reorder
+steps without modifying the orchestrator itself.
 """
 
 from __future__ import annotations
@@ -9,6 +11,7 @@ from __future__ import annotations
 import json
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 
 from any_llm import AuthenticationError, ContentFilterError
 from sqlalchemy.orm import Session
@@ -62,7 +65,35 @@ ensure_tool_modules_imported()
 
 
 # ---------------------------------------------------------------------------
-# Pipeline steps
+# Pipeline context and types
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PipelineContext:
+    """Shared state passed through pipeline steps."""
+
+    db: Session
+    contractor: Contractor
+    message: Message
+    media_urls: list[tuple[str, str]]
+    messaging_service: MessagingService
+    to_address: str = ""
+    downloaded_media: list[DownloadedMedia] = field(default_factory=list)
+    storage: StorageBackend | None = None
+    combined_context: str = ""
+    conversation_history: list[AgentMessage] = field(default_factory=list)
+    system_prompt_override: str | None = None
+    event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = field(default_factory=list)
+    response: AgentResponse | None = None
+    _onboarding_sub: OnboardingSubscriber | None = None
+
+
+PipelineStep = Callable[[PipelineContext], Awaitable[PipelineContext]]
+
+
+# ---------------------------------------------------------------------------
+# Pipeline steps (original functions)
 # ---------------------------------------------------------------------------
 
 
@@ -282,6 +313,103 @@ def persist_outbound(
 
 
 # ---------------------------------------------------------------------------
+# Composable pipeline step wrappers
+# ---------------------------------------------------------------------------
+
+
+async def prepare_media_step(ctx: PipelineContext) -> PipelineContext:
+    """Download media and initialize storage backend."""
+    ctx.downloaded_media, ctx.storage = await prepare_media(
+        ctx.db, ctx.contractor, ctx.message.id, ctx.media_urls, ctx.messaging_service
+    )
+    return ctx
+
+
+async def build_context_step(ctx: PipelineContext) -> PipelineContext:
+    """Run media pipeline and build combined context."""
+    ctx.combined_context = await build_message_context(
+        ctx.db, ctx.message, ctx.contractor, ctx.media_urls, ctx.downloaded_media
+    )
+    return ctx
+
+
+async def load_history_step(ctx: PipelineContext) -> PipelineContext:
+    """Load conversation history and set up onboarding."""
+    ctx.conversation_history = await load_conversation_history(
+        ctx.db, ctx.message.conversation_id, contractor_id=ctx.contractor.id
+    )
+    was_onboarding = is_onboarding_needed(ctx.contractor)
+    if was_onboarding:
+        ctx.system_prompt_override = build_onboarding_system_prompt(ctx.contractor)
+    onboarding_sub = OnboardingSubscriber(ctx.db, ctx.contractor, was_onboarding)
+    ctx.event_subscribers.append(onboarding_sub)
+    ctx._onboarding_sub = onboarding_sub
+    return ctx
+
+
+async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
+    """Initialize agent with tools and process the message."""
+    ctx.response = await run_agent(
+        db=ctx.db,
+        contractor=ctx.contractor,
+        message=ctx.message,
+        combined_context=ctx.combined_context,
+        conversation_history=ctx.conversation_history,
+        storage=ctx.storage,
+        messaging_service=ctx.messaging_service,
+        to_address=ctx.to_address,
+        downloaded_media=ctx.downloaded_media,
+        system_prompt_override=ctx.system_prompt_override,
+        event_subscribers=ctx.event_subscribers,
+    )
+    return ctx
+
+
+async def finalize_onboarding_step(ctx: PipelineContext) -> PipelineContext:
+    """Append onboarding completion note if applicable."""
+    if ctx._onboarding_sub and ctx.response:
+        ctx._onboarding_sub.finalize(ctx.response)
+    return ctx
+
+
+async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
+    """Send reply to the contractor."""
+    if ctx.response:
+        await dispatch_reply(ctx.response, ctx.messaging_service, ctx.to_address, ctx.message.id)
+    return ctx
+
+
+async def persist_outbound_step(ctx: PipelineContext) -> PipelineContext:
+    """Store outbound message record."""
+    if ctx.response:
+        persist_outbound(ctx.db, ctx.message.conversation_id, ctx.response)
+    return ctx
+
+
+# ---------------------------------------------------------------------------
+# Pipeline runner and default pipeline
+# ---------------------------------------------------------------------------
+
+
+async def run_pipeline(ctx: PipelineContext, steps: list[PipelineStep]) -> PipelineContext:
+    """Execute pipeline steps in sequence."""
+    for step in steps:
+        ctx = await step(ctx)
+    return ctx
+
+
+DEFAULT_PIPELINE: list[PipelineStep] = [
+    prepare_media_step,
+    build_context_step,
+    load_history_step,
+    run_agent_step,
+    finalize_onboarding_step,
+    dispatch_reply_step,
+    persist_outbound_step,
+]
+
+
+# ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------
 
@@ -292,16 +420,13 @@ async def handle_inbound_message(
     message: Message,
     media_urls: list[tuple[str, str]],
     messaging_service: MessagingService,
+    pipeline: list[PipelineStep] | None = None,
 ) -> AgentResponse:
     """Full message processing pipeline.
 
-    Orchestrates discrete pipeline steps:
-    1. prepare_media        - download and auto-save media
-    2. build_message_context - run media pipeline, build combined context
-    3. run_agent            - initialize agent with tools and event subscribers
-    4. finalize_onboarding  - append completion note if onboarding just finished
-    5. dispatch_reply       - send reply to contractor
-    6. persist_outbound     - store outbound message record
+    Orchestrates discrete pipeline steps via a composable list of
+    ``PipelineStep`` callables. Pass a custom ``pipeline`` to add,
+    remove, or reorder steps; defaults to ``DEFAULT_PIPELINE``.
     """
     to_address = contractor.channel_identifier or contractor.phone
     if not to_address:
@@ -311,44 +436,13 @@ async def handle_inbound_message(
         )
         return AgentResponse(reply_text="")
 
-    # 1. Download and auto-save media
-    downloaded_media, storage = await prepare_media(
-        db, contractor, message.id, media_urls, messaging_service
-    )
-
-    # 2. Build combined context from text + media
-    combined_context = await build_message_context(
-        db, message, contractor, media_urls, downloaded_media
-    )
-
-    # 3. Load history and run agent (with onboarding subscriber)
-    conversation_history = await load_conversation_history(
-        db, message.conversation_id, contractor_id=contractor.id
-    )
-    was_onboarding = is_onboarding_needed(contractor)
-    system_prompt_override = build_onboarding_system_prompt(contractor) if was_onboarding else None
-    onboarding_sub = OnboardingSubscriber(db, contractor, was_onboarding)
-    response = await run_agent(
+    ctx = PipelineContext(
         db=db,
         contractor=contractor,
         message=message,
-        combined_context=combined_context,
-        conversation_history=conversation_history,
-        storage=storage,
+        media_urls=media_urls,
         messaging_service=messaging_service,
         to_address=to_address,
-        downloaded_media=downloaded_media,
-        system_prompt_override=system_prompt_override,
-        event_subscribers=[onboarding_sub],
     )
-
-    # 4. Finalize onboarding (append completion note if applicable)
-    onboarding_sub.finalize(response)
-
-    # 5. Send reply
-    await dispatch_reply(response, messaging_service, to_address, message.id)
-
-    # 6. Persist outbound message
-    persist_outbound(db, message.conversation_id, response)
-
-    return response
+    ctx = await run_pipeline(ctx, pipeline or DEFAULT_PIPELINE)
+    return ctx.response or AgentResponse(reply_text="")
