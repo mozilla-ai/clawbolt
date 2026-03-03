@@ -40,6 +40,9 @@ class Settings(BaseSettings):
 
     # Agent loop
     max_tool_rounds: int = 10
+    max_input_tokens: int = 120_000
+    context_trim_target_tokens: int = 80_000
+    rate_limit_retry_delay: float = 2.0
 
     # Conversation & memory
     conversation_timeout_hours: int = 4
@@ -69,6 +72,8 @@ class Settings(BaseSettings):
     heartbeat_model: str = ""  # empty = fall back to llm_model
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
     heartbeat_concurrency: int = 5  # max concurrent contractor evaluations per tick
+    checklist_daily_interval_hours: int = 20
+    heartbeat_recent_messages_count: int = 5
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
