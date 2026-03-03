@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import zoneinfo
 from typing import TYPE_CHECKING, cast
 
 from pydantic import BaseModel, Field
@@ -172,6 +173,14 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             fields_updated.append("business_hours")
 
         if timezone is not None:
+            try:
+                zoneinfo.ZoneInfo(str(timezone))
+            except (KeyError, zoneinfo.ZoneInfoNotFoundError):
+                return ToolResult(
+                    content=f"Invalid timezone: {timezone}. Use IANA format like America/New_York.",
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
             updates["timezone"] = str(timezone)
             fields_updated.append("timezone")
 
@@ -239,7 +248,6 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             function=update_profile,
             params_model=UpdateProfileParams,
             usage_hint=("Use this to update known contractor details (name, trade, rates, etc.)."),
-
         ),
     ]
 
