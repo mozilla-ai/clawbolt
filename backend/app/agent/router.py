@@ -29,9 +29,9 @@ from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
 from backend.app.agent.tools.registry import (
     ToolContext,
+    create_list_capabilities_tool,
     default_registry,
     ensure_tool_modules_imported,
-    select_tools,
 )
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
@@ -199,13 +199,6 @@ async def run_agent(
     Handles LLM-level errors (content filter, auth, unexpected) by returning
     an error fallback AgentResponse.
     """
-    agent = ClawboltAgent(
-        db=db,
-        contractor=contractor,
-        messaging_service=messaging_service,
-        chat_id=to_address,
-    )
-
     tool_context = ToolContext(
         db=db,
         contractor=contractor,
@@ -215,13 +208,21 @@ async def run_agent(
         downloaded_media=downloaded_media,
     )
 
-    selected_factories = select_tools(
-        message.body or "",
-        has_media=bool(downloaded_media),
-        has_storage=storage is not None,
-        factory_names=default_registry.factory_names,
+    agent = ClawboltAgent(
+        db=db,
+        contractor=contractor,
+        messaging_service=messaging_service,
+        chat_id=to_address,
+        tool_context=tool_context,
+        registry=default_registry,
     )
-    tools = default_registry.create_tools(tool_context, selected_factories=selected_factories)
+
+    # Start with core tools only; specialist tools are discovered on demand
+    # via the list_capabilities meta-tool.
+    tools = default_registry.create_core_tools(tool_context)
+    specialist_summaries = default_registry.get_available_specialist_summaries(tool_context)
+    if specialist_summaries:
+        tools.append(create_list_capabilities_tool(specialist_summaries))
     agent.register_tools(tools)
 
     for subscriber in event_subscribers or []:

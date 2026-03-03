@@ -3,6 +3,12 @@
 Tool modules self-register with the default registry at import time.
 The router calls ``create_tools(context)`` instead of manually importing
 and assembling tools from every module.
+
+Factories are classified as **core** (always-available) or **specialist**
+(discovered on demand via the ``list_capabilities`` meta-tool).  Core tools
+are registered to the LLM on every message; specialist tools require the
+agent to explicitly activate them, keeping the initial schema payload small
+and enabling progressive disclosure as tool count grows.
 """
 
 from __future__ import annotations
@@ -10,35 +16,20 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
-import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
 from backend.app.models import Contractor
 from backend.app.services.messaging import MessagingService
 from backend.app.services.storage_service import StorageBackend
 
 logger = logging.getLogger(__name__)
-
-# Factory names that are always included regardless of message content.
-_ALWAYS_INCLUDE: frozenset[str] = frozenset({"memory", "messaging", "profile"})
-
-# Keyword patterns that trigger inclusion of specific tool factories.
-# Each entry maps a factory name to a compiled regex of trigger words.
-_KEYWORD_RULES: dict[str, re.Pattern[str]] = {
-    "estimate": re.compile(
-        r"\b(estimates?|quotes?|bids?|prices?|pricing|costs?|costing|invoices?|how\s+much)\b",
-        re.IGNORECASE,
-    ),
-    "checklist": re.compile(
-        r"\b(checklists?|reminders?|todos?|tasks?|to-dos?)\b",
-        re.IGNORECASE,
-    ),
-}
 
 
 @dataclass
@@ -60,70 +51,66 @@ class ToolFactory:
     create: Callable[[ToolContext], list[Tool]]
     requires_storage: bool = False
     requires_messaging: bool = False
+    core: bool = True
+    summary: str = ""
 
 
-def select_tools(
-    message: str,
-    *,
-    has_media: bool = False,
-    has_storage: bool = False,
-    factory_names: list[str] | None = None,
-) -> set[str]:
-    """Select which tool factories to include based on message context.
+class ListCapabilitiesParams(BaseModel):
+    """Parameters for the list_capabilities meta-tool."""
 
-    Returns a set of factory names that should be activated for the given
-    message. The selection logic is:
-
-    - Always include: memory, messaging, profile tools
-    - Include estimate tools when: message mentions pricing keywords
-    - Include file tools when: media is present AND storage is configured
-    - Include checklist tools when: message mentions task/checklist keywords
-    - Fallback: when no specialized keywords match, include all tools
-
-    Args:
-        message: The inbound message text (may be empty).
-        has_media: Whether the message includes media attachments.
-        has_storage: Whether a storage backend is configured.
-        factory_names: Available factory names. When ``None``, uses the
-            default set of known factories.
-
-    Returns:
-        Set of factory names to include.
-    """
-    all_names = (
-        set(factory_names)
-        if factory_names is not None
-        else {
-            "memory",
-            "messaging",
-            "estimate",
-            "checklist",
-            "profile",
-            "file",
-        }
+    category: str | None = Field(
+        default=None,
+        description="Category name to activate. Omit to see all available categories.",
     )
 
-    selected: set[str] = set(_ALWAYS_INCLUDE & all_names)
 
-    # Check keyword rules for specialized tools
-    specialized_matched = False
-    for name, pattern in _KEYWORD_RULES.items():
-        if name in all_names and pattern.search(message):
-            selected.add(name)
-            specialized_matched = True
+def create_list_capabilities_tool(
+    specialist_summaries: dict[str, str],
+) -> Tool:
+    """Create the ``list_capabilities`` meta-tool.
 
-    # Include file tools when media is present and storage is available.
-    # Media presence is orthogonal to keyword matching: it adds file tools
-    # but does not count as a "specialized match" for fallback purposes.
-    if has_media and has_storage and "file" in all_names:
-        selected.add("file")
+    The tool itself only returns text describing available specialist
+    categories.  Actual tool schema injection is handled by the agent
+    loop in ``core.py`` after detecting a ``list_capabilities`` call.
+    """
 
-    # Fallback: when no specialized keywords matched, include everything
-    # so the model has full capability for ambiguous or general messages
-    if not specialized_matched:
-        selected = all_names.copy()
+    async def list_capabilities(category: str | None = None) -> ToolResult:
+        if category is None:
+            if not specialist_summaries:
+                return ToolResult(content="No additional capabilities available.")
+            lines = [
+                "Available specialist capabilities "
+                "(call list_capabilities with a category name to activate):"
+            ]
+            for name, summary in sorted(specialist_summaries.items()):
+                lines.append(f"- {name}: {summary}")
+            return ToolResult(content="\n".join(lines))
 
-    return selected
+        if category not in specialist_summaries:
+            available = ", ".join(sorted(specialist_summaries.keys()))
+            return ToolResult(
+                content=f'Unknown category "{category}". Available: {available}',
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+
+        return ToolResult(content=f'Category "{category}" is now active.')
+
+    categories = ", ".join(sorted(specialist_summaries.keys()))
+    return Tool(
+        name=ToolName.LIST_CAPABILITIES,
+        description=(
+            "Discover and activate specialist tool capabilities. "
+            "Call without arguments to see available categories. "
+            "Call with a category name to activate those tools."
+        ),
+        function=list_capabilities,
+        params_model=ListCapabilitiesParams,
+        usage_hint=(
+            f"You have specialist capabilities ({categories}). "
+            "Call list_capabilities with a category name to activate them."
+        ),
+    )
 
 
 class ToolRegistry:
@@ -139,14 +126,30 @@ class ToolRegistry:
         *,
         requires_storage: bool = False,
         requires_messaging: bool = False,
+        core: bool = True,
+        summary: str = "",
     ) -> None:
-        """Register a tool factory by name."""
+        """Register a tool factory by name.
+
+        Args:
+            name: Unique factory name.
+            create: Callable that produces a list of ``Tool`` objects.
+            requires_storage: Skip this factory when no storage backend exists.
+            requires_messaging: Skip this factory when no messaging service exists.
+            core: If ``True`` the factory's tools are always registered.
+                If ``False`` the factory is a specialist, discoverable via
+                ``list_capabilities``.
+            summary: One-line description shown by ``list_capabilities`` for
+                specialist factories.
+        """
         if name in self._factories:
             logger.warning("Overwriting existing tool factory: %s", name)
         self._factories[name] = ToolFactory(
             create=create,
             requires_storage=requires_storage,
             requires_messaging=requires_messaging,
+            core=core,
+            summary=summary,
         )
 
     def create_tools(
@@ -184,6 +187,40 @@ class ToolRegistry:
                     )
             tools.extend(created)
         return tools
+
+    def create_core_tools(self, context: ToolContext) -> list[Tool]:
+        """Create only core (always-available) tools."""
+        return self.create_tools(context, selected_factories=self.core_factory_names)
+
+    def get_available_specialist_summaries(
+        self,
+        context: ToolContext,
+    ) -> dict[str, str]:
+        """Return summaries of specialist factories whose dependencies are met.
+
+        Used by the setup code to build the ``list_capabilities`` meta-tool
+        with only the categories that are actually usable.
+        """
+        summaries: dict[str, str] = {}
+        for name, factory in self._factories.items():
+            if factory.core:
+                continue
+            if factory.requires_storage and context.storage is None:
+                continue
+            if factory.requires_messaging and context.messaging_service is None:
+                continue
+            summaries[name] = factory.summary
+        return summaries
+
+    @property
+    def core_factory_names(self) -> set[str]:
+        """Return the set of core factory names."""
+        return {name for name, f in self._factories.items() if f.core}
+
+    @property
+    def specialist_factory_names(self) -> set[str]:
+        """Return the set of specialist factory names."""
+        return {name for name, f in self._factories.items() if not f.core}
 
     @property
     def factory_names(self) -> list[str]:

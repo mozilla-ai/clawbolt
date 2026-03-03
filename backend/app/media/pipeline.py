@@ -10,8 +10,6 @@ logger = logging.getLogger(__name__)
 
 # Fallback messages when media processing is unavailable
 VISION_FALLBACK = "[Photo — vision analysis not available]"
-AUDIO_FALLBACK = "[Audio file - transcription not available (faster-whisper not installed)]"
-VIDEO_FALLBACK = "[Video file - transcription not available (faster-whisper not installed)]"
 VIDEO_ERROR_FALLBACK = "[Video file - transcription not available]"
 
 # Media type display labels used in combined context output
@@ -55,18 +53,11 @@ async def _process_single_media(
             )
             extracted_text = VISION_FALLBACK
     elif category == "audio":
-        try:
-            extracted_text = await transcribe_audio(media.content, media.mime_type)
-        except ImportError:
-            logger.warning("faster-whisper not installed, skipping audio transcription")
-            extracted_text = AUDIO_FALLBACK
+        extracted_text = await transcribe_audio(media.content, media.mime_type)
     elif category == "video":
         # Future: extract audio track. For now, try audio transcription.
         try:
             extracted_text = await transcribe_audio(media.content, media.mime_type)
-        except ImportError:
-            logger.warning("faster-whisper not installed, skipping video transcription")
-            extracted_text = VIDEO_FALLBACK
         except Exception:
             logger.warning("Could not process video file: %s", media.original_url)
             extracted_text = VIDEO_ERROR_FALLBACK

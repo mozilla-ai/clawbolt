@@ -43,6 +43,8 @@ from backend.app.agent.tools.base import (
     ToolTags,
     tool_to_function_schema,
 )
+from backend.app.agent.tools.names import ToolName
+from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.config import settings
 from backend.app.models import Contractor
 from backend.app.services.llm_usage import log_llm_usage
@@ -265,6 +267,8 @@ class ClawboltAgent:
         contractor: Contractor,
         messaging_service: MessagingService | None = None,
         chat_id: str | None = None,
+        tool_context: ToolContext | None = None,
+        registry: ToolRegistry | None = None,
     ) -> None:
         self.db = db
         self.contractor = contractor
@@ -273,6 +277,9 @@ class ClawboltAgent:
         self.tools: list[Tool] = []
         self._tools_by_name: dict[str, Tool] = {}
         self._subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = []
+        self._tool_context = tool_context
+        self._registry = registry
+        self._activated_specialists: set[str] = set()
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -306,6 +313,48 @@ class ClawboltAgent:
             if tool.name in self._tools_by_name:
                 logger.warning("Duplicate tool name registered: %s", tool.name)
             self._tools_by_name[tool.name] = tool
+
+    def _activate_specialist(self, factory_name: str) -> None:
+        """Activate a specialist tool factory, injecting its tools for the next round."""
+        if factory_name in self._activated_specialists:
+            return
+        if self._registry is None or self._tool_context is None:
+            return
+        self._activated_specialists.add(factory_name)
+        new_tools = self._registry.create_tools(
+            self._tool_context,
+            selected_factories={factory_name},
+        )
+        for tool in new_tools:
+            if tool.name not in self._tools_by_name:
+                self.tools.append(tool)
+                self._tools_by_name[tool.name] = tool
+
+    def _check_specialist_activations(
+        self,
+        parsed_calls: list[ToolCallRequest],
+    ) -> bool:
+        """Check for list_capabilities calls and activate requested specialists.
+
+        Returns True if any new specialist factories were activated (meaning
+        tool schemas need to be rebuilt for the next round).
+        """
+        if self._registry is None:
+            return False
+        activated_any = False
+        specialist_names = self._registry.specialist_factory_names
+        for tc_req in parsed_calls:
+            if tc_req.name != ToolName.LIST_CAPABILITIES:
+                continue
+            category = tc_req.arguments.get("category")
+            if (
+                category
+                and category in specialist_names
+                and category not in self._activated_specialists
+            ):
+                self._activate_specialist(category)
+                activated_any = True
+        return activated_any
 
     async def _build_system_prompt(self, message_context: str) -> str:
         """Build the full system prompt via the composable builder."""
@@ -513,8 +562,6 @@ class ClawboltAgent:
                 MAX_INPUT_TOKENS,
             )
 
-        tool_schemas = [tool_to_function_schema(t) for t in self.tools] if self.tools else None
-
         llm_kwargs: dict[str, Any] = {}
         if temperature is not None:
             llm_kwargs["temperature"] = temperature
@@ -525,6 +572,9 @@ class ClawboltAgent:
         reply_text = ""
 
         for _round in range(MAX_TOOL_ROUNDS):
+            # Rebuild tool schemas each round so dynamically activated
+            # specialist tools are visible to the LLM.
+            tool_schemas = [tool_to_function_schema(t) for t in self.tools] if self.tools else None
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
             purpose = "agent_main" if _round == 0 else "agent_followup"
@@ -683,6 +733,10 @@ class ClawboltAgent:
                         content=result_str,
                     )
                 )
+
+            # Activate any specialist factories requested via list_capabilities.
+            # New tool schemas will be picked up at the top of the next round.
+            self._check_specialist_activations(parsed_calls)
 
             messages.extend(tool_results)
             await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))

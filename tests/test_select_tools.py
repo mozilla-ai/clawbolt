@@ -1,257 +1,338 @@
-"""Tests for context-aware tool selection via select_tools()."""
+"""Tests for progressive tool disclosure via list_capabilities meta-tool."""
 
 import pytest
+from pydantic import BaseModel
 
-from backend.app.agent.tools.registry import select_tools
+from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.agent.tools.names import ToolName
+from backend.app.agent.tools.registry import (
+    ToolContext,
+    ToolRegistry,
+    create_list_capabilities_tool,
+    ensure_tool_modules_imported,
+)
 
-# The full set of known factory names used in tests.
-ALL_FACTORIES = ["memory", "messaging", "estimate", "checklist", "profile", "file"]
-
-
-class TestAlwaysIncludedTools:
-    """Memory, messaging, and profile tools are always included."""
-
-    def test_always_includes_memory(self) -> None:
-        result = select_tools("how much for a deck?", factory_names=ALL_FACTORIES)
-        assert "memory" in result
-
-    def test_always_includes_messaging(self) -> None:
-        result = select_tools("how much for a deck?", factory_names=ALL_FACTORIES)
-        assert "messaging" in result
-
-    def test_always_includes_profile(self) -> None:
-        result = select_tools("how much for a deck?", factory_names=ALL_FACTORIES)
-        assert "profile" in result
+# Ensure all tool modules self-register with the default registry.
+ensure_tool_modules_imported()
 
 
-class TestEstimateKeywords:
-    """Estimate tools are included when pricing keywords appear."""
+class _EmptyParams(BaseModel):
+    """Minimal stand-in so the params_model check passes."""
 
-    @pytest.mark.parametrize(
-        "keyword",
-        ["estimate", "quote", "bid", "price", "cost", "how much", "invoice"],
+
+def _make_tool(name: str) -> Tool:
+    """Create a trivial tool for testing."""
+
+    async def noop() -> ToolResult:
+        return ToolResult(content="ok")
+
+    return Tool(name=name, description=f"test {name}", function=noop, params_model=_EmptyParams)
+
+
+def _build_test_registry() -> ToolRegistry:
+    """Build a registry with 3 core and 3 specialist factories."""
+    registry = ToolRegistry()
+    # Core factories
+    registry.register("memory", lambda ctx: [_make_tool("save_fact"), _make_tool("recall_facts")])
+    registry.register("messaging", lambda ctx: [_make_tool("send_reply")])
+    registry.register("profile", lambda ctx: [_make_tool("view_profile")])
+    # Specialist factories
+    registry.register(
+        "estimate",
+        lambda ctx: [_make_tool("generate_estimate")],
+        core=False,
+        summary="Generate professional estimates and quotes with PDF output",
     )
-    def test_estimate_keyword_triggers_inclusion(self, keyword: str) -> None:
-        result = select_tools(
-            f"Can you give me a {keyword} for the bathroom remodel?",
-            factory_names=ALL_FACTORIES,
-        )
-        assert "estimate" in result
-
-    def test_estimate_keyword_case_insensitive(self) -> None:
-        result = select_tools("Give me an ESTIMATE", factory_names=ALL_FACTORIES)
-        assert "estimate" in result
-
-    def test_estimate_keyword_does_not_include_checklist(self) -> None:
-        result = select_tools("How much for a deck?", factory_names=ALL_FACTORIES)
-        assert "estimate" in result
-        assert "checklist" not in result
-
-
-class TestChecklistKeywords:
-    """Checklist tools are included when task keywords appear."""
-
-    @pytest.mark.parametrize(
-        "keyword",
-        ["checklist", "reminder", "todo", "task", "to-do"],
+    registry.register(
+        "checklist",
+        lambda ctx: [_make_tool("add_checklist_item"), _make_tool("list_checklist_items")],
+        core=False,
+        summary="Manage recurring reminders and task checklists",
     )
-    def test_checklist_keyword_triggers_inclusion(self, keyword: str) -> None:
-        result = select_tools(
-            f"Add a {keyword} for the Johnson project",
-            factory_names=ALL_FACTORIES,
-        )
-        assert "checklist" in result
-
-    def test_checklist_keyword_case_insensitive(self) -> None:
-        result = select_tools("Show my CHECKLIST", factory_names=ALL_FACTORIES)
-        assert "checklist" in result
-
-    def test_checklist_keyword_does_not_include_estimate(self) -> None:
-        result = select_tools("Add a task for tomorrow", factory_names=ALL_FACTORIES)
-        assert "checklist" in result
-        assert "estimate" not in result
-
-
-class TestFileTools:
-    """File tools are included only when media is present AND storage is configured."""
-
-    def test_file_included_with_media_and_storage(self) -> None:
-        result = select_tools(
-            "Here is the photo",
-            has_media=True,
-            has_storage=True,
-            factory_names=ALL_FACTORIES,
-        )
-        assert "file" in result
-
-    def test_file_excluded_without_media(self) -> None:
-        """No media means file tools are not specifically selected."""
-        result = select_tools(
-            "How much for a deck?",
-            has_media=False,
-            has_storage=True,
-            factory_names=ALL_FACTORIES,
-        )
-        # estimate keyword matched, so only specialized + always tools
-        assert "file" not in result
-
-    def test_file_excluded_without_storage(self) -> None:
-        """No storage means file tools are not specifically selected."""
-        result = select_tools(
-            "How much for a deck?",
-            has_media=True,
-            has_storage=False,
-            factory_names=ALL_FACTORIES,
-        )
-        # estimate keyword matched, so only specialized + always tools
-        assert "file" not in result
-
-
-class TestFallbackBehavior:
-    """When no specialized keywords match, all tools are included."""
-
-    def test_generic_message_includes_all_tools(self) -> None:
-        result = select_tools("Hello, how are you?", factory_names=ALL_FACTORIES)
-        assert result == set(ALL_FACTORIES)
-
-    def test_empty_message_includes_all_tools(self) -> None:
-        result = select_tools("", factory_names=ALL_FACTORIES)
-        assert result == set(ALL_FACTORIES)
-
-    def test_ambiguous_message_includes_all_tools(self) -> None:
-        result = select_tools(
-            "Can you help me with my project?",
-            factory_names=ALL_FACTORIES,
-        )
-        assert result == set(ALL_FACTORIES)
-
-
-class TestMultipleKeywords:
-    """Messages matching multiple keyword groups include all matched tools."""
-
-    def test_estimate_and_checklist_both_included(self) -> None:
-        result = select_tools(
-            "Give me a quote and add a reminder to follow up",
-            factory_names=ALL_FACTORIES,
-        )
-        assert "estimate" in result
-        assert "checklist" in result
-        assert "memory" in result
-        assert "messaging" in result
-        assert "profile" in result
-        # file not matched (no media), and specialized matched, so file excluded
-        assert "file" not in result
-
-    def test_estimate_with_media_and_storage(self) -> None:
-        result = select_tools(
-            "How much would this cost?",
-            has_media=True,
-            has_storage=True,
-            factory_names=ALL_FACTORIES,
-        )
-        assert "estimate" in result
-        assert "file" in result
-        assert "memory" in result
-
-
-class TestFactoryNamesParameter:
-    """select_tools respects the factory_names parameter."""
-
-    def test_limits_to_provided_factory_names(self) -> None:
-        result = select_tools(
-            "Hello there",
-            factory_names=["memory", "messaging"],
-        )
-        assert result == {"memory", "messaging"}
-
-    def test_unknown_factory_in_keyword_rule_ignored(self) -> None:
-        """If estimate is not in factory_names, it cannot be selected."""
-        result = select_tools(
-            "How much for a deck?",
-            factory_names=["memory", "messaging", "profile"],
-        )
-        # No specialized keyword matched for available factories, fallback to all
-        assert result == {"memory", "messaging", "profile"}
-
-    def test_none_factory_names_uses_defaults(self) -> None:
-        result = select_tools("Hello there", factory_names=None)
-        # Should use the hardcoded default set and include all (fallback)
-        assert "memory" in result
-        assert "messaging" in result
-
-
-class TestWordBoundaries:
-    """Keywords must match at word boundaries to avoid false positives."""
-
-    def test_estimated_does_not_match_estimate(self) -> None:
-        """'estimated' contains 'estimate' but should still match at word boundary."""
-        # Actually 'estimated' does start with 'estimate' at a word boundary,
-        # but the regex uses \b which checks boundaries. 'estimated' has
-        # 'estimate' followed by 'd', so \bestimate\b won't match 'estimated'.
-        result = select_tools("The estimated time is 3 hours", factory_names=ALL_FACTORIES)
-        # 'estimated' does NOT match \bestimate\b, so no specialized match, fallback
-        assert result == set(ALL_FACTORIES)
-
-    def test_costing_matches_estimate(self) -> None:
-        result = select_tools("The costing method is simple", factory_names=ALL_FACTORIES)
-        # 'costing' matches the estimate regex as a verb form
-        assert "estimate" in result
-
-    def test_priceless_does_not_match_price(self) -> None:
-        result = select_tools("That view is priceless", factory_names=ALL_FACTORIES)
-        # 'priceless' does NOT match \bprice\b, fallback to all
-        assert result == set(ALL_FACTORIES)
-
-
-class TestPluralForms:
-    """Plural and verb forms of keywords trigger tool selection."""
-
-    @pytest.mark.parametrize(
-        "keyword",
-        ["estimates", "quotes", "bids", "prices", "pricing", "costs", "costing", "invoices"],
+    registry.register(
+        "file",
+        lambda ctx: [_make_tool("upload_to_storage")],
+        requires_storage=True,
+        core=False,
+        summary="Upload and organize files in cloud storage",
     )
-    def test_estimate_plural_and_verb_forms(self, keyword: str) -> None:
-        result = select_tools(
-            f"Send me the {keyword} for this job",
-            factory_names=ALL_FACTORIES,
+    return registry
+
+
+class TestCoreSpecialistClassification:
+    """Factories are correctly classified as core or specialist."""
+
+    def test_core_factory_names(self) -> None:
+        registry = _build_test_registry()
+        assert registry.core_factory_names == {"memory", "messaging", "profile"}
+
+    def test_specialist_factory_names(self) -> None:
+        registry = _build_test_registry()
+        assert registry.specialist_factory_names == {"estimate", "checklist", "file"}
+
+    def test_core_defaults_to_true(self) -> None:
+        registry = ToolRegistry()
+        registry.register("x", lambda ctx: [])
+        assert registry.core_factory_names == {"x"}
+        assert registry.specialist_factory_names == set()
+
+
+class TestCreateCoreTools:
+    """create_core_tools only returns tools from core factories."""
+
+    def test_only_core_tools_returned(self) -> None:
+        registry = _build_test_registry()
+        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        tools = registry.create_core_tools(ctx)
+        names = {t.name for t in tools}
+        assert names == {"save_fact", "recall_facts", "send_reply", "view_profile"}
+
+    def test_specialist_tools_excluded(self) -> None:
+        registry = _build_test_registry()
+        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        tools = registry.create_core_tools(ctx)
+        names = {t.name for t in tools}
+        assert "generate_estimate" not in names
+        assert "add_checklist_item" not in names
+        assert "upload_to_storage" not in names
+
+
+class TestAvailableSpecialistSummaries:
+    """get_available_specialist_summaries filters by dependency satisfaction."""
+
+    def test_returns_all_specialists_when_deps_met(self) -> None:
+        from unittest.mock import MagicMock
+
+        registry = _build_test_registry()
+        ctx = ToolContext(
+            db=None,  # type: ignore[arg-type]
+            contractor=None,  # type: ignore[arg-type]
+            storage=MagicMock(),
         )
-        assert "estimate" in result
+        summaries = registry.get_available_specialist_summaries(ctx)
+        assert "estimate" in summaries
+        assert "checklist" in summaries
+        assert "file" in summaries
 
-    @pytest.mark.parametrize(
-        "keyword",
-        ["checklists", "reminders", "todos", "tasks", "to-dos"],
-    )
-    def test_checklist_plural_forms(self, keyword: str) -> None:
-        result = select_tools(
-            f"Show me my {keyword}",
-            factory_names=ALL_FACTORIES,
+    def test_excludes_file_when_no_storage(self) -> None:
+        registry = _build_test_registry()
+        ctx = ToolContext(db=None, contractor=None, storage=None)  # type: ignore[arg-type]
+        summaries = registry.get_available_specialist_summaries(ctx)
+        assert "estimate" in summaries
+        assert "checklist" in summaries
+        assert "file" not in summaries
+
+    def test_excludes_core_factories(self) -> None:
+        registry = _build_test_registry()
+        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        summaries = registry.get_available_specialist_summaries(ctx)
+        assert "memory" not in summaries
+        assert "messaging" not in summaries
+        assert "profile" not in summaries
+
+
+class TestListCapabilitiesTool:
+    """The list_capabilities meta-tool returns correct information."""
+
+    @pytest.mark.asyncio
+    async def test_list_all_categories(self) -> None:
+        summaries = {
+            "estimate": "Generate estimates",
+            "checklist": "Manage checklists",
+        }
+        tool = create_list_capabilities_tool(summaries)
+        result = await tool.function(category=None)
+        assert "estimate" in result.content
+        assert "checklist" in result.content
+        assert not result.is_error
+
+    @pytest.mark.asyncio
+    async def test_activate_valid_category(self) -> None:
+        summaries = {"estimate": "Generate estimates"}
+        tool = create_list_capabilities_tool(summaries)
+        result = await tool.function(category="estimate")
+        assert "active" in result.content.lower()
+        assert not result.is_error
+
+    @pytest.mark.asyncio
+    async def test_activate_unknown_category_returns_error(self) -> None:
+        summaries = {"estimate": "Generate estimates"}
+        tool = create_list_capabilities_tool(summaries)
+        result = await tool.function(category="nonexistent")
+        assert result.is_error
+        assert "estimate" in result.content  # hint about available categories
+
+    @pytest.mark.asyncio
+    async def test_no_specialists_available(self) -> None:
+        tool = create_list_capabilities_tool({})
+        result = await tool.function(category=None)
+        assert "no additional" in result.content.lower()
+        assert not result.is_error
+
+    def test_tool_has_correct_name(self) -> None:
+        tool = create_list_capabilities_tool({"x": "test"})
+        assert tool.name == ToolName.LIST_CAPABILITIES
+
+    def test_tool_has_params_model(self) -> None:
+        tool = create_list_capabilities_tool({"x": "test"})
+        assert tool.params_model is not None
+
+    def test_tool_usage_hint_lists_categories(self) -> None:
+        summaries = {"estimate": "x", "checklist": "y"}
+        tool = create_list_capabilities_tool(summaries)
+        assert "checklist" in tool.usage_hint
+        assert "estimate" in tool.usage_hint
+
+
+class TestDefaultRegistryCoreSpecialistSplit:
+    """The default registry correctly classifies built-in factories."""
+
+    def test_core_factories(self) -> None:
+        from backend.app.agent.tools.registry import default_registry
+
+        core = default_registry.core_factory_names
+        assert "memory" in core
+        assert "messaging" in core
+        assert "profile" in core
+
+    def test_specialist_factories(self) -> None:
+        from backend.app.agent.tools.registry import default_registry
+
+        specialist = default_registry.specialist_factory_names
+        assert "estimate" in specialist
+        assert "checklist" in specialist
+        assert "file" in specialist
+
+    def test_no_overlap(self) -> None:
+        from backend.app.agent.tools.registry import default_registry
+
+        core = default_registry.core_factory_names
+        specialist = default_registry.specialist_factory_names
+        assert not core & specialist
+
+
+class TestDynamicToolActivation:
+    """The agent activates specialist tools when list_capabilities is called."""
+
+    def test_activate_specialist_adds_tools(self) -> None:
+        from backend.app.agent.core import ClawboltAgent
+        from backend.app.agent.messages import ToolCallRequest
+
+        registry = _build_test_registry()
+        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        agent = ClawboltAgent(
+            db=None,  # type: ignore[arg-type]
+            contractor=None,  # type: ignore[arg-type]
+            tool_context=ctx,
+            registry=registry,
         )
-        assert "checklist" in result
+        core_tools = registry.create_core_tools(ctx)
+        agent.register_tools(core_tools)
 
+        # Before activation, no estimate tools
+        assert "generate_estimate" not in agent._tools_by_name
 
-class TestMediaOrthogonality:
-    """Media presence adds file tools but does not suppress fallback."""
+        # Simulate list_capabilities call
+        calls = [
+            ToolCallRequest(
+                id="call_1",
+                name=ToolName.LIST_CAPABILITIES,
+                arguments={"category": "estimate"},
+            )
+        ]
+        activated = agent._check_specialist_activations(calls)
+        assert activated
+        assert "generate_estimate" in agent._tools_by_name
 
-    def test_media_without_keywords_still_falls_back_to_all(self) -> None:
-        """When media is present but no keywords match, all tools are included."""
-        result = select_tools(
-            "Here is the photo",
-            has_media=True,
-            has_storage=True,
-            factory_names=ALL_FACTORIES,
+    def test_activation_is_idempotent(self) -> None:
+        from backend.app.agent.core import ClawboltAgent
+        from backend.app.agent.messages import ToolCallRequest
+
+        registry = _build_test_registry()
+        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        agent = ClawboltAgent(
+            db=None,  # type: ignore[arg-type]
+            contractor=None,  # type: ignore[arg-type]
+            tool_context=ctx,
+            registry=registry,
         )
-        # No keyword matched, so fallback includes all tools
-        assert result == set(ALL_FACTORIES)
+        agent.register_tools(registry.create_core_tools(ctx))
 
-    def test_media_with_keywords_does_not_include_unmatched(self) -> None:
-        """When media is present and keywords match, only matched + file + always tools."""
-        result = select_tools(
-            "Here is the estimate photo",
-            has_media=True,
-            has_storage=True,
-            factory_names=ALL_FACTORIES,
+        calls = [
+            ToolCallRequest(
+                id="call_1",
+                name=ToolName.LIST_CAPABILITIES,
+                arguments={"category": "estimate"},
+            )
+        ]
+        agent._check_specialist_activations(calls)
+        tool_count_after_first = len(agent.tools)
+
+        # Second activation should not add duplicate tools
+        activated = agent._check_specialist_activations(calls)
+        assert not activated
+        assert len(agent.tools) == tool_count_after_first
+
+    def test_non_list_capabilities_call_ignored(self) -> None:
+        from backend.app.agent.core import ClawboltAgent
+        from backend.app.agent.messages import ToolCallRequest
+
+        registry = _build_test_registry()
+        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        agent = ClawboltAgent(
+            db=None,  # type: ignore[arg-type]
+            contractor=None,  # type: ignore[arg-type]
+            tool_context=ctx,
+            registry=registry,
         )
-        assert "estimate" in result
-        assert "file" in result
-        assert "memory" in result
-        assert "checklist" not in result
+        agent.register_tools(registry.create_core_tools(ctx))
+
+        calls = [
+            ToolCallRequest(id="call_1", name="save_fact", arguments={"key": "x", "value": "y"})
+        ]
+        activated = agent._check_specialist_activations(calls)
+        assert not activated
+
+    def test_unknown_category_not_activated(self) -> None:
+        from backend.app.agent.core import ClawboltAgent
+        from backend.app.agent.messages import ToolCallRequest
+
+        registry = _build_test_registry()
+        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        agent = ClawboltAgent(
+            db=None,  # type: ignore[arg-type]
+            contractor=None,  # type: ignore[arg-type]
+            tool_context=ctx,
+            registry=registry,
+        )
+        agent.register_tools(registry.create_core_tools(ctx))
+        initial_count = len(agent.tools)
+
+        calls = [
+            ToolCallRequest(
+                id="call_1",
+                name=ToolName.LIST_CAPABILITIES,
+                arguments={"category": "nonexistent"},
+            )
+        ]
+        activated = agent._check_specialist_activations(calls)
+        assert not activated
+        assert len(agent.tools) == initial_count
+
+    def test_no_registry_returns_false(self) -> None:
+        from backend.app.agent.core import ClawboltAgent
+        from backend.app.agent.messages import ToolCallRequest
+
+        agent = ClawboltAgent(
+            db=None,  # type: ignore[arg-type]
+            contractor=None,  # type: ignore[arg-type]
+        )
+        calls = [
+            ToolCallRequest(
+                id="call_1",
+                name=ToolName.LIST_CAPABILITIES,
+                arguments={"category": "estimate"},
+            )
+        ]
+        activated = agent._check_specialist_activations(calls)
+        assert not activated

@@ -32,5 +32,8 @@ class ToolName:
     VIEW_PROFILE = "view_profile"
     UPDATE_PROFILE = "update_profile"
 
+    # Meta-tools
+    LIST_CAPABILITIES = "list_capabilities"
+
     # Heartbeat (not registered in the main tool registry)
     COMPOSE_MESSAGE = "compose_message"

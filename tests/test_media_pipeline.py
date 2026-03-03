@@ -83,20 +83,6 @@ async def test_process_unknown_media_type() -> None:
 
 @pytest.mark.asyncio()
 @patch(
-    "backend.app.media.pipeline.transcribe_audio",
-    new_callable=AsyncMock,
-    side_effect=ImportError("faster-whisper not installed"),
-)
-async def test_audio_graceful_when_whisper_missing(mock_audio: AsyncMock) -> None:
-    """Audio processing should degrade gracefully when faster-whisper is not installed."""
-    result = await process_message_media("Voice memo", [_make_media("audio/ogg")])
-    assert len(result.media_results) == 1
-    assert "not available" in result.media_results[0].extracted_text
-    assert "faster-whisper" in result.media_results[0].extracted_text
-
-
-@pytest.mark.asyncio()
-@patch(
     "backend.app.media.pipeline.analyze_image",
     new_callable=AsyncMock,
     side_effect=RuntimeError("Vision API rate limit exceeded"),

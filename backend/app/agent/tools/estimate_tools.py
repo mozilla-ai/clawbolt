@@ -196,7 +196,12 @@ def _estimate_factory(ctx: ToolContext) -> list[Tool]:
 def _register() -> None:
     from backend.app.agent.tools.registry import default_registry
 
-    default_registry.register("estimate", _estimate_factory)
+    default_registry.register(
+        "estimate",
+        _estimate_factory,
+        core=False,
+        summary="Generate professional estimates and quotes with PDF output",
+    )
 
 
 _register()
