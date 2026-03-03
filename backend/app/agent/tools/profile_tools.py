@@ -48,6 +48,10 @@ class UpdateProfileParams(BaseModel):
         default=None,
         description="Working hours (e.g. 'Mon-Fri 7am-5pm')",
     )
+    timezone: str | None = Field(
+        default=None,
+        description="IANA timezone (e.g. 'America/New_York', 'America/Los_Angeles')",
+    )
     communication_style: str | None = Field(
         default=None,
         description="Preferred communication style (e.g. 'casual', 'formal')",
@@ -96,6 +100,7 @@ def _format_profile(contractor: Contractor) -> str:
         lines.append("  Hourly Rate: Not set")
 
     lines.append(f"  Business Hours: {contractor.business_hours or 'Not set'}")
+    lines.append(f"  Timezone: {contractor.timezone or 'Not set'}")
     lines.append(f"  Phone: {contractor.phone or 'Not set'}")
 
     # Communication style from preferences_json
@@ -129,6 +134,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
         location: str | None = None,
         hourly_rate: str | float | None = None,
         business_hours: str | None = None,
+        timezone: str | None = None,
         communication_style: str | None = None,
         soul_text: str | None = None,
     ) -> ToolResult:
@@ -165,6 +171,10 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             updates["business_hours"] = str(business_hours)
             fields_updated.append("business_hours")
 
+        if timezone is not None:
+            updates["timezone"] = str(timezone)
+            fields_updated.append("timezone")
+
         if communication_style is not None:
             updates["preferences_json"] = json.dumps(
                 {"communication_style": str(communication_style)}
@@ -189,6 +199,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             "location",
             "hourly_rate",
             "business_hours",
+            "timezone",
             "preferences_json",
             "soul_text",
         }
@@ -228,6 +239,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             function=update_profile,
             params_model=UpdateProfileParams,
             usage_hint=("Use this to update known contractor details (name, trade, rates, etc.)."),
+
         ),
     ]
 
@@ -268,7 +280,7 @@ def extract_profile_updates_from_tool_calls(
             continue
         args = cast(dict[str, object], args_raw)
 
-        for field in ("name", "trade", "location", "business_hours", "soul_text"):
+        for field in ("name", "trade", "location", "business_hours", "timezone", "soul_text"):
             val = args.get(field)
             if val is not None:
                 updates[field] = str(val)
