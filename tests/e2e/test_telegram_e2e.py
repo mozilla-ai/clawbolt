@@ -68,6 +68,9 @@ def e2e_client(
     with (
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.agent.ingestion.SessionLocal", test_session_factory),
+        # Disable webhook secret validation so e2e tests don't need to derive
+        # and send the secret header (the e2e focus is Telegram round-trip).
+        patch("backend.app.routers.telegram_webhook.settings.telegram_bot_token", ""),
         TestClient(app) as c,
     ):
         yield c

@@ -7,7 +7,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy.orm import Session
 
 from backend.app.agent.ingestion import InboundMessage, process_inbound_message
-from backend.app.config import settings
+from backend.app.config import get_effective_webhook_secret, settings
 from backend.app.database import get_db
 from backend.app.models import Message
 from backend.app.services.messaging import MessagingService, get_messaging_service
@@ -22,10 +22,11 @@ router = APIRouter()
 
 def _validate_webhook_secret(request: Request) -> None:
     """Validate the Telegram webhook secret token header."""
-    if not settings.telegram_webhook_secret:
+    secret = get_effective_webhook_secret(settings)
+    if not secret:
         return
     header = request.headers.get(TELEGRAM_SECRET_HEADER, "")
-    if header != settings.telegram_webhook_secret:
+    if header != secret:
         logger.warning("Invalid Telegram webhook secret")
         # Still return 200 to avoid Telegram retries, but log the warning.
         # The message will not be processed (early return in the endpoint).

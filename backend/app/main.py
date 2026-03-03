@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.agent.heartbeat import heartbeat_scheduler
-from backend.app.config import settings
+from backend.app.config import get_effective_webhook_secret, settings
 from backend.app.routers import auth, estimates, health, telegram_webhook
 from backend.app.services.webhook import (
     discover_tunnel_url,
@@ -43,7 +43,7 @@ async def _auto_register_webhook() -> None:
         return
 
     webhook_url = f"{tunnel_url}/api/webhooks/telegram"
-    secret = settings.telegram_webhook_secret or None
+    secret = get_effective_webhook_secret(settings) or None
 
     # Wait for the quick-tunnel hostname to be DNS-resolvable before calling
     # setWebhook.  If we call too early, Telegram caches the negative DNS
@@ -64,11 +64,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
     heartbeat_scheduler.start()
 
-    if settings.telegram_bot_token and not settings.telegram_webhook_secret:
-        logger.warning(
-            "TELEGRAM_WEBHOOK_SECRET is not set — webhook endpoint is unprotected. "
-            "Set TELEGRAM_WEBHOOK_SECRET to enable request validation."
-        )
+    if settings.telegram_bot_token:
+        if settings.telegram_webhook_secret:
+            logger.info("Webhook secret: using explicit TELEGRAM_WEBHOOK_SECRET")
+        else:
+            logger.info("Webhook secret: auto-derived from bot token")
 
     if (
         settings.telegram_bot_token
