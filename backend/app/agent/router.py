@@ -89,7 +89,7 @@ async def handle_inbound_message(
             )
         )
         if has_storage:
-            storage = get_storage_service()
+            storage = get_storage_service(contractor=contractor)
     except Exception:
         logger.debug("Storage not configured, skipping file features")
 

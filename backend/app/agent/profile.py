@@ -1,8 +1,12 @@
+import json
+import logging
 from typing import Any
 
 from sqlalchemy.orm import Session
 
 from backend.app.models import Contractor
+
+logger = logging.getLogger(__name__)
 
 
 async def update_contractor_profile(
@@ -49,6 +53,16 @@ def build_soul_prompt(contractor: Contractor) -> str:
     if contractor.soul_text:
         lines.append(f"\n{contractor.soul_text}")
 
+    if contractor.preferences_json and contractor.preferences_json != "{}":
+        try:
+            prefs = json.loads(contractor.preferences_json)
+            if isinstance(prefs, dict):
+                style = prefs.get("communication_style")
+                if style:
+                    lines.append(f"Communication style: {style}.")
+        except (json.JSONDecodeError, TypeError):
+            logger.debug("Could not parse preferences_json for contractor %s", contractor.user_id)
+
     return "\n".join(lines)
 
 
@@ -76,8 +90,8 @@ def build_onboarding_prompt() -> str:
         "- How they'd like you to communicate (formal, casual, brief, detailed)\n\n"
         "IMPORTANT: As soon as the contractor shares any of the above information, "
         "immediately save it using the save_fact tool. Use keys like 'name', 'trade', "
-        "'location', 'hourly_rate', or 'business_hours'. Do not wait — save each "
-        "piece of information as soon as you learn it.\n\n"
+        "'location', 'hourly_rate', 'business_hours', or 'communication_style'. "
+        "Do not wait — save each piece of information as soon as you learn it.\n\n"
         "After collecting and saving information, briefly confirm what you've saved "
         "so the contractor knows you got it right. For example: \"Great, I've got you "
         'down as Jake, a plumber in Portland." When you still need more information, '

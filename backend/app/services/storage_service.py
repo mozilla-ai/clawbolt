@@ -14,6 +14,7 @@ import dropbox.exceptions
 import dropbox.files
 
 from backend.app.config import Settings, settings
+from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
 
@@ -25,9 +26,9 @@ class StorageBackend(ABC):
     Drive, local filesystem, etc.).  The interface is intentionally minimal so
     that adding new backends is straightforward.
 
-    Multi-tenant note: today one backend instance is shared across all
-    contractors.  A future iteration will allow per-contractor credentials so
-    each contractor's files go to their own cloud account.
+    Per-contractor isolation: when a contractor_id is provided, each backend
+    isolates files into a per-contractor subdirectory (local) or path prefix
+    (cloud).  A future Phase 2 will add shared cloud folders per contractor.
     """
 
     @abstractmethod
@@ -50,11 +51,16 @@ class StorageBackend(ABC):
 
 
 class DropboxStorage(StorageBackend):
-    def __init__(self, access_token: str) -> None:
+    def __init__(self, access_token: str, contractor_id: int | None = None) -> None:
         self.dbx = dropbox.Dropbox(access_token)
+        self._path_prefix = f"/{contractor_id}" if contractor_id is not None else ""
+
+    def _prefixed(self, path: str) -> str:
+        """Prepend the per-contractor prefix to a Dropbox path."""
+        return f"{self._path_prefix}{path}" if self._path_prefix else path
 
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
-        full_path = f"{path}/{filename}"
+        full_path = f"{self._prefixed(path)}/{filename}"
         logger.info("Uploading to Dropbox: %s (%d bytes)", full_path, len(file_bytes))
         await asyncio.to_thread(
             self.dbx.files_upload, file_bytes, full_path, mode=dropbox.files.WriteMode.overwrite
@@ -76,9 +82,10 @@ class DropboxStorage(StorageBackend):
             return full_path
 
     async def create_folder(self, path: str) -> str:
+        prefixed = self._prefixed(path)
         with contextlib.suppress(dropbox.exceptions.ApiError):
-            await asyncio.to_thread(self.dbx.files_create_folder_v2, path)
-        return path
+            await asyncio.to_thread(self.dbx.files_create_folder_v2, prefixed)
+        return prefixed
 
     async def move_file(
         self, from_path: str, from_filename: str, to_path: str, to_filename: str
@@ -100,7 +107,7 @@ class DropboxStorage(StorageBackend):
             return dest
 
     async def list_folder(self, path: str) -> list[dict[str, str]]:
-        result = await asyncio.to_thread(self.dbx.files_list_folder, path)
+        result = await asyncio.to_thread(self.dbx.files_list_folder, self._prefixed(path))
         files: list[dict[str, str]] = []
         for entry in result.entries:
             files.append({"name": entry.name, "path": entry.path_display})
@@ -108,9 +115,15 @@ class DropboxStorage(StorageBackend):
 
 
 class GoogleDriveStorage(StorageBackend):
-    def __init__(self, credentials_json: str) -> None:
+    # TODO(Phase 2): Google Drive uses folder IDs, not path strings, so the
+    # _path_prefix approach does not provide real per-contractor isolation.
+    # Proper isolation requires creating a per-contractor root folder on first
+    # use and passing its folder ID as the parent for all operations.
+
+    def __init__(self, credentials_json: str, contractor_id: int | None = None) -> None:
         self.credentials_json = credentials_json
         self._service: Any = None
+        self._path_prefix = f"{contractor_id}/" if contractor_id is not None else ""
 
     def _get_service(self) -> Any:
         if self._service is None:
@@ -122,6 +135,8 @@ class GoogleDriveStorage(StorageBackend):
         return self._service
 
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
+        # TODO(Phase 2): Does not apply contractor isolation. Drive needs a
+        # per-contractor root folder ID as the parent. See class-level TODO.
         from googleapiclient.http import MediaIoBaseUpload
 
         logger.info("Uploading to Google Drive: %s/%s (%d bytes)", path, filename, len(file_bytes))
@@ -138,9 +153,15 @@ class GoogleDriveStorage(StorageBackend):
         return url
 
     async def create_folder(self, path: str) -> str:
+        # TODO(Phase 2): The prefix logic here does not actually isolate folder
+        # names. For path="/Job Photos" with contractor_id=42, prefixed becomes
+        # "42/Job Photos" and split("/")[-1] still yields "Job Photos"
+        # (unchanged). Real isolation needs a per-contractor root folder ID as
+        # the parent. See class-level TODO.
         service = self._get_service()
+        prefixed = f"{self._path_prefix}{path}" if self._path_prefix else path
         folder_metadata = {
-            "name": path.split("/")[-1],
+            "name": prefixed.split("/")[-1],
             "mimeType": "application/vnd.google-apps.folder",
         }
         result = await asyncio.to_thread(
@@ -177,6 +198,8 @@ class GoogleDriveStorage(StorageBackend):
         return update_result.get("webViewLink", update_result.get("id", ""))
 
     async def list_folder(self, path: str) -> list[dict[str, str]]:
+        # TODO(Phase 2): Does not apply contractor isolation. Drive queries
+        # folders by ID, not path. See class-level TODO.
         service = self._get_service()
         query = f"'{path}' in parents and trashed=false"
         result = await asyncio.to_thread(
@@ -191,8 +214,15 @@ class GoogleDriveStorage(StorageBackend):
 class LocalFileStorage(StorageBackend):
     """Local filesystem storage for development and demos."""
 
-    def __init__(self, base_dir: str = settings.file_storage_base_dir) -> None:
-        self.base_dir = Path(base_dir).resolve()
+    def __init__(
+        self,
+        base_dir: str = settings.file_storage_base_dir,
+        contractor_id: int | None = None,
+    ) -> None:
+        base = Path(base_dir).resolve()
+        if contractor_id is not None:
+            base = base / str(contractor_id)
+        self.base_dir = base
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
     def _safe_path(self, *segments: str) -> Path:
@@ -240,22 +270,23 @@ class LocalFileStorage(StorageBackend):
 
 def get_storage_service(
     svc_settings: Settings | None = None,
-    contractor: object | None = None,
+    contractor: Contractor | None = None,
 ) -> StorageBackend:
     """Factory: return the configured storage backend.
 
     Args:
         svc_settings: Override the global settings (useful in tests).
-        contractor: Reserved for future multi-tenant support where each
-            contractor may have their own storage credentials.
+        contractor: When provided, files are isolated into a per-contractor
+            subdirectory (local) or path prefix (cloud).
     """
     s = svc_settings or settings
+    cid = contractor.id if contractor is not None else None
     if s.storage_provider == "local":
-        return LocalFileStorage()
+        return LocalFileStorage(base_dir=s.file_storage_base_dir, contractor_id=cid)
     elif s.storage_provider == "dropbox":
-        return DropboxStorage(s.dropbox_access_token)
+        return DropboxStorage(s.dropbox_access_token, contractor_id=cid)
     elif s.storage_provider == "google_drive":
-        return GoogleDriveStorage(s.google_drive_credentials_json)
+        return GoogleDriveStorage(s.google_drive_credentials_json, contractor_id=cid)
     else:
         msg = f"Unknown storage provider: {s.storage_provider}"
         raise ValueError(msg)

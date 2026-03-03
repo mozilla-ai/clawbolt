@@ -1,5 +1,6 @@
 """Onboarding conversation logic for new contractors."""
 
+import json
 import logging
 import re
 from typing import Any
@@ -48,6 +49,15 @@ def build_onboarding_system_prompt(contractor: Contractor) -> str:
         known.append(f"- Rate: ${contractor.hourly_rate:.0f}/hour")
     if contractor.business_hours and contractor.business_hours.strip():
         known.append(f"- Business hours: {contractor.business_hours}")
+    if contractor.preferences_json and contractor.preferences_json != "{}":
+        try:
+            prefs = json.loads(contractor.preferences_json)
+            if isinstance(prefs, dict):
+                style = prefs.get("communication_style")
+                if style:
+                    known.append(f"- Communication style: {style}")
+        except (json.JSONDecodeError, TypeError):
+            pass
 
     parts = [base]
     if known:
@@ -112,6 +122,10 @@ def _match_profile_field(key: str) -> str | None:
         for w in ["hours", "schedule", "availability", "work hours", "business hours"]
     ):
         return "business_hours"
+    if any(w in key_lower for w in ["communication", "tone", "formality"]):
+        return "preferences_json"
+    if any(w in key_lower for w in ["soul", "bio", "about me", "personality"]):
+        return "soul_text"
     return None
 
 
@@ -136,6 +150,9 @@ def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
         "rate": "hourly_rate",
         "business_hours": "business_hours",
         "hours": "business_hours",
+        "communication_style": "preferences_json",
+        "communication_preference": "preferences_json",
+        "soul_text": "soul_text",
     }
 
     for tc in agent_response.tool_calls:
@@ -155,6 +172,8 @@ def extract_profile_updates(agent_response: AgentResponse) -> dict[str, Any]:
                     updates[field] = parsed
                 else:
                     logger.warning("Could not parse hourly rate from value: %r", value)
+            elif field == "preferences_json":
+                updates[field] = json.dumps({"communication_style": str(value)})
             else:
                 updates[field] = str(value)
 

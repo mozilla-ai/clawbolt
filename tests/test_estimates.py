@@ -17,8 +17,8 @@ def _use_tmp_pdf_dir(tmp_path: Path) -> Generator[None]:
     pdf_dir = tmp_path / "estimates"
     pdf_dir.mkdir()
     with (
-        patch("backend.app.agent.tools.estimate_tools.PDF_DIR", pdf_dir),
-        patch("backend.app.routers.estimates.PDF_DIR", pdf_dir),
+        patch("backend.app.agent.tools.estimate_tools.PDF_BASE_DIR", pdf_dir),
+        patch("backend.app.routers.estimates.PDF_BASE_DIR", pdf_dir),
     ):
         yield
 
@@ -94,10 +94,10 @@ async def test_generate_estimate_pdf_generated(
 
     assert ".pdf" in result
 
-    # Verify PDF file was actually written in the temp directory
+    # Verify PDF file was actually written in the temp directory (per-contractor subdir)
     estimate = db_session.query(Estimate).first()
     assert estimate is not None
-    pdf_path = tmp_path / "estimates" / f"{estimate.id}.pdf"
+    pdf_path = tmp_path / "estimates" / str(test_contractor.id) / f"{estimate.id}.pdf"
     assert pdf_path.exists()
     assert pdf_path.stat().st_size > 0
 
@@ -231,7 +231,9 @@ def test_serve_estimate_pdf_endpoint(
     db_session.refresh(estimate)
 
     # Create a test PDF file in the temp directory (patched via _use_tmp_pdf_dir)
-    test_pdf = tmp_path / "estimates" / f"{estimate.id}.pdf"
+    contractor_dir = tmp_path / "estimates" / str(test_contractor.id)
+    contractor_dir.mkdir(parents=True, exist_ok=True)
+    test_pdf = contractor_dir / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 test content")
 
     response = client.get(f"/api/estimates/{estimate.id}/pdf")
@@ -272,7 +274,9 @@ def test_serve_estimate_pdf_other_user_rejected(
     db_session.refresh(estimate)
 
     # Create the PDF file so we can verify auth blocks access, not file absence
-    test_pdf = tmp_path / "estimates" / f"{estimate.id}.pdf"
+    contractor_dir = tmp_path / "estimates" / str(other_contractor.id)
+    contractor_dir.mkdir(parents=True, exist_ok=True)
+    test_pdf = contractor_dir / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 secret content")
 
     response = client.get(f"/api/estimates/{estimate.id}/pdf")
@@ -342,7 +346,7 @@ async def test_generate_estimate_no_storage_still_saves_locally(
     assert "EST-0001" in result
     estimate = db_session.query(Estimate).first()
     assert estimate is not None
-    pdf_path = tmp_path / "estimates" / f"{estimate.id}.pdf"
+    pdf_path = tmp_path / "estimates" / str(test_contractor.id) / f"{estimate.id}.pdf"
     assert pdf_path.exists()
 
 
@@ -391,5 +395,5 @@ async def test_generate_estimate_cloud_upload_failure_does_not_kill_call(
     # Verify local PDF was saved
     estimate = db_session.query(Estimate).first()
     assert estimate is not None
-    pdf_path = tmp_path / "estimates" / f"{estimate.id}.pdf"
+    pdf_path = tmp_path / "estimates" / str(test_contractor.id) / f"{estimate.id}.pdf"
     assert pdf_path.exists()
