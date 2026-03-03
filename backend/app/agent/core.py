@@ -137,6 +137,41 @@ def _estimate_tokens(messages: list[AgentMessage]) -> int:
     return total
 
 
+def _log_token_estimation_drift(
+    messages: list[AgentMessage],
+    response: ChatCompletion,
+) -> None:
+    """Log a warning when estimated token count drifts >30% from actual usage.
+
+    Uses ``response.usage.prompt_tokens`` (reported by the LLM provider) to
+    compare against our character-ratio estimate.  Not all providers return
+    usage data, so missing values are silently ignored.
+    """
+    usage = getattr(response, "usage", None)
+    if usage is None:
+        return
+    actual = getattr(usage, "prompt_tokens", None)
+    if not actual:
+        return
+
+    estimated = _estimate_tokens(messages)
+    if abs(estimated - actual) > actual * 0.3:
+        total_chars = sum(
+            len(m.content or "")
+            for m in messages
+            if isinstance(m, (SystemMessage, UserMessage, AssistantMessage, ToolResultMessage))
+            and m.content
+        )
+        observed_ratio = total_chars / actual if actual else 0.0
+        logger.warning(
+            "Token estimate drift: estimated=%d actual=%d ratio=%.2f (configured=%.1f)",
+            estimated,
+            actual,
+            observed_ratio,
+            _CHARS_PER_TOKEN,
+        )
+
+
 def _format_validation_error(tool_name: str, exc: ValidationError, tool: Tool | None = None) -> str:
     """Format a Pydantic ValidationError into a structured message for the LLM."""
     error_lines: list[str] = [f"Validation error for {tool_name}:"]
@@ -494,6 +529,7 @@ class BackshopAgent:
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
             purpose = "agent_main" if _round == 0 else "agent_followup"
             log_llm_usage(self.db, self.contractor.id, settings.llm_model, response, purpose)
+            _log_token_estimation_drift(messages, response)
 
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)
