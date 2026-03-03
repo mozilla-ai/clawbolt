@@ -49,7 +49,7 @@ from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
 
-MAX_TOOL_ROUNDS = 5
+MAX_TOOL_ROUNDS = settings.max_tool_rounds
 RATE_LIMIT_RETRY_DELAY = 2.0
 # Target token budget when trimming for context length (leave room for output tokens)
 CONTEXT_TRIM_TARGET_TOKENS = 80_000
