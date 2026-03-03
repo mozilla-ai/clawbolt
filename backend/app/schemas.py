@@ -2,6 +2,8 @@ import datetime
 
 from pydantic import BaseModel
 
+from backend.app.enums import EstimateStatus
+
 
 class HealthResponse(BaseModel):
     status: str
@@ -73,7 +75,7 @@ class EstimateLineItemBase(BaseModel):
 class EstimateBase(BaseModel):
     description: str = ""
     total_amount: float = 0.0
-    status: str = "draft"
+    status: str = EstimateStatus.DRAFT
 
 
 class EstimateResponse(EstimateBase):

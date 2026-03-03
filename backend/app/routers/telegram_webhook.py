@@ -12,6 +12,7 @@ from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
 from backend.app.database import SessionLocal, get_db
+from backend.app.enums import MessageDirection
 from backend.app.models import Contractor, Message
 from backend.app.services.messaging import MessagingService, get_messaging_service
 from backend.app.services.rate_limiter import check_webhook_rate_limit
@@ -209,7 +210,7 @@ async def telegram_inbound(
 
     message = Message(
         conversation_id=conversation.id,
-        direction="inbound",
+        direction=MessageDirection.INBOUND,
         external_message_id=external_id or None,
         body=text,
         media_urls_json=json.dumps([file_id for file_id, _mime in media_items]),

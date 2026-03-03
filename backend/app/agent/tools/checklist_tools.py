@@ -6,9 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.enums import ChecklistSchedule, ChecklistStatus
 from backend.app.models import HeartbeatChecklistItem
-
-VALID_CHECKLIST_SCHEDULES = ("daily", "weekdays", "once")
 
 
 class AddChecklistItemParams(BaseModel):
@@ -16,7 +15,7 @@ class AddChecklistItemParams(BaseModel):
 
     description: str = Field(description="What to check or remind about")
     schedule: Literal["daily", "weekdays", "once"] = Field(
-        default="daily",
+        default=ChecklistSchedule.DAILY,
         description="How often to check (default: daily)",
     )
 
@@ -36,10 +35,10 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
 
     async def add_checklist_item(
         description: str,
-        schedule: str = "daily",
+        schedule: str = ChecklistSchedule.DAILY,
     ) -> ToolResult:
         """Add an item to the contractor's heartbeat checklist."""
-        if schedule not in VALID_CHECKLIST_SCHEDULES:
+        if schedule not in list(ChecklistSchedule):
             return ToolResult(
                 content=f"Invalid schedule '{schedule}'. Use: daily, weekdays, or once.",
                 is_error=True,
@@ -60,7 +59,7 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
             db.query(HeartbeatChecklistItem)
             .filter(
                 HeartbeatChecklistItem.contractor_id == contractor_id,
-                HeartbeatChecklistItem.status == "active",
+                HeartbeatChecklistItem.status == ChecklistStatus.ACTIVE,
             )
             .order_by(HeartbeatChecklistItem.id)
             .all()

@@ -6,6 +6,7 @@ import logging
 from sqlalchemy.orm import Session
 
 from backend.app.config import settings
+from backend.app.enums import MessageDirection
 from backend.app.models import Conversation, Message
 
 logger = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ async def load_conversation_history(
 
     history: list[dict[str, str]] = []
     for msg in messages:
-        role = "user" if msg.direction == "inbound" else "assistant"
+        role = "user" if msg.direction == MessageDirection.INBOUND else "assistant"
         # Prefer processed context (includes media descriptions) over raw body
         content = msg.processed_context if msg.processed_context else msg.body
         history.append({"role": role, "content": content})
