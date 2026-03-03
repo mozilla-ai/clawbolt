@@ -36,6 +36,7 @@ from backend.app.models import (
     Conversation,
     Estimate,
     HeartbeatChecklistItem,
+    HeartbeatLog,
     Memory,
     Message,
 )
@@ -447,6 +448,32 @@ async def evaluate_heartbeat_need(
 
 
 # ---------------------------------------------------------------------------
+# Persistent rate limiting
+# ---------------------------------------------------------------------------
+
+
+def get_daily_heartbeat_count(db: Session, contractor_id: int) -> int:
+    """Count heartbeat messages sent to a contractor today (UTC).
+
+    Queries the ``heartbeat_log`` table instead of relying on in-memory state
+    so that rate limits survive process restarts and work across multiple
+    workers.
+    """
+    today_start = datetime.datetime.combine(
+        datetime.date.today(), datetime.time.min, tzinfo=datetime.UTC
+    )
+    count: int = (
+        db.query(HeartbeatLog)
+        .filter(
+            HeartbeatLog.contractor_id == contractor_id,
+            HeartbeatLog.created_at >= today_start,
+        )
+        .count()
+    )
+    return count
+
+
+# ---------------------------------------------------------------------------
 # Per-contractor runner
 # ---------------------------------------------------------------------------
 
@@ -455,7 +482,6 @@ async def run_heartbeat_for_contractor(
     db: Session,
     contractor: Contractor,
     messaging_service: MessagingService,
-    daily_counts: dict[int, int],
     max_daily: int,
 ) -> HeartbeatAction | None:
     """Full heartbeat pipeline for a single contractor.
@@ -470,8 +496,8 @@ async def run_heartbeat_for_contractor(
     if not is_within_business_hours(contractor):
         return None
 
-    # Gate: daily rate limit
-    if daily_counts.get(contractor.id, 0) >= max_daily:
+    # Gate: daily rate limit (persistent via heartbeat_log table)
+    if get_daily_heartbeat_count(db, contractor.id) >= max_daily:
         return None
 
     # Cheap checks -- skip LLM entirely if nothing is flagged
@@ -506,6 +532,9 @@ async def run_heartbeat_for_contractor(
         body=action.message,
     )
     db.add(outbound)
+
+    # Record heartbeat log for persistent rate limiting
+    db.add(HeartbeatLog(contractor_id=contractor.id))
     db.commit()
 
     # Mark checklist items as triggered
@@ -517,7 +546,6 @@ async def run_heartbeat_for_contractor(
     if check_result.due_checklist_items:
         db.commit()
 
-    daily_counts[contractor.id] = daily_counts.get(contractor.id, 0) + 1
     return action
 
 
@@ -531,8 +559,6 @@ class HeartbeatScheduler:
 
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
-        self._daily_counts: dict[int, int] = {}
-        self._last_reset_date: datetime.date | None = None
 
     # -- public API --
 
@@ -572,11 +598,6 @@ class HeartbeatScheduler:
 
     async def tick(self) -> None:
         """Single heartbeat pass: evaluate every onboarded contractor."""
-        today = datetime.date.today()
-        if self._last_reset_date != today:
-            self._daily_counts = {}
-            self._last_reset_date = today
-
         db: Session = SessionLocal()
         try:
             contractors = (
@@ -590,7 +611,6 @@ class HeartbeatScheduler:
                         db=db,
                         contractor=contractor,
                         messaging_service=messaging_service,
-                        daily_counts=self._daily_counts,
                         max_daily=settings.heartbeat_max_daily_messages,
                     )
                 except Exception:

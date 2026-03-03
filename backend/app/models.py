@@ -38,6 +38,7 @@ class Contractor(Base):
     checklist_items: Mapped[list["HeartbeatChecklistItem"]] = relationship(
         back_populates="contractor"
     )
+    heartbeat_logs: Mapped[list["HeartbeatLog"]] = relationship(back_populates="contractor")
 
 
 class Client(Base):
@@ -193,3 +194,17 @@ class HeartbeatChecklistItem(Base):
     )
 
     contractor: Mapped["Contractor"] = relationship(back_populates="checklist_items")
+
+
+class HeartbeatLog(Base):
+    """Persistent log of outbound heartbeat messages for rate limiting."""
+
+    __tablename__ = "heartbeat_log"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    contractor_id: Mapped[int] = mapped_column(Integer, ForeignKey("contractors.id"), index=True)
+    created_at: Mapped[datetime.datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+    contractor: Mapped["Contractor"] = relationship(back_populates="heartbeat_logs")
