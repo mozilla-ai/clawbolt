@@ -94,7 +94,9 @@ def create_list_capabilities_tool(
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
 
-        return ToolResult(content=f'Category "{category}" is now active.')
+        return ToolResult(
+            content=f'Category "{category}" activated. Tools are available in your next response.'
+        )
 
     categories = ", ".join(sorted(specialist_summaries.keys()))
     return Tool(

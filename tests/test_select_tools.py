@@ -151,7 +151,7 @@ class TestListCapabilitiesTool:
         summaries = {"estimate": "Generate estimates"}
         tool = create_list_capabilities_tool(summaries)
         result = await tool.function(category="estimate")
-        assert "active" in result.content.lower()
+        assert "activated" in result.content.lower()
         assert not result.is_error
 
     @pytest.mark.asyncio

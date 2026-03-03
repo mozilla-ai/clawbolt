@@ -315,16 +315,22 @@ class ClawboltAgent:
             self._tools_by_name[tool.name] = tool
 
     def _activate_specialist(self, factory_name: str) -> None:
-        """Activate a specialist tool factory, injecting its tools for the next round."""
+        """Activate a specialist tool factory, injecting its tools for the next round.
+
+        Only marks the factory as activated if at least one tool was
+        actually created (dependencies like storage may prevent creation).
+        """
         if factory_name in self._activated_specialists:
             return
         if self._registry is None or self._tool_context is None:
             return
-        self._activated_specialists.add(factory_name)
         new_tools = self._registry.create_tools(
             self._tool_context,
             selected_factories={factory_name},
         )
+        if not new_tools:
+            return
+        self._activated_specialists.add(factory_name)
         for tool in new_tools:
             if tool.name not in self._tools_by_name:
                 self.tools.append(tool)

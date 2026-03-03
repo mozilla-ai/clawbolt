@@ -9,7 +9,8 @@ from backend.app.media.vision import analyze_image
 logger = logging.getLogger(__name__)
 
 # Fallback messages when media processing is unavailable
-VISION_FALLBACK = "[Photo — vision analysis not available]"
+VISION_FALLBACK = "[Photo - vision analysis not available]"
+AUDIO_ERROR_FALLBACK = "[Audio file - transcription not available]"
 VIDEO_ERROR_FALLBACK = "[Video file - transcription not available]"
 
 # Media type display labels used in combined context output
@@ -53,7 +54,11 @@ async def _process_single_media(
             )
             extracted_text = VISION_FALLBACK
     elif category == "audio":
-        extracted_text = await transcribe_audio(media.content, media.mime_type)
+        try:
+            extracted_text = await transcribe_audio(media.content, media.mime_type)
+        except Exception:
+            logger.warning("Could not transcribe audio: %s", media.original_url)
+            extracted_text = AUDIO_ERROR_FALLBACK
     elif category == "video":
         # Future: extract audio track. For now, try audio transcription.
         try:
