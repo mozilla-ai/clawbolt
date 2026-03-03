@@ -665,3 +665,33 @@ def test_inbound_webhook_extracts_video(
     messages = db_session.query(Message).all()
     assert len(messages) == 1
     assert "BAACAgIAAxkBAAI" in messages[0].media_urls_json
+
+
+# -- Telegram bot command handling --
+
+
+def test_start_command_converted_to_greeting(
+    client: TestClient, db_session: Session, test_contractor: Contractor
+) -> None:
+    """/start command should be converted to a greeting, not passed as raw text."""
+    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+        payload = make_telegram_update_payload(
+            chat_id=int(test_contractor.channel_identifier),
+            text="/start",
+        )
+        response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+
+    messages = db_session.query(Message).all()
+    assert len(messages) == 1
+    assert messages[0].body == "Hi"
+
+
+def test_other_bot_commands_ignored(client: TestClient, db_session: Session) -> None:
+    """Unhandled bot commands (e.g. /help) should be silently ignored."""
+    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h:
+        payload = make_telegram_update_payload(chat_id=123456789, text="/help")
+        response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+    mock_h.assert_not_called()
+    assert db_session.query(Message).count() == 0

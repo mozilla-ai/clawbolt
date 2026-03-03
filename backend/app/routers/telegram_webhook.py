@@ -140,7 +140,20 @@ def _parse_telegram_update(update: dict) -> InboundMessage | None:
         return None
 
     chat_id = str(chat["id"])
-    text = msg.get("text") or msg.get("caption") or ""
+    raw_text = msg.get("text") or msg.get("caption") or ""
+
+    # Strip Telegram bot commands: /start is sent automatically when a user
+    # opens the bot for the first time. Treat it as a greeting so the agent
+    # sees a natural message instead of a raw command.
+    text = raw_text
+    if raw_text.strip().lower() in ("/start", "/start@"):
+        text = "Hi"
+    elif raw_text.strip().startswith("/"):
+        # Ignore other bot commands (e.g. /help, /settings) that the bot
+        # does not handle. Return None to skip processing entirely.
+        logger.debug("Ignoring unhandled bot command: %s", raw_text.strip().split()[0])
+        return None
+
     username = msg.get("from", {}).get("username", "")
 
     if not _check_allowlist(chat_id, username):
