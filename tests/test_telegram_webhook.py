@@ -502,3 +502,166 @@ def test_extract_telegram_media_document_without_mime_defaults() -> None:
     media = _extract_telegram_media(update)
     assert len(media) == 1
     assert media[0] == ("BQACAgIAAxkBAAI", "application/octet-stream")
+
+
+# -- Regression: caption extraction for media messages --
+
+
+def test_parse_photo_with_caption_extracts_text(
+    client: TestClient, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Photo messages with a caption should store the caption as body."""
+    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+        payload = make_telegram_update_payload(
+            chat_id=int(test_contractor.channel_identifier),
+            photo_file_id="AgACAgIAAxkBAAI",
+            caption="Kitchen remodel damage",
+        )
+        response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+
+    messages = db_session.query(Message).all()
+    assert len(messages) == 1
+    assert messages[0].body == "Kitchen remodel damage"
+    assert "AgACAgIAAxkBAAI" in messages[0].media_urls_json
+
+
+def test_parse_document_with_caption_extracts_text(
+    client: TestClient, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Document messages with a caption should store the caption as body."""
+    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+        payload = make_telegram_update_payload(
+            chat_id=int(test_contractor.channel_identifier),
+            document_file_id="BQACAgIAAxkBAAI",
+            caption="Invoice for deck job",
+        )
+        response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+
+    messages = db_session.query(Message).all()
+    assert len(messages) == 1
+    assert messages[0].body == "Invoice for deck job"
+
+
+def test_parse_media_without_caption_has_empty_body(
+    client: TestClient, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Media messages without a caption should have an empty body."""
+    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+        payload = make_telegram_update_payload(
+            chat_id=int(test_contractor.channel_identifier),
+            photo_file_id="AgACAgIAAxkBAAI",
+        )
+        response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+
+    messages = db_session.query(Message).all()
+    assert len(messages) == 1
+    assert messages[0].body == ""
+
+
+# -- Regression: missing Telegram media types --
+
+
+def test_extract_media_video() -> None:
+    """Video file_ids should be extracted."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {
+        "message": {
+            "video": {
+                "file_id": "BAACAgIAAxkBAAI",
+                "file_unique_id": "vid1",
+                "duration": 10,
+                "width": 1280,
+                "height": 720,
+                "mime_type": "video/mp4",
+            }
+        }
+    }
+    media = _extract_telegram_media(update)
+    assert len(media) == 1
+    assert media[0] == ("BAACAgIAAxkBAAI", "video/mp4")
+
+
+def test_extract_media_video_note() -> None:
+    """Video note (round video) file_ids should be extracted."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {
+        "message": {
+            "video_note": {
+                "file_id": "DQACAgIAAxkBAAI",
+                "file_unique_id": "vnote1",
+                "duration": 5,
+                "length": 240,
+            }
+        }
+    }
+    media = _extract_telegram_media(update)
+    assert len(media) == 1
+    assert media[0] == ("DQACAgIAAxkBAAI", "video/mp4")
+
+
+def test_extract_media_audio() -> None:
+    """Audio file_ids should be extracted."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {
+        "message": {
+            "audio": {
+                "file_id": "CQACAgIAAxkBAAI",
+                "file_unique_id": "audio1",
+                "duration": 180,
+                "mime_type": "audio/mpeg",
+            }
+        }
+    }
+    media = _extract_telegram_media(update)
+    assert len(media) == 1
+    assert media[0] == ("CQACAgIAAxkBAAI", "audio/mpeg")
+
+
+def test_extract_media_video_without_file_id() -> None:
+    """Videos missing file_id should be skipped."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {"message": {"video": {"file_unique_id": "v1", "duration": 10}}}
+    media = _extract_telegram_media(update)
+    assert media == []
+
+
+def test_extract_media_video_note_without_file_id() -> None:
+    """Video notes missing file_id should be skipped."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {"message": {"video_note": {"file_unique_id": "vn1", "duration": 5}}}
+    media = _extract_telegram_media(update)
+    assert media == []
+
+
+def test_extract_media_audio_without_file_id() -> None:
+    """Audio files missing file_id should be skipped."""
+    from backend.app.routers.telegram_webhook import _extract_telegram_media
+
+    update = {"message": {"audio": {"file_unique_id": "a1", "duration": 180}}}
+    media = _extract_telegram_media(update)
+    assert media == []
+
+
+def test_inbound_webhook_extracts_video(
+    client: TestClient, db_session: Session, test_contractor: Contractor
+) -> None:
+    """Video file_ids should be extracted and stored."""
+    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+        payload = make_telegram_update_payload(
+            chat_id=int(test_contractor.channel_identifier),
+            video_file_id="BAACAgIAAxkBAAI",
+        )
+        response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+
+    messages = db_session.query(Message).all()
+    assert len(messages) == 1
+    assert "BAACAgIAAxkBAAI" in messages[0].media_urls_json

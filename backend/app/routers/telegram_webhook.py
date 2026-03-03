@@ -61,6 +61,27 @@ def _extract_telegram_media(
         if file_id:
             media.append((file_id, voice.get("mime_type", "audio/ogg")))
 
+    # Video
+    video = msg.get("video")
+    if video:
+        file_id = video.get("file_id")
+        if file_id:
+            media.append((file_id, video.get("mime_type", "video/mp4")))
+
+    # Video note (round video messages)
+    video_note = msg.get("video_note")
+    if video_note:
+        file_id = video_note.get("file_id")
+        if file_id:
+            media.append((file_id, "video/mp4"))
+
+    # Audio file (not voice note)
+    audio = msg.get("audio")
+    if audio:
+        file_id = audio.get("file_id")
+        if file_id:
+            media.append((file_id, audio.get("mime_type", "audio/mpeg")))
+
     # Document -- preserve Telegram-provided MIME type so images sent as
     # documents (e.g. image/png) are correctly classified downstream
     doc = msg.get("document")
@@ -119,7 +140,7 @@ def _parse_telegram_update(update: dict) -> InboundMessage | None:
         return None
 
     chat_id = str(chat["id"])
-    text = msg.get("text", "")
+    text = msg.get("text") or msg.get("caption") or ""
     username = msg.get("from", {}).get("username", "")
 
     if not _check_allowlist(chat_id, username):
