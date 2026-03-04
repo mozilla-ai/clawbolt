@@ -96,12 +96,12 @@ async def _verify_llm_settings() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
-    # Pydantic BaseSettings only injects .env values for its own declared
-    # fields (extra="ignore").  Provider API keys like GROQ_API_KEY are NOT
-    # Settings fields, so they never reach os.environ.  The any-llm SDK
-    # reads keys from os.environ directly, so we must populate it here.
-    # Docker Compose already handles this via its env_file directive;
-    # this call covers bare-host / local-dev setups.  See #399.
+    # Pydantic Settings reads .env for its own declared fields only and
+    # does not mutate os.environ. Provider API keys like GROQ_API_KEY are
+    # consumed by the any-llm SDK, which reads them directly from
+    # os.environ, so we ensure .env values are loaded into the process
+    # environment here. Docker Compose already handles this via its
+    # env_file directive; this call covers bare-host / local-dev setups.
     load_dotenv()
 
     await _verify_llm_settings()
