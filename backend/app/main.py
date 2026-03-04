@@ -4,6 +4,7 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from any_llm import acompletion
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -95,6 +96,14 @@ async def _verify_llm_settings() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
+    # Pydantic Settings reads .env for its own declared fields only and
+    # does not mutate os.environ. Provider API keys like GROQ_API_KEY are
+    # consumed by the any-llm SDK, which reads them directly from
+    # os.environ, so we ensure .env values are loaded into the process
+    # environment here. Docker Compose already handles this via its
+    # env_file directive; this call covers bare-host / local-dev setups.
+    load_dotenv()
+
     await _verify_llm_settings()
     heartbeat_scheduler.start()
 
