@@ -25,6 +25,7 @@ from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.llm_parsing import parse_tool_calls
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt
 from backend.app.agent.tools.names import ToolName
+from backend.app.channels import get_channel, get_default_channel
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import (
@@ -43,7 +44,7 @@ from backend.app.models import (
     Message,
 )
 from backend.app.services.llm_usage import log_llm_usage
-from backend.app.services.messaging import MessagingService, _build_messaging_service
+from backend.app.services.messaging import MessagingService
 
 logger = logging.getLogger(__name__)
 
@@ -698,7 +699,6 @@ class HeartbeatScheduler:
         if not contractors:
             return
 
-        messaging_service = _build_messaging_service()
         semaphore = asyncio.Semaphore(settings.heartbeat_concurrency)
 
         async def _process_one(contractor: Contractor) -> None:
@@ -706,6 +706,15 @@ class HeartbeatScheduler:
             async with semaphore:
                 db: Session = SessionLocal()
                 try:
+                    # Route to the contractor's preferred channel, falling
+                    # back to the first registered channel.
+                    try:
+                        messaging_service: MessagingService = get_channel(
+                            contractor.preferred_channel
+                        )
+                    except KeyError:
+                        messaging_service = get_default_channel()
+
                     await run_heartbeat_for_contractor(
                         db=db,
                         contractor=contractor,

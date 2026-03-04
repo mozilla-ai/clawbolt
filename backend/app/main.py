@@ -1,4 +1,3 @@
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
@@ -9,7 +8,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.app.agent.heartbeat import heartbeat_scheduler
-from backend.app.channels import register_channel
+from backend.app.channels import get_manager, register_channel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.config import settings
 from backend.app.routers import auth, estimates, health
@@ -26,8 +25,7 @@ logger = logging.getLogger(__name__)
 
 # -- Build and register channels at module scope ----------------------------
 
-_telegram_channel = TelegramChannel(bot_token=settings.telegram_bot_token)
-register_channel(_telegram_channel)
+register_channel(TelegramChannel(bot_token=settings.telegram_bot_token))
 
 
 async def _verify_llm_settings() -> None:
@@ -124,16 +122,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             'Set to "*" to allow all users, or provide a comma-separated list of IDs/usernames.'
         )
 
-    # Fire-and-forget: start channel lifecycle (e.g. webhook registration).
-    channel_task: asyncio.Task[None] | None = None
-    if settings.telegram_bot_token:
-        channel_task = asyncio.create_task(_telegram_channel.start())
+    # Start all registered channels concurrently.
+    manager = get_manager()
+    channel_tasks = await manager.start_all()
 
     yield
 
-    if channel_task and not channel_task.done():
-        channel_task.cancel()
-    await _telegram_channel.stop()
+    # Cancel any channel start tasks still running.
+    for task in channel_tasks:
+        if not task.done():
+            task.cancel()
+    await manager.stop_all()
     heartbeat_scheduler.stop()
 
 
@@ -149,5 +148,9 @@ app.add_middleware(
 
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
-app.include_router(_telegram_channel.get_router(), prefix="/api")
+
+# Include routers from all registered channels.
+for _channel in get_manager().channels.values():
+    app.include_router(_channel.get_router(), prefix="/api")
+
 app.include_router(estimates.router, prefix="/api")

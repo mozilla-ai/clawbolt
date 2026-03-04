@@ -1358,7 +1358,7 @@ class TestHeartbeatScheduler:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.SessionLocal")
-    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    @patch("backend.app.agent.heartbeat.get_default_channel")
     async def test_tick_queries_onboarded(
         self, mock_messaging_cls: MagicMock, mock_session_local: MagicMock
     ) -> None:
@@ -1377,7 +1377,7 @@ class TestHeartbeatScheduler:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
     @patch("backend.app.agent.heartbeat.SessionLocal")
-    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    @patch("backend.app.agent.heartbeat.get_default_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_concurrent_processing(
         self,
@@ -1429,7 +1429,7 @@ class TestHeartbeatScheduler:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
     @patch("backend.app.agent.heartbeat.SessionLocal")
-    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    @patch("backend.app.agent.heartbeat.get_default_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_error_isolation(
         self,
@@ -1475,7 +1475,7 @@ class TestHeartbeatScheduler:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
     @patch("backend.app.agent.heartbeat.SessionLocal")
-    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    @patch("backend.app.agent.heartbeat.get_default_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_semaphore_limits_concurrency(
         self,
@@ -1530,7 +1530,7 @@ class TestHeartbeatScheduler:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.SessionLocal")
-    @patch("backend.app.agent.heartbeat._build_messaging_service")
+    @patch("backend.app.agent.heartbeat.get_default_channel")
     async def test_tick_no_contractors(
         self, mock_messaging_cls: MagicMock, mock_session_local: MagicMock
     ) -> None:
