@@ -2,7 +2,7 @@
 
 Revision ID: 001
 Revises:
-Create Date: 2026-02-28
+Create Date: 2026-03-04
 
 """
 
@@ -30,10 +30,14 @@ def upgrade() -> None:
         sa.Column("hourly_rate", sa.Float(), nullable=True),
         sa.Column("soul_text", sa.Text(), server_default="", nullable=False),
         sa.Column("business_hours", sa.String(255), server_default="", nullable=False),
+        sa.Column("timezone", sa.String(50), server_default="", nullable=False),
         sa.Column("preferred_channel", sa.String(20), server_default="telegram", nullable=False),
         sa.Column("channel_identifier", sa.String(255), server_default="", nullable=False),
         sa.Column("onboarding_complete", sa.Boolean(), server_default="0", nullable=False),
+        sa.Column("is_active", sa.Boolean(), server_default="1", nullable=False),
         sa.Column("preferences_json", sa.Text(), server_default="{}", nullable=False),
+        sa.Column("heartbeat_opt_in", sa.Boolean(), server_default="1", nullable=False),
+        sa.Column("heartbeat_frequency", sa.String(20), server_default="", nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -124,6 +128,7 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("is_active", sa.Boolean(), server_default="1", nullable=False),
+        sa.Column("last_compacted_message_id", sa.Integer(), nullable=True),
     )
 
     op.create_table(
@@ -141,6 +146,7 @@ def upgrade() -> None:
         sa.Column("body", sa.Text(), server_default="", nullable=False),
         sa.Column("media_urls_json", sa.Text(), server_default="[]", nullable=False),
         sa.Column("processed_context", sa.Text(), server_default="", nullable=False),
+        sa.Column("tool_interactions_json", sa.Text(), server_default="", nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -208,8 +214,75 @@ def upgrade() -> None:
         ),
     )
 
+    op.create_table(
+        "heartbeat_checklist_items",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column(
+            "contractor_id",
+            sa.Integer(),
+            sa.ForeignKey("contractors.id"),
+            index=True,
+            nullable=False,
+        ),
+        sa.Column("description", sa.Text(), nullable=False),
+        sa.Column("schedule", sa.String(50), server_default="daily", nullable=False),
+        sa.Column("active_hours", sa.String(255), server_default="", nullable=False),
+        sa.Column("last_triggered_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("status", sa.String(20), server_default="active", nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+    )
+
+    op.create_table(
+        "heartbeat_log",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column(
+            "contractor_id",
+            sa.Integer(),
+            sa.ForeignKey("contractors.id"),
+            index=True,
+            nullable=False,
+        ),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+    )
+
+    op.create_table(
+        "llm_usage_logs",
+        sa.Column("id", sa.Integer(), primary_key=True),
+        sa.Column(
+            "contractor_id",
+            sa.Integer(),
+            sa.ForeignKey("contractors.id"),
+            index=True,
+            nullable=False,
+        ),
+        sa.Column("model", sa.String(100), nullable=False),
+        sa.Column("prompt_tokens", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("completion_tokens", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("total_tokens", sa.Integer(), server_default="0", nullable=False),
+        sa.Column("purpose", sa.String(50), nullable=False),
+        sa.Column(
+            "created_at",
+            sa.DateTime(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+    )
+
 
 def downgrade() -> None:
+    op.drop_table("llm_usage_logs")
+    op.drop_table("heartbeat_log")
+    op.drop_table("heartbeat_checklist_items")
     op.drop_table("media_files")
     op.drop_table("estimate_line_items")
     op.drop_table("estimates")
