@@ -3,9 +3,9 @@ import starlight from "@astrojs/starlight";
 
 export default defineConfig({
   site: process.env.CI
-    ? "https://mozilla-ai.github.io"
+    ? "https://clawbolt.ai"
     : "http://localhost:4321",
-  base: process.env.CI ? "/clawbolt" : "/",
+  base: "/",
   integrations: [
     starlight({
       title: "Clawbolt",
