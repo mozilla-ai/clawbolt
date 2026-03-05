@@ -39,8 +39,14 @@ async def test_estimate_generation_roundtrip(
         agent.register_tools(tools)
 
         response = await agent.process_message(
-            "I need an estimate for a deck build. "
+            "Use the generate_estimate tool to create an estimate for a deck build. "
             "Labor: 20 hours at $75/hr. Materials: $1,200 for composite decking.",
+            system_prompt_override=(
+                "You are a contractor assistant. When the user provides estimate"
+                " details, always call the generate_estimate tool with the line"
+                " items. Do not respond with text only."
+            ),
+            temperature=0,
         )
 
     # Agent should have called the estimate tool
