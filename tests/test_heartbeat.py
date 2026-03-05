@@ -8,6 +8,7 @@ from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -15,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from backend.app.agent.heartbeat import (
     COMPOSE_MESSAGE_TOOL,
     CheapCheckResult,
+    ComposeMessageParams,
     HeartbeatAction,
     HeartbeatScheduler,
     _is_checklist_item_due,
@@ -39,6 +41,7 @@ from backend.app.models import (
     Memory,
     Message,
 )
+from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -116,13 +119,13 @@ def mock_messaging() -> MagicMock:
     return svc
 
 
-def _make_tool_call_response(
+def _make_heartbeat_tool_call(
     action: str = "no_action",
     message: str = "",
     reasoning: str = "",
     priority: int = 1,
     tool_name: str = "compose_message",
-) -> MagicMock:
+) -> MessageResponse:
     """Build a mock LLM response that includes a tool call."""
     args = json.dumps(
         {
@@ -132,35 +135,7 @@ def _make_tool_call_response(
             "priority": priority,
         }
     )
-    func = MagicMock()
-    func.name = tool_name
-    func.arguments = args
-    tool_call = MagicMock()
-    tool_call.function = func
-    tool_call.id = "call_mock_001"
-
-    msg = MagicMock()
-    msg.tool_calls = [tool_call]
-    msg.content = None
-    choice = MagicMock()
-    choice.message = msg
-    resp = MagicMock()
-    resp.choices = [choice]
-    resp.usage = None
-    return resp
-
-
-def _make_text_response(content: str) -> MagicMock:
-    """Build a mock LLM response with plain text (no tool call)."""
-    msg = MagicMock()
-    msg.tool_calls = None
-    msg.content = content
-    choice = MagicMock()
-    choice.message = msg
-    resp = MagicMock()
-    resp.choices = [choice]
-    resp.usage = None
-    return resp
+    return make_tool_call_response([{"name": tool_name, "arguments": args, "id": "call_mock_001"}])
 
 
 # ---------------------------------------------------------------------------
@@ -703,27 +678,31 @@ class TestIsChecklistItemDue:
 
 
 class TestComposeMessageToolSchema:
-    def test_tool_has_correct_type(self) -> None:
-        assert COMPOSE_MESSAGE_TOOL["type"] == "function"
+    def test_tool_has_name(self) -> None:
+        assert COMPOSE_MESSAGE_TOOL["name"] == "compose_message"
 
-    def test_tool_has_function_name(self) -> None:
-        assert COMPOSE_MESSAGE_TOOL["function"]["name"] == "compose_message"
+    def test_tool_has_description(self) -> None:
+        assert "description" in COMPOSE_MESSAGE_TOOL
 
     def test_tool_has_required_fields(self) -> None:
-        required = COMPOSE_MESSAGE_TOOL["function"]["parameters"]["required"]
+        required = COMPOSE_MESSAGE_TOOL["input_schema"]["required"]
         assert "action" in required
         assert "reasoning" in required
         assert "priority" in required
 
     def test_action_enum_values(self) -> None:
-        action_prop = COMPOSE_MESSAGE_TOOL["function"]["parameters"]["properties"]["action"]
+        action_prop = COMPOSE_MESSAGE_TOOL["input_schema"]["properties"]["action"]
         assert action_prop["enum"] == ["send_message", "no_action"]
 
     def test_priority_is_integer_with_bounds(self) -> None:
-        priority_prop = COMPOSE_MESSAGE_TOOL["function"]["parameters"]["properties"]["priority"]
+        priority_prop = COMPOSE_MESSAGE_TOOL["input_schema"]["properties"]["priority"]
         assert priority_prop["type"] == "integer"
         assert priority_prop["minimum"] == 1
         assert priority_prop["maximum"] == 5
+
+    def test_schema_generated_from_pydantic_model(self) -> None:
+        """COMPOSE_MESSAGE_TOOL schema is generated from ComposeMessageParams."""
+        assert COMPOSE_MESSAGE_TOOL["input_schema"] == ComposeMessageParams.model_json_schema()
 
 
 # ---------------------------------------------------------------------------
@@ -734,7 +713,7 @@ class TestComposeMessageToolSchema:
 class TestParseToolCallResponse:
     def test_valid_send_message(self) -> None:
         """A well-formed compose_message tool call should parse correctly."""
-        resp = _make_tool_call_response(
+        resp = _make_heartbeat_tool_call(
             action="send_message",
             message="Hey Mike, draft estimate pending!",
             reasoning="Stale draft",
@@ -748,7 +727,7 @@ class TestParseToolCallResponse:
 
     def test_valid_no_action(self) -> None:
         """A no_action tool call should parse correctly."""
-        resp = _make_tool_call_response(
+        resp = _make_heartbeat_tool_call(
             action="no_action",
             message="",
             reasoning="Nothing actionable",
@@ -762,7 +741,7 @@ class TestParseToolCallResponse:
 
     def test_text_response_falls_back_to_no_action(self) -> None:
         """If the LLM returns text instead of a tool call, default to no_action."""
-        resp = _make_text_response("I think you should send a message about the estimate.")
+        resp = make_text_response("I think you should send a message about the estimate.")
         action = _parse_tool_call_response(resp)
         assert action.action_type == "no_action"
         assert action.priority == 0
@@ -770,14 +749,14 @@ class TestParseToolCallResponse:
 
     def test_empty_text_response(self) -> None:
         """Empty text response should also fall back to no_action."""
-        resp = _make_text_response("")
+        resp = make_text_response("")
         action = _parse_tool_call_response(resp)
         assert action.action_type == "no_action"
         assert action.priority == 0
 
     def test_wrong_tool_name_falls_back(self) -> None:
         """If the LLM calls a different tool, default to no_action."""
-        resp = _make_tool_call_response(
+        resp = _make_heartbeat_tool_call(
             action="send_message",
             message="Hi",
             reasoning="test",
@@ -789,118 +768,111 @@ class TestParseToolCallResponse:
         assert "unexpected tool" in action.reasoning
 
     def test_malformed_arguments(self) -> None:
-        """Malformed JSON arguments should fall back to no_action."""
-        func = MagicMock()
-        func.name = "compose_message"
-        func.arguments = "{broken json"
-        tool_call = MagicMock()
-        tool_call.function = func
-        tool_call.id = "call_bad"
-
-        msg = MagicMock()
-        msg.tool_calls = [tool_call]
-        msg.content = None
-        choice = MagicMock()
-        choice.message = msg
-        resp = MagicMock()
-        resp.choices = [choice]
-
+        """Non-dict tool input should fall back to no_action."""
+        resp = MessageResponse(
+            id="msg_mock",
+            content=[
+                MessageContentBlock(
+                    type="tool_use",
+                    id="call_bad",
+                    name="compose_message",
+                    input=None,
+                ),
+            ],
+            model="mock-model",
+            stop_reason="tool_use",
+            usage=MessageUsage(input_tokens=0, output_tokens=0),
+        )
         action = _parse_tool_call_response(resp)
         assert action.action_type == "no_action"
         assert "Malformed tool arguments" in action.reasoning
 
     def test_none_arguments_does_not_crash(self) -> None:
-        """None func.arguments should not raise TypeError on slicing."""
-        func = MagicMock()
-        func.name = "compose_message"
-        func.arguments = None
-        tool_call = MagicMock()
-        tool_call.function = func
-        tool_call.id = "call_none_args"
-
-        msg = MagicMock()
-        msg.tool_calls = [tool_call]
-        msg.content = None
-        choice = MagicMock()
-        choice.message = msg
-        resp = MagicMock()
-        resp.choices = [choice]
-
+        """None tool input should not raise TypeError."""
+        resp = MessageResponse(
+            id="msg_mock",
+            content=[
+                MessageContentBlock(
+                    type="tool_use",
+                    id="call_none_args",
+                    name="compose_message",
+                    input=None,
+                ),
+            ],
+            model="mock-model",
+            stop_reason="tool_use",
+            usage=MessageUsage(input_tokens=0, output_tokens=0),
+        )
         action = _parse_tool_call_response(resp)
         assert action.action_type == "no_action"
         assert action.priority == 0
 
-    def test_non_numeric_priority_defaults_to_3(self) -> None:
-        """Non-numeric priority value should default to 3 instead of crashing."""
-        args = json.dumps(
-            {
-                "action": "send_message",
-                "message": "Hello",
-                "reasoning": "test",
-                "priority": "high",
-            }
+    def test_non_numeric_priority_falls_back_to_no_action(self) -> None:
+        """Non-numeric priority value triggers validation error and falls back to no_action."""
+        resp = MessageResponse(
+            id="msg_mock",
+            content=[
+                MessageContentBlock(
+                    type="tool_use",
+                    id="call_bad_priority",
+                    name="compose_message",
+                    input={
+                        "action": "send_message",
+                        "message": "Hello",
+                        "reasoning": "test",
+                        "priority": "high",
+                    },
+                ),
+            ],
+            model="mock-model",
+            stop_reason="tool_use",
+            usage=MessageUsage(input_tokens=0, output_tokens=0),
         )
-        func = MagicMock()
-        func.name = "compose_message"
-        func.arguments = args
-        tool_call = MagicMock()
-        tool_call.function = func
-        tool_call.id = "call_bad_priority"
-
-        msg = MagicMock()
-        msg.tool_calls = [tool_call]
-        msg.content = None
-        choice = MagicMock()
-        choice.message = msg
-        resp = MagicMock()
-        resp.choices = [choice]
-
         action = _parse_tool_call_response(resp)
-        assert action.action_type == "send_message"
-        assert action.priority == 3
+        assert action.action_type == "no_action"
+        assert action.priority == 0
 
     def test_missing_optional_message_defaults_empty(self) -> None:
         """If the LLM omits the optional message field, it should default to empty."""
-        args = json.dumps({"action": "no_action", "reasoning": "nothing", "priority": 2})
-        func = MagicMock()
-        func.name = "compose_message"
-        func.arguments = args
-        tool_call = MagicMock()
-        tool_call.function = func
-        tool_call.id = "call_no_msg"
-
-        msg = MagicMock()
-        msg.tool_calls = [tool_call]
-        msg.content = None
-        choice = MagicMock()
-        choice.message = msg
-        resp = MagicMock()
-        resp.choices = [choice]
-
+        resp = MessageResponse(
+            id="msg_mock",
+            content=[
+                MessageContentBlock(
+                    type="tool_use",
+                    id="call_no_msg",
+                    name="compose_message",
+                    input={"action": "no_action", "reasoning": "nothing", "priority": 2},
+                ),
+            ],
+            model="mock-model",
+            stop_reason="tool_use",
+            usage=MessageUsage(input_tokens=0, output_tokens=0),
+        )
         action = _parse_tool_call_response(resp)
         assert action.action_type == "no_action"
         assert action.message == ""
         assert action.priority == 2
 
-    def test_no_function_attribute_falls_back(self) -> None:
-        """Tool call with no function attribute should fall back to no_action."""
-        tool_call = MagicMock()
-        tool_call.function = None
-        tool_call.id = "call_nofunc"
-
-        msg = MagicMock()
-        msg.tool_calls = [tool_call]
-        msg.content = None
-        choice = MagicMock()
-        choice.message = msg
-        resp = MagicMock()
-        resp.choices = [choice]
-
+    def test_nameless_tool_use_falls_back(self) -> None:
+        """tool_use block with no name should fall back to no_action."""
+        resp = MessageResponse(
+            id="msg_mock",
+            content=[
+                MessageContentBlock(
+                    type="tool_use",
+                    id="call_nofunc",
+                    name=None,
+                    input={"action": "send_message"},
+                ),
+            ],
+            model="mock-model",
+            stop_reason="tool_use",
+            usage=MessageUsage(input_tokens=0, output_tokens=0),
+        )
         action = _parse_tool_call_response(resp)
         assert action.action_type == "no_action"
-        # Shared parser skips tool calls with no function, so heartbeat
-        # sees an empty parsed list and reports "did not call compose_message"
-        assert "did not call compose_message" in action.reasoning
+        # Parsed tool call has empty name, so heartbeat reports "unexpected tool"
+        assert "unexpected tool" in action.reasoning
 
 
 # ---------------------------------------------------------------------------
@@ -911,7 +883,7 @@ class TestParseToolCallResponse:
 class TestEvaluateHeartbeatNeed:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.acompletion")
+    @patch("backend.app.agent.heartbeat.amessages")
     async def test_llm_says_no(
         self,
         mock_llm: AsyncMock,
@@ -925,7 +897,7 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
-        mock_llm.return_value = _make_tool_call_response(
+        mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action",
             message="",
             reasoning="Nothing actionable",
@@ -937,7 +909,7 @@ class TestEvaluateHeartbeatNeed:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.acompletion")
+    @patch("backend.app.agent.heartbeat.amessages")
     async def test_llm_says_send(
         self,
         mock_llm: AsyncMock,
@@ -951,7 +923,7 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
-        mock_llm.return_value = _make_tool_call_response(
+        mock_llm.return_value = _make_heartbeat_tool_call(
             action="send_message",
             message="Hey Mike, you have a draft estimate sitting for 2 days.",
             reasoning="Stale draft estimate",
@@ -963,7 +935,7 @@ class TestEvaluateHeartbeatNeed:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.acompletion")
+    @patch("backend.app.agent.heartbeat.amessages")
     async def test_uses_heartbeat_model_when_set(
         self,
         mock_llm: AsyncMock,
@@ -978,7 +950,7 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.heartbeat_model = "gpt-4o-mini"
         mock_settings.heartbeat_provider = "openai"
         mock_settings.llm_max_tokens_heartbeat = 256
-        mock_llm.return_value = _make_tool_call_response(
+        mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action", message="", reasoning="", priority=1
         )
         await evaluate_heartbeat_need(db, contractor, ["test flag"])
@@ -989,7 +961,7 @@ class TestEvaluateHeartbeatNeed:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.acompletion")
+    @patch("backend.app.agent.heartbeat.amessages")
     async def test_passes_api_base_not_api_key(
         self,
         mock_llm: AsyncMock,
@@ -1004,7 +976,7 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
-        mock_llm.return_value = _make_tool_call_response(
+        mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action", message="", reasoning="test", priority=1
         )
         await evaluate_heartbeat_need(db, contractor, ["test flag"])
@@ -1015,7 +987,7 @@ class TestEvaluateHeartbeatNeed:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.acompletion")
+    @patch("backend.app.agent.heartbeat.amessages")
     async def test_text_response_falls_back_to_no_action(
         self,
         mock_llm: AsyncMock,
@@ -1030,14 +1002,14 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
-        mock_llm.return_value = _make_text_response("I'm not sure what to do {broken json")
+        mock_llm.return_value = make_text_response("I'm not sure what to do {broken json")
         action = await evaluate_heartbeat_need(db, contractor, ["test flag"])
         assert action.action_type == "no_action"
         assert action.priority == 0
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.acompletion")
+    @patch("backend.app.agent.heartbeat.amessages")
     async def test_passes_tools_to_acompletion(
         self,
         mock_llm: AsyncMock,
@@ -1052,7 +1024,7 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
-        mock_llm.return_value = _make_tool_call_response(
+        mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action", message="", reasoning="test", priority=1
         )
         await evaluate_heartbeat_need(db, contractor, ["test flag"])
@@ -1062,7 +1034,7 @@ class TestEvaluateHeartbeatNeed:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.acompletion")
+    @patch("backend.app.agent.heartbeat.amessages")
     async def test_prompt_does_not_ask_for_raw_json(
         self,
         mock_llm: AsyncMock,
@@ -1077,13 +1049,12 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.heartbeat_model = ""
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
-        mock_llm.return_value = _make_tool_call_response(
+        mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action", message="", reasoning="test", priority=1
         )
         await evaluate_heartbeat_need(db, contractor, ["test flag"])
         call_args = mock_llm.call_args
-        messages = call_args.kwargs["messages"]
-        system_content = messages[0]["content"]
+        system_content = call_args.kwargs["system"]
         assert "Respond with ONLY a JSON object" not in system_content
         assert "compose_message" in system_content
 

@@ -54,7 +54,7 @@ def test_tool_to_function_schema_uses_params_model() -> None:
         params_model=SampleParams,
     )
     schema = tool_to_function_schema(tool)
-    params = schema["function"]["parameters"]
+    params = schema["input_schema"]
 
     # Should have properties from the Pydantic model
     assert "name" in params["properties"]
@@ -64,23 +64,6 @@ def test_tool_to_function_schema_uses_params_model() -> None:
     # Required fields: only 'name' (count has a default)
     assert "name" in params["required"]
     assert "count" not in params.get("required", [])
-
-
-def test_tool_to_function_schema_falls_back_to_raw_dict() -> None:
-    """When no params_model is set, raw parameters dict should be used."""
-
-    async def dummy(**kwargs: object) -> ToolResult:
-        return ToolResult(content="ok")
-
-    raw_params = {"type": "object", "properties": {"x": {"type": "string"}}}
-    tool = Tool(
-        name="sample",
-        description="A sample tool",
-        function=dummy,
-        parameters=raw_params,
-    )
-    schema = tool_to_function_schema(tool)
-    assert schema["function"]["parameters"] is raw_params
 
 
 # ---------------------------------------------------------------------------
@@ -196,9 +179,9 @@ def test_add_checklist_item_rejects_invalid_schedule() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_failure_returns_error_result(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -214,7 +197,7 @@ async def test_agent_validation_failure_returns_error_result(
         ]
     )
     followup_response = make_text_response("Let me fix that.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -237,15 +220,15 @@ async def test_agent_validation_failure_returns_error_result(
 
     # The error should be recorded
     assert any("Failed: typed_tool (validation)" in a for a in response.actions_taken)
-    assert response.tool_calls[0]["is_error"] is True
-    assert "Validation error" in response.tool_calls[0]["result"]
-    assert "name" in response.tool_calls[0]["result"]
+    assert response.tool_calls[0].is_error is True
+    assert "Validation error" in response.tool_calls[0].result
+    assert "name" in response.tool_calls[0].result
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_success_calls_tool(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -260,7 +243,7 @@ async def test_agent_validation_success_calls_tool(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -284,9 +267,9 @@ async def test_agent_validation_success_calls_tool(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_coerces_types(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -301,7 +284,7 @@ async def test_agent_validation_coerces_types(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -324,9 +307,9 @@ async def test_agent_validation_coerces_types(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_wrong_type_returns_field_error(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -341,7 +324,7 @@ async def test_agent_validation_wrong_type_returns_field_error(
         ]
     )
     followup_response = make_text_response("Let me fix that.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A name")
@@ -360,41 +343,9 @@ async def test_agent_validation_wrong_type_returns_field_error(
     response = await agent.process_message("test", system_prompt_override="system")
 
     mock_func.assert_not_called()
-    error_result = response.tool_calls[0]["result"]
+    error_result = response.tool_calls[0].result
     assert "value" in error_result
     assert "Validation error for typed_tool" in error_result
-
-
-# ---------------------------------------------------------------------------
-# Registry enforcement: tools without params_model are rejected
-# ---------------------------------------------------------------------------
-
-
-def test_registry_rejects_tool_without_params_model() -> None:
-    """Registry should raise ValueError for tools without params_model."""
-    from unittest.mock import MagicMock
-
-    from backend.app.agent.tools.registry import ToolContext, ToolRegistry
-
-    async def dummy(**kwargs: object) -> ToolResult:
-        return ToolResult(content="ok")
-
-    def bad_factory(ctx: ToolContext) -> list[Tool]:
-        return [
-            Tool(
-                name="legacy_tool",
-                description="No params_model",
-                function=dummy,
-                parameters={"type": "object", "properties": {}},
-            )
-        ]
-
-    registry = ToolRegistry()
-    registry.register("bad", bad_factory)
-
-    ctx = ToolContext(db=MagicMock(), contractor=MagicMock())
-    with pytest.raises(ValueError, match="missing a params_model"):
-        registry.create_tools(ctx)
 
 
 def test_update_profile_params_accepts_partial_update() -> None:
@@ -426,9 +377,9 @@ def test_update_profile_params_accepts_all_fields() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_batch_validation_reports_all_errors_at_once(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -467,7 +418,7 @@ async def test_batch_validation_reports_all_errors_at_once(
         ]
     )
     followup_response = make_text_response("I see both errors. Let me fix them.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
@@ -481,16 +432,16 @@ async def test_batch_validation_reports_all_errors_at_once(
     assert len(validation_failures) == 2
 
     # Both errors should appear in tool_calls records
-    error_records = [tc for tc in response.tool_calls if tc["is_error"]]
+    error_records = [tc for tc in response.tool_calls if tc.is_error]
     assert len(error_records) == 2
-    assert error_records[0]["tool_call_id"] == "call_a"
-    assert error_records[1]["tool_call_id"] == "call_b"
+    assert error_records[0].tool_call_id == "call_a"
+    assert error_records[1].tool_call_id == "call_b"
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_batch_validation_executes_valid_calls_alongside_invalid(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -529,7 +480,7 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
@@ -544,7 +495,7 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
 
     # Verify tool_call_records: 2 errors + 1 success = 3 records
     assert len(response.tool_calls) == 3
-    error_ids = {tc["tool_call_id"] for tc in response.tool_calls if tc["is_error"]}
-    success_ids = {tc["tool_call_id"] for tc in response.tool_calls if not tc["is_error"]}
+    error_ids = {tc.tool_call_id for tc in response.tool_calls if tc.is_error}
+    success_ids = {tc.tool_call_id for tc in response.tool_calls if not tc.is_error}
     assert error_ids == {"call_bad1", "call_bad2"}
     assert success_ids == {"call_good"}

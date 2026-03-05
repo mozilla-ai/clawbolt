@@ -52,31 +52,36 @@ class TestStoredToolInteractionModel:
         assert model.result == ""
 
     def test_extra_fields_ignored(self) -> None:
-        """Extra fields (like 'tags') should not cause validation failure."""
+        """Unknown extra fields should not cause validation failure."""
         data = {
             "tool_call_id": "call_xyz",
             "name": "lookup_client",
             "args": {},
             "result": "Found client.",
             "is_error": False,
-            "tags": ["SENDS_REPLY"],
+            "unknown_field": "ignored",
         }
         model = StoredToolInteraction.model_validate(data)
         assert model.name == "lookup_client"
-        assert not hasattr(model, "tags") or "tags" not in model.model_fields
 
-    def test_model_dump_excludes_extra(self) -> None:
-        """model_dump should only contain declared fields."""
-        data = {
-            "tool_call_id": "call_1",
-            "name": "tool_a",
-            "args": {"x": 1},
-            "result": "ok",
-            "is_error": False,
-        }
-        model = StoredToolInteraction.model_validate(data)
+    def test_tags_field_defaults_empty(self) -> None:
+        """tags should default to an empty set."""
+        model = StoredToolInteraction.model_validate({})
+        assert model.tags == set()
+
+    def test_tags_excluded_from_model_dump(self) -> None:
+        """model_dump should exclude tags (Field(exclude=True))."""
+        model = StoredToolInteraction(
+            tool_call_id="call_1",
+            name="tool_a",
+            args={"x": 1},
+            result="ok",
+            is_error=False,
+            tags={"SAVES_MEMORY"},
+        )
         dumped = model.model_dump()
         assert set(dumped.keys()) == {"tool_call_id", "name", "args", "result", "is_error"}
+        assert "tags" not in dumped
 
     def test_round_trip_json(self) -> None:
         """Serializing to JSON and parsing back should produce the same model."""
@@ -235,25 +240,16 @@ class TestPersistOutboundValidation:
     """Tests for persist_outbound using StoredToolInteraction serialization."""
 
     def test_serialization_excludes_tags(self) -> None:
-        """The 'tags' field should be stripped during serialization."""
-        from backend.app.agent.context import StoredToolInteraction
-
-        # Simulate what persist_outbound does
-        tool_calls = [
-            {
-                "tool_call_id": "call_1",
-                "name": "save_memory",
-                "args": {"key": "k"},
-                "result": "ok",
-                "is_error": False,
-                "tags": {"SAVES_MEMORY"},
-            }
-        ]
-        validated = [
-            StoredToolInteraction.model_validate({k: v for k, v in tc.items() if k != "tags"})
-            for tc in tool_calls
-        ]
-        json_str = json.dumps([v.model_dump() for v in validated])
+        """model_dump() should exclude tags via Field(exclude=True)."""
+        tc = StoredToolInteraction(
+            tool_call_id="call_1",
+            name="save_memory",
+            args={"key": "k"},
+            result="ok",
+            is_error=False,
+            tags={"SAVES_MEMORY"},
+        )
+        json_str = json.dumps([tc.model_dump()])
         parsed = json.loads(json_str)
         assert len(parsed) == 1
         assert "tags" not in parsed[0]
@@ -261,24 +257,16 @@ class TestPersistOutboundValidation:
 
     def test_serialization_round_trip(self) -> None:
         """Tool interactions should survive serialize -> parse round trip."""
-        from backend.app.agent.context import StoredToolInteraction
-
-        tool_calls = [
-            {
-                "tool_call_id": "call_rt",
-                "name": "create_estimate",
-                "args": {"client_name": "Bob", "total": 500},
-                "result": "Estimate #1 created.",
-                "is_error": False,
-                "tags": {"SENDS_REPLY"},
-            }
-        ]
+        tc = StoredToolInteraction(
+            tool_call_id="call_rt",
+            name="create_estimate",
+            args={"client_name": "Bob", "total": 500},
+            result="Estimate #1 created.",
+            is_error=False,
+            tags={"SENDS_REPLY"},
+        )
         # Serialize (as persist_outbound does)
-        validated = [
-            StoredToolInteraction.model_validate({k: v for k, v in tc.items() if k != "tags"})
-            for tc in tool_calls
-        ]
-        json_str = json.dumps([v.model_dump() for v in validated])
+        json_str = json.dumps([tc.model_dump()])
 
         # Parse back (as _parse_tool_interactions does)
         restored = _parse_tool_interactions(json_str)

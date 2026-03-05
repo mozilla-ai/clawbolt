@@ -1,14 +1,14 @@
 """LLM usage tracking helper.
 
-Extracts token counts from acompletion responses and persists them to the
+Extracts token counts from amessages responses and persists them to the
 ``llm_usage_logs`` table for cost monitoring per contractor.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
+from any_llm.types.messages import MessageResponse
 from sqlalchemy.orm import Session
 
 from backend.app.models import LLMUsageLog
@@ -20,7 +20,7 @@ def log_llm_usage(
     db: Session,
     contractor_id: int,
     model: str,
-    response: Any,
+    response: MessageResponse,
     purpose: str,
 ) -> LLMUsageLog | None:
     """Extract token usage from an LLM response and save to the database.
@@ -28,14 +28,9 @@ def log_llm_usage(
     Returns the created ``LLMUsageLog`` row, or ``None`` if the response
     did not contain usage information.
     """
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        logger.debug("No usage data in LLM response for purpose=%s", purpose)
-        return None
-
-    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-    completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-    total_tokens = getattr(usage, "total_tokens", 0) or (prompt_tokens + completion_tokens)
+    prompt_tokens = response.usage.input_tokens
+    completion_tokens = response.usage.output_tokens
+    total_tokens = prompt_tokens + completion_tokens
 
     log_entry = LLMUsageLog(
         contractor_id=contractor_id,

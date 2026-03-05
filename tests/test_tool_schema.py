@@ -146,7 +146,7 @@ def test_tool_to_function_schema_flat_for_estimate_params() -> None:
     assert "$ref" not in schema_json
 
     # Verify the nested line_items structure is properly inlined
-    params = schema["function"]["parameters"]
+    params = schema["input_schema"]
     items_prop = params["properties"]["line_items"]
     assert items_prop["type"] == "array"
     # The items should be an inlined object, not a $ref
@@ -187,29 +187,12 @@ def test_tool_to_function_schema_simple_model() -> None:
         params_model=SimpleParams,
     )
     schema = tool_to_function_schema(tool)
-    params = schema["function"]["parameters"]
+    params = schema["input_schema"]
     assert params["type"] == "object"
     assert "name" in params["properties"]
     assert "count" in params["properties"]
     assert "$defs" not in json.dumps(schema)
     assert '"title"' not in json.dumps(schema)
-
-
-def test_tool_to_function_schema_fallback_to_raw_parameters() -> None:
-    """When no params_model, should use raw parameters dict as-is."""
-    raw_params: dict[str, Any] = {
-        "type": "object",
-        "properties": {"x": {"type": "integer"}},
-        "required": ["x"],
-    }
-    tool = Tool(
-        name="raw",
-        description="A raw tool",
-        function=_dummy_func,
-        parameters=raw_params,
-    )
-    schema = tool_to_function_schema(tool)
-    assert schema["function"]["parameters"] == raw_params
 
 
 def test_estimate_line_item_params_ge_constraints() -> None:

@@ -11,11 +11,12 @@ import json
 import logging
 import re
 import zoneinfo
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from backend.app.agent.context import StoredToolInteraction
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.models import Contractor
@@ -269,7 +270,7 @@ _register()
 
 
 def extract_profile_updates_from_tool_calls(
-    tool_calls: list[dict[str, object]],
+    tool_calls: list[StoredToolInteraction],
 ) -> dict[str, object]:
     """Extract profile updates from update_profile tool call records.
 
@@ -281,14 +282,11 @@ def extract_profile_updates_from_tool_calls(
     updates: dict[str, object] = {}
 
     for tc in tool_calls:
-        if tc.get("name") != ToolName.UPDATE_PROFILE:
+        if tc.name != ToolName.UPDATE_PROFILE:
             continue
-        if tc.get("is_error"):
+        if tc.is_error:
             continue
-        args_raw = tc.get("args", {})
-        if not isinstance(args_raw, dict):
-            continue
-        args = cast(dict[str, object], args_raw)
+        args = tc.args
 
         for field in ("name", "trade", "location", "business_hours", "timezone", "soul_text"):
             val = args.get(field)

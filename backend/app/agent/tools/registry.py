@@ -180,13 +180,6 @@ class ToolRegistry:
                 logger.debug("Skipping %s: no messaging service", name)
                 continue
             created = factory.create(context)
-            for tool in created:
-                if tool.params_model is None:
-                    raise ValueError(
-                        f"Tool '{tool.name}' from factory '{name}' is missing "
-                        f"a params_model. All tools must define a Pydantic "
-                        f"BaseModel for parameter validation."
-                    )
             tools.extend(created)
         return tools
 

@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from any_llm import AuthenticationError, ContentFilterError
 from sqlalchemy.orm import Session
 
-from backend.app.agent.context import StoredToolInteraction, load_conversation_history
+from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, ClawboltAgent
 from backend.app.agent.events import AgentEvent
 from backend.app.agent.messages import AgentMessage
@@ -266,8 +266,7 @@ async def dispatch_reply(
 ) -> None:
     """Send reply to the contractor unless the agent already sent one via a tool."""
     sent_reply = any(
-        ToolTags.SENDS_REPLY in tc.get("tags", set()) and not tc.get("is_error", False)
-        for tc in response.tool_calls
+        ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in response.tool_calls
     )
     if not sent_reply and response.reply_text:
         try:
@@ -293,15 +292,10 @@ def persist_outbound(
         return
 
     # Serialize tool interactions for conversation history reconstruction.
-    # Validate each record via StoredToolInteraction, which also strips
-    # runtime-only fields like 'tags' (sets) that are not JSON-serializable.
+    # model_dump() automatically excludes 'tags' (Field(exclude=True)).
     tool_interactions = ""
     if response.tool_calls:
-        validated = [
-            StoredToolInteraction.model_validate({k: v for k, v in tc.items() if k != "tags"})
-            for tc in response.tool_calls
-        ]
-        tool_interactions = json.dumps([v.model_dump() for v in validated])
+        tool_interactions = json.dumps([tc.model_dump() for tc in response.tool_calls])
 
     outbound = Message(
         conversation_id=conversation_id,
