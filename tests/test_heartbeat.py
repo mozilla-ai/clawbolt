@@ -702,9 +702,7 @@ class TestComposeMessageToolSchema:
 
     def test_schema_generated_from_pydantic_model(self) -> None:
         """COMPOSE_MESSAGE_TOOL schema is generated from ComposeMessageParams."""
-        from backend.app.agent.tools.base import params_to_input_schema
-
-        assert COMPOSE_MESSAGE_TOOL["input_schema"] == params_to_input_schema(ComposeMessageParams)
+        assert COMPOSE_MESSAGE_TOOL["input_schema"] == ComposeMessageParams.model_json_schema()
 
 
 # ---------------------------------------------------------------------------

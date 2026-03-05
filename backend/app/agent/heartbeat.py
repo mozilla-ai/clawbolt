@@ -25,7 +25,6 @@ from sqlalchemy.orm import Session
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.llm_parsing import parse_tool_calls
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt
-from backend.app.agent.tools.base import params_to_input_schema
 from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel, get_default_channel
 from backend.app.config import settings
@@ -71,7 +70,7 @@ COMPOSE_MESSAGE_TOOL: dict[str, Any] = {
     "description": (
         "Compose a proactive message to send to the contractor, or decide no message is needed."
     ),
-    "input_schema": params_to_input_schema(ComposeMessageParams),
+    "input_schema": ComposeMessageParams.model_json_schema(),
 }
 
 # Keywords that suggest a memory fact is time-sensitive
