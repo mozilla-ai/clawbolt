@@ -1,4 +1,4 @@
-"""Integration tests that exercise the real acompletion() call path.
+"""Integration tests that exercise the real amessages() call path.
 
 These tests require ANTHROPIC_API_KEY set in the environment.
 They are skipped by default and only run via ``pytest -m integration``.
@@ -72,21 +72,23 @@ async def test_agent_message_format_accepted(
 
 @pytest.mark.integration()
 @skip_without_anthropic_key
-async def test_acompletion_direct_call() -> None:
-    """Verify acompletion() works directly with anthropic provider."""
-    from any_llm import acompletion
-    from any_llm.types.completion import ChatCompletion
+async def test_amessages_direct_call() -> None:
+    """Verify amessages() works directly with anthropic provider."""
+    from any_llm import amessages
+    from any_llm.types.messages import MessageResponse
 
-    raw = await acompletion(
+    raw = await amessages(
         model=_ANTHROPIC_MODEL,
         provider="anthropic",
+        system="Reply with exactly: HELLO",
         messages=[
-            {"role": "system", "content": "Reply with exactly: HELLO"},
             {"role": "user", "content": "Say hello"},
         ],
         max_tokens=50,
     )
-    assert isinstance(raw, ChatCompletion)
+    assert isinstance(raw, MessageResponse)
 
-    assert raw.choices
-    assert raw.choices[0].message.content
+    assert raw.content
+    text_parts = [block.text for block in raw.content if block.type == "text"]
+    assert text_parts
+    assert text_parts[0]

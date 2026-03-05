@@ -22,7 +22,7 @@ def test_full_message_round_trip(
 ) -> None:
     """End-to-end: inbound message -> agent processes -> outbound reply."""
     with patch(
-        "backend.app.agent.core.acompletion",
+        "backend.app.agent.core.amessages",
         new_callable=AsyncMock,
         return_value=make_text_response("I can help with that deck estimate!"),
     ):
@@ -62,7 +62,7 @@ def test_full_message_round_trip_new_contractor(
 ) -> None:
     """New contractor sends message -> auto-created -> agent replies."""
     with patch(
-        "backend.app.agent.core.acompletion",
+        "backend.app.agent.core.amessages",
         new_callable=AsyncMock,
         return_value=make_text_response("Welcome to Clawbolt! What's your name?"),
     ):
@@ -98,7 +98,7 @@ def test_full_message_agent_failure_still_returns_200(
 ) -> None:
     """If the entire agent pipeline fails, webhook still returns 200."""
     with patch(
-        "backend.app.agent.core.acompletion",
+        "backend.app.agent.core.amessages",
         new_callable=AsyncMock,
         side_effect=RuntimeError("LLM service down"),
     ):

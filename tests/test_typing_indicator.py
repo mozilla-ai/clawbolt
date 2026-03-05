@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
@@ -13,18 +14,25 @@ from backend.app.models import Contractor
 from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
+
+class _InputParams(BaseModel):
+    """Params model for tools accepting an input parameter."""
+
+    input: str
+
+
 # ---------------------------------------------------------------------------
 # ClawboltAgent typing indicator tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_sends_typing_indicator_before_llm_call(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """Agent should send a typing indicator before each acompletion call."""
-    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
     mock_messaging = MagicMock(spec=MessagingService)
     mock_messaging.send_typing_indicator = AsyncMock()
@@ -41,9 +49,9 @@ async def test_agent_sends_typing_indicator_before_llm_call(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_sends_typing_indicator_before_each_tool_round(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -56,15 +64,11 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
         name="test_tool",
         description="A test tool",
         function=mock_tool_fn,
-        parameters={
-            "type": "object",
-            "properties": {"input": {"type": "string"}},
-            "required": ["input"],
-        },
+        params_model=_InputParams,
     )
 
     # First call returns a tool call, second call returns a text response
-    mock_acompletion.side_effect = [  # type: ignore[union-attr]
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
         make_tool_call_response(
             [{"name": "test_tool", "arguments": json.dumps({"input": "test"})}],
             content=None,
@@ -91,27 +95,27 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_works_without_messaging_service(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """Agent should work correctly when no messaging_service is provided."""
-    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     response = await agent.process_message("Hi there")
 
     assert response.reply_text == "Hello!"
-    mock_acompletion.assert_called_once()  # type: ignore[union-attr]
+    mock_amessages.assert_called_once()  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_typing_indicator_failure_does_not_break_agent(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """Agent should continue processing even if typing indicator fails."""
-    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
     mock_messaging = MagicMock(spec=MessagingService)
     mock_messaging.send_typing_indicator = AsyncMock(side_effect=RuntimeError("API down"))
@@ -129,12 +133,12 @@ async def test_agent_typing_indicator_failure_does_not_break_agent(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_no_typing_indicator_without_chat_id(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """Agent should not send typing indicator when chat_id is not provided."""
-    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
     mock_messaging = MagicMock(spec=MessagingService)
     mock_messaging.send_typing_indicator = AsyncMock()
@@ -157,7 +161,7 @@ async def test_agent_no_typing_indicator_without_chat_id(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.settings")
-@patch("backend.app.agent.heartbeat.acompletion")
+@patch("backend.app.agent.heartbeat.amessages")
 async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_llm: AsyncMock,
     mock_settings: MagicMock,
@@ -172,38 +176,21 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_settings.heartbeat_provider = ""
     mock_settings.llm_max_tokens_heartbeat = 256
 
-    # Build a mock tool call response
-    mock_tc = MagicMock()
-    mock_tc.id = "call_0"
-    mock_tc.function.name = "compose_message"
-    mock_tc.function.arguments = json.dumps(
-        {
-            "action": "no_action",
-            "message": "",
-            "reasoning": "Nothing actionable",
-            "priority": 1,
-        }
-    )
-    msg = MagicMock()
-    msg.content = None
-    msg.tool_calls = [mock_tc]
-    msg.model_dump.return_value = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
+    mock_llm.return_value = make_tool_call_response(
+        [
             {
-                "id": "call_0",
-                "type": "function",
-                "function": {
-                    "name": "compose_message",
-                    "arguments": mock_tc.function.arguments,
-                },
+                "name": "compose_message",
+                "arguments": json.dumps(
+                    {
+                        "action": "no_action",
+                        "message": "",
+                        "reasoning": "Nothing actionable",
+                        "priority": 1,
+                    }
+                ),
             }
         ],
-    }
-    choice = MagicMock()
-    choice.message = msg
-    mock_llm.return_value = MagicMock(choices=[choice])
+    )
 
     mock_messaging = MagicMock(spec=MessagingService)
     mock_messaging.send_typing_indicator = AsyncMock()
@@ -222,7 +209,7 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.settings")
-@patch("backend.app.agent.heartbeat.acompletion")
+@patch("backend.app.agent.heartbeat.amessages")
 async def test_heartbeat_works_without_messaging_service(
     mock_llm: AsyncMock,
     mock_settings: MagicMock,
@@ -237,37 +224,21 @@ async def test_heartbeat_works_without_messaging_service(
     mock_settings.heartbeat_provider = ""
     mock_settings.llm_max_tokens_heartbeat = 256
 
-    mock_tc = MagicMock()
-    mock_tc.id = "call_0"
-    mock_tc.function.name = "compose_message"
-    mock_tc.function.arguments = json.dumps(
-        {
-            "action": "no_action",
-            "message": "",
-            "reasoning": "Nothing actionable",
-            "priority": 1,
-        }
-    )
-    msg = MagicMock()
-    msg.content = None
-    msg.tool_calls = [mock_tc]
-    msg.model_dump.return_value = {
-        "role": "assistant",
-        "content": None,
-        "tool_calls": [
+    mock_llm.return_value = make_tool_call_response(
+        [
             {
-                "id": "call_0",
-                "type": "function",
-                "function": {
-                    "name": "compose_message",
-                    "arguments": mock_tc.function.arguments,
-                },
+                "name": "compose_message",
+                "arguments": json.dumps(
+                    {
+                        "action": "no_action",
+                        "message": "",
+                        "reasoning": "Nothing actionable",
+                        "priority": 1,
+                    }
+                ),
             }
         ],
-    }
-    choice = MagicMock()
-    choice.message = msg
-    mock_llm.return_value = MagicMock(choices=[choice])
+    )
 
     # Should not raise when no messaging_service is provided
     action = await evaluate_heartbeat_need(

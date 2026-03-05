@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
@@ -12,6 +13,24 @@ from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.messaging_tools import create_messaging_tools
 from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
+
+
+class _EmptyParams(BaseModel):
+    """Minimal params model for tools with no parameters."""
+
+
+class _KeyValueParams(BaseModel):
+    """Params model for tools accepting key/value pairs."""
+
+    key: str
+    value: str
+
+
+class _QParams(BaseModel):
+    """Params model for tools accepting a q parameter."""
+
+    q: str
+
 
 # --- ToolTags constants ---
 
@@ -53,7 +72,7 @@ def test_tool_default_tags_empty() -> None:
         name="noop",
         description="Does nothing",
         function=lambda: None,
-        parameters={},
+        params_model=_EmptyParams,
     )
     assert tool.tags == set()
 
@@ -64,7 +83,7 @@ def test_tool_with_single_tag() -> None:
         name="save_fact",
         description="Saves a memory",
         function=lambda: None,
-        parameters={},
+        params_model=_EmptyParams,
         tags={ToolTags.SAVES_MEMORY},
     )
     assert ToolTags.SAVES_MEMORY in tool.tags
@@ -77,7 +96,7 @@ def test_tool_with_multiple_tags() -> None:
         name="multi",
         description="Multi-purpose",
         function=lambda: None,
-        parameters={},
+        params_model=_EmptyParams,
         tags={ToolTags.SAVES_MEMORY, ToolTags.SENDS_REPLY},
     )
     assert ToolTags.SAVES_MEMORY in tool.tags
@@ -86,8 +105,8 @@ def test_tool_with_multiple_tags() -> None:
 
 def test_tool_tags_do_not_leak_between_instances() -> None:
     """Each Tool instance should have its own tags set (no shared default)."""
-    tool_a = Tool(name="a", description="A", function=lambda: None, parameters={})
-    tool_b = Tool(name="b", description="B", function=lambda: None, parameters={})
+    tool_a = Tool(name="a", description="A", function=lambda: None, params_model=_EmptyParams)
+    tool_b = Tool(name="b", description="B", function=lambda: None, params_model=_EmptyParams)
     tool_a.tags.add(ToolTags.SAVES_MEMORY)
     assert ToolTags.SAVES_MEMORY not in tool_b.tags
 
@@ -133,9 +152,9 @@ def test_messaging_tools_do_not_have_saves_memory_tag() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_tool_call_records_include_tags(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """Tool call records in AgentResponse should include tags from the Tool definition."""
     tool_response = make_tool_call_response(
@@ -147,14 +166,14 @@ async def test_agent_tool_call_records_include_tags(
         ]
     )
     followup_response = make_text_response("Got it!")
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_save = AsyncMock(return_value=ToolResult(content="Saved rate = $50/hr"))
     tool = Tool(
         name="save_fact",
         description="Save a fact",
         function=mock_save,
-        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+        params_model=_KeyValueParams,
         tags={ToolTags.SAVES_MEMORY},
     )
 
@@ -163,14 +182,13 @@ async def test_agent_tool_call_records_include_tags(
     response = await agent.process_message("My rate is $50/hour")
 
     assert len(response.tool_calls) == 1
-    assert "tags" in response.tool_calls[0]
-    assert ToolTags.SAVES_MEMORY in response.tool_calls[0]["tags"]
+    assert ToolTags.SAVES_MEMORY in response.tool_calls[0].tags
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_memories_saved_uses_tags_not_name(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """memories_saved should be populated based on SAVES_MEMORY tag, not tool name."""
     tool_response = make_tool_call_response(
@@ -182,14 +200,14 @@ async def test_agent_memories_saved_uses_tags_not_name(
         ]
     )
     followup_response = make_text_response("Noted!")
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_fn = AsyncMock(return_value=ToolResult(content="Saved"))
     tool = Tool(
         name="custom_memory_saver",
         description="Custom memory saver",
         function=mock_fn,
-        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+        params_model=_KeyValueParams,
         tags={ToolTags.SAVES_MEMORY},
     )
 
@@ -202,9 +220,9 @@ async def test_agent_memories_saved_uses_tags_not_name(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_untagged_tool_has_empty_tags(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """Tool without tags should produce tool_call record with empty tags set."""
     tool_response = make_tool_call_response(
@@ -216,14 +234,14 @@ async def test_agent_untagged_tool_has_empty_tags(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_fn = AsyncMock(return_value=ToolResult(content="ok"))
     tool = Tool(
         name="some_tool",
         description="A tool",
         function=mock_fn,
-        parameters={"type": "object", "properties": {"q": {}}},
+        params_model=_QParams,
     )
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
@@ -231,7 +249,7 @@ async def test_agent_untagged_tool_has_empty_tags(
     response = await agent.process_message("hello")
 
     assert len(response.tool_calls) == 1
-    assert response.tool_calls[0]["tags"] == set()
+    assert response.tool_calls[0].tags == set()
     assert len(response.memories_saved) == 0
 
 

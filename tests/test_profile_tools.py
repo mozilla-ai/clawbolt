@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import json
 from collections.abc import Awaitable, Callable
-from typing import Any
 
 import pytest
 from sqlalchemy.orm import Session
 
+from backend.app.agent.context import StoredToolInteraction
 from backend.app.agent.tools.base import ToolResult
 from backend.app.agent.tools.profile_tools import (
     _format_profile,
@@ -408,13 +408,13 @@ async def test_update_profile_various_rate_formats(
 
 def test_extract_from_update_profile_calls() -> None:
     """Should extract profile fields from update_profile tool call records."""
-    tool_calls: list[dict[str, Any]] = [
-        {
-            "name": "update_profile",
-            "args": {"name": "Mike", "trade": "Electrician"},
-            "result": "Profile updated: name, trade",
-            "is_error": False,
-        },
+    tool_calls = [
+        StoredToolInteraction(
+            name="update_profile",
+            args={"name": "Mike", "trade": "Electrician"},
+            result="Profile updated: name, trade",
+            is_error=False,
+        ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates["name"] == "Mike"
@@ -423,13 +423,13 @@ def test_extract_from_update_profile_calls() -> None:
 
 def test_extract_from_update_profile_with_rate() -> None:
     """Should extract and parse hourly rate from update_profile calls."""
-    tool_calls: list[dict[str, Any]] = [
-        {
-            "name": "update_profile",
-            "args": {"hourly_rate": "$85/hr"},
-            "result": "Profile updated: hourly_rate",
-            "is_error": False,
-        },
+    tool_calls = [
+        StoredToolInteraction(
+            name="update_profile",
+            args={"hourly_rate": "$85/hr"},
+            result="Profile updated: hourly_rate",
+            is_error=False,
+        ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates["hourly_rate"] == 85.0
@@ -437,13 +437,13 @@ def test_extract_from_update_profile_with_rate() -> None:
 
 def test_extract_from_update_profile_with_communication_style() -> None:
     """Should extract communication style as preferences_json."""
-    tool_calls: list[dict[str, Any]] = [
-        {
-            "name": "update_profile",
-            "args": {"communication_style": "casual and brief"},
-            "result": "Profile updated: communication_style",
-            "is_error": False,
-        },
+    tool_calls = [
+        StoredToolInteraction(
+            name="update_profile",
+            args={"communication_style": "casual and brief"},
+            result="Profile updated: communication_style",
+            is_error=False,
+        ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert "preferences_json" in updates
@@ -453,13 +453,13 @@ def test_extract_from_update_profile_with_communication_style() -> None:
 
 def test_extract_ignores_non_update_profile_tools() -> None:
     """Should ignore tool calls that are not update_profile."""
-    tool_calls: list[dict[str, Any]] = [
-        {
-            "name": "save_fact",
-            "args": {"key": "name", "value": "Mike"},
-            "result": "Saved: name = Mike",
-            "is_error": False,
-        },
+    tool_calls = [
+        StoredToolInteraction(
+            name="save_fact",
+            args={"key": "name", "value": "Mike"},
+            result="Saved: name = Mike",
+            is_error=False,
+        ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates == {}
@@ -467,13 +467,13 @@ def test_extract_ignores_non_update_profile_tools() -> None:
 
 def test_extract_ignores_error_tool_calls() -> None:
     """Should ignore update_profile calls that had errors."""
-    tool_calls: list[dict[str, Any]] = [
-        {
-            "name": "update_profile",
-            "args": {"hourly_rate": "varies"},
-            "result": "Could not parse hourly rate",
-            "is_error": True,
-        },
+    tool_calls = [
+        StoredToolInteraction(
+            name="update_profile",
+            args={"hourly_rate": "varies"},
+            result="Could not parse hourly rate",
+            is_error=True,
+        ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates == {}
@@ -481,19 +481,19 @@ def test_extract_ignores_error_tool_calls() -> None:
 
 def test_extract_multiple_update_profile_calls() -> None:
     """Should merge results from multiple update_profile calls."""
-    tool_calls: list[dict[str, Any]] = [
-        {
-            "name": "update_profile",
-            "args": {"name": "Jake"},
-            "result": "Profile updated: name",
-            "is_error": False,
-        },
-        {
-            "name": "update_profile",
-            "args": {"trade": "Plumber", "location": "Portland"},
-            "result": "Profile updated: trade, location",
-            "is_error": False,
-        },
+    tool_calls = [
+        StoredToolInteraction(
+            name="update_profile",
+            args={"name": "Jake"},
+            result="Profile updated: name",
+            is_error=False,
+        ),
+        StoredToolInteraction(
+            name="update_profile",
+            args={"trade": "Plumber", "location": "Portland"},
+            result="Profile updated: trade, location",
+            is_error=False,
+        ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates["name"] == "Jake"
@@ -503,10 +503,10 @@ def test_extract_multiple_update_profile_calls() -> None:
 
 def test_extract_all_fields() -> None:
     """Should extract all supported profile fields."""
-    tool_calls: list[dict[str, Any]] = [
-        {
-            "name": "update_profile",
-            "args": {
+    tool_calls = [
+        StoredToolInteraction(
+            name="update_profile",
+            args={
                 "name": "Sarah",
                 "trade": "Electrician",
                 "location": "Austin, TX",
@@ -515,9 +515,9 @@ def test_extract_all_fields() -> None:
                 "communication_style": "formal",
                 "soul_text": "I specialize in rewiring.",
             },
-            "result": "Profile updated: all fields",
-            "is_error": False,
-        },
+            result="Profile updated: all fields",
+            is_error=False,
+        ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates["name"] == "Sarah"

@@ -7,7 +7,7 @@ from backend.app.agent.memory import save_memory
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import Contractor, Conversation, Memory, Message
 from backend.app.services.messaging import MessagingService
-from tests.mocks.llm import make_text_response
+from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
 @pytest.fixture()
@@ -118,9 +118,9 @@ async def test_recall_multiple_facts(db_session: Session, test_contractor: Contr
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_recall_end_to_end_save_then_query(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     conversation: Conversation,
@@ -147,13 +147,11 @@ async def test_recall_end_to_end_save_then_query(
     db_session.refresh(recall_msg)
 
     # Mock agent using recall_facts tool and returning answer
-    recall_response = make_text_response("You quoted $4,500 for the Johnson 12x12 composite deck.")
-    tool_call = MagicMock()
-    tool_call.id = "call_recall_0"
-    tool_call.function.name = "recall_facts"
-    tool_call.function.arguments = '{"query": "johnson deck"}'
-    recall_response.choices[0].message.tool_calls = [tool_call]
-    mock_acompletion.return_value = recall_response  # type: ignore[union-attr]
+    tool_response = make_tool_call_response(
+        [{"name": "recall_facts", "arguments": '{"query": "johnson deck"}', "id": "call_recall_0"}]
+    )
+    text_response = make_text_response("You quoted $4,500 for the Johnson 12x12 composite deck.")
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
         db=db_session,
@@ -168,9 +166,9 @@ async def test_recall_end_to_end_save_then_query(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_system_prompt_includes_recall_guidance(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     conversation: Conversation,
@@ -186,7 +184,7 @@ async def test_system_prompt_includes_recall_guidance(
     db_session.commit()
     db_session.refresh(msg)
 
-    mock_acompletion.return_value = make_text_response("Let me check my memory.")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Let me check my memory.")  # type: ignore[union-attr]
 
     await handle_inbound_message(
         db=db_session,
@@ -196,11 +194,11 @@ async def test_system_prompt_includes_recall_guidance(
         messaging_service=mock_messaging,
     )
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
-    assert "Recall Behavior" in system_msg
-    assert "search your memory" in system_msg.lower()
-    assert "don't make things up" in system_msg
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["system"]
+    assert "Recall Behavior" in system_prompt
+    assert "search your memory" in system_prompt.lower()
+    assert "don't make things up" in system_prompt
 
 
 @pytest.mark.asyncio()

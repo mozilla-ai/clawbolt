@@ -39,6 +39,7 @@ class StoredToolInteraction(BaseModel):
     args: dict[str, Any] = Field(default_factory=dict)
     result: str = ""
     is_error: bool = False
+    tags: set[str] = Field(default_factory=set, exclude=True)
 
 
 async def _run_compaction_in_background(

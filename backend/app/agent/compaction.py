@@ -10,10 +10,11 @@ import json
 import logging
 from typing import Any, cast
 
-from any_llm import acompletion
-from any_llm.types.completion import ChatCompletion
+from any_llm import amessages
+from any_llm.types.messages import MessageResponse
 from sqlalchemy.orm import Session
 
+from backend.app.agent.llm_parsing import get_response_text
 from backend.app.agent.memory import save_memory
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.config import settings
@@ -130,18 +131,18 @@ async def compact_session(
     provider = settings.compaction_provider or settings.llm_provider
 
     messages: list[dict[str, Any]] = [
-        {"role": "system", "content": COMPACTION_SYSTEM_PROMPT},
         {"role": "user", "content": conversation_text},
     ]
 
     try:
         response = cast(
-            ChatCompletion,
-            await acompletion(
+            MessageResponse,
+            await amessages(
                 model=model,
                 provider=provider,
                 api_base=settings.llm_api_base,
-                messages=messages,  # type: ignore[arg-type]
+                system=COMPACTION_SYSTEM_PROMPT,
+                messages=messages,
                 max_tokens=settings.compaction_max_tokens,
             ),
         )
@@ -149,7 +150,7 @@ async def compact_session(
         logger.exception("Compaction LLM call failed for contractor %d", contractor_id)
         return [], None
 
-    raw_content = response.choices[0].message.content or ""
+    raw_content = get_response_text(response)
     facts = _parse_compaction_response(raw_content)
 
     saved_facts: list[dict[str, str]] = []

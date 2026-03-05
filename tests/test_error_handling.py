@@ -43,16 +43,16 @@ def mock_messaging() -> MessagingService:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_llm_failure_returns_friendly_message(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
     mock_messaging: MessagingService,
 ) -> None:
     """When agent LLM fails, should return a friendly error message."""
-    mock_acompletion.side_effect = Exception("LLM API timeout")  # type: ignore[union-attr]
+    mock_amessages.side_effect = Exception("LLM API timeout")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
         db=db_session,
@@ -67,9 +67,9 @@ async def test_agent_llm_failure_returns_friendly_message(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_all_media_download_failure_adds_note(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
@@ -77,7 +77,7 @@ async def test_all_media_download_failure_adds_note(
 ) -> None:
     """When all media downloads fail, context should include a note."""
     mock_messaging.download_media.side_effect = Exception("Download failed")  # type: ignore[union-attr]
-    mock_acompletion.return_value = make_text_response("Got your message!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Got your message!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
         db=db_session,
@@ -90,17 +90,17 @@ async def test_all_media_download_failure_adds_note(
     # Agent should still process (text-only fallback)
     assert response.reply_text == "Got your message!"
     # The system note about download failure should have been in the context
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
     user_msg = call_args.kwargs["messages"][-1]["content"]
     assert "couldn't download" in user_msg
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
 async def test_partial_media_success(
     mock_vision: AsyncMock,
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
@@ -120,7 +120,7 @@ async def test_partial_media_success(
         Exception("Download failed"),
     ]
     mock_vision.return_value = "A nice deck photo."
-    mock_acompletion.return_value = make_text_response("I can see the deck!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("I can see the deck!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
         db=db_session,
@@ -139,16 +139,16 @@ async def test_partial_media_success(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_messaging_send_failure_still_stores_message(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
     mock_messaging: MessagingService,
 ) -> None:
     """When messaging send fails, outbound message should still be stored."""
-    mock_acompletion.return_value = make_text_response("Here's your answer!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Here's your answer!")  # type: ignore[union-attr]
     mock_messaging.send_text.side_effect = Exception("Messaging service outage")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -169,11 +169,11 @@ async def test_messaging_send_failure_still_stores_message(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.router.process_message_media", new_callable=AsyncMock)
 async def test_media_pipeline_failure_falls_back_to_text(
     mock_pipeline: AsyncMock,
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     inbound_message: Message,
@@ -198,7 +198,7 @@ async def test_media_pipeline_failure_falls_back_to_text(
             combined_context="[Text message]: 'Hello, I need help'",
         ),
     ]
-    mock_acompletion.return_value = make_text_response("I can help!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("I can help!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
         db=db_session,
