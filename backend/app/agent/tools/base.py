@@ -41,8 +41,7 @@ class Tool:
     name: str
     description: str
     function: Callable[..., Awaitable[ToolResult]]
-    parameters: dict[str, Any] = field(default_factory=dict)
-    params_model: type[BaseModel] | None = None
+    params_model: type[BaseModel]
     tags: set[ToolTags] = field(default_factory=set)
     usage_hint: str = ""
 
@@ -80,20 +79,14 @@ def tool_to_function_schema(tool: Tool) -> dict[str, Any]:
 
     The JSON Schema is generated from the tool's ``params_model``
     (Pydantic BaseModel), which is the single source of truth for
-    parameter definitions.  Falls back to the raw ``parameters`` dict
-    only for backward compatibility with tests that create tools
-    without a ``params_model``.
+    parameter definitions.
     """
-    if tool.params_model is not None:
-        schema = tool.params_model.model_json_schema()
-        schema = _inline_refs(schema)
-        schema = _strip_titles(schema)
-        input_schema = schema
-    else:
-        input_schema = tool.parameters
+    schema = tool.params_model.model_json_schema()
+    schema = _inline_refs(schema)
+    schema = _strip_titles(schema)
 
     return {
         "name": tool.name,
         "description": tool.description,
-        "input_schema": input_schema,
+        "input_schema": schema,
     }

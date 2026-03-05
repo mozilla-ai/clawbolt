@@ -187,13 +187,7 @@ def _format_validation_error(tool_name: str, exc: ValidationError, tool: Tool | 
 
 def _summarize_tool_params(tool: Tool) -> str:
     """Build a concise parameter summary string from a tool's schema."""
-    if tool.params_model is not None:
-        schema = tool.params_model.model_json_schema()
-    elif tool.parameters:
-        schema = tool.parameters
-    else:
-        return ""
-
+    schema = tool.params_model.model_json_schema()
     props = schema.get("properties", {})
     required = set(schema.get("required", []))
     if not props:
@@ -508,16 +502,13 @@ class ClawboltAgent:
     def _validate_tool_args(
         self, tool: Tool, tool_args: dict[str, Any]
     ) -> tuple[dict[str, Any], str | None]:
-        """Validate tool arguments against the tool's params_model if present.
+        """Validate tool arguments against the tool's params_model.
 
         Returns a tuple of (validated_args, error_message). When validation
         succeeds, error_message is None and validated_args contains the
         coerced values. When validation fails, error_message contains a
         structured description of the field errors.
         """
-        if tool.params_model is None:
-            return tool_args, None
-
         try:
             validated = tool.params_model.model_validate(tool_args)
             return validated.model_dump(), None

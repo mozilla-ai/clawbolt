@@ -35,6 +35,25 @@ class _EmptyParams(BaseModel):
     """Minimal params model used by registry tests that need a valid tool."""
 
 
+class _KeyValueParams(BaseModel):
+    """Params model for tools accepting key/value pairs."""
+
+    key: str
+    value: str
+
+
+class _QueryParams(BaseModel):
+    """Params model for tools accepting a query."""
+
+    query: str
+
+
+class _DescriptionParams(BaseModel):
+    """Params model for tools accepting a description."""
+
+    description: str
+
+
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_responds_to_message(
@@ -106,14 +125,14 @@ async def test_system_prompt_includes_tool_hints(
             name="save_fact",
             description="Save a fact",
             function=dummy,
-            parameters={},
+            params_model=_EmptyParams,
             usage_hint="When you learn new info, save it.",
         ),
         Tool(
             name="recall_facts",
             description="Recall facts",
             function=dummy,
-            parameters={},
+            params_model=_EmptyParams,
             usage_hint="Search memory for relevant information.",
         ),
     ]
@@ -162,14 +181,14 @@ async def test_system_prompt_skips_tools_without_hints(
             name="tool_with_hint",
             description="Has a hint",
             function=dummy,
-            parameters={},
+            params_model=_EmptyParams,
             usage_hint="This tool does something useful.",
         ),
         Tool(
             name="tool_without_hint",
             description="No hint",
             function=dummy,
-            parameters={},
+            params_model=_EmptyParams,
         ),
     ]
 
@@ -224,7 +243,7 @@ async def test_agent_tool_loop_sends_results_back(
         name="save_fact",
         description="Save a fact",
         function=mock_save,
-        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+        params_model=_KeyValueParams,
     )
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
@@ -267,7 +286,7 @@ async def test_agent_tool_loop_includes_tool_results_in_followup(
         name="recall_facts",
         description="Recall facts",
         function=mock_recall,
-        parameters={"type": "object", "properties": {"query": {}}},
+        params_model=_QueryParams,
     )
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
@@ -330,13 +349,13 @@ async def test_agent_multi_round_tool_calls(
                 name="recall_facts",
                 description="Recall facts",
                 function=mock_recall,
-                parameters={"type": "object", "properties": {"query": {}}},
+                params_model=_QueryParams,
             ),
             Tool(
                 name="generate_estimate",
                 description="Generate estimate",
                 function=mock_estimate,
-                parameters={"type": "object", "properties": {"description": {}}},
+                params_model=_DescriptionParams,
             ),
         ]
     )
@@ -392,7 +411,7 @@ async def test_agent_tool_loop_respects_max_rounds(
                 name="recall_facts",
                 description="Recall facts",
                 function=mock_recall,
-                parameters={"type": "object", "properties": {"query": {}}},
+                params_model=_QueryParams,
             ),
         ]
     )
@@ -438,7 +457,7 @@ async def test_agent_handles_malformed_tool_arguments(
         name="save_fact",
         description="Save a fact",
         function=mock_save,
-        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+        params_model=_KeyValueParams,
     )
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
@@ -479,7 +498,7 @@ async def test_agent_passes_dict_arguments_to_tool(
         name="save_fact",
         description="Save a fact",
         function=mock_save,
-        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+        params_model=_KeyValueParams,
     )
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
@@ -1047,8 +1066,8 @@ def test_register_tools_builds_dict_lookup(
         return ToolResult(content="ok")
 
     tools = [
-        Tool(name="tool_a", description="A", function=dummy, parameters={}),
-        Tool(name="tool_b", description="B", function=dummy, parameters={}),
+        Tool(name="tool_a", description="A", function=dummy, params_model=_EmptyParams),
+        Tool(name="tool_b", description="B", function=dummy, params_model=_EmptyParams),
     ]
     agent.register_tools(tools)
 
@@ -1069,8 +1088,8 @@ def test_register_tools_warns_on_duplicate_name(
         return ToolResult(content="ok")
 
     tools = [
-        Tool(name="dupe", description="First", function=dummy, parameters={}),
-        Tool(name="dupe", description="Second", function=dummy, parameters={}),
+        Tool(name="dupe", description="First", function=dummy, params_model=_EmptyParams),
+        Tool(name="dupe", description="Second", function=dummy, params_model=_EmptyParams),
     ]
 
     with caplog.at_level("WARNING", logger="backend.app.agent.core"):
@@ -1096,7 +1115,9 @@ async def test_tool_result_error_appends_hint(
     async def failing_tool(**kwargs: object) -> ToolResult:
         return ToolResult(content="Error: item not found", is_error=True)
 
-    tool = Tool(name="do_thing", description="test", function=failing_tool, parameters={})
+    tool = Tool(
+        name="do_thing", description="test", function=failing_tool, params_model=_EmptyParams
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1127,7 +1148,7 @@ async def test_tool_result_success_no_hint(
     async def ok_tool(**kwargs: object) -> ToolResult:
         return ToolResult(content="Done!")
 
-    tool = Tool(name="do_thing", description="test", function=ok_tool, parameters={})
+    tool = Tool(name="do_thing", description="test", function=ok_tool, params_model=_EmptyParams)
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1157,7 +1178,9 @@ async def test_tool_exception_appends_hint(
     async def crashing_tool(**kwargs: object) -> ToolResult:
         raise RuntimeError("Something broke")
 
-    tool = Tool(name="bad_tool", description="test", function=crashing_tool, parameters={})
+    tool = Tool(
+        name="bad_tool", description="test", function=crashing_tool, params_model=_EmptyParams
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1191,8 +1214,15 @@ async def test_unknown_tool_error_lists_available_tools(
         return ToolResult(content="ok")
 
     tools = [
-        Tool(name="save_fact", description="Save a fact", function=dummy, parameters={}),
-        Tool(name="recall_facts", description="Recall facts", function=dummy, parameters={}),
+        Tool(
+            name="save_fact", description="Save a fact", function=dummy, params_model=_EmptyParams
+        ),
+        Tool(
+            name="recall_facts",
+            description="Recall facts",
+            function=dummy,
+            params_model=_EmptyParams,
+        ),
     ]
 
     # LLM calls a tool that doesn't exist
@@ -1251,7 +1281,6 @@ async def test_validation_error_includes_expected_schema(
         name="save_fact",
         description="Save a fact",
         function=save_fact,
-        parameters={},
         params_model=FactParams,
     )
 
@@ -1311,7 +1340,9 @@ async def test_error_kind_not_found_produces_specific_hint(
             error_kind=ToolErrorKind.NOT_FOUND,
         )
 
-    tool = Tool(name="find_item", description="test", function=missing_tool, parameters={})
+    tool = Tool(
+        name="find_item", description="test", function=missing_tool, params_model=_EmptyParams
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1345,7 +1376,9 @@ async def test_error_kind_service_produces_specific_hint(
             error_kind=ToolErrorKind.SERVICE,
         )
 
-    tool = Tool(name="upload", description="test", function=failing_service, parameters={})
+    tool = Tool(
+        name="upload", description="test", function=failing_service, params_model=_EmptyParams
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1378,7 +1411,9 @@ async def test_error_kind_validation_produces_specific_hint(
             error_kind=ToolErrorKind.VALIDATION,
         )
 
-    tool = Tool(name="create_thing", description="test", function=bad_args_tool, parameters={})
+    tool = Tool(
+        name="create_thing", description="test", function=bad_args_tool, params_model=_EmptyParams
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1411,7 +1446,9 @@ async def test_error_kind_internal_produces_specific_hint(
             error_kind=ToolErrorKind.INTERNAL,
         )
 
-    tool = Tool(name="broken_tool", description="test", function=buggy_tool, parameters={})
+    tool = Tool(
+        name="broken_tool", description="test", function=buggy_tool, params_model=_EmptyParams
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1440,7 +1477,12 @@ async def test_error_with_no_kind_uses_default_hint(
     async def legacy_error_tool(**kwargs: object) -> ToolResult:
         return ToolResult(content="Error: something went wrong", is_error=True)
 
-    tool = Tool(name="legacy_tool", description="test", function=legacy_error_tool, parameters={})
+    tool = Tool(
+        name="legacy_tool",
+        description="test",
+        function=legacy_error_tool,
+        params_model=_EmptyParams,
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1474,7 +1516,12 @@ async def test_error_with_custom_hint_overrides_kind_default(
             hint="Ask the user for the correct estimate number.",
         )
 
-    tool = Tool(name="get_estimate", description="test", function=custom_hint_tool, parameters={})
+    tool = Tool(
+        name="get_estimate",
+        description="test",
+        function=custom_hint_tool,
+        params_model=_EmptyParams,
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1512,7 +1559,9 @@ async def test_different_error_kinds_produce_different_hints(
                 error_kind=error_kind,
             )
 
-        tool = Tool(name="test_tool", description="test", function=make_tool, parameters={})
+        tool = Tool(
+            name="test_tool", description="test", function=make_tool, params_model=_EmptyParams
+        )
 
         mock_amessages.reset_mock()
         mock_amessages.side_effect = [
@@ -1547,7 +1596,9 @@ async def test_unhandled_exception_uses_internal_hint(
     async def crashing_tool(**kwargs: object) -> ToolResult:
         raise RuntimeError("Unexpected crash")
 
-    tool = Tool(name="crash_tool", description="test", function=crashing_tool, parameters={})
+    tool = Tool(
+        name="crash_tool", description="test", function=crashing_tool, params_model=_EmptyParams
+    )
 
     mock_amessages.side_effect = [
         make_tool_call_response(
@@ -1618,7 +1669,14 @@ class TestToolRegistry:
         registry = ToolRegistry()
 
         def storage_factory(ctx: ToolContext) -> list[Tool]:
-            return [Tool(name="needs_storage", description="test", function=lambda: None)]
+            return [
+                Tool(
+                    name="needs_storage",
+                    description="test",
+                    function=lambda: None,
+                    params_model=_EmptyParams,
+                )
+            ]
 
         registry.register("storage_tool", storage_factory, requires_storage=True)
         ctx = ToolContext(db=db_session, contractor=test_contractor, storage=None)
@@ -1634,7 +1692,14 @@ class TestToolRegistry:
         registry = ToolRegistry()
 
         def msg_factory(ctx: ToolContext) -> list[Tool]:
-            return [Tool(name="needs_messaging", description="test", function=lambda: None)]
+            return [
+                Tool(
+                    name="needs_messaging",
+                    description="test",
+                    function=lambda: None,
+                    params_model=_EmptyParams,
+                )
+            ]
 
         registry.register("msg_tool", msg_factory, requires_messaging=True)
         ctx = ToolContext(db=db_session, contractor=test_contractor, messaging_service=None)

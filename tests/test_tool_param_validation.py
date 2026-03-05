@@ -66,23 +66,6 @@ def test_tool_to_function_schema_uses_params_model() -> None:
     assert "count" not in params.get("required", [])
 
 
-def test_tool_to_function_schema_falls_back_to_raw_dict() -> None:
-    """When no params_model is set, raw parameters dict should be used."""
-
-    async def dummy(**kwargs: object) -> ToolResult:
-        return ToolResult(content="ok")
-
-    raw_params = {"type": "object", "properties": {"x": {"type": "string"}}}
-    tool = Tool(
-        name="sample",
-        description="A sample tool",
-        function=dummy,
-        parameters=raw_params,
-    )
-    schema = tool_to_function_schema(tool)
-    assert schema["input_schema"] is raw_params
-
-
 # ---------------------------------------------------------------------------
 # Param model existence tests: every tool module defines models
 # ---------------------------------------------------------------------------
@@ -363,38 +346,6 @@ async def test_agent_validation_wrong_type_returns_field_error(
     error_result = response.tool_calls[0]["result"]
     assert "value" in error_result
     assert "Validation error for typed_tool" in error_result
-
-
-# ---------------------------------------------------------------------------
-# Registry enforcement: tools without params_model are rejected
-# ---------------------------------------------------------------------------
-
-
-def test_registry_rejects_tool_without_params_model() -> None:
-    """Registry should raise ValueError for tools without params_model."""
-    from unittest.mock import MagicMock
-
-    from backend.app.agent.tools.registry import ToolContext, ToolRegistry
-
-    async def dummy(**kwargs: object) -> ToolResult:
-        return ToolResult(content="ok")
-
-    def bad_factory(ctx: ToolContext) -> list[Tool]:
-        return [
-            Tool(
-                name="legacy_tool",
-                description="No params_model",
-                function=dummy,
-                parameters={"type": "object", "properties": {}},
-            )
-        ]
-
-    registry = ToolRegistry()
-    registry.register("bad", bad_factory)
-
-    ctx = ToolContext(db=MagicMock(), contractor=MagicMock())
-    with pytest.raises(ValueError, match="missing a params_model"):
-        registry.create_tools(ctx)
 
 
 def test_update_profile_params_accepts_partial_update() -> None:

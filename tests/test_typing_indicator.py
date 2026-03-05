@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
@@ -12,6 +13,13 @@ from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import Contractor
 from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
+
+
+class _InputParams(BaseModel):
+    """Params model for tools accepting an input parameter."""
+
+    input: str
+
 
 # ---------------------------------------------------------------------------
 # ClawboltAgent typing indicator tests
@@ -56,11 +64,7 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
         name="test_tool",
         description="A test tool",
         function=mock_tool_fn,
-        parameters={
-            "type": "object",
-            "properties": {"input": {"type": "string"}},
-            "required": ["input"],
-        },
+        params_model=_InputParams,
     )
 
     # First call returns a tool call, second call returns a text response

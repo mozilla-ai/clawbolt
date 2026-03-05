@@ -195,23 +195,6 @@ def test_tool_to_function_schema_simple_model() -> None:
     assert '"title"' not in json.dumps(schema)
 
 
-def test_tool_to_function_schema_fallback_to_raw_parameters() -> None:
-    """When no params_model, should use raw parameters dict as-is."""
-    raw_params: dict[str, Any] = {
-        "type": "object",
-        "properties": {"x": {"type": "integer"}},
-        "required": ["x"],
-    }
-    tool = Tool(
-        name="raw",
-        description="A raw tool",
-        function=_dummy_func,
-        parameters=raw_params,
-    )
-    schema = tool_to_function_schema(tool)
-    assert schema["input_schema"] == raw_params
-
-
 def test_estimate_line_item_params_ge_constraints() -> None:
     """EstimateLineItemParams should enforce ge=0 on quantity and unit_price."""
     # Valid values

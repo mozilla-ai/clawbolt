@@ -4,6 +4,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
@@ -18,6 +19,17 @@ from backend.app.agent.events import (
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
+
+
+class _EmptyParams(BaseModel):
+    """Minimal params model for tools with no parameters."""
+
+
+class _KeyValueParams(BaseModel):
+    """Params model for tools accepting key/value pairs."""
+
+    key: str
+    value: str
 
 
 @pytest.fixture()
@@ -76,7 +88,7 @@ async def test_events_emitted_for_tool_call(
                 name="save_fact",
                 description="Save a fact",
                 function=mock_tool,
-                parameters={"type": "object", "properties": {}},
+                params_model=_KeyValueParams,
             )
         ]
     )
