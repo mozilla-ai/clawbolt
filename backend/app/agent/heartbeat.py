@@ -15,15 +15,17 @@ import logging
 import re
 import zoneinfo
 from dataclasses import dataclass, field
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 from any_llm import amessages
 from any_llm.types.messages import MessageResponse
+from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.llm_parsing import parse_tool_calls
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt
+from backend.app.agent.tools.base import params_to_input_schema
 from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel, get_default_channel
 from backend.app.config import settings
@@ -52,36 +54,24 @@ logger = logging.getLogger(__name__)
 # Data structures
 # ---------------------------------------------------------------------------
 
-# Tool schema for the heartbeat compose_message tool (Anthropic Messages API format)
+
+class ComposeMessageParams(BaseModel):
+    """Parameters for the heartbeat compose_message tool."""
+
+    action: Literal["send_message", "no_action"]
+    message: str = Field(
+        default="", description="The message to send (required if action is send_message)"
+    )
+    reasoning: str = Field(description="Brief explanation of why this action was chosen")
+    priority: int = Field(ge=1, le=5, description="Priority level from 1 (lowest) to 5 (highest)")
+
+
 COMPOSE_MESSAGE_TOOL: dict[str, Any] = {
     "name": ToolName.COMPOSE_MESSAGE,
     "description": (
         "Compose a proactive message to send to the contractor, or decide no message is needed."
     ),
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "action": {
-                "type": "string",
-                "enum": ["send_message", "no_action"],
-            },
-            "message": {
-                "type": "string",
-                "description": "The message to send (required if action is send_message)",
-            },
-            "reasoning": {
-                "type": "string",
-                "description": "Brief explanation of why this action was chosen",
-            },
-            "priority": {
-                "type": "integer",
-                "minimum": 1,
-                "maximum": 5,
-                "description": "Priority level from 1 (lowest) to 5 (highest)",
-            },
-        },
-        "required": ["action", "reasoning", "priority"],
-    },
+    "input_schema": params_to_input_schema(ComposeMessageParams),
 }
 
 # Keywords that suggest a memory fact is time-sensitive
@@ -441,17 +431,22 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
             priority=0,
         )
 
-    data = tc.arguments
     try:
-        priority = int(data.get("priority", 3))
-    except (ValueError, TypeError):
-        priority = 3
+        params = ComposeMessageParams.model_validate(tc.arguments)
+    except ValidationError as exc:
+        logger.warning("Heartbeat tool call failed validation: %s", exc)
+        return HeartbeatAction(
+            action_type="no_action",
+            message="",
+            reasoning="Tool arguments failed validation",
+            priority=0,
+        )
 
     return HeartbeatAction(
-        action_type=data.get("action", "no_action"),
-        message=data.get("message", ""),
-        reasoning=data.get("reasoning", ""),
-        priority=priority,
+        action_type=params.action,
+        message=params.message,
+        reasoning=params.reasoning,
+        priority=params.priority,
     )
 
 

@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 from backend.app.agent.heartbeat import (
     COMPOSE_MESSAGE_TOOL,
     CheapCheckResult,
+    ComposeMessageParams,
     HeartbeatAction,
     HeartbeatScheduler,
     _is_checklist_item_due,
@@ -699,6 +700,12 @@ class TestComposeMessageToolSchema:
         assert priority_prop["minimum"] == 1
         assert priority_prop["maximum"] == 5
 
+    def test_schema_generated_from_pydantic_model(self) -> None:
+        """COMPOSE_MESSAGE_TOOL schema is generated from ComposeMessageParams."""
+        from backend.app.agent.tools.base import params_to_input_schema
+
+        assert COMPOSE_MESSAGE_TOOL["input_schema"] == params_to_input_schema(ComposeMessageParams)
+
 
 # ---------------------------------------------------------------------------
 # _parse_tool_call_response
@@ -802,8 +809,8 @@ class TestParseToolCallResponse:
         assert action.action_type == "no_action"
         assert action.priority == 0
 
-    def test_non_numeric_priority_defaults_to_3(self) -> None:
-        """Non-numeric priority value should default to 3 instead of crashing."""
+    def test_non_numeric_priority_falls_back_to_no_action(self) -> None:
+        """Non-numeric priority value triggers validation error and falls back to no_action."""
         resp = MessageResponse(
             id="msg_mock",
             content=[
@@ -824,8 +831,8 @@ class TestParseToolCallResponse:
             usage=MessageUsage(input_tokens=0, output_tokens=0),
         )
         action = _parse_tool_call_response(resp)
-        assert action.action_type == "send_message"
-        assert action.priority == 3
+        assert action.action_type == "no_action"
+        assert action.priority == 0
 
     def test_missing_optional_message_defaults_empty(self) -> None:
         """If the LLM omits the optional message field, it should default to empty."""

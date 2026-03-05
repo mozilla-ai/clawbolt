@@ -74,6 +74,18 @@ def _strip_titles(obj: Any) -> Any:
     return obj
 
 
+def params_to_input_schema(model: type[BaseModel]) -> dict[str, Any]:
+    """Generate a clean JSON Schema ``input_schema`` dict from a Pydantic model.
+
+    Useful for callers that need a schema without constructing a full ``Tool``
+    object (e.g. the heartbeat compose_message tool).
+    """
+    schema = model.model_json_schema()
+    schema = _inline_refs(schema)
+    schema = _strip_titles(schema)
+    return schema
+
+
 def tool_to_function_schema(tool: Tool) -> dict[str, Any]:
     """Convert a Tool to the Anthropic Messages API tool schema.
 
@@ -81,12 +93,8 @@ def tool_to_function_schema(tool: Tool) -> dict[str, Any]:
     (Pydantic BaseModel), which is the single source of truth for
     parameter definitions.
     """
-    schema = tool.params_model.model_json_schema()
-    schema = _inline_refs(schema)
-    schema = _strip_titles(schema)
-
     return {
         "name": tool.name,
         "description": tool.description,
-        "input_schema": schema,
+        "input_schema": params_to_input_schema(tool.params_model),
     }
