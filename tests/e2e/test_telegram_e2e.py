@@ -117,7 +117,7 @@ def test_webhook_to_reply_round_trip(
     expected_reply = "[clawbolt e2e] I can help with that deck estimate!"
 
     with patch(
-        "backend.app.agent.core.acompletion",
+        "backend.app.agent.core.amessages",
         new_callable=AsyncMock,
         return_value=make_text_response(expected_reply),
     ):

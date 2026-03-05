@@ -27,7 +27,7 @@ def agent(db_session: Session, test_contractor: Contractor) -> ClawboltAgent:
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_events_emitted_for_text_response(
     mock_prompt: AsyncMock,
@@ -57,7 +57,7 @@ async def test_events_emitted_for_text_response(
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_events_emitted_for_tool_call(
     mock_prompt: AsyncMock,
@@ -114,7 +114,7 @@ async def test_events_emitted_for_tool_call(
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_no_events_without_subscribers(
     mock_prompt: AsyncMock,
@@ -131,7 +131,7 @@ async def test_no_events_without_subscribers(
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_subscriber_error_does_not_crash_agent(
     mock_prompt: AsyncMock,
@@ -153,7 +153,7 @@ async def test_subscriber_error_does_not_crash_agent(
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_multiple_subscribers(
     mock_prompt: AsyncMock,

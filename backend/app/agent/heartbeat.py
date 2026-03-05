@@ -17,8 +17,8 @@ import zoneinfo
 from dataclasses import dataclass, field
 from typing import Any, cast
 
-from any_llm import acompletion
-from any_llm.types.completion import ChatCompletion
+from any_llm import amessages
+from any_llm.types.messages import MessageResponse
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
@@ -52,38 +52,35 @@ logger = logging.getLogger(__name__)
 # Data structures
 # ---------------------------------------------------------------------------
 
-# Tool schema for the heartbeat compose_message tool
+# Tool schema for the heartbeat compose_message tool (Anthropic Messages API format)
 COMPOSE_MESSAGE_TOOL: dict[str, Any] = {
-    "type": "function",
-    "function": {
-        "name": ToolName.COMPOSE_MESSAGE,
-        "description": (
-            "Compose a proactive message to send to the contractor, or decide no message is needed."
-        ),
-        "parameters": {
-            "type": "object",
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": ["send_message", "no_action"],
-                },
-                "message": {
-                    "type": "string",
-                    "description": "The message to send (required if action is send_message)",
-                },
-                "reasoning": {
-                    "type": "string",
-                    "description": "Brief explanation of why this action was chosen",
-                },
-                "priority": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 5,
-                    "description": "Priority level from 1 (lowest) to 5 (highest)",
-                },
+    "name": ToolName.COMPOSE_MESSAGE,
+    "description": (
+        "Compose a proactive message to send to the contractor, or decide no message is needed."
+    ),
+    "input_schema": {
+        "type": "object",
+        "properties": {
+            "action": {
+                "type": "string",
+                "enum": ["send_message", "no_action"],
             },
-            "required": ["action", "reasoning", "priority"],
+            "message": {
+                "type": "string",
+                "description": "The message to send (required if action is send_message)",
+            },
+            "reasoning": {
+                "type": "string",
+                "description": "Brief explanation of why this action was chosen",
+            },
+            "priority": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 5,
+                "description": "Priority level from 1 (lowest) to 5 (highest)",
+            },
         },
+        "required": ["action", "reasoning", "priority"],
     },
 }
 
@@ -403,7 +400,7 @@ async def build_heartbeat_context(
 # ---------------------------------------------------------------------------
 
 
-def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
+def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
     """Extract a HeartbeatAction from an LLM tool call response.
 
     If the LLM did not call the compose_message tool (e.g. returned plain text
@@ -413,7 +410,9 @@ def _parse_tool_call_response(response: ChatCompletion) -> HeartbeatAction:
 
     if not parsed:
         # LLM returned text instead of calling the tool: default to no_action
-        content = response.choices[0].message.content or ""
+        from backend.app.agent.llm_parsing import get_response_text
+
+        content = get_response_text(response)
         logger.warning("Heartbeat LLM returned text instead of tool call: %s", content[:200])
         return HeartbeatAction(
             action_type="no_action",
@@ -488,13 +487,13 @@ async def evaluate_heartbeat_need(
     provider = settings.heartbeat_provider or settings.llm_provider
 
     response = cast(
-        ChatCompletion,
-        await acompletion(
+        MessageResponse,
+        await amessages(
             model=model,
             provider=provider,
             api_base=settings.llm_api_base,
+            system=prompt,
             messages=[
-                {"role": "system", "content": prompt},
                 {
                     "role": "user",
                     "content": "Compose a proactive message based on the flags above.",

@@ -76,7 +76,7 @@ def _strip_titles(obj: Any) -> Any:
 
 
 def tool_to_function_schema(tool: Tool) -> dict[str, Any]:
-    """Convert a Tool to the function-calling schema expected by LLM providers.
+    """Convert a Tool to the Anthropic Messages API tool schema.
 
     The JSON Schema is generated from the tool's ``params_model``
     (Pydantic BaseModel), which is the single source of truth for
@@ -88,15 +88,12 @@ def tool_to_function_schema(tool: Tool) -> dict[str, Any]:
         schema = tool.params_model.model_json_schema()
         schema = _inline_refs(schema)
         schema = _strip_titles(schema)
-        parameters = schema
+        input_schema = schema
     else:
-        parameters = tool.parameters
+        input_schema = tool.parameters
 
     return {
-        "type": "function",
-        "function": {
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": parameters,
-        },
+        "name": tool.name,
+        "description": tool.description,
+        "input_schema": input_schema,
     }

@@ -10,9 +10,9 @@ from any_llm import (
     ContentFilterError,
     ContextLengthExceededError,
     RateLimitError,
-    acompletion,
+    amessages,
 )
-from any_llm.types.completion import ChatCompletion
+from any_llm.types.messages import MessageResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
@@ -25,7 +25,7 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from backend.app.agent.llm_parsing import parse_tool_calls
+from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -33,7 +33,7 @@ from backend.app.agent.messages import (
     ToolCallRequest,
     ToolResultMessage,
     UserMessage,
-    messages_to_dicts,
+    messages_to_messages_api,
 )
 from backend.app.agent.system_prompt import build_agent_system_prompt
 from backend.app.agent.tools.base import (
@@ -141,18 +141,14 @@ def _estimate_tokens(messages: list[AgentMessage]) -> int:
 
 def _log_token_estimation_drift(
     messages: list[AgentMessage],
-    response: ChatCompletion,
+    response: MessageResponse,
 ) -> None:
     """Log a warning when estimated token count drifts >30% from actual usage.
 
-    Uses ``response.usage.prompt_tokens`` (reported by the LLM provider) to
-    compare against our character-ratio estimate.  Not all providers return
-    usage data, so missing values are silently ignored.
+    Uses ``response.usage.input_tokens`` (reported by the LLM provider) to
+    compare against our character-ratio estimate.
     """
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return
-    actual = getattr(usage, "prompt_tokens", None)
+    actual = response.usage.input_tokens
     if not actual:
         return
 
@@ -373,25 +369,27 @@ class ClawboltAgent:
         messages: list[AgentMessage],
         tool_schemas: list[Any] | None,
         llm_kwargs: dict[str, Any],
-    ) -> ChatCompletion:
-        """Call acompletion with typed exception handling and retry logic.
+    ) -> MessageResponse:
+        """Call amessages with typed exception handling and retry logic.
 
-        Accepts typed ``AgentMessage`` objects and serializes them to dicts
-        at the LLM API boundary.  Handles RateLimitError (retry once after
-        delay) and ContextLengthExceededError (trim history and retry once).
+        Accepts typed ``AgentMessage`` objects and serializes them to
+        Anthropic Messages API format at the LLM boundary.  Handles
+        RateLimitError (retry once after delay) and
+        ContextLengthExceededError (trim history and retry once).
         ContentFilterError and AuthenticationError are re-raised with
         appropriate logging so the caller can produce a user-facing message.
         """
         await self._send_typing_indicator()
-        msg_dicts = messages_to_dicts(messages)
+        system, msg_dicts = messages_to_messages_api(messages)
         try:
             return cast(
-                ChatCompletion,
-                await acompletion(
+                MessageResponse,
+                await amessages(
                     model=settings.llm_model,
                     provider=settings.llm_provider,
                     api_base=settings.llm_api_base,
-                    messages=msg_dicts,  # type: ignore[arg-type]
+                    system=system,
+                    messages=msg_dicts,
                     tools=tool_schemas,
                     max_tokens=settings.llm_max_tokens_agent,
                     **llm_kwargs,
@@ -401,12 +399,13 @@ class ClawboltAgent:
             logger.warning("Rate limit hit, retrying after %.1fs delay", RATE_LIMIT_RETRY_DELAY)
             await asyncio.sleep(RATE_LIMIT_RETRY_DELAY)
             return cast(
-                ChatCompletion,
-                await acompletion(
+                MessageResponse,
+                await amessages(
                     model=settings.llm_model,
                     provider=settings.llm_provider,
                     api_base=settings.llm_api_base,
-                    messages=msg_dicts,  # type: ignore[arg-type]
+                    system=system,
+                    messages=msg_dicts,
                     tools=tool_schemas,
                     max_tokens=settings.llm_max_tokens_agent,
                     **llm_kwargs,
@@ -419,14 +418,15 @@ class ClawboltAgent:
                 len(messages),
                 len(trimmed),
             )
-            trimmed_dicts = messages_to_dicts(trimmed)
+            system, trimmed_dicts = messages_to_messages_api(trimmed)
             return cast(
-                ChatCompletion,
-                await acompletion(
+                MessageResponse,
+                await amessages(
                     model=settings.llm_model,
                     provider=settings.llm_provider,
                     api_base=settings.llm_api_base,
-                    messages=trimmed_dicts,  # type: ignore[arg-type]
+                    system=system,
+                    messages=trimmed_dicts,
                     tools=tool_schemas,
                     max_tokens=settings.llm_max_tokens_agent,
                     **llm_kwargs,
@@ -590,7 +590,7 @@ class ClawboltAgent:
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)
             if not parsed_raw:
-                reply_text = response.choices[0].message.content or ""
+                reply_text = get_response_text(response)
                 await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=False))
                 break
 
@@ -608,7 +608,7 @@ class ClawboltAgent:
             # Append the assistant message (with tool_calls) to conversation
             messages.append(
                 AssistantMessage(
-                    content=response.choices[0].message.content,
+                    content=get_response_text(response) or None,
                     tool_calls=parsed_calls,
                 )
             )
@@ -748,7 +748,7 @@ class ClawboltAgent:
             await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))
         else:
             # Max rounds reached -- use last response content
-            reply_text = response.choices[0].message.content or ""
+            reply_text = get_response_text(response)
 
         total_duration = (time.monotonic() - agent_start_time) * 1000
         await self._emit(

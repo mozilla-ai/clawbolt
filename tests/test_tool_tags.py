@@ -133,9 +133,9 @@ def test_messaging_tools_do_not_have_saves_memory_tag() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_tool_call_records_include_tags(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """Tool call records in AgentResponse should include tags from the Tool definition."""
     tool_response = make_tool_call_response(
@@ -147,7 +147,7 @@ async def test_agent_tool_call_records_include_tags(
         ]
     )
     followup_response = make_text_response("Got it!")
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_save = AsyncMock(return_value=ToolResult(content="Saved rate = $50/hr"))
     tool = Tool(
@@ -168,9 +168,9 @@ async def test_agent_tool_call_records_include_tags(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_memories_saved_uses_tags_not_name(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """memories_saved should be populated based on SAVES_MEMORY tag, not tool name."""
     tool_response = make_tool_call_response(
@@ -182,7 +182,7 @@ async def test_agent_memories_saved_uses_tags_not_name(
         ]
     )
     followup_response = make_text_response("Noted!")
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_fn = AsyncMock(return_value=ToolResult(content="Saved"))
     tool = Tool(
@@ -202,9 +202,9 @@ async def test_agent_memories_saved_uses_tags_not_name(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_untagged_tool_has_empty_tags(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, db_session: Session, test_contractor: Contractor
 ) -> None:
     """Tool without tags should produce tool_call record with empty tags set."""
     tool_response = make_tool_call_response(
@@ -216,7 +216,7 @@ async def test_agent_untagged_tool_has_empty_tags(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_fn = AsyncMock(return_value=ToolResult(content="ok"))
     tool = Tool(

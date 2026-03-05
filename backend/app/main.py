@@ -2,7 +2,7 @@ import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
-from any_llm import acompletion
+from any_llm import amessages
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -68,7 +68,7 @@ async def _verify_llm_settings() -> None:
 
     for label, provider, model in unique:
         try:
-            await acompletion(
+            await amessages(
                 model=model,
                 provider=provider,
                 api_base=settings.llm_api_base,

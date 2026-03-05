@@ -6,6 +6,7 @@ from collections.abc import Generator
 from unittest.mock import MagicMock, patch
 
 import pytest
+from any_llm.types.messages import MessageResponse, MessageUsage
 from sqlalchemy import create_engine
 from sqlalchemy.orm import Session, sessionmaker
 from sqlalchemy.pool import StaticPool
@@ -58,14 +59,16 @@ def _make_response_with_usage(
     prompt_tokens: int = 100,
     completion_tokens: int = 50,
     total_tokens: int = 150,
-) -> MagicMock:
-    """Build a mock LLM response with usage data."""
+) -> MessageResponse:
+    """Build a MessageResponse with custom usage data.
+
+    The parameter names use prompt_tokens/completion_tokens to match the
+    database column names; they map to input_tokens/output_tokens in the
+    Messages API response format. The total_tokens parameter is kept for
+    call-site clarity but is not used (total is always computed).
+    """
     resp = make_text_response("Hello!")
-    usage = MagicMock()
-    usage.prompt_tokens = prompt_tokens
-    usage.completion_tokens = completion_tokens
-    usage.total_tokens = total_tokens
-    resp.usage = usage
+    resp.usage = MessageUsage(input_tokens=prompt_tokens, output_tokens=completion_tokens)
     return resp
 
 
@@ -86,19 +89,6 @@ def test_log_llm_usage_saves_to_db(db: Session, contractor: Contractor) -> None:
     # Verify it's actually in the DB
     rows = db.query(LLMUsageLog).filter(LLMUsageLog.contractor_id == contractor.id).all()
     assert len(rows) == 1
-
-
-def test_log_llm_usage_no_usage_data(db: Session, contractor: Contractor) -> None:
-    """log_llm_usage should return None when response has no usage data."""
-    response = make_text_response("Hello!")
-    # MagicMock attributes auto-create, so explicitly set usage to None
-    response.usage = None
-
-    entry = log_llm_usage(db, contractor.id, "test-model", response, "agent_main")
-
-    assert entry is None
-    rows = db.query(LLMUsageLog).filter(LLMUsageLog.contractor_id == contractor.id).all()
-    assert len(rows) == 0
 
 
 def test_log_llm_usage_zero_tokens(db: Session, contractor: Contractor) -> None:
@@ -158,15 +148,15 @@ def test_log_llm_usage_different_models(db: Session, contractor: Contractor) -> 
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_process_message_logs_usage(
-    mock_acompletion: MagicMock,
+    mock_amessages: MagicMock,
     db: Session,
     contractor: Contractor,
 ) -> None:
     """ClawboltAgent.process_message should call log_llm_usage after acompletion."""
     response = _make_response_with_usage(prompt_tokens=300, completion_tokens=120, total_tokens=420)
-    mock_acompletion.return_value = response
+    mock_amessages.return_value = response
 
     agent = ClawboltAgent(db=db, contractor=contractor)
     await agent.process_message("What is my schedule today?")

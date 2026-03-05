@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy.orm import Session
@@ -17,6 +17,7 @@ from backend.app.agent.context import load_conversation_history
 from backend.app.agent.memory import get_all_memories
 from backend.app.agent.messages import AssistantMessage, UserMessage
 from backend.app.models import Contractor, Conversation, Message
+from tests.mocks.llm import make_text_response
 
 
 @pytest.fixture()
@@ -174,9 +175,7 @@ async def test_compact_session_extracts_and_saves_facts(
         ]
     )
 
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = llm_response_content
+    mock_response = make_text_response(llm_response_content)
 
     messages = [
         UserMessage(content="I usually charge $45 per square foot for composite decks"),
@@ -184,7 +183,7 @@ async def test_compact_session_extracts_and_saves_facts(
         UserMessage(content="Oh and Mr. Smith's number is 555-0123"),
     ]
 
-    with patch("backend.app.agent.compaction.acompletion", return_value=mock_response) as mock_llm:
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
         saved, max_id = await compact_session(db_session, test_contractor.id, messages)
 
     assert len(saved) == 2
@@ -207,8 +206,7 @@ async def test_compact_session_extracts_and_saves_facts(
     # Verify LLM was called with the system prompt
     mock_llm.assert_called_once()
     call_kwargs = mock_llm.call_args
-    call_messages = call_kwargs.kwargs.get("messages") or call_kwargs[1].get("messages")
-    assert call_messages[0]["content"] == COMPACTION_SYSTEM_PROMPT
+    assert call_kwargs.kwargs.get("system") == COMPACTION_SYSTEM_PROMPT
 
 
 @pytest.mark.asyncio()
@@ -216,15 +214,13 @@ async def test_compact_session_returns_max_message_id(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """compact_session should return the max_message_id when provided."""
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = json.dumps(
-        [{"key": "fact", "value": "val", "category": "general"}]
+    mock_response = make_text_response(
+        json.dumps([{"key": "fact", "value": "val", "category": "general"}])
     )
 
     messages = [UserMessage(content="test")]
 
-    with patch("backend.app.agent.compaction.acompletion", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         saved, max_id = await compact_session(
             db_session, test_contractor.id, messages, max_message_id=42
         )
@@ -238,7 +234,7 @@ async def test_compact_session_empty_messages(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """compact_session with no messages should return empty list without LLM call."""
-    with patch("backend.app.agent.compaction.acompletion") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages") as mock_llm:
         saved, max_id = await compact_session(db_session, test_contractor.id, [])
 
     assert saved == []
@@ -253,7 +249,7 @@ async def test_compact_session_disabled(db_session: Session, test_contractor: Co
 
     with (
         patch("backend.app.agent.compaction.settings") as mock_settings,
-        patch("backend.app.agent.compaction.acompletion") as mock_llm,
+        patch("backend.app.agent.compaction.amessages") as mock_llm,
     ):
         mock_settings.compaction_enabled = False
         saved, max_id = await compact_session(db_session, test_contractor.id, messages)
@@ -271,7 +267,7 @@ async def test_compact_session_llm_failure_returns_empty(
     messages = [UserMessage(content="Some content")]
 
     with patch(
-        "backend.app.agent.compaction.acompletion",
+        "backend.app.agent.compaction.amessages",
         side_effect=Exception("LLM unavailable"),
     ):
         saved, max_id = await compact_session(db_session, test_contractor.id, messages)
@@ -285,13 +281,11 @@ async def test_compact_session_invalid_llm_response(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """compact_session should handle unparseable LLM responses gracefully."""
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = "Sorry, I can't do that."
+    mock_response = make_text_response("Sorry, I can't do that.")
 
     messages = [UserMessage(content="Some content")]
 
-    with patch("backend.app.agent.compaction.acompletion", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         saved, max_id = await compact_session(db_session, test_contractor.id, messages)
 
     assert saved == []
@@ -303,16 +297,14 @@ async def test_compact_session_no_durable_facts(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """compact_session should handle LLM returning empty array (no facts)."""
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = "[]"
+    mock_response = make_text_response("[]")
 
     messages = [
         UserMessage(content="Hey there"),
         AssistantMessage(content="Hello! How can I help?"),
     ]
 
-    with patch("backend.app.agent.compaction.acompletion", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         saved, max_id = await compact_session(db_session, test_contractor.id, messages)
 
     assert saved == []
@@ -326,14 +318,12 @@ async def test_compact_session_uses_configured_model(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """compact_session should use compaction_model/provider when configured."""
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = "[]"
+    mock_response = make_text_response("[]")
 
     messages = [UserMessage(content="test")]
 
     with (
-        patch("backend.app.agent.compaction.acompletion", return_value=mock_response) as mock_llm,
+        patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm,
         patch("backend.app.agent.compaction.settings") as mock_settings,
     ):
         mock_settings.compaction_enabled = True
@@ -355,14 +345,12 @@ async def test_compact_session_falls_back_to_llm_model(
     db_session: Session, test_contractor: Contractor
 ) -> None:
     """compact_session should fall back to llm_model when compaction_model is empty."""
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = "[]"
+    mock_response = make_text_response("[]")
 
     messages = [UserMessage(content="test")]
 
     with (
-        patch("backend.app.agent.compaction.acompletion", return_value=mock_response) as mock_llm,
+        patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm,
         patch("backend.app.agent.compaction.settings") as mock_settings,
     ):
         mock_settings.compaction_enabled = True
@@ -405,11 +393,9 @@ async def test_load_history_triggers_compaction_when_full(
             {"key": "fact_from_compaction", "value": "extracted", "category": "general"},
         ]
     )
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = llm_response_content
+    mock_response = make_text_response(llm_response_content)
 
-    with patch("backend.app.agent.compaction.acompletion", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         # Use limit=5, so 3 messages are trimmed (8 total, 5 loaded, minus current = 4 history)
         history = await load_conversation_history(
             db_session, conversation.id, limit=5, contractor_id=test_contractor.id
@@ -443,13 +429,11 @@ async def test_load_history_updates_last_compacted_message_id(
         )
     db_session.commit()
 
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = json.dumps(
-        [{"key": "f", "value": "v", "category": "general"}]
+    mock_response = make_text_response(
+        json.dumps([{"key": "f", "value": "v", "category": "general"}])
     )
 
-    with patch("backend.app.agent.compaction.acompletion", return_value=mock_response):
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await load_conversation_history(
             db_session, conversation.id, limit=5, contractor_id=test_contractor.id
         )
@@ -497,13 +481,11 @@ async def test_load_history_skips_already_compacted_messages(
     conversation.last_compacted_message_id = all_msgs[1].id
     db_session.commit()
 
-    mock_response = AsyncMock()
-    mock_response.choices = [AsyncMock()]
-    mock_response.choices[0].message.content = json.dumps(
-        [{"key": "new_fact", "value": "from_remaining", "category": "general"}]
+    mock_response = make_text_response(
+        json.dumps([{"key": "new_fact", "value": "from_remaining", "category": "general"}])
     )
 
-    with patch("backend.app.agent.compaction.acompletion", return_value=mock_response) as mock_llm:
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
         await load_conversation_history(
             db_session, conversation.id, limit=5, contractor_id=test_contractor.id
         )
@@ -515,7 +497,8 @@ async def test_load_history_skips_already_compacted_messages(
     call_messages = mock_llm.call_args.kwargs.get("messages") or mock_llm.call_args[1].get(
         "messages"
     )
-    user_content = call_messages[1]["content"]
+    # System prompt is now passed via 'system' kwarg, user content is messages[0]
+    user_content = call_messages[0]["content"]
     assert "Message 2" in user_content
     assert "Message 0" not in user_content
     assert "Message 1" not in user_content
@@ -549,7 +532,7 @@ async def test_load_history_no_compaction_when_all_already_compacted(
     conversation.last_compacted_message_id = all_msgs[2].id
     db_session.commit()
 
-    with patch("backend.app.agent.compaction.acompletion") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages") as mock_llm:
         await load_conversation_history(
             db_session, conversation.id, limit=5, contractor_id=test_contractor.id
         )
@@ -575,7 +558,7 @@ async def test_load_history_no_compaction_when_under_limit(
         )
     db_session.commit()
 
-    with patch("backend.app.agent.compaction.acompletion") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages") as mock_llm:
         history = await load_conversation_history(
             db_session, conversation.id, limit=20, contractor_id=test_contractor.id
         )
@@ -603,7 +586,7 @@ async def test_load_history_no_compaction_without_contractor_id(
         )
     db_session.commit()
 
-    with patch("backend.app.agent.compaction.acompletion") as mock_llm:
+    with patch("backend.app.agent.compaction.amessages") as mock_llm:
         history = await load_conversation_history(db_session, conversation.id, limit=5)
 
     mock_llm.assert_not_called()
@@ -628,7 +611,7 @@ async def test_load_history_compaction_failure_does_not_break_history(
     db_session.commit()
 
     with patch(
-        "backend.app.agent.compaction.acompletion",
+        "backend.app.agent.compaction.amessages",
         side_effect=Exception("LLM down"),
     ):
         history = await load_conversation_history(

@@ -145,9 +145,9 @@ def test_get_missing_optional_fields_partial(db_session: Session) -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_normal_prompt_includes_missing_optional_nudge(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     mock_messaging: MessagingService,
 ) -> None:
@@ -174,7 +174,7 @@ async def test_normal_prompt_includes_missing_optional_nudge(
     db_session.commit()
     db_session.refresh(msg)
 
-    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
         db=db_session,
@@ -184,17 +184,17 @@ async def test_normal_prompt_includes_missing_optional_nudge(
         messaging_service=mock_messaging,
     )
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["system"]
     assert "rates" in system_msg
     assert "business hours" in system_msg
     assert "opportunity comes up naturally" in system_msg
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_normal_prompt_no_nudge_when_optional_fields_filled(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     mock_messaging: MessagingService,
 ) -> None:
@@ -224,7 +224,7 @@ async def test_normal_prompt_no_nudge_when_optional_fields_filled(
     db_session.commit()
     db_session.refresh(msg)
 
-    mock_acompletion.return_value = make_text_response("Hey!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Hey!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
         db=db_session,
@@ -234,8 +234,8 @@ async def test_normal_prompt_no_nudge_when_optional_fields_filled(
         messaging_service=mock_messaging,
     )
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["system"]
     assert "opportunity comes up naturally" not in system_msg
 
 
@@ -354,16 +354,16 @@ def mock_messaging() -> MessagingService:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_onboarding_uses_onboarding_prompt(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     new_contractor: Contractor,
     onboarding_message: Message,
     mock_messaging: MessagingService,
 ) -> None:
     """Router should use onboarding prompt for new contractors."""
-    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
         "Welcome to Clawbolt! What's your name?"
     )
 
@@ -376,15 +376,15 @@ async def test_onboarding_uses_onboarding_prompt(
     )
 
     assert response.reply_text == "Welcome to Clawbolt! What's your name?"
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["system"]
     assert "new contractor" in system_msg
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_onboarding_extracts_profile_updates_via_update_profile(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     new_contractor: Contractor,
     onboarding_message: Message,
@@ -402,7 +402,7 @@ async def test_onboarding_extracts_profile_updates_via_update_profile(
         ]
     )
     text_response = make_text_response("Nice to meet you, Mike!")
-    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     await handle_inbound_message(
         db=db_session,
@@ -417,9 +417,9 @@ async def test_onboarding_extracts_profile_updates_via_update_profile(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_complete_profile_uses_normal_prompt(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     mock_messaging: MessagingService,
@@ -434,7 +434,7 @@ async def test_complete_profile_uses_normal_prompt(
     db_session.commit()
     db_session.refresh(msg)
 
-    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
         "Let me help with that estimate!"
     )
 
@@ -447,8 +447,8 @@ async def test_complete_profile_uses_normal_prompt(
     )
 
     assert response.reply_text == "Let me help with that estimate!"
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["system"]
     assert "new contractor" not in system_msg
 
 
@@ -458,9 +458,9 @@ async def test_complete_profile_uses_normal_prompt(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_profile_updates_post_onboarding_single_field(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     mock_messaging: MessagingService,
@@ -495,7 +495,7 @@ async def test_profile_updates_post_onboarding_single_field(
     )
     text_response = make_text_response("Got it, updated your location to Denver!")
 
-    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     await handle_inbound_message(
         db=db_session,
@@ -510,9 +510,9 @@ async def test_profile_updates_post_onboarding_single_field(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_profile_updates_post_onboarding_multiple_fields(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     mock_messaging: MessagingService,
@@ -554,7 +554,7 @@ async def test_profile_updates_post_onboarding_multiple_fields(
     )
     text_response = make_text_response("Updated your location and rate!")
 
-    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     await handle_inbound_message(
         db=db_session,
@@ -575,9 +575,9 @@ async def test_profile_updates_post_onboarding_multiple_fields(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_profile_updates_during_onboarding_still_work(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     new_contractor: Contractor,
     onboarding_message: Message,
@@ -610,7 +610,7 @@ async def test_profile_updates_during_onboarding_still_work(
     )
     text_response = make_text_response("Welcome Sarah! Great to have a plumber on board.")
 
-    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     await handle_inbound_message(
         db=db_session,
@@ -633,9 +633,9 @@ async def test_profile_updates_during_onboarding_still_work(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_prepopulated_contractor_gets_onboarding_complete(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     mock_messaging: MessagingService,
 ) -> None:
@@ -676,7 +676,7 @@ async def test_prepopulated_contractor_gets_onboarding_complete(
     db_session.commit()
     db_session.refresh(msg)
 
-    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
         "Sure thing, Sarah!"
     )
 
@@ -695,9 +695,9 @@ async def test_prepopulated_contractor_gets_onboarding_complete(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
 @patch("backend.app.agent.heartbeat.run_cheap_checks")
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_prepopulated_contractor_included_in_heartbeat(
-    mock_acompletion: object,
+    mock_amessages: object,
     mock_cheap_checks: MagicMock,
     _mock_hours: MagicMock,
     db_session: Session,
@@ -739,7 +739,7 @@ async def test_prepopulated_contractor_included_in_heartbeat(
     db_session.refresh(msg)
 
     # Process a message to trigger the onboarding_complete fix
-    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
         "Happy to help, Jake!"
     )
 
@@ -773,9 +773,9 @@ async def test_prepopulated_contractor_included_in_heartbeat(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_onboarding_completion_message_appended(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     mock_messaging: MessagingService,
 ) -> None:
@@ -818,7 +818,7 @@ async def test_onboarding_completion_message_appended(
     ]
 
     # First call: tool calls to update profile; second call: text reply
-    mock_acompletion.side_effect = [  # type: ignore[union-attr]
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
         make_tool_call_response(tool_calls, content=None),
         make_text_response("Great to meet you, Jake!"),
     ]
@@ -839,9 +839,9 @@ async def test_onboarding_completion_message_appended(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_onboarding_completion_message_includes_optional_fields(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     mock_messaging: MessagingService,
 ) -> None:
@@ -874,7 +874,7 @@ async def test_onboarding_completion_message_includes_optional_fields(
         },
     ]
 
-    mock_acompletion.side_effect = [  # type: ignore[union-attr]
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
         make_tool_call_response(tool_calls, content=None),
         make_text_response("Welcome aboard, Sarah!"),
     ]
@@ -895,9 +895,9 @@ async def test_onboarding_completion_message_includes_optional_fields(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_no_completion_message_when_already_onboarded(
-    mock_acompletion: object,
+    mock_amessages: object,
     db_session: Session,
     test_contractor: Contractor,
     mock_messaging: MessagingService,
@@ -914,7 +914,7 @@ async def test_no_completion_message_when_already_onboarded(
     db_session.commit()
     db_session.refresh(msg)
 
-    mock_acompletion.return_value = make_text_response("Sure, I can help!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Sure, I can help!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
         db=db_session,

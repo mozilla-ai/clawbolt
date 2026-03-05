@@ -54,7 +54,7 @@ def test_tool_to_function_schema_uses_params_model() -> None:
         params_model=SampleParams,
     )
     schema = tool_to_function_schema(tool)
-    params = schema["function"]["parameters"]
+    params = schema["input_schema"]
 
     # Should have properties from the Pydantic model
     assert "name" in params["properties"]
@@ -80,7 +80,7 @@ def test_tool_to_function_schema_falls_back_to_raw_dict() -> None:
         parameters=raw_params,
     )
     schema = tool_to_function_schema(tool)
-    assert schema["function"]["parameters"] is raw_params
+    assert schema["input_schema"] is raw_params
 
 
 # ---------------------------------------------------------------------------
@@ -196,9 +196,9 @@ def test_add_checklist_item_rejects_invalid_schedule() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_failure_returns_error_result(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -214,7 +214,7 @@ async def test_agent_validation_failure_returns_error_result(
         ]
     )
     followup_response = make_text_response("Let me fix that.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -243,9 +243,9 @@ async def test_agent_validation_failure_returns_error_result(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_success_calls_tool(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -260,7 +260,7 @@ async def test_agent_validation_success_calls_tool(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -284,9 +284,9 @@ async def test_agent_validation_success_calls_tool(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_coerces_types(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -301,7 +301,7 @@ async def test_agent_validation_coerces_types(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -324,9 +324,9 @@ async def test_agent_validation_coerces_types(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_wrong_type_returns_field_error(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -341,7 +341,7 @@ async def test_agent_validation_wrong_type_returns_field_error(
         ]
     )
     followup_response = make_text_response("Let me fix that.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A name")
@@ -426,9 +426,9 @@ def test_update_profile_params_accepts_all_fields() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_batch_validation_reports_all_errors_at_once(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -467,7 +467,7 @@ async def test_batch_validation_reports_all_errors_at_once(
         ]
     )
     followup_response = make_text_response("I see both errors. Let me fix them.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
@@ -488,9 +488,9 @@ async def test_batch_validation_reports_all_errors_at_once(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_batch_validation_executes_valid_calls_alongside_invalid(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     db_session: Session,
     test_contractor: Contractor,
 ) -> None:
@@ -529,7 +529,7 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     agent = ClawboltAgent(db=db_session, contractor=test_contractor)
     agent.register_tools([tool])
