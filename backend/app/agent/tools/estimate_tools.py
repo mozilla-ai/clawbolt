@@ -178,12 +178,16 @@ def create_estimate_tools(
             name=ToolName.GENERATE_ESTIMATE,
             description=(
                 "Generate a professional estimate PDF. Use when the contractor asks for "
-                "an estimate, quote, or bid. Include line items with description, quantity, "
-                "and unit_price."
+                "an estimate, quote, or bid. Requires line_items: each item needs a "
+                "description, quantity, and unit_price. Do NOT call this tool until you "
+                "have at least one concrete line item from the contractor."
             ),
             function=generate_estimate,
             params_model=GenerateEstimateParams,
-            usage_hint=("When asked for an estimate, gather the details and generate the PDF."),
+            usage_hint=(
+                "Before calling this tool, ask the contractor for specific line items "
+                "(what work, how much, at what price). Do not guess line items."
+            ),
         ),
     ]
 

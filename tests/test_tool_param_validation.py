@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.core import ClawboltAgent, _summarize_tool_params
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
 from backend.app.agent.tools.checklist_tools import (
     AddChecklistItemParams,
@@ -499,3 +499,87 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
     success_ids = {tc.tool_call_id for tc in response.tool_calls if not tc.is_error}
     assert error_ids == {"call_bad1", "call_bad2"}
     assert success_ids == {"call_good"}
+
+
+# ---------------------------------------------------------------------------
+# Validation error summary tests: nested types in error messages (#434)
+# ---------------------------------------------------------------------------
+
+
+def _make_tool(name: str, params_model: type[BaseModel]) -> Tool:
+    """Helper to build a Tool with a dummy function for summary tests."""
+
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    return Tool(name=name, description="test", function=dummy, params_model=params_model)
+
+
+def test_summarize_tool_params_includes_array_item_structure() -> None:
+    """Validation error summary should describe array item fields, not just 'array'.
+
+    Regression test for #434: when the LLM omits line_items, the error
+    message must show the expected item structure so it can self-correct.
+    """
+    tool = _make_tool("generate_estimate", GenerateEstimateParams)
+    summary = _summarize_tool_params(tool)
+
+    # Should show nested item fields, not bare 'array'
+    assert "array of {" in summary
+    assert '"description": string' in summary
+    assert '"quantity": number' in summary
+    assert '"unit_price": number' in summary
+
+
+def test_summarize_tool_params_resolves_anyof_types() -> None:
+    """Optional union fields (str | None) should show the concrete type, not 'any'."""
+    tool = _make_tool("generate_estimate", GenerateEstimateParams)
+    summary = _summarize_tool_params(tool)
+
+    assert '"client_name": string (optional)' in summary
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_validation_error_for_missing_line_items_shows_item_structure(
+    mock_amessages: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """When line_items is missing, the error sent to the LLM should describe the item schema.
+
+    Regression test for #434: the LLM needs to know what each line item
+    looks like in order to construct a valid retry.
+    """
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_est",
+                "name": "estimate_tool",
+                "arguments": json.dumps({"description": "Deck repair"}),
+            }
+        ]
+    )
+    followup_response = make_text_response("Let me add line items.")
+    mock_amessages.side_effect = [tool_response, followup_response]
+
+    mock_func = AsyncMock(return_value=ToolResult(content="ok"))
+    tool = Tool(
+        name="estimate_tool",
+        description="Generate an estimate",
+        function=mock_func,
+        params_model=GenerateEstimateParams,
+    )
+
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    mock_func.assert_not_called()
+    error_result = response.tool_calls[0].result
+
+    # Error should mention the missing field
+    assert "line_items" in error_result
+    # Error should include the item structure so the LLM can self-correct
+    assert "unit_price" in error_result
+    assert "array of {" in error_result
