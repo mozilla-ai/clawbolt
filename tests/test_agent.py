@@ -259,7 +259,7 @@ async def test_agent_tool_loop_sends_results_back(
     # Verify the reply comes from the follow-up response, not "Done."
     assert response.reply_text == "Got it, I'll remember your rate is $75/hour!"
     assert len(response.tool_calls) == 1
-    assert response.tool_calls[0]["name"] == "save_fact"
+    assert response.tool_calls[0].name == "save_fact"
 
 
 @pytest.mark.asyncio()
@@ -374,8 +374,8 @@ async def test_agent_multi_round_tool_calls(
 
     # Both tool calls should be recorded
     assert len(response.tool_calls) == 2
-    assert response.tool_calls[0]["name"] == "recall_facts"
-    assert response.tool_calls[1]["name"] == "generate_estimate"
+    assert response.tool_calls[0].name == "recall_facts"
+    assert response.tool_calls[1].name == "generate_estimate"
 
 
 @pytest.mark.asyncio()
@@ -1132,8 +1132,8 @@ async def test_tool_result_error_appends_hint(
 
     # The hint should have been appended to the error result
     assert any("Failed: do_thing" in a for a in response.actions_taken)
-    assert response.tool_calls[0]["is_error"] is True
-    assert "[Analyze the error" in response.tool_calls[0]["result"]
+    assert response.tool_calls[0].is_error is True
+    assert "[Analyze the error" in response.tool_calls[0].result
 
 
 @pytest.mark.asyncio()
@@ -1162,8 +1162,8 @@ async def test_tool_result_success_no_hint(
     response = await agent.process_message("test", system_prompt_override="system")
 
     assert any("Called do_thing" in a for a in response.actions_taken)
-    assert response.tool_calls[0]["is_error"] is False
-    assert "[Analyze the error" not in response.tool_calls[0]["result"]
+    assert response.tool_calls[0].is_error is False
+    assert "[Analyze the error" not in response.tool_calls[0].result
 
 
 @pytest.mark.asyncio()
@@ -1355,7 +1355,7 @@ async def test_error_kind_not_found_produces_specific_hint(
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "not found" in result_content.lower()
     assert "[The requested resource was not found" in result_content
 
@@ -1391,7 +1391,7 @@ async def test_error_kind_service_produces_specific_hint(
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "[An external service is temporarily unavailable" in result_content
 
 
@@ -1426,7 +1426,7 @@ async def test_error_kind_validation_produces_specific_hint(
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "[Check the expected parameter format" in result_content
 
 
@@ -1461,7 +1461,7 @@ async def test_error_kind_internal_produces_specific_hint(
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "[An internal error occurred" in result_content
 
 
@@ -1495,7 +1495,7 @@ async def test_error_with_no_kind_uses_default_hint(
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "[Analyze the error above and try a different approach.]" in result_content
 
 
@@ -1534,7 +1534,7 @@ async def test_error_with_custom_hint_overrides_kind_default(
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     # Custom hint should appear, not the default NOT_FOUND hint
     assert "[Ask the user for the correct estimate number.]" in result_content
     assert "requested resource was not found" not in result_content
@@ -1575,7 +1575,7 @@ async def test_different_error_kinds_produce_different_hints(
         agent.register_tools([tool])
         response = await agent.process_message("test", system_prompt_override="system")
 
-        collected_hints[kind.value] = response.tool_calls[0]["result"]
+        collected_hints[kind.value] = response.tool_calls[0].result
 
     # All hints should be different from each other
     hint_values = list(collected_hints.values())

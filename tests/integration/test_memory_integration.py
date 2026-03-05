@@ -41,7 +41,7 @@ async def test_memory_save_via_llm(
         )
 
     # Agent should have saved at least one fact
-    tool_names = [tc["name"] for tc in response.tool_calls]
+    tool_names = [tc.name for tc in response.tool_calls]
     assert "save_fact" in tool_names, f"Expected save_fact call, got: {tool_names}"
 
     # Memory records should exist in DB
@@ -100,7 +100,7 @@ async def test_memory_save_then_recall(
 
     # The reply should mention $85 (LLM gets it via system prompt memory context)
     # The LLM may phrase it differently, so also accept tool-based recall
-    recalled = any(tc["name"] == "recall_facts" for tc in response.tool_calls)
+    recalled = any(tc.name == "recall_facts" for tc in response.tool_calls)
     assert "85" in response.reply_text or recalled, (
         f"Expected '85' in reply or recall_facts call. Reply: {response.reply_text}"
     )

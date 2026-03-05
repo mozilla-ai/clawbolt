@@ -98,3 +98,28 @@ async def test_analyze_image_falls_back_to_llm_model(
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
     assert call_args.kwargs["model"] == "claude-haiku-4-5-20251001"
+
+
+# -- _build_vision_content unit tests --
+
+
+def test_build_vision_content_without_context() -> None:
+    """_build_vision_content without context should return only the image block."""
+    from backend.app.media.vision import _build_vision_content
+
+    blocks = _build_vision_content("AAAA", "image/jpeg")
+    assert len(blocks) == 1
+    assert blocks[0]["type"] == "image"
+    assert blocks[0]["source"]["data"] == "AAAA"
+    assert blocks[0]["source"]["media_type"] == "image/jpeg"
+
+
+def test_build_vision_content_with_context() -> None:
+    """_build_vision_content with context should prepend a text block."""
+    from backend.app.media.vision import _build_vision_content
+
+    blocks = _build_vision_content("BBBB", "image/png", context="Describe this")
+    assert len(blocks) == 2
+    assert blocks[0] == {"type": "text", "text": "Describe this"}
+    assert blocks[1]["type"] == "image"
+    assert blocks[1]["source"]["data"] == "BBBB"

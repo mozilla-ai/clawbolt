@@ -65,7 +65,7 @@ async def test_onboarding_extracts_profile_from_intro(
         )
 
     # Agent should have called update_profile for name and trade
-    tool_names = [tc["name"] for tc in response.tool_calls]
+    tool_names = [tc.name for tc in response.tool_calls]
     used_profile_tool = "update_profile" in tool_names
 
     # Extract profile updates using the new extraction logic

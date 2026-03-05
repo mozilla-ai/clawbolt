@@ -182,8 +182,7 @@ async def test_agent_tool_call_records_include_tags(
     response = await agent.process_message("My rate is $50/hour")
 
     assert len(response.tool_calls) == 1
-    assert "tags" in response.tool_calls[0]
-    assert ToolTags.SAVES_MEMORY in response.tool_calls[0]["tags"]
+    assert ToolTags.SAVES_MEMORY in response.tool_calls[0].tags
 
 
 @pytest.mark.asyncio()
@@ -250,7 +249,7 @@ async def test_agent_untagged_tool_has_empty_tags(
     response = await agent.process_message("hello")
 
     assert len(response.tool_calls) == 1
-    assert response.tool_calls[0]["tags"] == set()
+    assert response.tool_calls[0].tags == set()
     assert len(response.memories_saved) == 0
 
 

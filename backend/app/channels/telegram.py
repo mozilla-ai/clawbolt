@@ -9,6 +9,7 @@ from pathlib import Path
 import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from sqlalchemy.orm import Session
 from telegram import Bot
 from telegram.constants import ChatAction
@@ -29,6 +30,61 @@ logger = logging.getLogger(__name__)
 
 TELEGRAM_SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
 STARTUP_DELAY_SECONDS = 3
+
+
+# ---------------------------------------------------------------------------
+# Pydantic models for Telegram webhook payloads
+# ---------------------------------------------------------------------------
+
+
+class TelegramUser(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+    username: str = ""
+
+
+class TelegramChat(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    id: int
+
+
+class TelegramPhotoSize(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    file_id: str = ""
+    file_size: int = 0
+
+
+class TelegramMediaFile(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    file_id: str = ""
+    mime_type: str = ""
+
+
+class TelegramMessage(BaseModel):
+    model_config = ConfigDict(extra="ignore", populate_by_name=True)
+
+    message_id: int = 0
+    chat: TelegramChat | None = None
+    from_user: TelegramUser | None = Field(default=None, alias="from")
+    text: str = ""
+    caption: str = ""
+    photo: list[TelegramPhotoSize] = Field(default_factory=list)
+    voice: TelegramMediaFile | None = None
+    video: TelegramMediaFile | None = None
+    video_note: TelegramMediaFile | None = None
+    audio: TelegramMediaFile | None = None
+    document: TelegramMediaFile | None = None
+
+
+class TelegramUpdate(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    update_id: int = 0
+    message: TelegramMessage | None = None
 
 
 class _InvalidSecret(Exception):
@@ -102,51 +158,37 @@ class TelegramChannel(BaseChannel):
             raise _InvalidSecret
 
     @staticmethod
-    def extract_media(update: dict) -> list[tuple[str, str]]:
+    def extract_media(update: TelegramUpdate) -> list[tuple[str, str]]:
         """Extract media file_ids from a Telegram update.
 
         Returns a list of ``(file_id, mime_type)`` tuples.
         """
-        msg = update.get("message", {})
+        msg = update.message
+        if msg is None:
+            return []
         media: list[tuple[str, str]] = []
 
-        photos = msg.get("photo")
-        if photos:
-            largest = max(photos, key=lambda p: p.get("file_size", 0))
-            file_id = largest.get("file_id")
-            if file_id:
-                media.append((file_id, "image/jpeg"))
+        if msg.photo:
+            largest = max(msg.photo, key=lambda p: p.file_size)
+            if largest.file_id:
+                media.append((largest.file_id, "image/jpeg"))
 
-        voice = msg.get("voice")
-        if voice:
-            file_id = voice.get("file_id")
-            if file_id:
-                media.append((file_id, voice.get("mime_type", "audio/ogg")))
+        if msg.voice and msg.voice.file_id:
+            media.append((msg.voice.file_id, msg.voice.mime_type or "audio/ogg"))
 
-        video = msg.get("video")
-        if video:
-            file_id = video.get("file_id")
-            if file_id:
-                media.append((file_id, video.get("mime_type", "video/mp4")))
+        if msg.video and msg.video.file_id:
+            media.append((msg.video.file_id, msg.video.mime_type or "video/mp4"))
 
-        video_note = msg.get("video_note")
-        if video_note:
-            file_id = video_note.get("file_id")
-            if file_id:
-                media.append((file_id, "video/mp4"))
+        if msg.video_note and msg.video_note.file_id:
+            media.append((msg.video_note.file_id, "video/mp4"))
 
-        audio = msg.get("audio")
-        if audio:
-            file_id = audio.get("file_id")
-            if file_id:
-                media.append((file_id, audio.get("mime_type", "audio/mpeg")))
+        if msg.audio and msg.audio.file_id:
+            media.append((msg.audio.file_id, msg.audio.mime_type or "audio/mpeg"))
 
-        doc = msg.get("document")
-        if doc:
-            file_id = doc.get("file_id")
-            if file_id:
-                doc_mime = doc.get("mime_type", "application/octet-stream")
-                media.append((file_id, doc_mime))
+        if msg.document and msg.document.file_id:
+            media.append(
+                (msg.document.file_id, msg.document.mime_type or "application/octet-stream")
+            )
 
         if media:
             logger.debug(
@@ -186,22 +228,21 @@ class TelegramChannel(BaseChannel):
         return chat_id_match or username_match
 
     @staticmethod
-    def parse_update(update: dict) -> InboundMessage | None:
-        """Parse a Telegram update dict into an ``InboundMessage``.
+    def parse_update(update: TelegramUpdate) -> InboundMessage | None:
+        """Parse a Telegram update into an ``InboundMessage``.
 
         Returns ``None`` if the update should be ignored.
         """
-        msg = update.get("message")
+        msg = update.message
         if not msg:
             return None
 
-        chat = msg.get("chat") if isinstance(msg, dict) else None
-        if not chat or "id" not in chat:
+        if not msg.chat:
             logger.warning("Telegram message missing chat.id, ignoring")
             return None
 
-        chat_id = str(chat["id"])
-        raw_text = msg.get("text") or msg.get("caption") or ""
+        chat_id = str(msg.chat.id)
+        raw_text = msg.text or msg.caption or ""
 
         text = raw_text
         if raw_text.strip().lower() in ("/start", "/start@"):
@@ -210,11 +251,11 @@ class TelegramChannel(BaseChannel):
             logger.debug("Ignoring unhandled bot command: %s", raw_text.strip().split()[0])
             return None
 
-        username = msg.get("from", {}).get("username", "")
+        username = msg.from_user.username if msg.from_user else ""
 
         media_items = TelegramChannel.extract_media(update)
 
-        message_id = str(msg.get("message_id", ""))
+        message_id = str(msg.message_id) if msg.message_id else ""
         external_id = f"tg_{chat_id}_{message_id}" if message_id else ""
 
         return InboundMessage(
@@ -247,9 +288,15 @@ class TelegramChannel(BaseChannel):
                 return JSONResponse(content={"ok": True})
 
             try:
-                update: dict = await request.json()
+                raw: dict = await request.json()
             except ValueError:
                 logger.warning("Telegram webhook received invalid JSON")
+                return JSONResponse(content={"ok": True})
+
+            try:
+                update = TelegramUpdate.model_validate(raw)
+            except ValidationError:
+                logger.warning("Telegram webhook payload failed validation")
                 return JSONResponse(content={"ok": True})
 
             inbound = TelegramChannel.parse_update(update)

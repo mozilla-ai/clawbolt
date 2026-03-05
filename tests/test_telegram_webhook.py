@@ -467,59 +467,67 @@ def test_webhook_missing_chat_id_returns_200(client: TestClient) -> None:
 
 def test_extract_media_skips_photo_without_file_id() -> None:
     """Photos missing file_id should be skipped instead of crashing."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "photo": [{"file_unique_id": "abc", "width": 90, "height": 90, "file_size": 1000}],
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "photo": [{"file_unique_id": "abc", "width": 90, "height": 90, "file_size": 1000}],
+            }
         }
-    }
+    )
     media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_skips_voice_without_file_id() -> None:
     """Voice notes missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "voice": {"file_unique_id": "v1", "duration": 5},
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "voice": {"file_unique_id": "v1", "duration": 5},
+            }
         }
-    }
+    )
     media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_skips_document_without_file_id() -> None:
     """Documents missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "document": {"file_unique_id": "d1", "file_name": "test.pdf"},
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "document": {"file_unique_id": "d1", "file_name": "test.pdf"},
+            }
         }
-    }
+    )
     media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_telegram_media_image_document_preserves_mime() -> None:
     """Images sent as documents should preserve their image/* MIME type."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "message_id": 1,
-            "chat": {"id": 123},
-            "document": {
-                "file_id": "BQACAgIAAxkBAAI",
-                "file_unique_id": "doc1",
-                "file_name": "screenshot.png",
-                "mime_type": "image/png",
-            },
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 123},
+                "document": {
+                    "file_id": "BQACAgIAAxkBAAI",
+                    "file_unique_id": "doc1",
+                    "file_name": "screenshot.png",
+                    "mime_type": "image/png",
+                },
+            }
         }
-    }
+    )
     media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BQACAgIAAxkBAAI", "image/png")
@@ -527,19 +535,21 @@ def test_extract_telegram_media_image_document_preserves_mime() -> None:
 
 def test_extract_telegram_media_document_without_mime_defaults() -> None:
     """Documents without mime_type should default to application/octet-stream."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "message_id": 1,
-            "chat": {"id": 123},
-            "document": {
-                "file_id": "BQACAgIAAxkBAAI",
-                "file_unique_id": "doc1",
-                "file_name": "unknown_file",
-            },
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 123},
+                "document": {
+                    "file_id": "BQACAgIAAxkBAAI",
+                    "file_unique_id": "doc1",
+                    "file_name": "unknown_file",
+                },
+            }
         }
-    }
+    )
     media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BQACAgIAAxkBAAI", "application/octet-stream")
@@ -607,20 +617,22 @@ def test_parse_media_without_caption_has_empty_body(
 
 def test_extract_media_video() -> None:
     """Video file_ids should be extracted."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "video": {
-                "file_id": "BAACAgIAAxkBAAI",
-                "file_unique_id": "vid1",
-                "duration": 10,
-                "width": 1280,
-                "height": 720,
-                "mime_type": "video/mp4",
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "video": {
+                    "file_id": "BAACAgIAAxkBAAI",
+                    "file_unique_id": "vid1",
+                    "duration": 10,
+                    "width": 1280,
+                    "height": 720,
+                    "mime_type": "video/mp4",
+                }
             }
         }
-    }
+    )
     media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BAACAgIAAxkBAAI", "video/mp4")
@@ -628,18 +640,20 @@ def test_extract_media_video() -> None:
 
 def test_extract_media_video_note() -> None:
     """Video note (round video) file_ids should be extracted."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "video_note": {
-                "file_id": "DQACAgIAAxkBAAI",
-                "file_unique_id": "vnote1",
-                "duration": 5,
-                "length": 240,
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "video_note": {
+                    "file_id": "DQACAgIAAxkBAAI",
+                    "file_unique_id": "vnote1",
+                    "duration": 5,
+                    "length": 240,
+                }
             }
         }
-    }
+    )
     media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("DQACAgIAAxkBAAI", "video/mp4")
@@ -647,18 +661,20 @@ def test_extract_media_video_note() -> None:
 
 def test_extract_media_audio() -> None:
     """Audio file_ids should be extracted."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "audio": {
-                "file_id": "CQACAgIAAxkBAAI",
-                "file_unique_id": "audio1",
-                "duration": 180,
-                "mime_type": "audio/mpeg",
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "audio": {
+                    "file_id": "CQACAgIAAxkBAAI",
+                    "file_unique_id": "audio1",
+                    "duration": 180,
+                    "mime_type": "audio/mpeg",
+                }
             }
         }
-    }
+    )
     media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("CQACAgIAAxkBAAI", "audio/mpeg")
@@ -666,27 +682,33 @@ def test_extract_media_audio() -> None:
 
 def test_extract_media_video_without_file_id() -> None:
     """Videos missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {"message": {"video": {"file_unique_id": "v1", "duration": 10}}}
+    update = TelegramUpdate.model_validate(
+        {"message": {"video": {"file_unique_id": "v1", "duration": 10}}}
+    )
     media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_video_note_without_file_id() -> None:
     """Video notes missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {"message": {"video_note": {"file_unique_id": "vn1", "duration": 5}}}
+    update = TelegramUpdate.model_validate(
+        {"message": {"video_note": {"file_unique_id": "vn1", "duration": 5}}}
+    )
     media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_audio_without_file_id() -> None:
     """Audio files missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {"message": {"audio": {"file_unique_id": "a1", "duration": 180}}}
+    update = TelegramUpdate.model_validate(
+        {"message": {"audio": {"file_unique_id": "a1", "duration": 180}}}
+    )
     media = TelegramChannel.extract_media(update)
     assert media == []
 
@@ -736,3 +758,35 @@ def test_other_bot_commands_ignored(client: TestClient, db_session: Session) -> 
     assert response.status_code == 200
     mock_h.assert_not_called()
     assert db_session.query(Message).count() == 0
+
+
+# -- TelegramUpdate model tests --
+
+
+def test_telegram_update_ignores_extra_fields() -> None:
+    """TelegramUpdate should silently ignore unknown Telegram fields."""
+    from backend.app.channels.telegram import TelegramUpdate
+
+    data = {
+        "update_id": 1,
+        "message": {
+            "message_id": 42,
+            "chat": {"id": 123, "type": "private"},
+            "text": "hello",
+            "from": {"id": 123, "is_bot": False, "first_name": "Test"},
+            "unknown_future_field": True,
+        },
+        "also_unknown": "ignored",
+    }
+    update = TelegramUpdate.model_validate(data)
+    assert update.update_id == 1
+    assert update.message is not None
+    assert update.message.text == "hello"
+
+
+def test_telegram_update_handles_missing_message() -> None:
+    """TelegramUpdate without a message field should parse with message=None."""
+    from backend.app.channels.telegram import TelegramUpdate
+
+    update = TelegramUpdate.model_validate({"update_id": 99})
+    assert update.message is None

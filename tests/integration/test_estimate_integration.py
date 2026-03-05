@@ -50,7 +50,7 @@ async def test_estimate_generation_roundtrip(
         )
 
     # Agent should have called the estimate tool
-    tool_names = [tc["name"] for tc in response.tool_calls]
+    tool_names = [tc.name for tc in response.tool_calls]
     assert "generate_estimate" in tool_names, f"Expected generate_estimate call, got: {tool_names}"
 
     # Estimate record should exist in DB

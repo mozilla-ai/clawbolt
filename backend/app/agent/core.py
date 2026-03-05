@@ -16,6 +16,7 @@ from any_llm.types.messages import MessageResponse
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
+from backend.app.agent.context import StoredToolInteraction
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentEvent,
@@ -244,7 +245,7 @@ class AgentResponse:
     reply_text: str
     actions_taken: list[str] = field(default_factory=list)
     memories_saved: list[dict[str, str]] = field(default_factory=list)
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[StoredToolInteraction] = field(default_factory=list)
     is_error_fallback: bool = False
 
 
@@ -565,7 +566,7 @@ class ClawboltAgent:
 
         actions_taken: list[str] = []
         memories_saved: list[dict[str, str]] = []
-        tool_call_records: list[dict[str, Any]] = []
+        tool_call_records: list[StoredToolInteraction] = []
         reply_text = ""
 
         for _round in range(MAX_TOOL_ROUNDS):
@@ -655,14 +656,14 @@ class ClawboltAgent:
                     result_str = validation_error + "\n\n" + hint
                     actions_taken.append(f"Failed: {tool_name} (validation)")
                     tool_call_records.append(
-                        {
-                            "tool_call_id": tc_req.id,
-                            "name": tool_name,
-                            "args": tool_args,
-                            "result": result_str,
-                            "is_error": True,
-                            "tags": tool_tags,
-                        }
+                        StoredToolInteraction(
+                            tool_call_id=tc_req.id,
+                            name=tool_name,
+                            args=tool_args,
+                            result=result_str,
+                            is_error=True,
+                            tags=set(tool_tags),
+                        )
                     )
                     tool_results.append(
                         ToolResultMessage(
@@ -698,14 +699,14 @@ class ClawboltAgent:
                     else:
                         actions_taken.append(f"Called {tool_name}")
                     tool_call_records.append(
-                        {
-                            "tool_call_id": tc_req.id,
-                            "name": tool_name,
-                            "args": validated_args,
-                            "result": result_str,
-                            "is_error": is_error,
-                            "tags": tool_tags,
-                        }
+                        StoredToolInteraction(
+                            tool_call_id=tc_req.id,
+                            name=tool_name,
+                            args=validated_args,
+                            result=result_str,
+                            is_error=is_error,
+                            tags=set(tool_tags),
+                        )
                     )
                     if ToolTags.SAVES_MEMORY in tool_tags:
                         memories_saved.append(validated_args)

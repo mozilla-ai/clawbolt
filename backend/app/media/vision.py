@@ -18,14 +18,14 @@ VISION_SYSTEM_PROMPT = (
 )
 
 
-async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -> str:
-    """Send an image to a vision LLM and get a text description."""
-    logger.info(
-        "Sending image to vision LLM: mime_type=%s, size=%d bytes", mime_type, len(image_bytes)
-    )
-    b64_image = base64.b64encode(image_bytes).decode("utf-8")
-
-    user_content: list[dict[str, Any]] = [
+def _build_vision_content(
+    b64_image: str, mime_type: str, context: str = ""
+) -> list[dict[str, Any]]:
+    """Build the content block list for a vision LLM request."""
+    blocks: list[dict[str, Any]] = []
+    if context:
+        blocks.append({"type": "text", "text": context})
+    blocks.append(
         {
             "type": "image",
             "source": {
@@ -33,10 +33,18 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
                 "media_type": mime_type,
                 "data": b64_image,
             },
-        },
-    ]
-    if context:
-        user_content.insert(0, {"type": "text", "text": context})
+        }
+    )
+    return blocks
+
+
+async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -> str:
+    """Send an image to a vision LLM and get a text description."""
+    logger.info(
+        "Sending image to vision LLM: mime_type=%s, size=%d bytes", mime_type, len(image_bytes)
+    )
+    b64_image = base64.b64encode(image_bytes).decode("utf-8")
+    user_content = _build_vision_content(b64_image, mime_type, context)
 
     model = settings.vision_model or settings.llm_model
     logger.info("Using vision model: %s (provider=%s)", model, settings.llm_provider)

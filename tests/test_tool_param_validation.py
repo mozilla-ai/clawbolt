@@ -220,9 +220,9 @@ async def test_agent_validation_failure_returns_error_result(
 
     # The error should be recorded
     assert any("Failed: typed_tool (validation)" in a for a in response.actions_taken)
-    assert response.tool_calls[0]["is_error"] is True
-    assert "Validation error" in response.tool_calls[0]["result"]
-    assert "name" in response.tool_calls[0]["result"]
+    assert response.tool_calls[0].is_error is True
+    assert "Validation error" in response.tool_calls[0].result
+    assert "name" in response.tool_calls[0].result
 
 
 @pytest.mark.asyncio()
@@ -343,7 +343,7 @@ async def test_agent_validation_wrong_type_returns_field_error(
     response = await agent.process_message("test", system_prompt_override="system")
 
     mock_func.assert_not_called()
-    error_result = response.tool_calls[0]["result"]
+    error_result = response.tool_calls[0].result
     assert "value" in error_result
     assert "Validation error for typed_tool" in error_result
 
@@ -432,10 +432,10 @@ async def test_batch_validation_reports_all_errors_at_once(
     assert len(validation_failures) == 2
 
     # Both errors should appear in tool_calls records
-    error_records = [tc for tc in response.tool_calls if tc["is_error"]]
+    error_records = [tc for tc in response.tool_calls if tc.is_error]
     assert len(error_records) == 2
-    assert error_records[0]["tool_call_id"] == "call_a"
-    assert error_records[1]["tool_call_id"] == "call_b"
+    assert error_records[0].tool_call_id == "call_a"
+    assert error_records[1].tool_call_id == "call_b"
 
 
 @pytest.mark.asyncio()
@@ -495,7 +495,7 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
 
     # Verify tool_call_records: 2 errors + 1 success = 3 records
     assert len(response.tool_calls) == 3
-    error_ids = {tc["tool_call_id"] for tc in response.tool_calls if tc["is_error"]}
-    success_ids = {tc["tool_call_id"] for tc in response.tool_calls if not tc["is_error"]}
+    error_ids = {tc.tool_call_id for tc in response.tool_calls if tc.is_error}
+    success_ids = {tc.tool_call_id for tc in response.tool_calls if not tc.is_error}
     assert error_ids == {"call_bad1", "call_bad2"}
     assert success_ids == {"call_good"}
