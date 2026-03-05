@@ -285,7 +285,7 @@ def run_cheap_checks(
         .all()
     )
     for item in active_items:
-        if _is_checklist_item_due(item, now):
+        if _is_checklist_item_due(item, now, tz_name=contractor.timezone or ""):
             result.due_checklist_items.append(item)
             result.flags.append(f"Checklist item due: {item.description}")
 
@@ -330,10 +330,13 @@ def run_cheap_checks(
 def _is_checklist_item_due(
     item: HeartbeatChecklistItem,
     now: datetime.datetime,
+    tz_name: str = "",
 ) -> bool:
     """Determine whether a checklist item should fire on this tick."""
-    # Weekday gate applies regardless of trigger history
-    if item.schedule == ChecklistSchedule.WEEKDAYS and now.weekday() > WEEKDAY_FRIDAY:
+    # Weekday gate: convert to contractor's local timezone so that
+    # e.g. Friday 5 PM Pacific is not treated as Saturday (UTC).
+    local_now = _to_local_time(now, tz_name) if tz_name else now
+    if item.schedule == ChecklistSchedule.WEEKDAYS and local_now.weekday() > WEEKDAY_FRIDAY:
         return False
 
     # Never triggered -> due (for daily/weekdays/once)

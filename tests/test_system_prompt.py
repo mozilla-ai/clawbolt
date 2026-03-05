@@ -1,14 +1,18 @@
 """Tests for the composable system prompt builder."""
 
+import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from backend.app.agent.system_prompt import (
     SystemPromptBuilder,
+    _to_contractor_time,
     build_agent_system_prompt,
+    build_date_section,
     build_identity_section,
     build_instructions_section,
+    build_local_datetime_section,
     build_memory_section,
     build_missing_fields_section,
     build_proactive_section,
@@ -299,3 +303,113 @@ class TestBuildAgentSystemPrompt:
             )
 
         assert "Mike {The Plumber}" in result
+
+
+class TestToContractorTime:
+    def test_converts_to_pacific(self) -> None:
+        utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        result = _to_contractor_time(utc, "America/Los_Angeles")
+        # UTC 17:00 in June (PDT, UTC-7) -> 10:00 local
+        assert result.hour == 10
+
+    def test_empty_timezone_returns_utc(self) -> None:
+        utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        result = _to_contractor_time(utc, "")
+        assert result.hour == 17
+
+    def test_invalid_timezone_returns_utc(self) -> None:
+        utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        result = _to_contractor_time(utc, "Not/A_Real_Zone")
+        assert result.hour == 17
+
+
+class TestBuildDateSection:
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_includes_day_of_week_and_date(self, mock_dt: MagicMock) -> None:
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 16, 15, 30, tzinfo=datetime.UTC
+        )
+        contractor = MagicMock()
+        contractor.timezone = ""
+        result = build_date_section(contractor)
+        # 2025-06-16 is a Monday
+        assert result == "Monday, 2025-06-16"
+
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_converts_to_contractor_timezone(self, mock_dt: MagicMock) -> None:
+        mock_dt.UTC = datetime.UTC
+        # Saturday 3 AM UTC -> Friday 8 PM Pacific (PDT)
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 14, 3, 0, tzinfo=datetime.UTC
+        )
+        contractor = MagicMock()
+        contractor.timezone = "America/Los_Angeles"
+        result = build_date_section(contractor)
+        # Should show Friday (local), not Saturday (UTC)
+        assert result == "Friday, 2025-06-13"
+
+
+class TestBuildLocalDatetimeSection:
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_includes_time_and_timezone(self, mock_dt: MagicMock) -> None:
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 15, 17, 30, tzinfo=datetime.UTC
+        )
+        contractor = MagicMock()
+        contractor.timezone = "America/New_York"
+        result = build_local_datetime_section(contractor)
+        # UTC 17:30 -> 1:30 PM EDT
+        assert "01:30 PM" in result
+        assert "Sunday" in result
+        assert "2025-06-15" in result
+
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_utc_fallback_when_no_timezone(self, mock_dt: MagicMock) -> None:
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 15, 17, 30, tzinfo=datetime.UTC
+        )
+        contractor = MagicMock()
+        contractor.timezone = ""
+        result = build_local_datetime_section(contractor)
+        assert "05:30 PM" in result
+        assert "Sunday" in result
+
+
+class TestAgentSystemPromptIncludesDate:
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.system_prompt.datetime")
+    async def test_agent_prompt_has_current_date(self, mock_dt: MagicMock) -> None:
+        """Main agent prompt should include a Current date section."""
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 16, 15, 0, tzinfo=datetime.UTC
+        )
+        contractor = MagicMock()
+        contractor.name = "Jake"
+        contractor.trade = "electrician"
+        contractor.location = "Seattle"
+        contractor.hourly_rate = 90
+        contractor.business_hours = "8am-6pm"
+        contractor.soul_text = None
+        contractor.preferences_json = None
+        contractor.timezone = "America/Los_Angeles"
+        contractor.id = 1
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                db=MagicMock(),
+                contractor=contractor,
+                tools=[],
+                message_context="hello",
+            )
+
+        assert "## Current date" in result
+        assert "Monday" in result
+        assert "2025-06-16" in result

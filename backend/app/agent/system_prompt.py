@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import datetime
 import logging
+import zoneinfo
 
 from sqlalchemy.orm import Session
 
@@ -133,6 +134,37 @@ def build_recall_section() -> str:
     )
 
 
+def _to_contractor_time(
+    now: datetime.datetime,
+    tz_name: str,
+) -> datetime.datetime:
+    """Convert *now* to the contractor's IANA timezone, falling back to UTC."""
+    if not tz_name:
+        return now
+    try:
+        return now.astimezone(zoneinfo.ZoneInfo(tz_name))
+    except (zoneinfo.ZoneInfoNotFoundError, KeyError, ValueError):
+        logger.warning("Invalid timezone %r, falling back to UTC", tz_name)
+        return now
+
+
+def build_date_section(contractor: Contractor) -> str:
+    """Build a cache-friendly date string in the contractor's local timezone.
+
+    Uses date-only granularity (no minutes) to avoid prompt-cache busting.
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    local = _to_contractor_time(now, contractor.timezone)
+    return local.strftime("%A, %Y-%m-%d")
+
+
+def build_local_datetime_section(contractor: Contractor) -> str:
+    """Build a human-readable local datetime for the heartbeat evaluator."""
+    now = datetime.datetime.now(datetime.UTC)
+    local = _to_contractor_time(now, contractor.timezone)
+    return local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
+
+
 def build_missing_fields_section(contractor: Contractor) -> str:
     """Build a note about missing optional profile fields, if any."""
     missing = get_missing_optional_fields(contractor)
@@ -178,6 +210,8 @@ async def build_agent_system_prompt(
         instructions = build_instructions_section()
     builder.add_section("Instructions", instructions)
 
+    builder.add_section("Current date", build_date_section(contractor))
+
     builder.add_section("Proactive Messaging", build_proactive_section())
     builder.add_section("Recall Behavior", build_recall_section())
 
@@ -218,7 +252,7 @@ async def build_heartbeat_system_prompt(
 
     builder.add_section(
         "Current time",
-        datetime.datetime.now(datetime.UTC).isoformat(),
+        build_local_datetime_section(contractor),
     )
 
     rules = (

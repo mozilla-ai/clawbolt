@@ -663,6 +663,39 @@ class TestIsChecklistItemDue:
         # Should not raise TypeError and should be due (>20h elapsed)
         assert _is_checklist_item_due(item, now) is True
 
+    def test_weekdays_saturday_utc_but_friday_local(self) -> None:
+        """Weekday item should fire when UTC is Saturday but local time is still Friday.
+
+        Regression test: before this fix, _is_checklist_item_due checked
+        now.weekday() in UTC. A contractor in America/Los_Angeles at 5 PM
+        Friday Pacific (00:00 Saturday UTC) would have the weekday gate
+        incorrectly skip the item.
+        """
+        # Saturday 00:00 UTC = Friday 5:00 PM Pacific (PDT, UTC-7)
+        saturday_utc = datetime.datetime(2025, 6, 14, 0, 0, tzinfo=datetime.UTC)
+        item = HeartbeatChecklistItem(
+            contractor_id=1,
+            description="Weekly check-in",
+            schedule="weekdays",
+            last_triggered_at=None,
+        )
+        # Without timezone: UTC says Saturday -> should skip (old buggy behavior)
+        assert _is_checklist_item_due(item, saturday_utc) is False
+        # With timezone: local is Friday -> should fire (fixed behavior)
+        assert _is_checklist_item_due(item, saturday_utc, tz_name="America/Los_Angeles") is True
+
+    def test_weekdays_sunday_local_still_skipped(self) -> None:
+        """Weekday item should still be skipped on a genuine local Sunday."""
+        # Sunday 10 AM Pacific = Sunday 5 PM UTC
+        sunday_utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        item = HeartbeatChecklistItem(
+            contractor_id=1,
+            description="Test",
+            schedule="weekdays",
+            last_triggered_at=None,
+        )
+        assert _is_checklist_item_due(item, sunday_utc, tz_name="America/Los_Angeles") is False
+
 
 # ---------------------------------------------------------------------------
 # COMPOSE_MESSAGE_TOOL schema validation
