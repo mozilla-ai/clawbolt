@@ -23,7 +23,7 @@ from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
-from backend.app.agent.llm_parsing import parse_tool_calls
+from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt
 from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel, get_default_channel
@@ -399,8 +399,6 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
 
     if not parsed:
         # LLM returned text instead of calling the tool: default to no_action
-        from backend.app.agent.llm_parsing import get_response_text
-
         content = get_response_text(response)
         logger.warning("Heartbeat LLM returned text instead of tool call: %s", content[:200])
         return HeartbeatAction(
