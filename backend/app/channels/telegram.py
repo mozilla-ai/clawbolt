@@ -295,8 +295,9 @@ class TelegramChannel(BaseChannel):
 
             try:
                 update = TelegramUpdate.model_validate(raw)
-            except ValidationError:
+            except ValidationError as exc:
                 logger.warning("Telegram webhook payload failed validation")
+                logger.debug("Validation details: %s", exc.errors())
                 return JSONResponse(content={"ok": True})
 
             inbound = TelegramChannel.parse_update(update)
