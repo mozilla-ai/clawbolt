@@ -95,9 +95,12 @@ class StoredMessage(BaseModel):
 
 
 class SessionMetadata(BaseModel):
-    """First line of a session JSONL file."""
+    """First line of a session JSONL file.
 
-    _type: str = "metadata"
+    Note: the ``_type`` discriminator is handled as a raw dict key when
+    serializing/deserializing JSONL, not through this model.
+    """
+
     session_id: str = ""
     contractor_id: int = 0
     last_message_at: str = ""
@@ -202,16 +205,22 @@ class MemoryFact(BaseModel):
 
 
 def _read_json(path: Path, default: Any = None) -> Any:
-    """Read and parse a JSON file. Returns default if file doesn't exist."""
+    """Read and parse a JSON file. Returns default if file doesn't exist or is corrupt."""
     if not path.exists():
         return default
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Corrupt JSON file %s, returning default", path)
+        return default
 
 
 def _write_json(path: Path, data: Any) -> None:
-    """Write data as JSON to a file, creating parent dirs."""
+    """Write data as JSON to a file atomically, creating parent dirs."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
+    tmp.rename(path)
 
 
 def _append_jsonl(path: Path, data: dict[str, Any]) -> None:
@@ -421,7 +430,9 @@ class ContractorStore:
 # ---------------------------------------------------------------------------
 
 # Regex to parse MEMORY.md entries: "- key: value (confidence: X.X)"
-_MEMORY_LINE_RE = re.compile(r"^-\s+(.+?):\s+(.+?)\s+\(confidence:\s+([\d.]+)\)\s*$")
+# Uses greedy match for value (.+) to handle values containing parentheses,
+# then anchors on the final "(confidence: ...)" suffix.
+_MEMORY_LINE_RE = re.compile(r"^-\s+(.+?):\s+(.+)\s+\(confidence:\s+([\d.]+)\)\s*$")
 _CATEGORY_RE = re.compile(r"^##\s+(.+)$")
 
 
@@ -1215,7 +1226,7 @@ class IdempotencyStore:
 
     def has_seen(self, external_id: str) -> bool:
         """Check if an external message ID has been seen."""
-        return external_id in self._load()
+        return external_id in set(self._load())
 
     async def mark_seen(self, external_id: str) -> None:
         """Mark an external message ID as seen. Caps at 10K entries."""

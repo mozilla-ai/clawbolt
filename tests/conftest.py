@@ -22,21 +22,17 @@ def _isolate_file_stores(tmp_path: object) -> Generator[None]:
 
 
 @pytest.fixture()
-def test_contractor(tmp_path: object) -> ContractorData:
+async def test_contractor(tmp_path: object) -> ContractorData:
     """Create a test contractor via the file store."""
-    import asyncio
-
     store = get_contractor_store()
-    return asyncio.get_event_loop().run_until_complete(
-        store.create(
-            user_id="test-user-001",
-            name="Test Contractor",
-            phone="+15551234567",
-            trade="General Contractor",
-            location="Portland, OR",
-            channel_identifier="123456789",
-            preferred_channel="telegram",
-        )
+    return await store.create(
+        user_id="test-user-001",
+        name="Test Contractor",
+        phone="+15551234567",
+        trade="General Contractor",
+        location="Portland, OR",
+        channel_identifier="123456789",
+        preferred_channel="telegram",
     )
 
 

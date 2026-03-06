@@ -203,8 +203,21 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
+        # Defense-in-depth: only allow known profile fields to be updated.
+        _allowed_fields = {
+            "name",
+            "trade",
+            "location",
+            "hourly_rate",
+            "business_hours",
+            "timezone",
+            "preferences_json",
+            "soul_text",
+        }
+        safe_updates = {k: v for k, v in updates.items() if k in _allowed_fields}
+
         store = get_contractor_store()
-        await store.update(contractor.id, **updates)
+        await store.update(contractor.id, **safe_updates)
 
         summary = ", ".join(fields_updated)
         return ToolResult(content=f"Profile updated: {summary}")
