@@ -14,8 +14,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - run: uv sync --all-extras
-      - run: uv run ruff check backend/ tests/ alembic/
-      - run: uv run ruff format --check backend/ tests/ alembic/
+      - run: uv run ruff check backend/ tests/
+      - run: uv run ruff format --check backend/ tests/
 
   typecheck:
     runs-on: ubuntu-latest
@@ -27,8 +27,6 @@ jobs:
 
   test:
     runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: "sqlite:///:memory:"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -38,7 +36,6 @@ jobs:
   e2e-telegram:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: "sqlite:///:memory:"
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_TEST_CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
     steps:
@@ -50,21 +47,9 @@ jobs:
   integration:
     runs-on: ubuntu-latest
     env:
-      DATABASE_URL: "sqlite:///:memory:"
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
       - run: uv sync --all-extras
       - run: uv run pytest -m integration -v --timeout=120
-
-  migration-check:
-    runs-on: ubuntu-latest
-    env:
-      DATABASE_URL: "sqlite:///test_migrations.db"
-    steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - run: uv sync --all-extras
-      - run: uv run alembic upgrade head
-      - run: uv run alembic check
