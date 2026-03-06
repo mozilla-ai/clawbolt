@@ -1,7 +1,7 @@
 """LLM usage tracking helper.
 
-Extracts token counts from amessages responses and persists them to the
-``llm_usage_logs`` table for cost monitoring per contractor.
+Extracts token counts from amessages responses and persists them to
+the per-contractor ``llm_usage.jsonl`` file for cost monitoring.
 """
 
 from __future__ import annotations
@@ -9,44 +9,32 @@ from __future__ import annotations
 import logging
 
 from any_llm.types.messages import MessageResponse
-from sqlalchemy.orm import Session
 
-from backend.app.models import LLMUsageLog
+from backend.app.agent.file_store import LLMUsageStore
 
 logger = logging.getLogger(__name__)
 
 
 def log_llm_usage(
-    db: Session,
     contractor_id: int,
     model: str,
     response: MessageResponse,
     purpose: str,
-) -> LLMUsageLog | None:
-    """Extract token usage from an LLM response and save to the database.
+) -> None:
+    """Extract token usage from an LLM response and save to the usage log.
 
-    Returns the created ``LLMUsageLog`` row, or ``None`` if the response
-    did not contain usage information.
+    Appends to the contractor's ``llm_usage.jsonl`` file.
     """
     prompt_tokens = response.usage.input_tokens
     completion_tokens = response.usage.output_tokens
     total_tokens = prompt_tokens + completion_tokens
 
-    log_entry = LLMUsageLog(
-        contractor_id=contractor_id,
-        model=model,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        purpose=purpose,
-    )
     try:
-        db.add(log_entry)
-        db.flush()
+        store = LLMUsageStore(contractor_id)
+        store.log(model, prompt_tokens, completion_tokens, purpose)
     except Exception:
         logger.exception("Failed to log LLM usage for contractor %d", contractor_id)
-        db.rollback()
-        return None
+        return
 
     logger.info(
         "LLM usage logged: contractor=%d model=%s purpose=%s tokens=%d",
@@ -55,4 +43,3 @@ def log_llm_usage(
         purpose,
         total_tokens,
     )
-    return log_entry

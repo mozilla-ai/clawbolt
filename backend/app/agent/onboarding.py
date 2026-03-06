@@ -7,13 +7,11 @@ import logging
 from typing import TYPE_CHECKING
 
 from backend.app.agent.events import AgentEndEvent, AgentEvent
+from backend.app.agent.file_store import ContractorData, get_contractor_store
 from backend.app.agent.profile import build_onboarding_prompt
 from backend.app.agent.tools.names import ToolName
-from backend.app.models import Contractor
 
 if TYPE_CHECKING:
-    from sqlalchemy.orm import Session
-
     from backend.app.agent.core import AgentResponse
 
 logger = logging.getLogger(__name__)
@@ -22,7 +20,7 @@ logger = logging.getLogger(__name__)
 REQUIRED_PROFILE_FIELDS = {"name", "trade", "location"}
 
 
-def is_onboarding_needed(contractor: Contractor) -> bool:
+def is_onboarding_needed(contractor: ContractorData) -> bool:
     """Check if contractor needs onboarding.
 
     Returns False once onboarding_complete is set, or if all required
@@ -37,7 +35,7 @@ def is_onboarding_needed(contractor: Contractor) -> bool:
     return False
 
 
-def build_onboarding_system_prompt(contractor: Contractor) -> str:
+def build_onboarding_system_prompt(contractor: ContractorData) -> str:
     """Build system prompt for onboarding mode.
 
     Wraps the base onboarding prompt with any partial profile info
@@ -90,14 +88,13 @@ class OnboardingSubscriber:
 
     Usage::
 
-        sub = OnboardingSubscriber(db, contractor, was_onboarding=True)
+        sub = OnboardingSubscriber(contractor, was_onboarding=True)
         agent.subscribe(sub)
         response = await agent.process_message(...)
         sub.finalize(response)  # appends completion note to reply if applicable
     """
 
-    def __init__(self, db: Session, contractor: Contractor, was_onboarding: bool) -> None:
-        self._db = db
+    def __init__(self, contractor: ContractorData, was_onboarding: bool) -> None:
         self._contractor = contractor
         self._was_onboarding = was_onboarding
         self._completion_note: str | None = None
@@ -105,25 +102,28 @@ class OnboardingSubscriber:
     async def __call__(self, event: AgentEvent) -> None:
         """Handle agent events. Only acts on ``AgentEndEvent``."""
         if isinstance(event, AgentEndEvent):
-            self._on_agent_end(event)
+            await self._on_agent_end(event)
 
-    def _on_agent_end(self, event: AgentEndEvent) -> None:
+    async def _on_agent_end(self, event: AgentEndEvent) -> None:
         """Process onboarding state after the agent finishes."""
-        # Refresh contractor if a profile update was made (the tool already
-        # committed, but the ORM object may be stale in this session).
+        store = get_contractor_store()
+
+        # Reload contractor if a profile update was made
         if any(a == f"Called {ToolName.UPDATE_PROFILE}" for a in event.actions_taken):
-            self._db.refresh(self._contractor)
+            refreshed = await store.get_by_id(self._contractor.id)
+            if refreshed:
+                self._contractor = refreshed
 
         # Transition: was onboarding and required fields are now complete
         if self._was_onboarding and not is_onboarding_needed(self._contractor):
+            await store.update(self._contractor.id, onboarding_complete=True)
             self._contractor.onboarding_complete = True
-            self._db.commit()
             self._completion_note = self._build_completion_note()
 
         # Pre-populated contractor: fields were already filled but flag was never set
         if not self._contractor.onboarding_complete and not is_onboarding_needed(self._contractor):
+            await store.update(self._contractor.id, onboarding_complete=True)
             self._contractor.onboarding_complete = True
-            self._db.commit()
 
     def _build_completion_note(self) -> str:
         parts = [f"Name: {self._contractor.name}", f"Trade: {self._contractor.trade}"]

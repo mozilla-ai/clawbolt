@@ -111,7 +111,7 @@ class TestSectionBuilders:
             new_callable=AsyncMock,
             return_value="client: John Doe, deck work",
         ):
-            result = await build_memory_section(MagicMock(), contractor_id=1)
+            result = await build_memory_section(contractor_id=1)
         assert "John Doe" in result
 
     @pytest.mark.asyncio
@@ -122,7 +122,7 @@ class TestSectionBuilders:
             new_callable=AsyncMock,
             return_value="",
         ):
-            result = await build_memory_section(MagicMock(), contractor_id=1)
+            result = await build_memory_section(contractor_id=1)
         assert result == "(No memories saved yet)"
 
     def test_build_instructions_section(self) -> None:
@@ -205,7 +205,6 @@ class TestBuildAgentSystemPrompt:
             return_value="client: Jane, roof repair",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
                 contractor=contractor,
                 tools=[tool],
                 message_context="how much for a roof repair?",
@@ -239,7 +238,6 @@ class TestBuildAgentSystemPrompt:
             return_value="",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
                 contractor=contractor,
                 tools=[],
                 message_context="hello",
@@ -269,7 +267,6 @@ class TestBuildAgentSystemPrompt:
             return_value="",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
                 contractor=contractor,
                 tools=[],
                 message_context="hello",
@@ -296,7 +293,6 @@ class TestBuildAgentSystemPrompt:
             return_value="",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
                 contractor=contractor,
                 tools=[],
                 message_context="hello",
@@ -404,7 +400,6 @@ class TestAgentSystemPromptIncludesDate:
             return_value="",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
                 contractor=contractor,
                 tools=[],
                 message_context="hello",

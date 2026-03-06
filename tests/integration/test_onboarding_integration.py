@@ -2,7 +2,7 @@
 
 Verifies that a new contractor's first message triggers onboarding,
 the agent extracts profile fields via update_profile, and the profile
-is updated in the database.
+is updated in the file store.
 
 Requires ANTHROPIC_API_KEY set in environment:
     ANTHROPIC_API_KEY=sk-... uv run pytest -m integration -v --timeout=120
@@ -11,9 +11,9 @@ Requires ANTHROPIC_API_KEY set in environment:
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.file_store import get_contractor_store
 from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
     is_onboarding_needed,
@@ -23,26 +23,22 @@ from backend.app.agent.tools.profile_tools import (
     create_profile_tools,
     extract_profile_updates_from_tool_calls,
 )
-from backend.app.models import Contractor
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
 
 @pytest.mark.integration()
 @skip_without_anthropic_key
-async def test_onboarding_extracts_profile_from_intro(
-    integration_db: Session,
-) -> None:
+async def test_onboarding_extracts_profile_from_intro() -> None:
     """Agent should extract name and trade from a natural introduction message."""
+
     # Create a blank contractor (no profile info)
-    contractor = Contractor(
+    store = get_contractor_store()
+    contractor = await store.create(
         user_id="onboarding-test-user",
         channel_identifier="onboard_test_1",
         preferred_channel="telegram",
     )
-    integration_db.add(contractor)
-    integration_db.commit()
-    integration_db.refresh(contractor)
 
     assert is_onboarding_needed(contractor)
 
@@ -52,9 +48,9 @@ async def test_onboarding_extracts_profile_from_intro(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = ClawboltAgent(db=integration_db, contractor=contractor)
-        tools = create_memory_tools(integration_db, contractor.id)
-        tools.extend(create_profile_tools(integration_db, contractor))
+        agent = ClawboltAgent(contractor=contractor)
+        tools = create_memory_tools(contractor.id)
+        tools.extend(create_profile_tools(contractor))
         agent.register_tools(tools)
 
         system_prompt = build_onboarding_system_prompt(contractor)

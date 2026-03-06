@@ -15,16 +15,20 @@ import json
 import logging
 from dataclasses import dataclass, field
 
-from sqlalchemy.orm import Session
 from starlette.background import BackgroundTask
 
 from backend.app.agent.concurrency import contractor_locks
 from backend.app.agent.context import get_or_create_conversation
+from backend.app.agent.file_store import (
+    ContractorData,
+    SessionState,
+    StoredMessage,
+    get_contractor_store,
+    get_session_store,
+)
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
-from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
-from backend.app.models import Contractor, Message
 from backend.app.services.messaging import MessagingService
 
 logger = logging.getLogger(__name__)
@@ -46,18 +50,16 @@ class InboundMessage:
     sender_username: str | None = None
 
 
-def _get_or_create_contractor(db: Session, channel: str, sender_id: str) -> Contractor:
+async def _get_or_create_contractor(channel: str, sender_id: str) -> ContractorData:
     """Look up or create a contractor by channel-specific sender ID."""
-    contractor = db.query(Contractor).filter(Contractor.channel_identifier == sender_id).first()
+    store = get_contractor_store()
+    contractor = await store.get_by_channel(sender_id)
     if contractor is None:
-        contractor = Contractor(
+        contractor = await store.create(
             user_id=f"{channel}_{sender_id}",
             channel_identifier=sender_id,
             preferred_channel=channel,
         )
-        db.add(contractor)
-        db.commit()
-        db.refresh(contractor)
     return contractor
 
 
@@ -70,7 +72,8 @@ def _get_or_create_contractor(db: Session, channel: str, sender_id: str) -> Cont
 class _BatchEntry:
     """A single message pending in a batch."""
 
-    message_id: int
+    session: SessionState
+    message: StoredMessage
     media_urls: list[tuple[str, str]]
 
 
@@ -81,6 +84,7 @@ class _BatchState:
     entries: list[_BatchEntry] = field(default_factory=list)
     timer: asyncio.Task[None] | None = None
     messaging_service: MessagingService | None = None
+    contractor: ContractorData | None = None
 
 
 class MessageBatcher:
@@ -89,7 +93,7 @@ class MessageBatcher:
     When multiple messages arrive within ``window_ms`` of each other
     (e.g. after a tunnel reconnect or when a user sends several messages
     quickly), they are batched together.  Only the last message triggers the
-    agent pipeline; earlier messages are already persisted in the database
+    agent pipeline; earlier messages are already persisted in the session
     and appear in conversation history automatically.  Media from all
     batched messages is combined so nothing is lost.
 
@@ -104,23 +108,27 @@ class MessageBatcher:
 
     async def enqueue(
         self,
-        contractor_id: int,
-        message_id: int,
+        contractor: ContractorData,
+        session: SessionState,
+        message: StoredMessage,
         media_urls: list[tuple[str, str]],
         messaging_service: MessagingService,
     ) -> None:
-        """Add a message to the batch for *contractor_id*.
+        """Add a message to the batch for the contractor.
 
         Resets the flush timer so that messages arriving within the window
         are grouped together.
         """
         async with self._lock:
-            state = self._states.setdefault(contractor_id, _BatchState())
-            state.entries.append(_BatchEntry(message_id=message_id, media_urls=media_urls))
+            state = self._states.setdefault(contractor.id, _BatchState())
+            state.entries.append(
+                _BatchEntry(session=session, message=message, media_urls=media_urls)
+            )
             state.messaging_service = messaging_service
+            state.contractor = contractor
             if state.timer is not None:
                 state.timer.cancel()
-            state.timer = asyncio.create_task(self._flush_after(contractor_id))
+            state.timer = asyncio.create_task(self._flush_after(contractor.id))
 
     async def _flush_after(self, contractor_id: int) -> None:
         """Wait for the batch window then flush."""
@@ -128,7 +136,7 @@ class MessageBatcher:
         await self._flush(contractor_id)
 
     async def _flush(self, contractor_id: int) -> None:
-        """Process the batched messages for *contractor_id*.
+        """Process the batched messages for the contractor.
 
         Acquires the per-contractor lock, then runs the agent pipeline for
         the most recent message.  Media from all batched messages is merged.
@@ -137,9 +145,12 @@ class MessageBatcher:
             state = self._states.pop(contractor_id, None)
         if state is None or not state.entries or state.messaging_service is None:
             return
+        if state.contractor is None:
+            return
 
         last_entry = state.entries[-1]
         messaging_service = state.messaging_service
+        contractor = state.contractor
 
         # Merge media from all batched messages so attachments are not lost.
         all_media: list[tuple[str, str]] = []
@@ -148,39 +159,32 @@ class MessageBatcher:
 
         if len(state.entries) > 1:
             logger.info(
-                "Batched %d messages for contractor %d, processing message %d",
+                "Batched %d messages for contractor %d, processing message seq %d",
                 len(state.entries),
                 contractor_id,
-                last_entry.message_id,
+                last_entry.message.seq,
             )
 
         async with contractor_locks.acquire(contractor_id):
-            db: Session = SessionLocal()
             try:
-                contractor = db.get(Contractor, contractor_id)
-                message = db.get(Message, last_entry.message_id)
-                if contractor is None or message is None:
-                    logger.error(
-                        "Batch flush: contractor %d or message %d not found",
-                        contractor_id,
-                        last_entry.message_id,
-                    )
-                    return
+                # Reload contractor in case it was updated
+                store = get_contractor_store()
+                fresh = await store.get_by_id(contractor_id)
+                if fresh is not None:
+                    contractor = fresh
                 await handle_inbound_message(
-                    db=db,
                     contractor=contractor,
-                    message=message,
+                    session=last_entry.session,
+                    message=last_entry.message,
                     media_urls=all_media,
                     messaging_service=messaging_service,
                 )
             except Exception:
                 logger.exception(
-                    "Agent pipeline failed for message %d (contractor %d)",
-                    last_entry.message_id,
+                    "Agent pipeline failed for message seq %d (contractor %d)",
+                    last_entry.message.seq,
                     contractor_id,
                 )
-            finally:
-                db.close()
 
 
 # Module-level singleton
@@ -193,61 +197,53 @@ message_batcher = MessageBatcher(window_ms=settings.message_batch_window_ms)
 
 
 async def _process_message_background(
-    contractor_id: int,
-    message_id: int,
+    contractor: ContractorData,
+    session: SessionState,
+    message: StoredMessage,
     media_urls: list[tuple[str, str]],
     messaging_service: MessagingService,
 ) -> None:
     """Run the agent pipeline directly (no batching).
 
     Used when ``message_batch_window_ms`` is 0.
-    Creates its own DB session rather than sharing the request-scoped one,
-    which would be closed by the time this task executes.
     """
-    async with contractor_locks.acquire(contractor_id):
-        db: Session = SessionLocal()
+    async with contractor_locks.acquire(contractor.id):
         try:
-            contractor = db.get(Contractor, contractor_id)
-            message = db.get(Message, message_id)
-            if contractor is None or message is None:
-                logger.error(
-                    "Background task: contractor %d or message %d not found",
-                    contractor_id,
-                    message_id,
-                )
-                return
+            # Reload contractor
+            store = get_contractor_store()
+            fresh = await store.get_by_id(contractor.id)
+            if fresh is not None:
+                contractor = fresh
             await handle_inbound_message(
-                db=db,
                 contractor=contractor,
+                session=session,
                 message=message,
                 media_urls=media_urls,
                 messaging_service=messaging_service,
             )
         except Exception:
             logger.exception(
-                "Agent pipeline failed for message %d (contractor %d)",
-                message_id,
-                contractor_id,
+                "Agent pipeline failed for message seq %d (contractor %d)",
+                message.seq,
+                contractor.id,
             )
-        finally:
-            db.close()
 
 
 async def _enqueue_message_background(
-    contractor_id: int,
-    message_id: int,
+    contractor: ContractorData,
+    session: SessionState,
+    message: StoredMessage,
     media_urls: list[tuple[str, str]],
     messaging_service: MessagingService,
 ) -> None:
     """Enqueue a message into the batcher (runs as a Starlette BackgroundTask)."""
-    await message_batcher.enqueue(contractor_id, message_id, media_urls, messaging_service)
+    await message_batcher.enqueue(contractor, session, message, media_urls, messaging_service)
 
 
 async def process_inbound_message(
-    db: Session,
     inbound: InboundMessage,
     messaging_service: MessagingService,
-) -> tuple[BackgroundTask, Contractor, Message]:
+) -> tuple[BackgroundTask, ContractorData, StoredMessage]:
     """Channel-agnostic inbound message processing.
 
     1. Look up or create the contractor from ``inbound.sender_id``
@@ -263,30 +259,17 @@ async def process_inbound_message(
     Returns (background_task, contractor, message) so the caller can
     include the task in its HTTP response.
     """
-    contractor = _get_or_create_contractor(db, inbound.channel, inbound.sender_id)
-    conversation, _is_new = await get_or_create_conversation(db, contractor.id)
-    logger.debug(
-        "Inbound message from %s/%s: contractor=%d, conversation=%d (new=%s), "
-        "text_length=%d, media=%d",
-        inbound.channel,
-        inbound.sender_id,
-        contractor.id,
-        conversation.id,
-        _is_new,
-        len(inbound.text),
-        len(inbound.media_refs),
-    )
+    contractor = await _get_or_create_contractor(inbound.channel, inbound.sender_id)
+    session, _is_new = await get_or_create_conversation(contractor.id)
 
-    message = Message(
-        conversation_id=conversation.id,
+    session_store = get_session_store(contractor.id)
+    message = await session_store.add_message(
+        session=session,
         direction=MessageDirection.INBOUND,
-        external_message_id=inbound.external_message_id or None,
         body=inbound.text,
+        external_message_id=inbound.external_message_id or "",
         media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
     )
-    db.add(message)
-    db.commit()
-    db.refresh(message)
 
     handler = (
         _enqueue_message_background
@@ -295,8 +278,9 @@ async def process_inbound_message(
     )
     task = BackgroundTask(
         handler,
-        contractor_id=contractor.id,
-        message_id=message.id,
+        contractor=contractor,
+        session=session,
+        message=message,
         media_urls=inbound.media_refs,
         messaging_service=messaging_service,
     )

@@ -8,14 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import ContractorData, EstimateStore
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.enums import EstimateStatus
-from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
 from backend.app.services.storage_service import StorageBackend
 
@@ -49,8 +48,7 @@ class GenerateEstimateParams(BaseModel):
 
 
 def create_estimate_tools(
-    db: Session,
-    contractor: Contractor,
+    contractor: ContractorData,
     storage: StorageBackend | None = None,
 ) -> list[Tool]:
     """Create estimate-related tools for the agent."""
@@ -99,30 +97,16 @@ def create_estimate_tools(
 
         total_amount = subtotal
 
-        # Create database records
-        estimate = Estimate(
-            contractor_id=contractor.id,
+        # Create estimate via file store
+        estimate_store = EstimateStore(contractor.id)
+        estimate = await estimate_store.create(
             description=description,
             total_amount=total_amount,
             status=EstimateStatus.DRAFT,
+            line_items=processed_items,
         )
-        db.add(estimate)
-        db.flush()  # Get the ID before adding line items
 
         estimate_number = ESTIMATE_NUMBER_FORMAT.format(estimate.id)
-
-        for item in processed_items:
-            line_item = EstimateLineItem(
-                estimate_id=estimate.id,
-                description=str(item["description"]),
-                quantity=float(item["quantity"]),
-                unit_price=float(item["unit_price"]),
-                total=float(item["total"]),
-            )
-            db.add(line_item)
-
-        db.commit()
-        db.refresh(estimate)
 
         # Generate PDF
         pdf_data = EstimatePDFData(
@@ -160,9 +144,8 @@ def create_estimate_tools(
                     estimate_number,
                 )
 
-        # Update estimate with PDF path - stays as DRAFT until actually sent
-        estimate.pdf_url = str(pdf_path)
-        db.commit()
+        # Update estimate with PDF path
+        await estimate_store.update(estimate.id, pdf_url=str(pdf_path))
 
         return ToolResult(
             content=(
@@ -194,7 +177,7 @@ def create_estimate_tools(
 
 def _estimate_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for estimate tools, used by the registry."""
-    return create_estimate_tools(ctx.db, ctx.contractor, ctx.storage)
+    return create_estimate_tools(ctx.contractor, ctx.storage)
 
 
 def _register() -> None:

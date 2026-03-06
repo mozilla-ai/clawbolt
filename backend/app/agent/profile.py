@@ -2,9 +2,7 @@ import json
 import logging
 from typing import Any
 
-from sqlalchemy.orm import Session
-
-from backend.app.models import Contractor
+from backend.app.agent.file_store import ContractorData, get_contractor_store
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +89,9 @@ def get_trade_defaults(trade: str) -> str | None:
 
 
 async def update_contractor_profile(
-    db: Session,
-    contractor: Contractor,
+    contractor: ContractorData,
     updates: dict[str, Any],
-) -> Contractor:
+) -> ContractorData:
     """Update contractor profile fields from onboarding or conversation."""
     allowed_fields = {
         "name",
@@ -107,15 +104,15 @@ async def update_contractor_profile(
         "timezone",
         "preferences_json",
     }
-    for field, value in updates.items():
-        if field in allowed_fields and value is not None:
-            setattr(contractor, field, value)
-    db.commit()
-    db.refresh(contractor)
-    return contractor
+    filtered = {k: v for k, v in updates.items() if k in allowed_fields and v is not None}
+    if not filtered:
+        return contractor
+    store = get_contractor_store()
+    updated = await store.update(contractor.id, **filtered)
+    return updated or contractor
 
 
-def build_soul_prompt(contractor: Contractor) -> str:
+def build_soul_prompt(contractor: ContractorData) -> str:
     """Build the 'soul' section of the system prompt from contractor profile.
 
     Layers (in order):
@@ -166,7 +163,7 @@ def build_soul_prompt(contractor: Contractor) -> str:
     return "\n".join(lines)
 
 
-def get_missing_optional_fields(contractor: Contractor) -> list[str]:
+def get_missing_optional_fields(contractor: ContractorData) -> list[str]:
     """Return labels for optional profile fields that are still empty."""
     optional: dict[str, str] = {
         "hourly_rate": "rates",

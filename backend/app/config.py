@@ -24,7 +24,7 @@ def get_effective_webhook_secret(s: "Settings") -> str:
 
 class Settings(BaseSettings):
     log_level: str = "INFO"
-    database_url: str = "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt"
+    contractor_data_dir: str = "data/contractors"
     cors_origins: str = "http://localhost:3000,http://localhost:8000"
     jwt_secret: str = "change-me-in-production"
     jwt_expiry_minutes: int = 15

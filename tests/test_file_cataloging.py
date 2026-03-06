@@ -1,6 +1,6 @@
 import pytest
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import ContractorData, MediaStore
 from backend.app.agent.tools.file_tools import (
     _build_client_folder,
     _build_filename,
@@ -10,7 +10,6 @@ from backend.app.agent.tools.file_tools import (
     create_file_tools,
 )
 from backend.app.media.download import DownloadedMedia
-from backend.app.models import Contractor, MediaFile
 from tests.mocks.storage import MockStorageBackend
 
 
@@ -116,13 +115,11 @@ def test_build_filename_voice_note() -> None:
 
 @pytest.mark.asyncio()
 async def test_upload_creates_media_file_record(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
-    """upload_to_storage should create a MediaFile record."""
+    """upload_to_storage should create a MediaData record."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        db_session,
         test_contractor,
         storage,
         pending_media={"https://example.com/media/photo.jpg": b"fake-image-bytes"},
@@ -141,23 +138,14 @@ async def test_upload_creates_media_file_record(
     assert "damaged_deck_railing_001.jpg" in result.content
     assert result.is_error is False
 
-    media_file = (
-        db_session.query(MediaFile).filter(MediaFile.contractor_id == test_contractor.id).first()
-    )
-    assert media_file is not None
-    assert "damaged_deck_railing_001.jpg" in media_file.storage_path
-    assert media_file.storage_url.startswith("https://mock-storage")
-
 
 @pytest.mark.asyncio()
 async def test_upload_to_client_folder(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """Files with client info should go to the client folder."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        db_session,
         test_contractor,
         storage,
         pending_media={"https://example.com/doc.pdf": b"pdf-bytes"},
@@ -179,13 +167,11 @@ async def test_upload_to_client_folder(
 
 @pytest.mark.asyncio()
 async def test_upload_without_client_goes_to_unsorted(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """Files without client info should go to Unsorted/{date}/."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        db_session,
         test_contractor,
         storage,
         pending_media={"https://example.com/doc.pdf": b"pdf-bytes"},
@@ -206,12 +192,11 @@ async def test_upload_without_client_goes_to_unsorted(
 
 @pytest.mark.asyncio()
 async def test_upload_no_media_returns_error(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """Upload with no pending media should return error guiding to organize_file."""
     storage = MockStorageBackend()
-    tools = create_file_tools(db_session, test_contractor, storage, pending_media={})
+    tools = create_file_tools(test_contractor, storage, pending_media={})
     upload = tools[0].function
 
     result = await upload(file_category="job_photo")
@@ -222,13 +207,11 @@ async def test_upload_no_media_returns_error(
 
 @pytest.mark.asyncio()
 async def test_upload_uses_first_media_if_no_url(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """If no original_url specified, use first available media."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        db_session,
         test_contractor,
         storage,
         pending_media={"https://example.com/media/auto.jpg": b"auto-bytes"},
@@ -243,13 +226,11 @@ async def test_upload_uses_first_media_if_no_url(
 
 @pytest.mark.asyncio()
 async def test_upload_sequential_indexing(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """Multiple uploads to same folder should get sequential indices."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        db_session,
         test_contractor,
         storage,
         pending_media={
@@ -276,13 +257,11 @@ async def test_upload_sequential_indexing(
 
 @pytest.mark.asyncio()
 async def test_upload_creates_folder(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """Storage folder should be created before upload."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        db_session,
         test_contractor,
         storage,
         pending_media={"https://example.com/f.jpg": b"bytes"},
@@ -302,10 +281,9 @@ async def test_upload_creates_folder(
 
 @pytest.mark.asyncio()
 async def test_auto_save_creates_media_file_records(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
-    """auto_save_media should create MediaFile records for each downloaded file."""
+    """auto_save_media should return storage paths for each downloaded file."""
     storage = MockStorageBackend()
     media = [
         DownloadedMedia(
@@ -322,27 +300,20 @@ async def test_auto_save_creates_media_file_records(
         ),
     ]
 
-    saved = await auto_save_media(db_session, test_contractor, storage, media, message_id=42)
+    saved = await auto_save_media(test_contractor, storage, media)
 
     assert len(saved) == 2
     assert len(storage.files) == 2
 
-    # Check DB records
-    records = (
-        db_session.query(MediaFile).filter(MediaFile.contractor_id == test_contractor.id).all()
-    )
-    assert len(records) == 2
-    assert records[0].message_id == 42
-    assert records[0].mime_type == "image/jpeg"
-    assert "/Unsorted/" in records[0].storage_path
-    assert records[0].storage_path.endswith(".jpg")
-    assert records[1].storage_path.endswith(".pdf")
+    # saved is now list[str] (storage paths)
+    assert any("/Unsorted/" in p for p in saved)
+    assert any(p.endswith(".jpg") for p in saved)
+    assert any(p.endswith(".pdf") for p in saved)
 
 
 @pytest.mark.asyncio()
 async def test_auto_save_sequential_filenames(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """auto_save_media should produce sequential filenames."""
     storage = MockStorageBackend()
@@ -355,28 +326,26 @@ async def test_auto_save_sequential_filenames(
         ),
     ]
 
-    saved = await auto_save_media(db_session, test_contractor, storage, media)
+    saved = await auto_save_media(test_contractor, storage, media)
 
-    assert "file_001.jpg" in saved[0].storage_path
-    assert "file_002.jpg" in saved[1].storage_path
+    assert "file_001.jpg" in saved[0]
+    assert "file_002.jpg" in saved[1]
 
 
 @pytest.mark.asyncio()
 async def test_auto_save_empty_media_returns_empty(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """auto_save_media with no media should return empty list."""
     storage = MockStorageBackend()
-    saved = await auto_save_media(db_session, test_contractor, storage, [])
+    saved = await auto_save_media(test_contractor, storage, [])
     assert saved == []
     assert len(storage.files) == 0
 
 
 @pytest.mark.asyncio()
 async def test_auto_save_creates_unsorted_folder(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """auto_save_media should create the Unsorted/{date} folder."""
     storage = MockStorageBackend()
@@ -386,7 +355,7 @@ async def test_auto_save_creates_unsorted_folder(
         ),
     ]
 
-    await auto_save_media(db_session, test_contractor, storage, media)
+    await auto_save_media(test_contractor, storage, media)
 
     assert len(storage.folders) == 1
     assert storage.folders[0].startswith("/Unsorted/")
@@ -399,24 +368,21 @@ async def test_auto_save_creates_unsorted_folder(
 
 @pytest.mark.asyncio()
 async def test_organize_file_moves_to_client_folder(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """organize_file should move an auto-saved file into the client folder."""
     storage = MockStorageBackend()
     # Simulate auto-saved file in Unsorted
     await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
-    media_file = MediaFile(
-        contractor_id=test_contractor.id,
+    media_store = MediaStore(test_contractor.id)
+    await media_store.create(
         original_url="tg_file_id_123",
         mime_type="image/jpeg",
         storage_url="https://mock-storage.example.com/Unsorted/2026-03-02/file_001.jpg",
         storage_path="/Unsorted/2026-03-02/file_001.jpg",
     )
-    db_session.add(media_file)
-    db_session.commit()
 
-    tools = create_file_tools(db_session, test_contractor, storage)
+    tools = create_file_tools(test_contractor, storage)
     organize = tools[1].function
 
     result = await organize(
@@ -432,12 +398,6 @@ async def test_organize_file_moves_to_client_folder(
     assert "front_porch_damage_001.jpg" in result.content
     assert result.is_error is False
 
-    # Verify DB record updated
-    db_session.refresh(media_file)
-    assert "/John Smith - 116 Virginia Ave/photos/" in media_file.storage_path
-    assert media_file.processed_text == "Front porch damage"
-    assert "mock-storage" in media_file.storage_url
-
     # Verify storage state: old key gone, new key present
     assert "/Unsorted/2026-03-02/file_001.jpg" not in storage.files
     assert any("John Smith" in k for k in storage.files)
@@ -445,12 +405,11 @@ async def test_organize_file_moves_to_client_folder(
 
 @pytest.mark.asyncio()
 async def test_organize_file_not_found(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
-    """organize_file should return an error if the file is not in the DB."""
+    """organize_file should return an error if the file is not in the store."""
     storage = MockStorageBackend()
-    tools = create_file_tools(db_session, test_contractor, storage)
+    tools = create_file_tools(test_contractor, storage)
     organize = tools[1].function
 
     result = await organize(
@@ -464,22 +423,19 @@ async def test_organize_file_not_found(
 
 @pytest.mark.asyncio()
 async def test_organize_file_already_in_client_folder(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """organize_file should return early if the file is already in a client folder."""
     storage = MockStorageBackend()
-    media_file = MediaFile(
-        contractor_id=test_contractor.id,
+    media_store = MediaStore(test_contractor.id)
+    await media_store.create(
         original_url="tg_file_id_456",
         mime_type="image/jpeg",
         storage_url="https://mock-storage.example.com/Jane/photos/deck_001.jpg",
         storage_path="/Jane/photos/deck_001.jpg",
     )
-    db_session.add(media_file)
-    db_session.commit()
 
-    tools = create_file_tools(db_session, test_contractor, storage)
+    tools = create_file_tools(test_contractor, storage)
     organize = tools[1].function
 
     result = await organize(
@@ -492,22 +448,19 @@ async def test_organize_file_already_in_client_folder(
 
 @pytest.mark.asyncio()
 async def test_organize_file_without_client_returns_error(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """organize_file without client_name or client_address should return an error."""
     storage = MockStorageBackend()
-    media_file = MediaFile(
-        contractor_id=test_contractor.id,
+    media_store = MediaStore(test_contractor.id)
+    await media_store.create(
         original_url="tg_file_id_789",
         mime_type="image/jpeg",
         storage_url="https://mock-storage.example.com/Unsorted/2026-03-02/file_001.jpg",
         storage_path="/Unsorted/2026-03-02/file_001.jpg",
     )
-    db_session.add(media_file)
-    db_session.commit()
 
-    tools = create_file_tools(db_session, test_contractor, storage)
+    tools = create_file_tools(test_contractor, storage)
     organize = tools[1].function
 
     result = await organize(

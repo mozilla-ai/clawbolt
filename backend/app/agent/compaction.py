@@ -12,7 +12,6 @@ from typing import Any, cast
 
 from any_llm import amessages
 from any_llm.types.messages import MessageResponse
-from sqlalchemy.orm import Session
 
 from backend.app.agent.llm_parsing import get_response_text
 from backend.app.agent.memory import save_memory
@@ -95,10 +94,9 @@ def _parse_compaction_response(raw: str) -> list[dict[str, str]]:
 
 
 async def compact_session(
-    db: Session,
     contractor_id: int,
     trimmed_messages: list[AgentMessage],
-    max_message_id: int | None = None,
+    max_message_seq: int | None = None,
 ) -> tuple[list[dict[str, str]], int | None]:
     """Extract durable facts from messages about to leave the context window.
 
@@ -106,16 +104,15 @@ async def compact_session(
     them via the existing memory subsystem.
 
     Args:
-        db: Database session.
         contractor_id: The contractor whose session is being compacted.
         trimmed_messages: Messages that are about to be dropped from context.
-        max_message_id: The highest message ID among the trimmed messages,
+        max_message_seq: The highest message seq among the trimmed messages,
             used to track compaction progress. Passed through to the return value.
 
     Returns:
-        A tuple of (saved_facts, max_message_id) where saved_facts is a list of
-        dicts with "key", "value", and "category" fields, and max_message_id is
-        the highest compacted message ID (for tracking).
+        A tuple of (saved_facts, max_message_seq) where saved_facts is a list of
+        dicts with "key", "value", and "category" fields, and max_message_seq is
+        the highest compacted message seq (for tracking).
     """
     if not trimmed_messages:
         return [], None
@@ -157,7 +154,6 @@ async def compact_session(
     for fact in facts:
         try:
             await save_memory(
-                db,
                 contractor_id=contractor_id,
                 key=fact["key"],
                 value=fact["value"],
@@ -178,4 +174,4 @@ async def compact_session(
                 contractor_id,
             )
 
-    return saved_facts, max_message_id
+    return saved_facts, max_message_seq

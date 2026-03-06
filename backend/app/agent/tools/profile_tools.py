@@ -14,12 +14,11 @@ import zoneinfo
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from backend.app.agent.context import StoredToolInteraction
+from backend.app.agent.file_store import ContractorData, get_contractor_store
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
-from backend.app.models import Contractor
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -85,7 +84,7 @@ def _parse_rate(value: str) -> float | None:
     return None
 
 
-def _format_profile(contractor: Contractor) -> str:
+def _format_profile(contractor: ContractorData) -> str:
     """Format the contractor's profile as a human-readable summary.
 
     Returns a structured text block with all known profile fields.
@@ -123,13 +122,14 @@ def _format_profile(contractor: Contractor) -> str:
     return "\n".join(lines)
 
 
-def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
+def create_profile_tools(contractor: ContractorData) -> list[Tool]:
     """Create profile introspection and update tools for the agent."""
 
     async def view_profile() -> ToolResult:
         """View the contractor's current profile information."""
-        db.refresh(contractor)
-        return ToolResult(content=_format_profile(contractor))
+        store = get_contractor_store()
+        refreshed = await store.get_by_id(contractor.id)
+        return ToolResult(content=_format_profile(refreshed or contractor))
 
     async def update_profile(
         name: str | None = None,
@@ -203,23 +203,8 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
-        # Apply updates directly to the contractor record
-        allowed_fields = {
-            "name",
-            "trade",
-            "location",
-            "hourly_rate",
-            "business_hours",
-            "timezone",
-            "preferences_json",
-            "soul_text",
-        }
-        for field, value in updates.items():
-            if field in allowed_fields:
-                setattr(contractor, field, value)
-
-        db.commit()
-        db.refresh(contractor)
+        store = get_contractor_store()
+        await store.update(contractor.id, **updates)
 
         summary = ", ".join(fields_updated)
         return ToolResult(content=f"Profile updated: {summary}")
@@ -257,7 +242,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
 
 def _profile_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for profile tools, used by the registry."""
-    return create_profile_tools(ctx.db, ctx.contractor)
+    return create_profile_tools(ctx.contractor)
 
 
 def _register() -> None:

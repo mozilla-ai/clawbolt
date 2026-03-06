@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.app.agent.file_store import ContractorData, SessionState, StoredMessage
 from backend.app.agent.ingestion import MessageBatcher
 
 
@@ -17,25 +18,13 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=50)
         messaging = MagicMock()
 
-        mock_contractor = MagicMock()
-        mock_contractor.id = 1
-        mock_contractor.channel_identifier = "123"
-        mock_contractor.phone = ""
+        mock_contractor = ContractorData(id=1, channel_identifier="123", phone="")
 
-        mock_message = MagicMock()
-        mock_message.id = 10
-        mock_message.conversation_id = 1
+        mock_session = SessionState(session_id="sess-1", contractor_id=1)
 
-        mock_db = MagicMock()
-        mock_db.get = MagicMock(
-            side_effect=lambda model, pk: {
-                (type(mock_contractor), 1): mock_contractor,
-                (type(mock_message), 10): mock_message,
-            }.get((model, pk))
-        )
+        mock_message = StoredMessage(direction="inbound", body="hello")
 
         with (
-            patch("backend.app.agent.ingestion.SessionLocal", return_value=mock_db),
             patch(
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
@@ -45,17 +34,8 @@ class TestMessageBatcher:
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
-            # Use the actual model classes for db.get
-            from backend.app.models import Contractor, Message
 
-            mock_db.get = MagicMock(
-                side_effect=lambda model, pk: {
-                    (Contractor, 1): mock_contractor,
-                    (Message, 10): mock_message,
-                }.get((model, pk))
-            )
-
-            await batcher.enqueue(1, 10, [], messaging)
+            await batcher.enqueue(mock_contractor, mock_session, mock_message, [], messaging)
             await asyncio.sleep(0.1)
 
             mock_handle.assert_called_once()
@@ -69,31 +49,15 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=100)
         messaging = MagicMock()
 
-        mock_contractor = MagicMock()
-        mock_contractor.id = 1
-        mock_contractor.channel_identifier = "123"
-        mock_contractor.phone = ""
+        mock_contractor = ContractorData(id=1, channel_identifier="123", phone="")
 
-        mock_msg_1 = MagicMock()
-        mock_msg_1.id = 10
-        mock_msg_2 = MagicMock()
-        mock_msg_2.id = 11
-        mock_msg_3 = MagicMock()
-        mock_msg_3.id = 12
-        mock_msg_3.conversation_id = 1
+        mock_session = SessionState(session_id="sess-1", contractor_id=1)
 
-        from backend.app.models import Contractor, Message
-
-        mock_db = MagicMock()
-        mock_db.get = MagicMock(
-            side_effect=lambda model, pk: {
-                (Contractor, 1): mock_contractor,
-                (Message, 12): mock_msg_3,
-            }.get((model, pk))
-        )
+        mock_msg_1 = StoredMessage(direction="inbound", body="first")
+        mock_msg_2 = StoredMessage(direction="inbound", body="second")
+        mock_msg_3 = StoredMessage(direction="inbound", body="third")
 
         with (
-            patch("backend.app.agent.ingestion.SessionLocal", return_value=mock_db),
             patch(
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
@@ -105,9 +69,21 @@ class TestMessageBatcher:
             )
 
             # Enqueue 3 messages rapidly (within the batch window)
-            await batcher.enqueue(1, 10, [("file_a", "image/jpeg")], messaging)
-            await batcher.enqueue(1, 11, [], messaging)
-            await batcher.enqueue(1, 12, [("file_b", "audio/ogg")], messaging)
+            await batcher.enqueue(
+                mock_contractor,
+                mock_session,
+                mock_msg_1,
+                [("file_a", "image/jpeg")],
+                messaging,
+            )
+            await batcher.enqueue(mock_contractor, mock_session, mock_msg_2, [], messaging)
+            await batcher.enqueue(
+                mock_contractor,
+                mock_session,
+                mock_msg_3,
+                [("file_b", "audio/ogg")],
+                messaging,
+            )
 
             await asyncio.sleep(0.2)
 
@@ -128,38 +104,16 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=50)
         messaging = MagicMock()
 
-        mock_c1 = MagicMock()
-        mock_c1.id = 1
-        mock_c1.channel_identifier = "111"
-        mock_c1.phone = ""
+        mock_c1 = ContractorData(id=1, channel_identifier="111", phone="")
+        mock_c2 = ContractorData(id=2, channel_identifier="222", phone="")
 
-        mock_c2 = MagicMock()
-        mock_c2.id = 2
-        mock_c2.channel_identifier = "222"
-        mock_c2.phone = ""
+        mock_session_1 = SessionState(session_id="sess-1", contractor_id=1)
+        mock_session_2 = SessionState(session_id="sess-2", contractor_id=2)
 
-        mock_msg_1 = MagicMock()
-        mock_msg_1.id = 10
-        mock_msg_1.conversation_id = 1
-
-        mock_msg_2 = MagicMock()
-        mock_msg_2.id = 20
-        mock_msg_2.conversation_id = 2
-
-        from backend.app.models import Contractor, Message
-
-        mock_db = MagicMock()
-        mock_db.get = MagicMock(
-            side_effect=lambda model, pk: {
-                (Contractor, 1): mock_c1,
-                (Contractor, 2): mock_c2,
-                (Message, 10): mock_msg_1,
-                (Message, 20): mock_msg_2,
-            }.get((model, pk))
-        )
+        mock_msg_1 = StoredMessage(direction="inbound", body="from c1")
+        mock_msg_2 = StoredMessage(direction="inbound", body="from c2")
 
         with (
-            patch("backend.app.agent.ingestion.SessionLocal", return_value=mock_db),
             patch(
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
@@ -170,8 +124,8 @@ class TestMessageBatcher:
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
 
-            await batcher.enqueue(1, 10, [], messaging)
-            await batcher.enqueue(2, 20, [], messaging)
+            await batcher.enqueue(mock_c1, mock_session_1, mock_msg_1, [], messaging)
+            await batcher.enqueue(mock_c2, mock_session_2, mock_msg_2, [], messaging)
 
             await asyncio.sleep(0.15)
 
@@ -184,27 +138,14 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=100)
         messaging = MagicMock()
 
-        mock_contractor = MagicMock()
-        mock_contractor.id = 1
-        mock_contractor.channel_identifier = "123"
-        mock_contractor.phone = ""
+        mock_contractor = ContractorData(id=1, channel_identifier="123", phone="")
 
-        mock_msg = MagicMock()
-        mock_msg.id = 11
-        mock_msg.conversation_id = 1
+        mock_session = SessionState(session_id="sess-1", contractor_id=1)
 
-        from backend.app.models import Contractor, Message
-
-        mock_db = MagicMock()
-        mock_db.get = MagicMock(
-            side_effect=lambda model, pk: {
-                (Contractor, 1): mock_contractor,
-                (Message, 11): mock_msg,
-            }.get((model, pk))
-        )
+        mock_msg_1 = StoredMessage(direction="inbound", body="first")
+        mock_msg_2 = StoredMessage(direction="inbound", body="second")
 
         with (
-            patch("backend.app.agent.ingestion.SessionLocal", return_value=mock_db),
             patch(
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
@@ -216,14 +157,14 @@ class TestMessageBatcher:
             )
 
             # First message
-            await batcher.enqueue(1, 10, [], messaging)
+            await batcher.enqueue(mock_contractor, mock_session, mock_msg_1, [], messaging)
 
             # Wait 70ms (within the 100ms window)
             await asyncio.sleep(0.07)
             mock_handle.assert_not_called()
 
             # Second message resets the timer
-            await batcher.enqueue(1, 11, [], messaging)
+            await batcher.enqueue(mock_contractor, mock_session, mock_msg_2, [], messaging)
 
             # Wait 70ms again (still within the new 100ms window)
             await asyncio.sleep(0.07)
@@ -239,27 +180,13 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=0)
         messaging = MagicMock()
 
-        mock_contractor = MagicMock()
-        mock_contractor.id = 1
-        mock_contractor.channel_identifier = "123"
-        mock_contractor.phone = ""
+        mock_contractor = ContractorData(id=1, channel_identifier="123", phone="")
 
-        mock_msg = MagicMock()
-        mock_msg.id = 10
-        mock_msg.conversation_id = 1
+        mock_session = SessionState(session_id="sess-1", contractor_id=1)
 
-        from backend.app.models import Contractor, Message
-
-        mock_db = MagicMock()
-        mock_db.get = MagicMock(
-            side_effect=lambda model, pk: {
-                (Contractor, 1): mock_contractor,
-                (Message, 10): mock_msg,
-            }.get((model, pk))
-        )
+        mock_message = StoredMessage(direction="inbound", body="hello")
 
         with (
-            patch("backend.app.agent.ingestion.SessionLocal", return_value=mock_db),
             patch(
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
@@ -270,7 +197,7 @@ class TestMessageBatcher:
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
 
-            await batcher.enqueue(1, 10, [], messaging)
+            await batcher.enqueue(mock_contractor, mock_session, mock_message, [], messaging)
             await asyncio.sleep(0.05)
 
             mock_handle.assert_called_once()
