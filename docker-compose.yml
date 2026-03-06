@@ -13,9 +13,7 @@ services:
         required: false
     volumes:
       - ${CLAWBOLT_DATA_DIR:-./data}:/app/data
-    command: >
-      uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
-      --log-level $${LOG_LEVEL:-info}
+    command: ["sh", "-c", "uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --log-level $${LOG_LEVEL:-info}"]
 
   tunnel:
     image: cloudflare/cloudflared:latest
