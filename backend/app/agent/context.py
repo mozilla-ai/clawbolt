@@ -174,6 +174,12 @@ async def load_conversation_history(
     """
     # Count total messages in this conversation to detect overflow
     total_count = db.query(Message).filter(Message.conversation_id == conversation_id).count()
+    logger.debug(
+        "Loading conversation history: conversation=%d, total_messages=%d, limit=%d",
+        conversation_id,
+        total_count,
+        limit,
+    )
 
     messages = (
         db.query(Message)
@@ -230,6 +236,7 @@ async def load_conversation_history(
             task.add_done_callback(_background_tasks.discard)
 
     history: list[AgentMessage] = []
+    tool_interaction_count = 0
     for msg in messages:
         # Prefer processed context (includes media descriptions) over raw body
         content = msg.processed_context if msg.processed_context else msg.body
@@ -239,9 +246,16 @@ async def load_conversation_history(
             # Check for stored tool interactions
             tool_interactions = _parse_tool_interactions(msg.tool_interactions_json)
             if tool_interactions:
+                tool_interaction_count += len(tool_interactions)
                 history.extend(_expand_outbound_with_tools(tool_interactions, content))
             else:
                 history.append(AssistantMessage(content=content))
+    logger.debug(
+        "Loaded %d history messages (%d with tool interactions) for conversation %d",
+        len(history),
+        tool_interaction_count,
+        conversation_id,
+    )
     return history
 
 

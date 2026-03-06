@@ -265,6 +265,17 @@ async def process_inbound_message(
     """
     contractor = _get_or_create_contractor(db, inbound.channel, inbound.sender_id)
     conversation, _is_new = await get_or_create_conversation(db, contractor.id)
+    logger.debug(
+        "Inbound message from %s/%s: contractor=%d, conversation=%d (new=%s), "
+        "text_length=%d, media=%d",
+        inbound.channel,
+        inbound.sender_id,
+        contractor.id,
+        conversation.id,
+        _is_new,
+        len(inbound.text),
+        len(inbound.media_refs),
+    )
 
     message = Message(
         conversation_id=conversation.id,
