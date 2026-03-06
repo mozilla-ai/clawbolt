@@ -14,8 +14,6 @@ RUN uv sync --frozen
 
 # Copy application code
 COPY backend/ backend/
-COPY alembic/ alembic/
-COPY alembic.ini .
 
 EXPOSE 8000
 
