@@ -75,6 +75,8 @@ def e2e_client(
         # Allow all chat IDs through so the allowlist doesn't block e2e messages.
         patch("backend.app.channels.telegram.settings.telegram_allowed_chat_ids", "*"),
         patch("backend.app.channels.telegram.settings.telegram_allowed_usernames", ""),
+        # Disable message batching so background tasks complete synchronously.
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
         TestClient(app) as c,
     ):
         yield c

@@ -64,6 +64,7 @@ class Settings(BaseSettings):
     whisper_compute_type: str = "int8"
 
     # Agent loop
+    message_batch_window_ms: int = 1500  # Batch rapid-fire messages per contractor
     max_tool_rounds: int = 10
     max_input_tokens: int = 120_000
     context_trim_target_tokens: int = 80_000

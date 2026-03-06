@@ -93,6 +93,9 @@ def client(
         # Clear bot token so auto-derived webhook secret is empty for tests that
         # don't send a secret header
         patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
+        # Disable message batching in tests: the async batcher creates
+        # fire-and-forget tasks that outlive the synchronous TestClient lifecycle.
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
         TestClient(app) as c,
     ):
         yield c
