@@ -1,6 +1,6 @@
 from collections.abc import Generator
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -159,6 +159,29 @@ async def test_generate_estimate_custom_terms(
     )
 
     assert "EST-0001" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_generate_estimate_no_terms_omits_default(
+    db_session: Session,
+    test_contractor: Contractor,
+) -> None:
+    """Omitting terms should pass None to the PDF, not a hardcoded default."""
+    tools = create_estimate_tools(db_session, test_contractor)
+    generate = tools[0].function
+
+    with patch(
+        "backend.app.agent.tools.estimate_tools.generate_estimate_pdf",
+        new_callable=AsyncMock,
+        return_value=b"%PDF-fake",
+    ) as mock_pdf:
+        await generate(
+            description="No terms job",
+            line_items=[{"description": "Work", "quantity": 1, "unit_price": 100.00}],
+        )
+
+        pdf_data = mock_pdf.call_args[0][0]
+        assert pdf_data.terms is None
 
 
 @pytest.mark.asyncio()
