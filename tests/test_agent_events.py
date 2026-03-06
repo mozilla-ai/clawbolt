@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.events import (
@@ -16,8 +15,8 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
+from backend.app.agent.file_store import ContractorData
 from backend.app.agent.tools.base import Tool, ToolResult
-from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -33,8 +32,8 @@ class _KeyValueParams(BaseModel):
 
 
 @pytest.fixture()
-def agent(db_session: Session, test_contractor: Contractor) -> ClawboltAgent:
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+def agent(test_contractor: ContractorData) -> ClawboltAgent:
+    agent = ClawboltAgent(contractor=test_contractor)
     return agent
 
 

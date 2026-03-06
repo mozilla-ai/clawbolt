@@ -13,8 +13,8 @@ import dropbox
 import dropbox.exceptions
 import dropbox.files
 
+from backend.app.agent.file_store import ContractorData
 from backend.app.config import Settings, settings
-from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
 
@@ -270,7 +270,7 @@ class LocalFileStorage(StorageBackend):
 
 def get_storage_service(
     svc_settings: Settings | None = None,
-    contractor: Contractor | None = None,
+    contractor: ContractorData | None = None,
 ) -> StorageBackend:
     """Factory: return the configured storage backend.
 

@@ -1,15 +1,14 @@
 """Shared fixtures for integration tests that hit a real LLM API."""
 
+import asyncio
 import os
 from collections.abc import Generator
+from unittest.mock import patch
 
 import pytest
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from backend.app.database import Base
-from backend.app.models import Contractor
+from backend.app.agent.file_store import ContractorData, get_contractor_store, reset_stores
+from backend.app.config import settings
 
 _ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 
@@ -19,49 +18,42 @@ skip_without_anthropic_key = pytest.mark.skipif(
 )
 
 
-@pytest.fixture()
-def integration_db() -> Generator[Session]:
-    """Fresh in-memory SQLite for integration tests."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session = sessionmaker(bind=engine)()
-    yield session
-    session.close()
+@pytest.fixture(autouse=True)
+def _isolate_file_stores(tmp_path: object) -> Generator[None]:
+    """Point file stores at a temp directory and reset caches for each test."""
+    with patch.object(settings, "contractor_data_dir", str(tmp_path)):
+        reset_stores()
+        yield
+    reset_stores()
 
 
 @pytest.fixture()
-def integration_contractor(integration_db: Session) -> Contractor:
+def integration_contractor() -> ContractorData:
     """Test contractor for integration tests."""
-    contractor = Contractor(
-        user_id="integration-test-user",
-        name="Integration Test Contractor",
-        phone="+15559999999",
-        trade="General Contractor",
-        location="Portland, OR",
+    store = get_contractor_store()
+    return asyncio.get_event_loop().run_until_complete(
+        store.create(
+            user_id="integration-test-user",
+            name="Integration Test Contractor",
+            phone="+15559999999",
+            trade="General Contractor",
+            location="Portland, OR",
+        )
     )
-    integration_db.add(contractor)
-    integration_db.commit()
-    integration_db.refresh(contractor)
-    return contractor
 
 
 @pytest.fixture()
-def onboarded_contractor(integration_db: Session) -> Contractor:
+def onboarded_contractor() -> ContractorData:
     """Onboarded contractor with business hours for heartbeat tests."""
-    contractor = Contractor(
-        user_id="heartbeat-integration-user",
-        name="Mike the Plumber",
-        phone="+15559990000",
-        trade="Plumber",
-        location="Portland, OR",
-        business_hours="7am-5pm",
-        onboarding_complete=True,
+    store = get_contractor_store()
+    return asyncio.get_event_loop().run_until_complete(
+        store.create(
+            user_id="heartbeat-integration-user",
+            name="Mike the Plumber",
+            phone="+15559990000",
+            trade="Plumber",
+            location="Portland, OR",
+            business_hours="7am-5pm",
+            onboarding_complete=True,
+        )
     )
-    integration_db.add(contractor)
-    integration_db.commit()
-    integration_db.refresh(contractor)
-    return contractor

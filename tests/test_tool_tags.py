@@ -5,13 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.file_store import ContractorData
 from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.messaging_tools import create_messaging_tools
-from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -116,16 +115,14 @@ def test_tool_tags_do_not_leak_between_instances() -> None:
 
 def test_memory_tools_save_fact_has_saves_memory_tag() -> None:
     """save_fact tool from create_memory_tools should have SAVES_MEMORY tag."""
-    db = MagicMock()
-    tools = create_memory_tools(db, contractor_id=1)
+    tools = create_memory_tools(contractor_id=1)
     save_fact = next(t for t in tools if t.name == "save_fact")
     assert ToolTags.SAVES_MEMORY in save_fact.tags
 
 
 def test_memory_tools_recall_and_forget_have_no_special_tags() -> None:
     """recall_facts and forget_fact should not have SAVES_MEMORY or SENDS_REPLY tags."""
-    db = MagicMock()
-    tools = create_memory_tools(db, contractor_id=1)
+    tools = create_memory_tools(contractor_id=1)
     for tool in tools:
         if tool.name in ("recall_facts", "forget_fact"):
             assert ToolTags.SAVES_MEMORY not in tool.tags
@@ -154,7 +151,7 @@ def test_messaging_tools_do_not_have_saves_memory_tag() -> None:
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_tool_call_records_include_tags(
-    mock_amessages: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_contractor: ContractorData
 ) -> None:
     """Tool call records in AgentResponse should include tags from the Tool definition."""
     tool_response = make_tool_call_response(
@@ -177,7 +174,7 @@ async def test_agent_tool_call_records_include_tags(
         tags={ToolTags.SAVES_MEMORY},
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("My rate is $50/hour")
 
@@ -188,7 +185,7 @@ async def test_agent_tool_call_records_include_tags(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_memories_saved_uses_tags_not_name(
-    mock_amessages: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_contractor: ContractorData
 ) -> None:
     """memories_saved should be populated based on SAVES_MEMORY tag, not tool name."""
     tool_response = make_tool_call_response(
@@ -211,7 +208,7 @@ async def test_agent_memories_saved_uses_tags_not_name(
         tags={ToolTags.SAVES_MEMORY},
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("My favorite color is blue")
 
@@ -222,7 +219,7 @@ async def test_agent_memories_saved_uses_tags_not_name(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_untagged_tool_has_empty_tags(
-    mock_amessages: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_contractor: ContractorData
 ) -> None:
     """Tool without tags should produce tool_call record with empty tags set."""
     tool_response = make_tool_call_response(
@@ -244,7 +241,7 @@ async def test_agent_untagged_tool_has_empty_tags(
         params_model=_QParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(contractor=test_contractor)
     agent.register_tools([tool])
     response = await agent.process_message("hello")
 
@@ -260,10 +257,8 @@ def test_update_profile_has_modifies_profile_tag() -> None:
     """update_profile tool from create_profile_tools should have MODIFIES_PROFILE tag."""
     from backend.app.agent.tools.profile_tools import create_profile_tools
 
-    db = MagicMock()
-    contractor = MagicMock()
-    contractor.id = 1
-    tools = create_profile_tools(db, contractor)
+    contractor = ContractorData(id=1, user_id="test", name="Test")
+    tools = create_profile_tools(contractor)
     update_profile = next(t for t in tools if t.name == "update_profile")
     assert ToolTags.MODIFIES_PROFILE in update_profile.tags
 
@@ -272,9 +267,7 @@ def test_view_profile_has_no_modifies_profile_tag() -> None:
     """view_profile should not have MODIFIES_PROFILE tag."""
     from backend.app.agent.tools.profile_tools import create_profile_tools
 
-    db = MagicMock()
-    contractor = MagicMock()
-    contractor.id = 1
-    tools = create_profile_tools(db, contractor)
+    contractor = ContractorData(id=1, user_id="test", name="Test")
+    tools = create_profile_tools(contractor)
     view_profile = next(t for t in tools if t.name == "view_profile")
     assert ToolTags.MODIFIES_PROFILE not in view_profile.tags

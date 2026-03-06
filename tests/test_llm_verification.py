@@ -1,41 +1,18 @@
 """Tests for LLM settings verification at startup."""
 
 import logging
-from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from backend.app.database import Base, get_db
 from backend.app.main import app
-
-
-def _setup_db() -> tuple[Session, "sessionmaker[Session]"]:
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session = sessionmaker(bind=engine)()
-    return session, sessionmaker(bind=engine)
 
 
 def test_startup_succeeds_when_primary_model_is_valid(
     caplog: "pytest.LogCaptureFixture",
 ) -> None:
     """Startup should succeed and log verification when the primary model works."""
-    session, _ = _setup_db()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch("backend.app.main.amessages", new_callable=AsyncMock) as mock_amessages,
         patch("backend.app.main.settings") as mock_settings,
@@ -64,19 +41,11 @@ def test_startup_succeeds_when_primary_model_is_valid(
 
     assert any("LLM verified (primary)" in msg for msg in caplog.messages)
 
-    session.close()
     app.dependency_overrides.clear()
 
 
 def test_startup_fails_when_primary_model_is_invalid() -> None:
     """Startup should raise RuntimeError when the primary model check fails."""
-    session, _ = _setup_db()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch(
             "backend.app.main.amessages",
@@ -104,7 +73,6 @@ def test_startup_fails_when_primary_model_is_invalid() -> None:
         ):
             pass
 
-    session.close()
     app.dependency_overrides.clear()
 
 
@@ -112,13 +80,6 @@ def test_startup_warns_when_optional_model_is_invalid(
     caplog: "pytest.LogCaptureFixture",
 ) -> None:
     """Optional model failures should warn but not block startup."""
-    session, _ = _setup_db()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     call_count = 0
 
     async def _selective_fail(**kwargs: object) -> None:
@@ -152,7 +113,6 @@ def test_startup_warns_when_optional_model_is_invalid(
 
     assert any("LLM startup check failed for vision model" in msg for msg in caplog.messages)
 
-    session.close()
     app.dependency_overrides.clear()
 
 
@@ -160,13 +120,6 @@ def test_deduplicates_identical_provider_model_pairs(
     caplog: "pytest.LogCaptureFixture",
 ) -> None:
     """Identical (provider, model) pairs should only be checked once."""
-    session, _ = _setup_db()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch("backend.app.main.amessages", new_callable=AsyncMock) as mock_amessages,
         patch("backend.app.main.settings") as mock_settings,
@@ -191,7 +144,6 @@ def test_deduplicates_identical_provider_model_pairs(
         # Only one call since (openai, gpt-4o) is deduplicated
         assert mock_amessages.call_count == 1
 
-    session.close()
     app.dependency_overrides.clear()
 
 
@@ -199,13 +151,6 @@ def test_checks_all_distinct_model_configs(
     caplog: "pytest.LogCaptureFixture",
 ) -> None:
     """Each distinct (provider, model) pair should get its own verification call."""
-    session, _ = _setup_db()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch("backend.app.main.amessages", new_callable=AsyncMock) as mock_amessages,
         patch("backend.app.main.settings") as mock_settings,
@@ -229,19 +174,11 @@ def test_checks_all_distinct_model_configs(
         # 4 distinct configs: primary, vision, compaction, heartbeat
         assert mock_amessages.call_count == 4
 
-    session.close()
     app.dependency_overrides.clear()
 
 
 def test_error_message_includes_env_var_names() -> None:
     """RuntimeError message should reference LLM_PROVIDER and LLM_MODEL env var names."""
-    session, _ = _setup_db()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch(
             "backend.app.main.amessages",
@@ -266,5 +203,4 @@ def test_error_message_includes_env_var_names() -> None:
         with pytest.raises(RuntimeError, match=r"LLM_PROVIDER.*LLM_MODEL"), TestClient(app):
             pass
 
-    session.close()
     app.dependency_overrides.clear()

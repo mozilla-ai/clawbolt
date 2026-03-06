@@ -10,14 +10,13 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
-from sqlalchemy.orm import Session
 from telegram import Bot
 from telegram.constants import ChatAction
 
+from backend.app.agent.file_store import get_idempotency_store
 from backend.app.agent.ingestion import InboundMessage, process_inbound_message
 from backend.app.channels.base import BaseChannel
 from backend.app.config import Settings, get_effective_webhook_secret, settings
-from backend.app.database import get_db
 from backend.app.media.download import DownloadedMedia, download_telegram_media
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import (
@@ -278,7 +277,6 @@ class TelegramChannel(BaseChannel):
         async def telegram_inbound(
             request: Request,
             _rate_limit: None = Depends(check_webhook_rate_limit),
-            db: Session = Depends(get_db),
             messaging_service: MessagingService = Depends(get_messaging_service),
         ) -> JSONResponse:
             """Receive inbound messages from Telegram."""
@@ -313,21 +311,14 @@ class TelegramChannel(BaseChannel):
                 return JSONResponse(content={"ok": True})
 
             # Idempotency: skip duplicate updates
-            from backend.app.models import Message
-
             if inbound.external_message_id:
-                existing = (
-                    db.query(Message)
-                    .filter(Message.external_message_id == inbound.external_message_id)
-                    .first()
-                )
-                if existing:
+                idempotency = get_idempotency_store()
+                if idempotency.has_seen(inbound.external_message_id):
                     logger.info("Duplicate webhook for %s, skipping", inbound.external_message_id)
                     return JSONResponse(content={"ok": True})
+                await idempotency.mark_seen(inbound.external_message_id)
 
-            task, _contractor, _message = await process_inbound_message(
-                db, inbound, messaging_service
-            )
+            task, _contractor, _message = await process_inbound_message(inbound, messaging_service)
             return JSONResponse(content={"ok": True}, background=task)
 
         return router

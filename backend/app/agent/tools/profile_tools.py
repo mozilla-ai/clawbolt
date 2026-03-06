@@ -14,12 +14,11 @@ import zoneinfo
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from backend.app.agent.context import StoredToolInteraction
+from backend.app.agent.file_store import ContractorData, get_contractor_store
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
-from backend.app.models import Contractor
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -59,6 +58,10 @@ class UpdateProfileParams(BaseModel):
         default=None,
         description="Preferred communication style (e.g. 'casual', 'formal')",
     )
+    assistant_name: str | None = Field(
+        default=None,
+        description="What the contractor calls their AI assistant",
+    )
     soul_text: str | None = Field(
         default=None,
         description="Bio or personality description for the assistant",
@@ -85,7 +88,7 @@ def _parse_rate(value: str) -> float | None:
     return None
 
 
-def _format_profile(contractor: Contractor) -> str:
+def _format_profile(contractor: ContractorData) -> str:
     """Format the contractor's profile as a human-readable summary.
 
     Returns a structured text block with all known profile fields.
@@ -117,19 +120,22 @@ def _format_profile(contractor: Contractor) -> str:
             pass
     lines.append(f"  Communication Style: {communication_style or 'Not set'}")
 
+    assistant = contractor.assistant_name if contractor.assistant_name != "Clawbolt" else None
+    lines.append(f"  AI Name: {assistant or 'Clawbolt (default)'}")
     lines.append(f"  Soul/Bio: {contractor.soul_text or 'Not set'}")
     lines.append(f"  Onboarding Complete: {'Yes' if contractor.onboarding_complete else 'No'}")
 
     return "\n".join(lines)
 
 
-def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
+def create_profile_tools(contractor: ContractorData) -> list[Tool]:
     """Create profile introspection and update tools for the agent."""
 
     async def view_profile() -> ToolResult:
         """View the contractor's current profile information."""
-        db.refresh(contractor)
-        return ToolResult(content=_format_profile(contractor))
+        store = get_contractor_store()
+        refreshed = await store.get_by_id(contractor.id)
+        return ToolResult(content=_format_profile(refreshed or contractor))
 
     async def update_profile(
         name: str | None = None,
@@ -139,6 +145,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
         business_hours: str | None = None,
         timezone: str | None = None,
         communication_style: str | None = None,
+        assistant_name: str | None = None,
         soul_text: str | None = None,
     ) -> ToolResult:
         """Update the contractor's profile information."""
@@ -192,6 +199,10 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             )
             fields_updated.append("communication_style")
 
+        if assistant_name is not None:
+            updates["assistant_name"] = str(assistant_name)
+            fields_updated.append("assistant_name")
+
         if soul_text is not None:
             updates["soul_text"] = str(soul_text)
             fields_updated.append("soul_text")
@@ -203,8 +214,8 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
-        # Apply updates directly to the contractor record
-        allowed_fields = {
+        # Defense-in-depth: only allow known profile fields to be updated.
+        _allowed_fields = {
             "name",
             "trade",
             "location",
@@ -212,14 +223,13 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             "business_hours",
             "timezone",
             "preferences_json",
+            "assistant_name",
             "soul_text",
         }
-        for field, value in updates.items():
-            if field in allowed_fields:
-                setattr(contractor, field, value)
+        safe_updates = {k: v for k, v in updates.items() if k in _allowed_fields}
 
-        db.commit()
-        db.refresh(contractor)
+        store = get_contractor_store()
+        await store.update(contractor.id, **safe_updates)
 
         summary = ", ".join(fields_updated)
         return ToolResult(content=f"Profile updated: {summary}")
@@ -244,7 +254,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
             description=(
                 "Update the contractor's profile information. "
                 "Use when you learn their name, trade, location, rate, "
-                "business hours, communication style, or bio. "
+                "business hours, communication style, your AI name, or bio. "
                 "Only include fields you want to change."
             ),
             function=update_profile,
@@ -257,7 +267,7 @@ def create_profile_tools(db: Session, contractor: Contractor) -> list[Tool]:
 
 def _profile_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for profile tools, used by the registry."""
-    return create_profile_tools(ctx.db, ctx.contractor)
+    return create_profile_tools(ctx.contractor)
 
 
 def _register() -> None:
@@ -288,7 +298,15 @@ def extract_profile_updates_from_tool_calls(
             continue
         args = tc.args
 
-        for field in ("name", "trade", "location", "business_hours", "timezone", "soul_text"):
+        for field in (
+            "name",
+            "trade",
+            "location",
+            "business_hours",
+            "timezone",
+            "assistant_name",
+            "soul_text",
+        ):
             val = args.get(field)
             if val is not None:
                 updates[field] = str(val)

@@ -14,7 +14,7 @@ class _FakeAuthBackend(AuthBackend):
     def get_auth_config(self) -> dict[str, Any]:
         return {"method": "firebase", "required": True, "project_id": "my-project"}
 
-    def authenticate_login(self, db: Any, credentials: dict[str, str]) -> Any:
+    async def authenticate_login(self, credentials: dict[str, str]) -> Any:
         raise NotImplementedError
 
 

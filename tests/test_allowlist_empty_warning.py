@@ -1,34 +1,16 @@
 """Test that a warning is logged when Telegram allowlists are empty."""
 
 import logging
-from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from backend.app.database import Base, get_db
 from backend.app.main import app
 
 
 def test_warns_when_both_allowlists_empty(caplog: "pytest.LogCaptureFixture") -> None:
     """Startup should warn when bot token is set but both allowlists are empty."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session = sessionmaker(bind=engine)()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
@@ -46,25 +28,11 @@ def test_warns_when_both_allowlists_empty(caplog: "pytest.LogCaptureFixture") ->
 
     assert any("All messages will be rejected" in msg for msg in caplog.messages)
 
-    session.close()
     app.dependency_overrides.clear()
 
 
 def test_no_warning_when_chat_ids_set(caplog: "pytest.LogCaptureFixture") -> None:
     """No allowlist warning when TELEGRAM_ALLOWED_CHAT_IDS is configured."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session = sessionmaker(bind=engine)()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
@@ -82,25 +50,11 @@ def test_no_warning_when_chat_ids_set(caplog: "pytest.LogCaptureFixture") -> Non
 
     assert not any("All messages will be rejected" in msg for msg in caplog.messages)
 
-    session.close()
     app.dependency_overrides.clear()
 
 
 def test_no_warning_when_usernames_set(caplog: "pytest.LogCaptureFixture") -> None:
     """No allowlist warning when TELEGRAM_ALLOWED_USERNAMES is configured."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session = sessionmaker(bind=engine)()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
@@ -118,7 +72,6 @@ def test_no_warning_when_usernames_set(caplog: "pytest.LogCaptureFixture") -> No
 
     assert not any("All messages will be rejected" in msg for msg in caplog.messages)
 
-    session.close()
     app.dependency_overrides.clear()
 
 
@@ -126,19 +79,6 @@ def test_no_allowlist_warning_when_bot_token_not_set(
     caplog: "pytest.LogCaptureFixture",
 ) -> None:
     """No allowlist warning when bot token is empty (Telegram not configured)."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session = sessionmaker(bind=engine)()
-
-    def _override_get_db() -> Generator[Session]:
-        yield session
-
-    app.dependency_overrides[get_db] = _override_get_db
-
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
@@ -156,5 +96,4 @@ def test_no_allowlist_warning_when_bot_token_not_set(
 
     assert not any("All messages will be rejected" in msg for msg in caplog.messages)
 
-    session.close()
     app.dependency_overrides.clear()

@@ -1,8 +1,8 @@
 import json
 
 import pytest
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import ContractorData
 from backend.app.agent.profile import (
     TRADE_DEFAULTS,
     build_onboarding_prompt,
@@ -10,14 +10,12 @@ from backend.app.agent.profile import (
     get_trade_defaults,
     update_contractor_profile,
 )
-from backend.app.models import Contractor
 
 
 @pytest.mark.asyncio()
-async def test_update_contractor_profile(db_session: Session, test_contractor: Contractor) -> None:
+async def test_update_contractor_profile(test_contractor: ContractorData) -> None:
     """Should update allowed profile fields."""
     updated = await update_contractor_profile(
-        db_session,
         test_contractor,
         {"name": "Mike Chen", "trade": "General Contractor", "hourly_rate": 85.0},
     )
@@ -28,19 +26,17 @@ async def test_update_contractor_profile(db_session: Session, test_contractor: C
 
 @pytest.mark.asyncio()
 async def test_update_contractor_profile_ignores_unknown_fields(
-    db_session: Session, test_contractor: Contractor
+    test_contractor: ContractorData,
 ) -> None:
     """Should ignore fields not in the allowed set."""
     original_name = test_contractor.name
-    await update_contractor_profile(
-        db_session, test_contractor, {"id": 999, "unknown_field": "bad"}
-    )
+    await update_contractor_profile(test_contractor, {"id": 999, "unknown_field": "bad"})
     assert test_contractor.name == original_name
 
 
 def test_build_soul_prompt_full_profile() -> None:
     """Soul prompt should include all profile fields."""
-    contractor = Contractor(
+    contractor = ContractorData(
         user_id="test",
         name="Mike Chen",
         trade="general contracting",
@@ -50,6 +46,7 @@ def test_build_soul_prompt_full_profile() -> None:
         soul_text="I specialize in deck building and exterior renovations.",
     )
     prompt = build_soul_prompt(contractor)
+    assert "Clawbolt" in prompt  # default assistant_name
     assert "Mike Chen" in prompt
     assert "general contracting" in prompt
     assert "Portland, OR" in prompt
@@ -58,9 +55,22 @@ def test_build_soul_prompt_full_profile() -> None:
     assert "deck building" in prompt
 
 
+def test_build_soul_prompt_uses_assistant_name() -> None:
+    """Soul prompt should use custom assistant_name instead of Clawbolt."""
+    contractor = ContractorData(
+        user_id="test",
+        name="Jake",
+        trade="plumbing",
+        assistant_name="Bolt",
+    )
+    prompt = build_soul_prompt(contractor)
+    assert "You are Bolt, the AI assistant for Jake" in prompt
+    assert "Clawbolt" not in prompt
+
+
 def test_build_soul_prompt_minimal_profile() -> None:
     """Soul prompt should work with minimal profile data."""
-    contractor = Contractor(user_id="test", name="", trade="", phone="+15551234567")
+    contractor = ContractorData(user_id="test", name="", trade="", phone="+15551234567")
     prompt = build_soul_prompt(contractor)
     assert "a contractor" in prompt
     assert "contracting" in prompt
@@ -68,7 +78,7 @@ def test_build_soul_prompt_minimal_profile() -> None:
 
 def test_build_soul_prompt_includes_preferences_json() -> None:
     """Soul prompt should render communication style from preferences_json."""
-    contractor = Contractor(
+    contractor = ContractorData(
         user_id="test",
         name="Jake",
         trade="plumbing",
@@ -80,7 +90,7 @@ def test_build_soul_prompt_includes_preferences_json() -> None:
 
 def test_build_soul_prompt_ignores_empty_preferences() -> None:
     """Soul prompt should not include communication style when preferences_json is empty."""
-    contractor = Contractor(
+    contractor = ContractorData(
         user_id="test",
         name="Jake",
         trade="plumbing",
@@ -92,7 +102,7 @@ def test_build_soul_prompt_ignores_empty_preferences() -> None:
 
 def test_build_soul_prompt_handles_malformed_preferences() -> None:
     """Soul prompt should gracefully handle malformed preferences_json."""
-    contractor = Contractor(
+    contractor = ContractorData(
         user_id="test",
         name="Jake",
         trade="plumbing",
@@ -110,6 +120,14 @@ def test_build_onboarding_prompt() -> None:
     assert "name" in prompt.lower()
     assert "trade" in prompt.lower()
     assert "rate" in prompt.lower()
+
+
+def test_build_onboarding_prompt_includes_personality_discovery() -> None:
+    """Onboarding prompt should include personality/naming discovery."""
+    prompt = build_onboarding_prompt()
+    assert "assistant_name" in prompt
+    assert "soul_text" in prompt
+    assert "personality" in prompt.lower()
 
 
 def test_build_onboarding_prompt_includes_confirmation_instruction() -> None:
@@ -195,7 +213,7 @@ class TestTradeDefaults:
 class TestSoulPromptWithTradeDefaults:
     def test_trade_defaults_included_without_soul_text(self) -> None:
         """When soul_text is empty, trade defaults should appear in the prompt."""
-        contractor = Contractor(
+        contractor = ContractorData(
             user_id="test",
             name="Sparky",
             trade="electrician",
@@ -207,7 +225,7 @@ class TestSoulPromptWithTradeDefaults:
 
     def test_soul_text_overrides_trade_defaults(self) -> None:
         """When soul_text is set, trade defaults should NOT appear."""
-        contractor = Contractor(
+        contractor = ContractorData(
             user_id="test",
             name="Sparky",
             trade="electrician",
@@ -220,7 +238,7 @@ class TestSoulPromptWithTradeDefaults:
 
     def test_no_trade_defaults_for_unknown_trade(self) -> None:
         """Unknown trades should produce a prompt without trade guidance."""
-        contractor = Contractor(
+        contractor = ContractorData(
             user_id="test",
             name="Bob",
             trade="chimney sweep",
@@ -233,8 +251,8 @@ class TestSoulPromptWithTradeDefaults:
 
     def test_trade_defaults_with_variant_names(self) -> None:
         """Both 'plumber' and 'plumbing' should produce the same guidance."""
-        contractor_a = Contractor(user_id="a", name="A", trade="plumber", soul_text="")
-        contractor_b = Contractor(user_id="b", name="B", trade="plumbing", soul_text="")
+        contractor_a = ContractorData(user_id="a", name="A", trade="plumber", soul_text="")
+        contractor_b = ContractorData(user_id="b", name="B", trade="plumbing", soul_text="")
         prompt_a = build_soul_prompt(contractor_a)
         prompt_b = build_soul_prompt(contractor_b)
         # Both should contain plumbing terminology guidance
@@ -243,7 +261,7 @@ class TestSoulPromptWithTradeDefaults:
 
     def test_soul_text_and_preferences_coexist(self) -> None:
         """Soul text and communication style should both appear."""
-        contractor = Contractor(
+        contractor = ContractorData(
             user_id="test",
             name="Jake",
             trade="plumbing",
@@ -256,7 +274,7 @@ class TestSoulPromptWithTradeDefaults:
 
     def test_trade_defaults_and_preferences_coexist(self) -> None:
         """Trade defaults and communication style should both appear when no soul_text."""
-        contractor = Contractor(
+        contractor = ContractorData(
             user_id="test",
             name="Jake",
             trade="plumbing",

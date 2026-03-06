@@ -3,7 +3,7 @@ title: Getting Started
 description: Get Clawbolt up and running with Docker in minutes.
 ---
 
-The fastest way to run Clawbolt is with Docker Compose. This starts PostgreSQL and the app together.
+The fastest way to run Clawbolt is with Docker Compose.
 
 ## Prerequisites
 
@@ -39,10 +39,9 @@ docker compose up --build
 ```
 
 This will:
-- Start a PostgreSQL 16 database
 - Build the app image (Python 3.11, ffmpeg for audio processing)
-- Run Alembic migrations to create the database schema
 - Start the FastAPI server on port 8000
+- Create the `data/` directory for file-based storage
 
 ## 4. Verify it's running
 

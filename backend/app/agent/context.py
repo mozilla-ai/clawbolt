@@ -1,15 +1,18 @@
 """Conversation context loading and session management."""
 
 import asyncio
-import datetime
 import json
 import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from backend.app.agent.compaction import compact_session
+from backend.app.agent.file_store import (
+    FileSessionStore,
+    SessionState,
+    get_session_store,
+)
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -19,7 +22,6 @@ from backend.app.agent.messages import (
 )
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
-from backend.app.models import Conversation, Message
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +34,7 @@ _background_tasks: set[asyncio.Task[None]] = set()
 
 
 class StoredToolInteraction(BaseModel):
-    """Schema for tool interaction records stored in Message.tool_interactions_json."""
+    """Schema for tool interaction records stored in StoredMessage.tool_interactions_json."""
 
     tool_call_id: str = ""
     name: str = ""
@@ -43,24 +45,23 @@ class StoredToolInteraction(BaseModel):
 
 
 async def _run_compaction_in_background(
-    db: Session,
-    conversation: Conversation,
+    session_store: FileSessionStore,
+    session: SessionState,
     contractor_id: int,
     trimmed_agent_messages: list[AgentMessage],
-    max_message_id: int,
+    max_message_seq: int,
 ) -> None:
-    """Run compaction and update the conversation's tracking field.
+    """Run compaction and update the session's tracking field.
 
     This is designed to be fired as a background task via asyncio.create_task
     so it does not block message processing.
     """
     try:
-        saved, compacted_id = await compact_session(
-            db, contractor_id, trimmed_agent_messages, max_message_id=max_message_id
+        saved, compacted_seq = await compact_session(
+            contractor_id, trimmed_agent_messages, max_message_seq=max_message_seq
         )
-        if compacted_id is not None:
-            conversation.last_compacted_message_id = compacted_id
-            db.commit()
+        if compacted_seq is not None:
+            await session_store.update_compaction_seq(session, compacted_seq)
         if saved:
             logger.info(
                 "Session compaction extracted %d fact(s) from %d trimmed message(s) "
@@ -71,8 +72,8 @@ async def _run_compaction_in_background(
             )
     except Exception:
         logger.exception(
-            "Session compaction failed for conversation %d, contractor %d",
-            conversation.id,
+            "Session compaction failed for session %s, contractor %d",
+            session.session_id,
             contractor_id,
         )
 
@@ -150,8 +151,7 @@ def _expand_outbound_with_tools(
 
 
 async def load_conversation_history(
-    db: Session,
-    conversation_id: int,
+    session: SessionState,
     limit: int = DEFAULT_HISTORY_LIMIT,
     contractor_id: int | None = None,
 ) -> list[AgentMessage]:
@@ -165,71 +165,51 @@ async def load_conversation_history(
     prior tool usage.  Old messages without tool interaction data are
     loaded as flat ``AssistantMessage`` (backward compatible).
 
-    When the conversation has more messages than *limit* and a *contractor_id*
+    When the session has more messages than *limit* and a *contractor_id*
     is provided, the messages that are about to age out are passed through
     session compaction to extract durable facts before they leave the context
     window. Compaction runs as a background task to avoid blocking message
     processing, and only processes messages not already compacted (tracked via
-    ``Conversation.last_compacted_message_id``).
+    ``SessionState.last_compacted_seq``).
     """
-    # Count total messages in this conversation to detect overflow
-    total_count = db.query(Message).filter(Message.conversation_id == conversation_id).count()
-    logger.debug(
-        "Loading conversation history: conversation=%d, total_messages=%d, limit=%d",
-        conversation_id,
-        total_count,
-        limit,
-    )
+    all_messages = session.messages
+    total_count = len(all_messages)
 
-    messages = (
-        db.query(Message)
-        .filter(Message.conversation_id == conversation_id)
-        .order_by(Message.id.desc())
-        .limit(limit)
-        .all()
-    )
-    # Reverse to chronological order, skip the current (most recent) message
-    messages = list(reversed(messages))[:-1] if len(messages) > 1 else []
+    # Get the most recent `limit` messages, excluding the current (last) one
+    if total_count > 1:
+        messages = all_messages[-(limit):][:-1] if total_count > limit else all_messages[:-1]
+    else:
+        messages = []
 
     # If messages were trimmed and we have a contractor_id, run compaction
-    # on the messages that are aging out of the window.
     if contractor_id is not None and total_count > limit:
-        conversation = db.query(Conversation).filter(Conversation.id == conversation_id).first()
-
         trimmed_count = total_count - limit
 
         # Get the oldest messages that have been trimmed from the context window
-        trimmed_db_messages = (
-            db.query(Message)
-            .filter(Message.conversation_id == conversation_id)
-            .order_by(Message.id.asc())
-            .limit(trimmed_count)
-            .all()
-        )
+        trimmed_msgs = all_messages[:trimmed_count]
 
         # Filter out messages that have already been compacted
-        if conversation and conversation.last_compacted_message_id is not None:
-            trimmed_db_messages = [
-                m for m in trimmed_db_messages if m.id > conversation.last_compacted_message_id
-            ]
+        if session.last_compacted_seq > 0:
+            trimmed_msgs = [m for m in trimmed_msgs if m.seq > session.last_compacted_seq]
 
         trimmed_agent_messages: list[AgentMessage] = []
-        for msg in trimmed_db_messages:
+        for msg in trimmed_msgs:
             content = msg.processed_context if msg.processed_context else msg.body
             if msg.direction == MessageDirection.INBOUND:
                 trimmed_agent_messages.append(UserMessage(content=content))
             else:
                 trimmed_agent_messages.append(AssistantMessage(content=content))
 
-        if trimmed_agent_messages and trimmed_db_messages and conversation:
-            max_message_id = max(m.id for m in trimmed_db_messages)
+        if trimmed_agent_messages and trimmed_msgs:
+            max_seq = max(m.seq for m in trimmed_msgs)
+            session_store = get_session_store(contractor_id)
             task = asyncio.create_task(
                 _run_compaction_in_background(
-                    db,
-                    conversation,
+                    session_store,
+                    session,
                     contractor_id,
                     trimmed_agent_messages,
-                    max_message_id,
+                    max_seq,
                 )
             )
             _background_tasks.add(task)
@@ -251,53 +231,23 @@ async def load_conversation_history(
             else:
                 history.append(AssistantMessage(content=content))
     logger.debug(
-        "Loaded %d history messages (%d with tool interactions) for conversation %d",
+        "Loaded %d history messages (%d with tool interactions) for session %s",
         len(history),
         tool_interaction_count,
-        conversation_id,
+        session.session_id,
     )
     return history
 
 
 async def get_or_create_conversation(
-    db: Session,
     contractor_id: int,
     external_session_id: str | None = None,
     timeout_hours: int = CONVERSATION_TIMEOUT_HOURS,
-) -> tuple[Conversation, bool]:
+) -> tuple[SessionState, bool]:
     """Get active conversation or create new one.
 
     A conversation is "active" if the last message was within the timeout window.
-    Returns (conversation, is_new).
+    Returns (session, is_new).
     """
-    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=timeout_hours)
-
-    # Look for an active conversation within the timeout window
-    active = (
-        db.query(Conversation)
-        .filter(
-            Conversation.contractor_id == contractor_id,
-            Conversation.is_active.is_(True),
-            Conversation.last_message_at >= cutoff,
-        )
-        .order_by(Conversation.last_message_at.desc())
-        .first()
-    )
-
-    if active:
-        # Update last_message_at timestamp
-        active.last_message_at = datetime.datetime.now(datetime.UTC)
-        db.commit()
-        db.refresh(active)
-        return active, False
-
-    # Create a new conversation
-    conversation = Conversation(
-        contractor_id=contractor_id,
-        external_session_id=external_session_id or "",
-        is_active=True,
-    )
-    db.add(conversation)
-    db.commit()
-    db.refresh(conversation)
-    return conversation, True
+    session_store = get_session_store(contractor_id)
+    return await session_store.get_or_create_session(timeout_hours=timeout_hours)

@@ -10,10 +10,13 @@ Requires ANTHROPIC_API_KEY set in environment:
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import (
+    ContractorData,
+    EstimateStore,
+    get_session_store,
+)
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
-from backend.app.models import Contractor, Conversation, Estimate, Message
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
@@ -21,8 +24,7 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_heartbeat_evaluate_returns_valid_action(
-    integration_db: Session,
-    onboarded_contractor: Contractor,
+    onboarded_contractor: ContractorData,
 ) -> None:
     """evaluate_heartbeat_need() should return a valid HeartbeatAction from a real LLM."""
     with patch("backend.app.agent.heartbeat.settings") as mock_settings:
@@ -33,9 +35,7 @@ async def test_heartbeat_evaluate_returns_valid_action(
         mock_settings.heartbeat_model = None
         mock_settings.llm_max_tokens_heartbeat = 300
 
-        action = await evaluate_heartbeat_need(
-            integration_db, onboarded_contractor, ["Test flag: check-in needed"]
-        )
+        action = await evaluate_heartbeat_need(onboarded_contractor, ["Test flag: check-in needed"])
 
     assert action.action_type in ("send_message", "no_action")
     assert isinstance(action.reasoning, str)
@@ -46,37 +46,31 @@ async def test_heartbeat_evaluate_returns_valid_action(
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_heartbeat_evaluate_with_context(
-    integration_db: Session,
-    onboarded_contractor: Contractor,
+    onboarded_contractor: ContractorData,
 ) -> None:
     """Heartbeat should handle a contractor with real conversation history and pending estimates."""
-    # Set up conversation with messages
-    conv = Conversation(contractor_id=onboarded_contractor.id, is_active=True)
-    integration_db.add(conv)
-    integration_db.commit()
-    integration_db.refresh(conv)
+    # Set up conversation with messages via file store
+    session_store = get_session_store(onboarded_contractor.id)
+    session, _ = await session_store.get_or_create_session()
 
-    integration_db.add(
-        Message(conversation_id=conv.id, direction="inbound", body="I need a quote for a deck")
+    await session_store.add_message(
+        session,
+        direction="inbound",
+        body="I need a quote for a deck",
     )
-    integration_db.add(
-        Message(
-            conversation_id=conv.id,
-            direction="outbound",
-            body="Sure! What size deck are you looking at?",
-        )
+    await session_store.add_message(
+        session,
+        direction="outbound",
+        body="Sure! What size deck are you looking at?",
     )
 
     # Add a pending draft estimate
-    integration_db.add(
-        Estimate(
-            contractor_id=onboarded_contractor.id,
-            description="12x12 composite deck build",
-            total_amount=4500,
-            status="draft",
-        )
+    estimate_store = EstimateStore(onboarded_contractor.id)
+    await estimate_store.create(
+        description="12x12 composite deck build",
+        total_amount=4500,
+        status="draft",
     )
-    integration_db.commit()
 
     with patch("backend.app.agent.heartbeat.settings") as mock_settings:
         mock_settings.llm_provider = "anthropic"
@@ -87,7 +81,6 @@ async def test_heartbeat_evaluate_with_context(
         mock_settings.llm_max_tokens_heartbeat = 300
 
         action = await evaluate_heartbeat_need(
-            integration_db,
             onboarded_contractor,
             ["Stale draft estimate: 12x12 composite deck build"],
         )

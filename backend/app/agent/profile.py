@@ -2,9 +2,7 @@ import json
 import logging
 from typing import Any
 
-from sqlalchemy.orm import Session
-
-from backend.app.models import Contractor
+from backend.app.agent.file_store import ContractorData, get_contractor_store
 
 logger = logging.getLogger(__name__)
 
@@ -91,10 +89,9 @@ def get_trade_defaults(trade: str) -> str | None:
 
 
 async def update_contractor_profile(
-    db: Session,
-    contractor: Contractor,
+    contractor: ContractorData,
     updates: dict[str, Any],
-) -> Contractor:
+) -> ContractorData:
     """Update contractor profile fields from onboarding or conversation."""
     allowed_fields = {
         "name",
@@ -106,16 +103,17 @@ async def update_contractor_profile(
         "business_hours",
         "timezone",
         "preferences_json",
+        "assistant_name",
     }
-    for field, value in updates.items():
-        if field in allowed_fields and value is not None:
-            setattr(contractor, field, value)
-    db.commit()
-    db.refresh(contractor)
-    return contractor
+    filtered = {k: v for k, v in updates.items() if k in allowed_fields and v is not None}
+    if not filtered:
+        return contractor
+    store = get_contractor_store()
+    updated = await store.update(contractor.id, **filtered)
+    return updated or contractor
 
 
-def build_soul_prompt(contractor: Contractor) -> str:
+def build_soul_prompt(contractor: ContractorData) -> str:
     """Build the 'soul' section of the system prompt from contractor profile.
 
     Layers (in order):
@@ -126,9 +124,10 @@ def build_soul_prompt(contractor: Contractor) -> str:
     """
     lines: list[str] = []
 
+    assistant = contractor.assistant_name or "Clawbolt"
     name = contractor.name or "a contractor"
     trade = contractor.trade or "contracting"
-    lines.append(f"You are the AI assistant for {name}, who works in {trade}.")
+    lines.append(f"You are {assistant}, the AI assistant for {name}, who works in {trade}.")
 
     if contractor.location:
         lines.append(f"Based in {contractor.location}.")
@@ -166,7 +165,7 @@ def build_soul_prompt(contractor: Contractor) -> str:
     return "\n".join(lines)
 
 
-def get_missing_optional_fields(contractor: Contractor) -> list[str]:
+def get_missing_optional_fields(contractor: ContractorData) -> list[str]:
     """Return labels for optional profile fields that are still empty."""
     optional: dict[str, str] = {
         "hourly_rate": "rates",
@@ -177,31 +176,57 @@ def get_missing_optional_fields(contractor: Contractor) -> list[str]:
 
 
 def build_onboarding_prompt() -> str:
-    """Build the system prompt for the onboarding conversation."""
+    """Build the system prompt for the onboarding conversation.
+
+    Inspired by openclaw's bootstrap ritual: the contractor names their AI,
+    shapes its personality, and covers the essential profile fields, all
+    through natural conversation rather than a form.
+    """
     return (
-        "You are Clawbolt, an AI assistant for solo contractors. "
-        "This is a new contractor texting you for the first time. "
-        "Your job is to have a friendly conversation to learn about them.\n\n"
-        "Naturally collect the following information through conversation:\n"
-        "- Their name\n"
-        "- What trade they work in (e.g., general contractor, electrician, plumber)\n"
-        "- Where they're based (city/region)\n"
-        "- Their typical rates (hourly or per-project)\n"
-        "- Their business hours\n"
-        "- Their timezone (e.g. America/New_York, America/Los_Angeles)\n"
-        "- How they'd like you to communicate (formal, casual, brief, detailed)\n\n"
-        "IMPORTANT: As soon as the contractor shares any of the above information, "
+        "You are a brand-new AI assistant for solo contractors. "
+        "This is your first conversation with a new contractor. "
+        "You just came online and you don't have a name yet.\n\n"
+        "## Your opening\n"
+        "Start with something like: \"Hey. I just came online and I'm going to be "
+        "your AI assistant. Before we get going, I need to figure out who I am "
+        'and who you are. What should I call you?"\n\n'
+        "## What to discover through conversation\n"
+        "Weave these into natural conversation. Don't interrogate.\n"
+        "1. Their name\n"
+        "2. What trade they work in (e.g., general contractor, electrician, plumber)\n"
+        "3. Where they're based (city/region)\n"
+        "4. What they want to call you (your name as their AI assistant)\n"
+        "5. Your vibe/personality: are they looking for something casual and blunt, "
+        "professional and polished, or somewhere in between?\n"
+        "6. Their typical rates (hourly or per-project)\n"
+        "7. Their business hours\n"
+        "8. Their timezone (e.g. America/New_York, America/Los_Angeles)\n\n"
+        "## Personality discovery\n"
+        "After learning their name and trade, ask what they want to call you. "
+        'If they pick a name, adopt it immediately. If they say "I don\'t care" '
+        "or similar, suggest a name that fits the vibe and ask if it works.\n\n"
+        'Then ask about your personality: "How do you want me to talk? Some people '
+        'want straight-to-the-point, others want more detail. What works for you?"\n\n'
+        "Once you have a sense of your name and personality, write it to your soul "
+        "using update_profile with soul_text. For example:\n"
+        'update_profile(assistant_name="Bolt", soul_text="Direct and practical. '
+        "Skip the pleasantries unless the contractor starts them. "
+        'Keep estimates tight and organized.")\n\n'
+        "## Saving information\n"
+        "IMPORTANT: As soon as the contractor shares any profile information, "
         "immediately save it using the update_profile tool. For example, if they say "
         '"I\'m Jake, a plumber in Portland", call update_profile with '
         'name="Jake", trade="plumber", location="Portland". '
         "Do not wait. Save each piece of information as soon as you learn it.\n\n"
+        "When you learn your name, save it with update_profile(assistant_name=...). "
+        "When you learn your personality, save it with update_profile(soul_text=...).\n\n"
         "For general facts (client names, project details, pricing notes), "
         "use save_fact instead.\n\n"
+        "## Style\n"
         "After collecting and saving information, briefly confirm what you've saved "
-        "so the contractor knows you got it right. For example: \"Great, I've got you "
-        'down as Jake, a plumber in Portland." When you still need more information, '
-        "mention what's missing naturally in conversation.\n\n"
+        "so the contractor knows you got it right. For example: \"Got it, I've got you "
+        'down as Jake, a plumber in Portland."\n\n'
         "Be conversational and warm. Don't ask all questions at once. "
-        "Let the conversation flow naturally. Start by introducing yourself "
-        "and asking their name and what kind of work they do."
+        "Let the conversation flow naturally. This is a getting-to-know-you "
+        "conversation, not a form."
     )

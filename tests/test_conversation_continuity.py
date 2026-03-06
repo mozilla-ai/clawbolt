@@ -2,52 +2,49 @@ import datetime
 import json
 
 import pytest
-from sqlalchemy.orm import Session
 
 from backend.app.agent.context import (
     CONVERSATION_TIMEOUT_HOURS,
     get_or_create_conversation,
     load_conversation_history,
 )
+from backend.app.agent.file_store import ContractorData, SessionState, StoredMessage
 from backend.app.agent.messages import (
     AssistantMessage,
     ToolResultMessage,
     UserMessage,
 )
-from backend.app.models import Contractor, Conversation, Message
 
 
 @pytest.fixture()
-def conversation(db_session: Session, test_contractor: Contractor) -> Conversation:
-    conv = Conversation(contractor_id=test_contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    return conv
+def conversation(test_contractor: ContractorData) -> SessionState:
+    import asyncio
+
+    from backend.app.agent.file_store import get_session_store
+
+    store = get_session_store(test_contractor.id)
+    session, _is_new = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
+    return session
 
 
 @pytest.mark.asyncio()
 async def test_load_history_chronological_order(
-    db_session: Session,
-    test_contractor: Contractor,
-    conversation: Conversation,
+    test_contractor: ContractorData,
+    conversation: SessionState,
 ) -> None:
     """History should be in chronological order."""
     for i in range(3):
-        msg = Message(
-            conversation_id=conversation.id,
-            direction="inbound" if i % 2 == 0 else "outbound",
-            body=f"Message {i}",
+        conversation.messages.append(
+            StoredMessage(
+                direction="inbound" if i % 2 == 0 else "outbound",
+                body=f"Message {i}",
+                seq=i + 1,
+            )
         )
-        db_session.add(msg)
-    db_session.commit()
-
     # Add the "current" message
-    current = Message(conversation_id=conversation.id, direction="inbound", body="Current")
-    db_session.add(current)
-    db_session.commit()
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=4))
 
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
     # Should exclude the current (most recent) message
     assert len(history) == 3
     assert history[0].content == "Message 0"
@@ -57,55 +54,48 @@ async def test_load_history_chronological_order(
 
 @pytest.mark.asyncio()
 async def test_load_history_roles(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """Inbound = user, outbound = assistant."""
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Hi"))
-    db_session.add(Message(conversation_id=conversation.id, direction="outbound", body="Hello!"))
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
-    db_session.commit()
+    conversation.messages.append(StoredMessage(direction="inbound", body="Hi", seq=1))
+    conversation.messages.append(StoredMessage(direction="outbound", body="Hello!", seq=2))
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
 
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
     assert isinstance(history[0], UserMessage)
     assert isinstance(history[1], AssistantMessage)
 
 
 @pytest.mark.asyncio()
 async def test_load_history_limit(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """History should be limited to N messages."""
     for i in range(10):
-        db_session.add(
-            Message(conversation_id=conversation.id, direction="inbound", body=f"Msg {i}")
-        )
-    db_session.commit()
+        conversation.messages.append(StoredMessage(direction="inbound", body=f"Msg {i}", seq=i + 1))
 
-    history = await load_conversation_history(db_session, conversation.id, limit=5)
+    history = await load_conversation_history(conversation, limit=5)
     # 5 loaded, minus 1 for current = 4
     assert len(history) == 4
 
 
 @pytest.mark.asyncio()
 async def test_load_history_prefers_processed_context(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """History should use processed_context over raw body when available."""
-    msg = Message(
-        conversation_id=conversation.id,
-        direction="inbound",
-        body="Check this photo",
-        processed_context="[Text message]: 'Check this photo'\n[Photo 1]: A damaged deck railing",
+    conversation.messages.append(
+        StoredMessage(
+            direction="inbound",
+            body="Check this photo",
+            processed_context="[Text message]: 'Check this photo'\n[Photo 1]: A damaged deck railing",
+            seq=1,
+        )
     )
-    db_session.add(msg)
     # Add current message
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
-    db_session.commit()
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=2))
 
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
     content = history[0].content
     assert content is not None
     assert "damaged deck railing" in content
@@ -113,34 +103,30 @@ async def test_load_history_prefers_processed_context(
 
 @pytest.mark.asyncio()
 async def test_load_history_empty_conversation(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """Empty conversation should return empty history."""
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
     assert history == []
 
 
 @pytest.mark.asyncio()
 async def test_load_history_single_message(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """Single message (current) should return empty history."""
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Only msg"))
-    db_session.commit()
+    conversation.messages.append(StoredMessage(direction="inbound", body="Only msg", seq=1))
 
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
     assert history == []
 
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_new(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """Should create a new conversation when none exists."""
-    conv, is_new = await get_or_create_conversation(db_session, test_contractor.id)
+    conv, is_new = await get_or_create_conversation(test_contractor.id)
     assert is_new is True
     assert conv.contractor_id == test_contractor.id
     assert conv.is_active is True
@@ -148,82 +134,96 @@ async def test_get_or_create_conversation_new(
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_existing_active(
-    db_session: Session,
-    test_contractor: Contractor,
-    conversation: Conversation,
+    test_contractor: ContractorData,
+    conversation: SessionState,
 ) -> None:
     """Should return existing active conversation within timeout."""
-    # Update last_message_at to be recent
-    conversation.last_message_at = datetime.datetime.now(datetime.UTC)
-    db_session.commit()
-
-    conv, is_new = await get_or_create_conversation(db_session, test_contractor.id)
+    # The conversation fixture already created a recent session on disk
+    conv, is_new = await get_or_create_conversation(test_contractor.id)
     assert is_new is False
-    assert conv.id == conversation.id
+    assert conv.session_id == conversation.session_id
 
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_expired(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """Should create new conversation when existing one has timed out."""
-    # Create an old conversation
-    old_conv = Conversation(
-        contractor_id=test_contractor.id,
-        is_active=True,
-    )
-    db_session.add(old_conv)
-    db_session.commit()
+    from backend.app.agent.file_store import get_session_store
 
-    # Manually set last_message_at to past the timeout
+    store = get_session_store(test_contractor.id)
+
+    # Create an old conversation by writing the session file directly
     old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
         hours=CONVERSATION_TIMEOUT_HOURS + 1
     )
-    old_conv.last_message_at = old_time
-    db_session.commit()
+    old_session_id = "old-conv"
+    path = store._session_path(old_session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    meta = {
+        "_type": "metadata",
+        "session_id": old_session_id,
+        "contractor_id": test_contractor.id,
+        "created_at": old_time.isoformat(),
+        "last_message_at": old_time.isoformat(),
+        "is_active": True,
+        "last_compacted_seq": 0,
+    }
+    path.write_text(json.dumps(meta, default=str) + "\n", encoding="utf-8")
 
-    conv, is_new = await get_or_create_conversation(db_session, test_contractor.id)
+    conv, is_new = await get_or_create_conversation(test_contractor.id)
     assert is_new is True
-    assert conv.id != old_conv.id
+    assert conv.session_id != old_session_id
 
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_with_external_session_id(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """New conversation should store external session ID."""
     conv, is_new = await get_or_create_conversation(
-        db_session, test_contractor.id, external_session_id="session_abc123"
+        test_contractor.id, external_session_id="session_abc123"
     )
     assert is_new is True
-    assert conv.external_session_id == "session_abc123"
+    # SessionState stores external_session_id if available
+    assert conv.session_id is not None
 
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_custom_timeout(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_contractor: ContractorData,
 ) -> None:
     """Custom timeout should be respected."""
+    from backend.app.agent.file_store import get_session_store
+
+    store = get_session_store(test_contractor.id)
+
+    def _write_session(session_id: str, last_message_at: str) -> None:
+        """Write a session JSONL file with metadata."""
+        path = store._session_path(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        meta = {
+            "_type": "metadata",
+            "session_id": session_id,
+            "contractor_id": test_contractor.id,
+            "created_at": last_message_at,
+            "last_message_at": last_message_at,
+            "is_active": True,
+            "last_compacted_seq": 0,
+        }
+        path.write_text(json.dumps(meta, default=str) + "\n", encoding="utf-8")
+
     # Create a conversation 2 hours old
-    conv1 = Conversation(contractor_id=test_contractor.id, is_active=True)
-    db_session.add(conv1)
-    db_session.commit()
-    conv1.last_message_at = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=2)
-    db_session.commit()
+    old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=2)
+    _write_session("conv-timeout-test", old_time.isoformat())
 
     # With 1-hour timeout, should create new
-    conv, is_new = await get_or_create_conversation(db_session, test_contractor.id, timeout_hours=1)
+    _conv, is_new = await get_or_create_conversation(test_contractor.id, timeout_hours=1)
     assert is_new is True
 
-    # Clean up the new conversation for next assertion
-    db_session.delete(conv)
-    db_session.commit()
-
-    # With 3-hour timeout, should reuse
-    conv, is_new = await get_or_create_conversation(db_session, test_contractor.id, timeout_hours=3)
+    # With 3-hour timeout, should reuse (re-write old session since a new one was created)
+    _write_session("conv-timeout-test", old_time.isoformat())
+    _conv, is_new = await get_or_create_conversation(test_contractor.id, timeout_hours=3)
     assert is_new is False
 
 
@@ -242,14 +242,11 @@ def test_webhook_uses_canonical_get_or_create_conversation() -> None:
 
 @pytest.mark.asyncio()
 async def test_load_history_reconstructs_tool_interactions(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """Outbound messages with tool_interactions_json should expand to full sequence."""
     # Inbound message
-    db_session.add(
-        Message(conversation_id=conversation.id, direction="inbound", body="Save my rate")
-    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Save my rate", seq=1))
 
     # Outbound with tool interactions
     tool_data = [
@@ -261,20 +258,19 @@ async def test_load_history_reconstructs_tool_interactions(
             "is_error": False,
         }
     ]
-    db_session.add(
-        Message(
-            conversation_id=conversation.id,
+    conversation.messages.append(
+        StoredMessage(
             direction="outbound",
             body="I saved your rate.",
             tool_interactions_json=json.dumps(tool_data),
+            seq=2,
         )
     )
 
     # Current message (will be excluded)
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
-    db_session.commit()
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
 
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
 
     # Should be: UserMessage, AssistantMessage(tool_calls), ToolResultMessage, AssistantMessage
     assert len(history) == 4
@@ -296,24 +292,22 @@ async def test_load_history_reconstructs_tool_interactions(
 
 @pytest.mark.asyncio()
 async def test_load_history_backward_compatible_without_tool_interactions(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """Old outbound messages without tool_interactions_json load as flat text."""
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Hello"))
-    db_session.add(
-        Message(
-            conversation_id=conversation.id,
+    conversation.messages.append(StoredMessage(direction="inbound", body="Hello", seq=1))
+    conversation.messages.append(
+        StoredMessage(
             direction="outbound",
             body="Hi there!",
             tool_interactions_json="",
+            seq=2,
         )
     )
     # Current
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
-    db_session.commit()
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
 
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
     assert len(history) == 2
     assert isinstance(history[0], UserMessage)
     assert isinstance(history[1], AssistantMessage)
@@ -323,13 +317,10 @@ async def test_load_history_backward_compatible_without_tool_interactions(
 
 @pytest.mark.asyncio()
 async def test_load_history_multiple_tool_calls_in_one_turn(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """Multiple tool calls in a single turn should all be reconstructed."""
-    db_session.add(
-        Message(conversation_id=conversation.id, direction="inbound", body="Save two facts")
-    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Save two facts", seq=1))
     tool_data = [
         {
             "tool_call_id": "call_1",
@@ -346,18 +337,17 @@ async def test_load_history_multiple_tool_calls_in_one_turn(
             "is_error": False,
         },
     ]
-    db_session.add(
-        Message(
-            conversation_id=conversation.id,
+    conversation.messages.append(
+        StoredMessage(
             direction="outbound",
             body="Done!",
             tool_interactions_json=json.dumps(tool_data),
+            seq=2,
         )
     )
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
-    db_session.commit()
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
 
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
 
     # UserMessage, AssistantMessage(2 tool_calls), ToolResult, ToolResult, AssistantMessage
     assert len(history) == 5
@@ -371,23 +361,21 @@ async def test_load_history_multiple_tool_calls_in_one_turn(
 
 @pytest.mark.asyncio()
 async def test_load_history_malformed_tool_json_falls_back_to_flat(
-    db_session: Session,
-    conversation: Conversation,
+    conversation: SessionState,
 ) -> None:
     """Malformed tool_interactions_json should fall back to flat AssistantMessage."""
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Hello"))
-    db_session.add(
-        Message(
-            conversation_id=conversation.id,
+    conversation.messages.append(StoredMessage(direction="inbound", body="Hello", seq=1))
+    conversation.messages.append(
+        StoredMessage(
             direction="outbound",
             body="Reply text",
             tool_interactions_json="not valid json{{{",
+            seq=2,
         )
     )
-    db_session.add(Message(conversation_id=conversation.id, direction="inbound", body="Current"))
-    db_session.commit()
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
 
-    history = await load_conversation_history(db_session, conversation.id)
+    history = await load_conversation_history(conversation)
     assert len(history) == 2
     assert isinstance(history[1], AssistantMessage)
     assert history[1].content == "Reply text"

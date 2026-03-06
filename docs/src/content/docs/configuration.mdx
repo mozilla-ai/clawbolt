@@ -22,6 +22,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `CONTRACTOR_DATA_DIR` | `data/contractors` | Directory for file-based contractor data storage |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated list of allowed CORS origins |
 | `JWT_SECRET` | `change-me-in-production` | Secret key for JWT signing. **Change this in production** |
 | `JWT_EXPIRY_MINUTES` | `15` | JWT token expiry time in minutes |
@@ -61,14 +62,6 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 | `FILE_STORAGE_BASE_DIR` | `data/storage` | Base directory for local file storage |
 
 See [Storage Providers](../deployment/storage/) for setup instructions.
-
-## Database
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | | PostgreSQL connection string. Set automatically by Docker Compose |
-
-When running with Docker Compose, the `DATABASE_URL` is set automatically. You don't need to configure it.
 
 ## LLM token limits
 

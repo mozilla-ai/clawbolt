@@ -14,7 +14,6 @@ from any_llm import (
 )
 from any_llm.types.messages import MessageResponse
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
 
 from backend.app.agent.context import StoredToolInteraction
 from backend.app.agent.events import (
@@ -26,6 +25,7 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
+from backend.app.agent.file_store import ContractorData
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.messages import (
     AgentMessage,
@@ -48,7 +48,6 @@ from backend.app.agent.tools.base import (
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.config import settings
-from backend.app.models import Contractor
 from backend.app.services.llm_usage import log_llm_usage
 from backend.app.services.messaging import MessagingService
 
@@ -236,14 +235,12 @@ class ClawboltAgent:
 
     def __init__(
         self,
-        db: Session,
-        contractor: Contractor,
+        contractor: ContractorData,
         messaging_service: MessagingService | None = None,
         chat_id: str | None = None,
         tool_context: ToolContext | None = None,
         registry: ToolRegistry | None = None,
     ) -> None:
-        self.db = db
         self.contractor = contractor
         self._messaging_service = messaging_service
         self._chat_id = chat_id
@@ -354,9 +351,7 @@ class ClawboltAgent:
 
     async def _build_system_prompt(self, message_context: str) -> str:
         """Build the full system prompt via the composable builder."""
-        return await build_agent_system_prompt(
-            self.db, self.contractor, self.tools, message_context
-        )
+        return await build_agent_system_prompt(self.contractor, self.tools, message_context)
 
     async def _call_llm_with_retry(
         self,
@@ -614,7 +609,7 @@ class ClawboltAgent:
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
             purpose = "agent_main" if _round == 0 else "agent_followup"
-            log_llm_usage(self.db, self.contractor.id, settings.llm_model, response, purpose)
+            log_llm_usage(self.contractor.id, settings.llm_model, response, purpose)
             if response.usage and response.usage.input_tokens:
                 self._last_input_tokens = response.usage.input_tokens
                 logger.debug(
