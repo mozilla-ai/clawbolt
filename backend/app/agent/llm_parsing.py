@@ -53,6 +53,15 @@ def parse_tool_calls(response: MessageResponse) -> list[ParsedToolCall]:
             )
         )
 
+    if result:
+        logger.debug(
+            "Parsed %d tool call(s) from LLM response: %s",
+            len(result),
+            ", ".join(
+                f"{tc.name}({', '.join(tc.arguments.keys()) if tc.arguments else ''})"
+                for tc in result
+            ),
+        )
     return result
 
 

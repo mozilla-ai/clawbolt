@@ -287,6 +287,12 @@ class ClawboltAgent:
             if tool.name in self._tools_by_name:
                 logger.warning("Duplicate tool name registered: %s", tool.name)
             self._tools_by_name[tool.name] = tool
+        logger.debug(
+            "Registered %d tools for contractor %s: %s",
+            len(tools),
+            self.contractor.id if self.contractor else "N/A",
+            ", ".join(sorted(self._tools_by_name.keys())),
+        )
 
     def _activate_specialist(self, factory_name: str) -> None:
         """Activate a specialist tool factory, injecting its tools for the next round.
@@ -303,12 +309,22 @@ class ClawboltAgent:
             selected_factories={factory_name},
         )
         if not new_tools:
+            logger.debug(
+                "Specialist factory %r produced no tools (dependencies unmet?)", factory_name
+            )
             return
         self._activated_specialists.add(factory_name)
+        new_names: list[str] = []
         for tool in new_tools:
             if tool.name not in self._tools_by_name:
                 self.tools.append(tool)
                 self._tools_by_name[tool.name] = tool
+                new_names.append(tool.name)
+        logger.debug(
+            "Activated specialist %r, added tools: %s",
+            factory_name,
+            ", ".join(new_names) or "(none new)",
+        )
 
     def _check_specialist_activations(
         self,
@@ -359,6 +375,15 @@ class ClawboltAgent:
         """
         await self._send_typing_indicator()
         system, msg_dicts = messages_to_messages_api(messages)
+        tool_count = len(tool_schemas) if tool_schemas else 0
+        logger.debug(
+            "Calling LLM: model=%s provider=%s messages=%d tools=%d max_tokens=%d",
+            settings.llm_model,
+            settings.llm_provider,
+            len(msg_dicts),
+            tool_count,
+            settings.llm_max_tokens_agent,
+        )
         try:
             return cast(
                 MessageResponse,
@@ -529,6 +554,12 @@ class ClawboltAgent:
     ) -> AgentResponse:
         """Process a message through the agent loop."""
         agent_start_time = time.monotonic()
+        logger.debug(
+            "Agent starting for contractor %d, message length=%d, history=%d messages",
+            self.contractor.id,
+            len(message_context),
+            len(conversation_history) if conversation_history else 0,
+        )
         system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
         await self._emit(
             AgentStartEvent(
@@ -571,6 +602,12 @@ class ClawboltAgent:
         reply_text = ""
 
         for _round in range(MAX_TOOL_ROUNDS):
+            logger.debug(
+                "Round %d/%d starting, %d messages in context",
+                _round,
+                MAX_TOOL_ROUNDS,
+                len(messages),
+            )
             # Rebuild tool schemas each round so dynamically activated
             # specialist tools are visible to the LLM.
             tool_schemas = [tool_to_function_schema(t) for t in self.tools] if self.tools else None
@@ -580,11 +617,21 @@ class ClawboltAgent:
             log_llm_usage(self.db, self.contractor.id, settings.llm_model, response, purpose)
             if response.usage and response.usage.input_tokens:
                 self._last_input_tokens = response.usage.input_tokens
+                logger.debug(
+                    "LLM usage: input_tokens=%d output_tokens=%d",
+                    response.usage.input_tokens,
+                    response.usage.output_tokens or 0,
+                )
 
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)
             if not parsed_raw:
                 reply_text = get_response_text(response)
+                logger.debug(
+                    "Round %d: no tool calls, final reply length=%d",
+                    _round,
+                    len(reply_text),
+                )
                 await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=False))
                 break
 
@@ -598,6 +645,12 @@ class ClawboltAgent:
                         arguments=ptc.arguments if ptc.arguments is not None else {},
                     )
                 )
+            logger.debug(
+                "Round %d: LLM requested %d tool call(s): %s",
+                _round,
+                len(parsed_calls),
+                ", ".join(tc.name for tc in parsed_calls),
+            )
 
             # Append the assistant message (with tool_calls) to conversation
             messages.append(
@@ -632,6 +685,7 @@ class ClawboltAgent:
 
                 tool_obj = self._tools_by_name.get(tool_name)
                 if not tool_obj:
+                    logger.debug("Unknown tool %r requested by LLM", tool_name)
                     available = ", ".join(sorted(self._tools_by_name.keys()))
                     result_str = (
                         f'Error: unknown tool "{tool_name}".'
@@ -719,6 +773,13 @@ class ClawboltAgent:
                     is_error = True
                     actions_taken.append(f"Failed: {tool_name}")
                 tool_duration = (time.monotonic() - tool_start) * 1000
+                logger.debug(
+                    "Tool %s completed in %.1fms, is_error=%s, result_length=%d",
+                    tool_name,
+                    tool_duration,
+                    is_error,
+                    len(result_str),
+                )
                 await self._emit(
                     ToolExecutionEndEvent(
                         tool_name=tool_name,
@@ -743,8 +804,16 @@ class ClawboltAgent:
         else:
             # Max rounds reached -- use last response content
             reply_text = get_response_text(response)
+            logger.debug("Max tool rounds (%d) reached, using last response", MAX_TOOL_ROUNDS)
 
         total_duration = (time.monotonic() - agent_start_time) * 1000
+        logger.debug(
+            "Agent finished for contractor %d in %.1fms, actions=%s, reply_length=%d",
+            self.contractor.id,
+            total_duration,
+            actions_taken or "(none)",
+            len(reply_text),
+        )
         await self._emit(
             AgentEndEvent(
                 reply_text=reply_text,

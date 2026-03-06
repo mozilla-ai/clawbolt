@@ -110,10 +110,17 @@ async def prepare_media(
     Also auto-saves downloaded media to storage when available.
     """
     downloaded_media: list[DownloadedMedia] = []
+    logger.debug(
+        "Preparing media for contractor %d, message %d: %d attachment(s)",
+        contractor.id,
+        message_id,
+        len(media_urls),
+    )
     for file_id, _mime_type in media_urls:
         try:
             media = await messaging_service.download_media(file_id)
             downloaded_media.append(media)
+            logger.debug("Downloaded media %s (%s)", file_id, _mime_type)
         except Exception:
             logger.exception("Failed to download media: %s", file_id)
 
@@ -224,6 +231,14 @@ async def run_agent(
     if specialist_summaries:
         tools.append(create_list_capabilities_tool(specialist_summaries))
     agent.register_tools(tools)
+    logger.debug(
+        "Agent initialized for contractor %d, message %d with %d core tools, "
+        "%d specialist categories available",
+        contractor.id,
+        message.id,
+        len(tools),
+        len(specialist_summaries),
+    )
 
     for subscriber in event_subscribers or []:
         agent.subscribe(subscriber)
@@ -268,7 +283,17 @@ async def dispatch_reply(
     sent_reply = any(
         ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in response.tool_calls
     )
+    if sent_reply:
+        logger.debug("Reply already sent via tool, skipping dispatch for message %d", message_id)
+    elif not response.reply_text:
+        logger.debug("No reply text to dispatch for message %d", message_id)
     if not sent_reply and response.reply_text:
+        logger.debug(
+            "Dispatching reply to %s for message %d (length=%d)",
+            to_address,
+            message_id,
+            len(response.reply_text),
+        )
         try:
             await messaging_service.send_text(to=to_address, body=response.reply_text)
         except Exception:
@@ -389,7 +414,10 @@ async def persist_outbound_step(ctx: PipelineContext) -> PipelineContext:
 async def run_pipeline(ctx: PipelineContext, steps: list[PipelineStep]) -> PipelineContext:
     """Execute pipeline steps in sequence."""
     for step in steps:
+        step_name = getattr(step, "__name__", type(step).__name__)
+        logger.debug("Pipeline step starting: %s", step_name)
         ctx = await step(ctx)
+        logger.debug("Pipeline step completed: %s", step_name)
     return ctx
 
 
@@ -423,6 +451,12 @@ async def handle_inbound_message(
     ``PipelineStep`` callables. Pass a custom ``pipeline`` to add,
     remove, or reorder steps; defaults to ``DEFAULT_PIPELINE``.
     """
+    logger.debug(
+        "Handling inbound message %d for contractor %d, %d media attachment(s)",
+        message.id,
+        contractor.id,
+        len(media_urls),
+    )
     to_address = contractor.channel_identifier or contractor.phone
     if not to_address:
         logger.error(

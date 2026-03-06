@@ -1767,3 +1767,55 @@ class TestToolRegistry:
         # The second factory should win
         assert len(tools) == 1
         assert tools[0].name == "b"
+
+
+# ---------------------------------------------------------------------------
+# Debug logging tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_emits_debug_logs_for_full_loop(
+    mock_amessages: AsyncMock,
+    db_session: Session,
+    test_contractor: Contractor,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Debug logging should trace the full agent loop lifecycle."""
+    tool_func = AsyncMock(return_value=ToolResult(content="saved"))
+    tool = Tool(
+        name="save_fact",
+        description="save",
+        function=tool_func,
+        params_model=_KeyValueParams,
+    )
+    mock_amessages.side_effect = [
+        make_tool_call_response(
+            [{"name": "save_fact", "arguments": {"key": "color", "value": "blue"}}]
+        ),
+        make_text_response("Done!"),
+    ]
+
+    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent.register_tools([tool])
+
+    with caplog.at_level("DEBUG", logger="backend.app.agent.core"):
+        await agent.process_message(
+            "Remember my favorite color is blue",
+            system_prompt_override="You are a helpful assistant.",
+        )
+
+    debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    # Agent start
+    assert any("Agent starting" in m for m in debug_messages)
+    # Round logging
+    assert any("Round 0" in m and "starting" in m for m in debug_messages)
+    # Tool calls parsed
+    assert any("save_fact" in m and "tool call" in m for m in debug_messages)
+    # Tool execution result
+    assert any("save_fact" in m and "completed" in m for m in debug_messages)
+    # Agent finished
+    assert any("Agent finished" in m for m in debug_messages)
+    # LLM call
+    assert any("Calling LLM" in m for m in debug_messages)
