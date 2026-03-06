@@ -18,8 +18,7 @@ Clawbolt is open source and contributions are welcome.
 - **Type annotations** required on all functions
 - **Ruff** for linting and formatting (rules: `E, F, I, UP, B, SIM, ANN, RUF`)
 - **Line length**: 100 characters
-- **SQLAlchemy 2.0** `mapped_column` style
-- **Pydantic v2** for all request/response schemas
+- **Pydantic v2** for all data classes and request/response schemas
 - **Async routes**: all route handlers use `async def`
 - **LLM calls**: all LLM calls via any-llm `acompletion` (async)
 
@@ -55,6 +54,6 @@ uv run ty check --python .venv backend/ tests/    # type checking passes
 ## Architecture notes
 
 - See [Architecture](../../architecture/) for system design overview
-- Every model and endpoint uses `user_id` scoping
+- Every data class and endpoint uses `user_id` scoping
 - External services are abstracted behind service classes in `backend/app/services/`
 - Config uses Pydantic `BaseSettings` with `extra="ignore"`

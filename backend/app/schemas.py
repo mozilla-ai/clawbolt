@@ -28,8 +28,6 @@ class ContractorResponse(ContractorBase):
     created_at: datetime.datetime
     updated_at: datetime.datetime
 
-    model_config = {"from_attributes": True}
-
 
 class MemoryBase(BaseModel):
     key: str
@@ -39,17 +37,11 @@ class MemoryBase(BaseModel):
 
 class MemoryCreate(MemoryBase):
     confidence: float = 1.0
-    source_message_id: int | None = None
 
 
 class MemoryResponse(MemoryBase):
-    id: int
-    contractor_id: int
     confidence: float
-    created_at: datetime.datetime
-    updated_at: datetime.datetime
-
-    model_config = {"from_attributes": True}
+    contractor_id: int
 
 
 class MessageBase(BaseModel):
@@ -58,11 +50,8 @@ class MessageBase(BaseModel):
 
 
 class MessageResponse(MessageBase):
-    id: int
-    conversation_id: int
-    created_at: datetime.datetime
-
-    model_config = {"from_attributes": True}
+    seq: int
+    timestamp: str
 
 
 class EstimateLineItemBase(BaseModel):
@@ -83,6 +72,4 @@ class EstimateResponse(EstimateBase):
     contractor_id: int
     client_id: int | None = None
     pdf_url: str = ""
-    created_at: datetime.datetime
-
-    model_config = {"from_attributes": True}
+    created_at: str

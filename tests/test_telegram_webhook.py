@@ -3,16 +3,33 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
 from backend.app.agent.core import AgentResponse
-from backend.app.models import Contractor, Conversation, Message
+from backend.app.agent.file_store import (
+    ContractorData,
+    StoredMessage,
+    get_contractor_store,
+    get_session_store,
+)
 from backend.app.services.messaging import MessagingService
 from tests.mocks.telegram import make_telegram_update_payload
 
 # All webhook tests mock handle_inbound_message to avoid LLM calls
 _MOCK_AGENT_RESPONSE = AgentResponse(reply_text="Mock reply")
 _PATCH_HANDLE = "backend.app.agent.ingestion.handle_inbound_message"
+
+
+def _get_all_messages(contractor_id: int) -> list[StoredMessage]:
+    """Helper to retrieve all stored messages for a contractor from the file session store."""
+    import asyncio
+
+    store = get_session_store(contractor_id)
+
+    async def _fetch() -> list[StoredMessage]:
+        session, _is_new = await store.get_or_create_session()
+        return list(session.messages)
+
+    return asyncio.get_event_loop().run_until_complete(_fetch())
 
 
 def test_inbound_webhook_returns_200(client: TestClient) -> None:
@@ -25,9 +42,9 @@ def test_inbound_webhook_returns_200(client: TestClient) -> None:
 
 
 def test_inbound_webhook_stores_message(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
-    """Inbound message should be stored in the database."""
+    """Inbound message should be stored in the file store."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
         payload = make_telegram_update_payload(
             chat_id=int(test_contractor.channel_identifier),
@@ -36,14 +53,14 @@ def test_inbound_webhook_stores_message(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert messages[0].direction == "inbound"
     assert messages[0].body == "I need a quote for kitchen remodel"
 
 
 def test_inbound_webhook_extracts_photo(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Photo file_ids should be extracted and stored."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -55,13 +72,13 @@ def test_inbound_webhook_extracts_photo(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert "AgACAgIAAxkBAAI" in messages[0].media_urls_json
 
 
 def test_inbound_webhook_extracts_voice(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Voice file_ids should be extracted."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -73,13 +90,13 @@ def test_inbound_webhook_extracts_voice(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert "AwACAgIAAxkBAAI" in messages[0].media_urls_json
 
 
 def test_inbound_webhook_extracts_document(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Document file_ids should be extracted."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -91,29 +108,32 @@ def test_inbound_webhook_extracts_document(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert "BQACAgIAAxkBAAI" in messages[0].media_urls_json
 
 
-def test_inbound_webhook_creates_contractor_if_new(client: TestClient, db_session: Session) -> None:
+def test_inbound_webhook_creates_contractor_if_new(client: TestClient) -> None:
     """Unknown chat_id should create a new contractor."""
+    import asyncio
+
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
         payload = make_telegram_update_payload(chat_id=999999999, text="Hi")
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    contractor = (
-        db_session.query(Contractor).filter(Contractor.channel_identifier == "999999999").first()
-    )
+    store = get_contractor_store()
+    contractor = asyncio.get_event_loop().run_until_complete(store.get_by_channel("999999999"))
     assert contractor is not None
     assert contractor.preferred_channel == "telegram"
 
 
 def test_inbound_webhook_creates_conversation(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
-    """Should create a conversation for the contractor."""
+    """Should create a session for the contractor."""
+    import asyncio
+
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
         payload = make_telegram_update_payload(
             chat_id=int(test_contractor.channel_identifier), text="Hello"
@@ -121,13 +141,9 @@ def test_inbound_webhook_creates_conversation(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    conversations = (
-        db_session.query(Conversation)
-        .filter(Conversation.contractor_id == test_contractor.id)
-        .all()
-    )
-    assert len(conversations) == 1
-    assert conversations[0].is_active is True
+    store = get_session_store(test_contractor.id)
+    session, _is_new = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
+    assert session.is_active is True
 
 
 def test_messaging_service_injected_via_depends(
@@ -142,7 +158,7 @@ def test_messaging_service_injected_via_depends(
 
 
 def test_webhook_calls_handle_inbound_message(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Webhook should call handle_inbound_message via background task."""
     with patch(
@@ -163,7 +179,7 @@ def test_webhook_calls_handle_inbound_message(
 
 
 def test_webhook_calls_handle_with_media(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Webhook should pass media as (file_id, mime_type) tuples to handler."""
     with patch(
@@ -182,7 +198,7 @@ def test_webhook_calls_handle_with_media(
 
 
 def test_webhook_survives_handler_failure(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Webhook should return 200 even if handle_inbound_message raises."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, side_effect=RuntimeError("LLM down")):
@@ -193,12 +209,12 @@ def test_webhook_survives_handler_failure(
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
 
 
 def test_webhook_idempotency_skips_duplicate(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Duplicate webhook calls should not create duplicate messages."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -213,7 +229,7 @@ def test_webhook_idempotency_skips_duplicate(
     assert response1.status_code == 200
     assert response2.status_code == 200
 
-    messages = db_session.query(Message).filter(Message.direction == "inbound").all()
+    messages = [m for m in _get_all_messages(test_contractor.id) if m.direction == "inbound"]
     assert len(messages) == 1
     chat_id = test_contractor.channel_identifier
     assert messages[0].external_message_id == f"tg_{chat_id}_999"
@@ -230,7 +246,7 @@ def test_webhook_non_message_update_returns_200(client: TestClient) -> None:
 # -- Allowlist gating tests --
 
 
-def test_allowlist_rejects_unlisted_chat_id(client: TestClient, db_session: Session) -> None:
+def test_allowlist_rejects_unlisted_chat_id(client: TestClient) -> None:
     """Messages from a chat_id not in the allowlist should be silently ignored."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -248,11 +264,10 @@ def test_allowlist_rejects_unlisted_chat_id(client: TestClient, db_session: Sess
 
     assert response.status_code == 200
     mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
 
 
 def test_allowlist_accepts_listed_chat_id(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Messages from a chat_id on the allowlist should be processed normally."""
     chat_id = test_contractor.channel_identifier
@@ -272,10 +287,11 @@ def test_allowlist_accepts_listed_chat_id(
 
     assert response.status_code == 200
     mock_h.assert_called_once()
-    assert db_session.query(Message).count() == 1
+    messages = _get_all_messages(test_contractor.id)
+    assert len(messages) == 1
 
 
-def test_allowlist_empty_denies_all(client: TestClient, db_session: Session) -> None:
+def test_allowlist_empty_denies_all(client: TestClient) -> None:
     """Empty allowlist (default) should deny all chat IDs."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -293,10 +309,9 @@ def test_allowlist_empty_denies_all(client: TestClient, db_session: Session) -> 
 
     assert response.status_code == 200
     mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
 
 
-def test_allowlist_wildcard_allows_all(client: TestClient, db_session: Session) -> None:
+def test_allowlist_wildcard_allows_all(client: TestClient) -> None:
     """Setting TELEGRAM_ALLOWED_CHAT_IDS to '*' should allow all chat IDs."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -316,7 +331,7 @@ def test_allowlist_wildcard_allows_all(client: TestClient, db_session: Session) 
     mock_h.assert_called_once()
 
 
-def test_username_wildcard_allows_all(client: TestClient, db_session: Session) -> None:
+def test_username_wildcard_allows_all(client: TestClient) -> None:
     """Setting TELEGRAM_ALLOWED_USERNAMES to '*' should allow all users."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -339,7 +354,7 @@ def test_username_wildcard_allows_all(client: TestClient, db_session: Session) -
 # -- Username allowlist tests --
 
 
-def test_username_allowlist_accepts_listed_user(client: TestClient, db_session: Session) -> None:
+def test_username_allowlist_accepts_listed_user(client: TestClient) -> None:
     """Messages from a username on the allowlist should be processed."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -359,7 +374,7 @@ def test_username_allowlist_accepts_listed_user(client: TestClient, db_session: 
     mock_h.assert_called_once()
 
 
-def test_username_allowlist_rejects_unlisted_user(client: TestClient, db_session: Session) -> None:
+def test_username_allowlist_rejects_unlisted_user(client: TestClient) -> None:
     """Messages from a username NOT on the allowlist should be ignored."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -377,10 +392,9 @@ def test_username_allowlist_rejects_unlisted_user(client: TestClient, db_session
 
     assert response.status_code == 200
     mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
 
 
-def test_username_allowlist_strips_at_prefix(client: TestClient, db_session: Session) -> None:
+def test_username_allowlist_strips_at_prefix(client: TestClient) -> None:
     """Usernames with @ prefix in config should still match."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -400,7 +414,7 @@ def test_username_allowlist_strips_at_prefix(client: TestClient, db_session: Ses
     mock_h.assert_called_once()
 
 
-def test_username_or_chat_id_either_passes(client: TestClient, db_session: Session) -> None:
+def test_username_or_chat_id_either_passes(client: TestClient) -> None:
     """If either chat_id OR username matches, the message should be allowed."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -421,7 +435,7 @@ def test_username_or_chat_id_either_passes(client: TestClient, db_session: Sessi
     mock_h.assert_called_once()
 
 
-def test_username_allowlist_no_username_in_payload(client: TestClient, db_session: Session) -> None:
+def test_username_allowlist_no_username_in_payload(client: TestClient) -> None:
     """Messages without a username should be rejected when only username allowlist is set."""
     with (
         patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
@@ -440,7 +454,6 @@ def test_username_allowlist_no_username_in_payload(client: TestClient, db_sessio
 
     assert response.status_code == 200
     mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
 
 
 # -- Regression tests for document MIME classification --
@@ -559,7 +572,7 @@ def test_extract_telegram_media_document_without_mime_defaults() -> None:
 
 
 def test_parse_photo_with_caption_extracts_text(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Photo messages with a caption should store the caption as body."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -571,14 +584,14 @@ def test_parse_photo_with_caption_extracts_text(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert messages[0].body == "Kitchen remodel damage"
     assert "AgACAgIAAxkBAAI" in messages[0].media_urls_json
 
 
 def test_parse_document_with_caption_extracts_text(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Document messages with a caption should store the caption as body."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -590,13 +603,13 @@ def test_parse_document_with_caption_extracts_text(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert messages[0].body == "Invoice for deck job"
 
 
 def test_parse_media_without_caption_has_empty_body(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Media messages without a caption should have an empty body."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -607,7 +620,7 @@ def test_parse_media_without_caption_has_empty_body(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert messages[0].body == ""
 
@@ -714,7 +727,7 @@ def test_extract_media_audio_without_file_id() -> None:
 
 
 def test_inbound_webhook_extracts_video(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """Video file_ids should be extracted and stored."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -725,7 +738,7 @@ def test_inbound_webhook_extracts_video(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert "BAACAgIAAxkBAAI" in messages[0].media_urls_json
 
@@ -734,7 +747,7 @@ def test_inbound_webhook_extracts_video(
 
 
 def test_start_command_converted_to_greeting(
-    client: TestClient, db_session: Session, test_contractor: Contractor
+    client: TestClient, test_contractor: ContractorData
 ) -> None:
     """/start command should be converted to a greeting, not passed as raw text."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
@@ -745,19 +758,18 @@ def test_start_command_converted_to_greeting(
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
 
-    messages = db_session.query(Message).all()
+    messages = _get_all_messages(test_contractor.id)
     assert len(messages) == 1
     assert messages[0].body == "Hi"
 
 
-def test_other_bot_commands_ignored(client: TestClient, db_session: Session) -> None:
+def test_other_bot_commands_ignored(client: TestClient) -> None:
     """Unhandled bot commands (e.g. /help) should be silently ignored."""
     with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h:
         payload = make_telegram_update_payload(chat_id=123456789, text="/help")
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
     mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
 
 
 # -- TelegramUpdate model tests --

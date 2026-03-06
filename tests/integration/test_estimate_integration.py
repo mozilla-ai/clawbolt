@@ -1,7 +1,7 @@
 """Integration tests for estimate generation via a real LLM.
 
 Verifies that the agent calls generate_estimate when asked for a quote
-and that the full pipeline (tool call -> DB records -> PDF) works.
+and that the full pipeline (tool call -> file store records -> PDF) works.
 
 Requires ANTHROPIC_API_KEY set in environment:
     ANTHROPIC_API_KEY=sk-... uv run pytest -m integration -v --timeout=120
@@ -10,12 +10,11 @@ Requires ANTHROPIC_API_KEY set in environment:
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.file_store import ContractorData, EstimateStore
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from backend.app.agent.tools.memory_tools import create_memory_tools
-from backend.app.models import Contractor, Estimate, EstimateLineItem
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
@@ -23,19 +22,18 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_estimate_generation_roundtrip(
-    integration_db: Session,
-    integration_contractor: Contractor,
+    integration_contractor: ContractorData,
 ) -> None:
-    """Agent should call generate_estimate tool and create DB records when asked for a quote."""
+    """Agent should call generate_estimate tool and create file store records when asked."""
     with patch("backend.app.agent.core.settings") as mock_settings:
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = ClawboltAgent(db=integration_db, contractor=integration_contractor)
-        tools = create_estimate_tools(integration_db, integration_contractor)
-        tools.extend(create_memory_tools(integration_db, integration_contractor.id))
+        agent = ClawboltAgent(contractor=integration_contractor)
+        tools = create_estimate_tools(integration_contractor)
+        tools.extend(create_memory_tools(integration_contractor.id))
         agent.register_tools(tools)
 
         response = await agent.process_message(
@@ -53,15 +51,15 @@ async def test_estimate_generation_roundtrip(
     tool_names = [tc.name for tc in response.tool_calls]
     assert "generate_estimate" in tool_names, f"Expected generate_estimate call, got: {tool_names}"
 
-    # Estimate record should exist in DB
-    estimates = integration_db.query(Estimate).all()
+    # Estimate record should exist in the file store
+    store = EstimateStore(integration_contractor.id)
+    estimates = await store.list_all()
     assert len(estimates) == 1
     assert estimates[0].status == "draft"
     assert estimates[0].total_amount > 0
 
     # Line items should exist
-    line_items = integration_db.query(EstimateLineItem).all()
-    assert len(line_items) >= 1
+    assert len(estimates[0].line_items) >= 1
 
     # Reply should mention the estimate
     assert response.reply_text

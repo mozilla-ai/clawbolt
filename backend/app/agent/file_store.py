@@ -1,0 +1,1339 @@
+"""File-based storage layer replacing PostgreSQL/SQLAlchemy.
+
+All file I/O goes through this module. Stores use JSON, JSONL, and Markdown
+formats following patterns from nanobot (JSONL sessions, MEMORY.md facts,
+per-user directories, asyncio.Lock) and openclaw (SOUL.md for personality,
+category-organized markdown memory, contractor_index for routing).
+
+Storage layout::
+
+    data/
+      contractor_index.json
+      seen_messages.json
+      contractors/
+        {contractor_id}/
+          contractor.json
+          SOUL.md
+          memory/
+            MEMORY.md
+            HISTORY.md
+          sessions/
+            {session_id}.jsonl
+          clients.json
+          estimates/
+            {estimate_id}.json
+          media.json
+          heartbeat/
+            checklist.json
+            log.jsonl
+          llm_usage.jsonl
+"""
+
+from __future__ import annotations
+
+import asyncio
+import datetime
+import json
+import logging
+import re
+from pathlib import Path
+from typing import Any
+
+from pydantic import BaseModel, Field
+
+from backend.app.config import settings
+from backend.app.enums import ChecklistSchedule, ChecklistStatus, EstimateStatus
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Data classes (replace ORM models)
+# ---------------------------------------------------------------------------
+
+
+class ContractorData(BaseModel):
+    """Replaces the Contractor ORM model."""
+
+    id: int = 0
+    user_id: str = ""
+    name: str = ""
+    phone: str = ""
+    trade: str = ""
+    location: str = ""
+    hourly_rate: float | None = None
+    soul_text: str = ""
+    business_hours: str = ""
+    timezone: str = ""
+    preferred_channel: str = "telegram"
+    channel_identifier: str = ""
+    assistant_name: str = "Clawbolt"
+    onboarding_complete: bool = False
+    is_active: bool = True
+    role: str = "user"
+    preferences_json: str = "{}"
+    heartbeat_opt_in: bool = True
+    heartbeat_frequency: str = ""
+    created_at: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.UTC)
+    )
+    updated_at: datetime.datetime = Field(
+        default_factory=lambda: datetime.datetime.now(datetime.UTC)
+    )
+
+
+class StoredMessage(BaseModel):
+    """Replaces the Message ORM model. One line in a session JSONL file."""
+
+    direction: str = ""
+    body: str = ""
+    processed_context: str = ""
+    tool_interactions_json: str = ""
+    external_message_id: str = ""
+    media_urls_json: str = "[]"
+    timestamp: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
+    seq: int = 0
+
+
+class SessionMetadata(BaseModel):
+    """First line of a session JSONL file.
+
+    Note: the ``_type`` discriminator is handled as a raw dict key when
+    serializing/deserializing JSONL, not through this model.
+    """
+
+    session_id: str = ""
+    contractor_id: int = 0
+    last_message_at: str = ""
+    is_active: bool = True
+    last_compacted_seq: int = 0
+
+
+class SessionState(BaseModel):
+    """In-memory representation of a conversation session."""
+
+    session_id: str = ""
+    contractor_id: int = 0
+    messages: list[StoredMessage] = Field(default_factory=list)
+    is_active: bool = True
+    created_at: str = ""
+    last_message_at: str = ""
+    last_compacted_seq: int = 0
+
+
+class ClientData(BaseModel):
+    """Replaces the Client ORM model."""
+
+    id: int = 0
+    name: str = ""
+    phone: str = ""
+    email: str = ""
+    address: str = ""
+    notes: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
+
+
+class EstimateLineItemData(BaseModel):
+    """Replaces the EstimateLineItem ORM model."""
+
+    id: int = 0
+    description: str = ""
+    quantity: float = 1.0
+    unit_price: float = 0.0
+    total: float = 0.0
+
+
+class EstimateData(BaseModel):
+    """Replaces the Estimate + EstimateLineItem ORM models."""
+
+    id: int = 0
+    contractor_id: int = 0
+    client_id: int | None = None
+    description: str = ""
+    total_amount: float = 0.0
+    status: str = EstimateStatus.DRAFT
+    pdf_url: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
+    line_items: list[EstimateLineItemData] = Field(default_factory=list)
+
+
+class MediaData(BaseModel):
+    """Replaces the MediaFile ORM model."""
+
+    id: int = 0
+    message_id: int | None = None
+    contractor_id: int = 0
+    original_url: str = ""
+    mime_type: str = ""
+    processed_text: str = ""
+    storage_url: str = ""
+    storage_path: str = ""
+    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
+
+
+class ChecklistItem(BaseModel):
+    """Replaces the HeartbeatChecklistItem ORM model."""
+
+    id: int = 0
+    contractor_id: int = 0
+    description: str = ""
+    schedule: str = ChecklistSchedule.DAILY
+    active_hours: str = ""
+    last_triggered_at: str | None = None
+    status: str = ChecklistStatus.ACTIVE
+    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
+
+
+class HeartbeatLogEntry(BaseModel):
+    """Replaces the HeartbeatLog ORM model."""
+
+    contractor_id: int = 0
+    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
+
+
+class MemoryFact(BaseModel):
+    """A single fact in MEMORY.md."""
+
+    key: str = ""
+    value: str = ""
+    category: str = "general"
+    confidence: float = 1.0
+
+
+# ---------------------------------------------------------------------------
+# Helper utilities
+# ---------------------------------------------------------------------------
+
+
+def _read_json(path: Path, default: Any = None) -> Any:
+    """Read and parse a JSON file. Returns default if file doesn't exist or is corrupt."""
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        logger.warning("Corrupt JSON file %s, returning default", path)
+        return default
+
+
+def _write_json(path: Path, data: Any) -> None:
+    """Write data as JSON to a file atomically, creating parent dirs."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
+    tmp.rename(path)
+
+
+def _append_jsonl(path: Path, data: dict[str, Any]) -> None:
+    """Append a single JSON line to a JSONL file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(data, default=str) + "\n")
+
+
+def _read_jsonl(path: Path) -> list[dict[str, Any]]:
+    """Read all lines from a JSONL file."""
+    if not path.exists():
+        return []
+    lines: list[dict[str, Any]] = []
+    for line in path.read_text(encoding="utf-8").strip().splitlines():
+        line = line.strip()
+        if line:
+            try:
+                lines.append(json.loads(line))
+            except json.JSONDecodeError:
+                logger.warning("Skipping invalid JSONL line in %s", path)
+    return lines
+
+
+def _data_dir() -> Path:
+    """Return the root data directory."""
+    return Path(settings.contractor_data_dir)
+
+
+def _contractor_dir(contractor_id: int) -> Path:
+    """Return the directory for a specific contractor."""
+    return _data_dir() / str(contractor_id)
+
+
+def _index_path() -> Path:
+    """Return the path to contractor_index.json."""
+    return _data_dir().parent / "contractor_index.json"
+
+
+def _next_id(items: list[dict[str, Any]]) -> int:
+    """Get the next auto-increment ID from a list of records."""
+    if not items:
+        return 1
+    return max(item.get("id", 0) for item in items) + 1
+
+
+# ---------------------------------------------------------------------------
+# ContractorStore
+# ---------------------------------------------------------------------------
+
+
+class ContractorStore:
+    """File-based contractor storage. Replaces Contractor model + queries."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+
+    def _all_dirs(self) -> list[Path]:
+        """List all contractor directories."""
+        base = _data_dir()
+        if not base.exists():
+            return []
+        return [d for d in sorted(base.iterdir()) if d.is_dir() and d.name.isdigit()]
+
+    def _load(self, contractor_id: int) -> ContractorData | None:
+        """Load a contractor from disk."""
+        path = _contractor_dir(contractor_id) / "contractor.json"
+        data = _read_json(path)
+        if data is None:
+            return None
+        contractor = ContractorData.model_validate(data)
+        # Load soul_text from SOUL.md
+        soul_path = _contractor_dir(contractor_id) / "SOUL.md"
+        if soul_path.exists():
+            raw = soul_path.read_text(encoding="utf-8").strip()
+            # Strip the "# Soul" header if present
+            if raw.startswith("# Soul"):
+                raw = raw[len("# Soul") :].strip()
+            contractor.soul_text = raw
+        return contractor
+
+    def _save(self, contractor: ContractorData) -> None:
+        """Save a contractor to disk."""
+        cdir = _contractor_dir(contractor.id)
+        cdir.mkdir(parents=True, exist_ok=True)
+
+        # Save contractor.json (exclude soul_text, it goes to SOUL.md)
+        data = contractor.model_dump()
+        soul_text = data.pop("soul_text", "")
+        _write_json(cdir / "contractor.json", data)
+
+        # Save SOUL.md
+        soul_path = cdir / "SOUL.md"
+        if soul_text:
+            soul_path.write_text(f"# Soul\n\n{soul_text}\n", encoding="utf-8")
+        elif not soul_path.exists():
+            # Seed a meaningful default for brand-new contractors
+            soul_path.write_text(
+                "# Soul\n\n"
+                "Be genuinely helpful, not performatively helpful. Skip the filler\n"
+                "and just help. Actions over words.\n\n"
+                "Have opinions. You're allowed to prefer things, find stuff interesting\n"
+                "or tedious. An assistant with no personality is just a search engine.\n\n"
+                "Be resourceful before asking. Try to figure it out, check context,\n"
+                "search memory. Then ask if you're stuck.\n\n"
+                "Keep it practical. Your contractor is on a job site, not at a desk.\n"
+                "Concise when needed, thorough when it matters.\n\n"
+                "This file is yours to evolve. As you learn who you are, update it.\n",
+                encoding="utf-8",
+            )
+
+        # Ensure subdirectories exist
+        (cdir / "memory").mkdir(exist_ok=True)
+        (cdir / "sessions").mkdir(exist_ok=True)
+        (cdir / "estimates").mkdir(exist_ok=True)
+        (cdir / "heartbeat").mkdir(exist_ok=True)
+
+        # Initialize MEMORY.md if it doesn't exist
+        mem_path = cdir / "memory" / "MEMORY.md"
+        if not mem_path.exists():
+            mem_path.write_text("# Long-term Memory\n", encoding="utf-8")
+
+    def _update_index(self, contractor: ContractorData) -> None:
+        """Update contractor_index.json with channel mapping."""
+        idx_path = _index_path()
+        index: dict[str, int] = _read_json(idx_path, {})
+        if contractor.channel_identifier:
+            key = f"{contractor.preferred_channel}:{contractor.channel_identifier}"
+            index[key] = contractor.id
+        _write_json(idx_path, index)
+
+    def _next_contractor_id(self) -> int:
+        """Get the next contractor ID by scanning existing directories."""
+        dirs = self._all_dirs()
+        if not dirs:
+            return 1
+        return max(int(d.name) for d in dirs) + 1
+
+    async def get_by_id(self, contractor_id: int) -> ContractorData | None:
+        """Get a contractor by ID."""
+        return self._load(contractor_id)
+
+    async def get_by_user_id(self, user_id: str) -> ContractorData | None:
+        """Get a contractor by user_id (scans all contractors)."""
+        for cdir in self._all_dirs():
+            cid = int(cdir.name)
+            c = self._load(cid)
+            if c and c.user_id == user_id:
+                return c
+        return None
+
+    async def get_by_channel(self, channel_identifier: str) -> ContractorData | None:
+        """Get a contractor by channel_identifier using the index."""
+        idx_path = _index_path()
+        index: dict[str, int] = _read_json(idx_path, {})
+        # Try all channel prefixes
+        for key, cid in index.items():
+            if key.endswith(f":{channel_identifier}"):
+                return self._load(cid)
+        # Fallback: scan directories
+        for cdir in self._all_dirs():
+            cid = int(cdir.name)
+            c = self._load(cid)
+            if c and c.channel_identifier == channel_identifier:
+                self._update_index(c)
+                return c
+        return None
+
+    async def create(
+        self,
+        user_id: str,
+        channel_identifier: str = "",
+        preferred_channel: str = "telegram",
+        **kwargs: Any,
+    ) -> ContractorData:
+        """Create a new contractor."""
+        async with self._lock:
+            cid = self._next_contractor_id()
+            now = datetime.datetime.now(datetime.UTC)
+            contractor = ContractorData(
+                id=cid,
+                user_id=user_id,
+                channel_identifier=channel_identifier,
+                preferred_channel=preferred_channel,
+                created_at=now,
+                updated_at=now,
+                **kwargs,
+            )
+            self._save(contractor)
+            self._update_index(contractor)
+            return contractor
+
+    async def update(self, contractor_id: int, **fields: Any) -> ContractorData | None:
+        """Update contractor fields."""
+        async with self._lock:
+            contractor = self._load(contractor_id)
+            if contractor is None:
+                return None
+            for key, value in fields.items():
+                if hasattr(contractor, key) and value is not None:
+                    setattr(contractor, key, value)
+            contractor.updated_at = datetime.datetime.now(datetime.UTC)
+            self._save(contractor)
+            if "channel_identifier" in fields or "preferred_channel" in fields:
+                self._update_index(contractor)
+            return contractor
+
+    async def list_all(self) -> list[ContractorData]:
+        """List all contractors."""
+        result: list[ContractorData] = []
+        for cdir in self._all_dirs():
+            cid = int(cdir.name)
+            c = self._load(cid)
+            if c:
+                result.append(c)
+        return result
+
+
+# ---------------------------------------------------------------------------
+# FileMemoryStore
+# ---------------------------------------------------------------------------
+
+# Regex to parse MEMORY.md entries: "- key: value (confidence: X.X)"
+# Uses greedy match for value (.+) to handle values containing parentheses,
+# then anchors on the final "(confidence: ...)" suffix.
+_MEMORY_LINE_RE = re.compile(r"^-\s+(.+?):\s+(.+)\s+\(confidence:\s+([\d.]+)\)\s*$")
+_CATEGORY_RE = re.compile(r"^##\s+(.+)$")
+
+
+class FileMemoryStore:
+    """File-based memory storage using MEMORY.md. Replaces Memory model."""
+
+    def __init__(self, contractor_id: int) -> None:
+        self.contractor_id = contractor_id
+        self._lock = asyncio.Lock()
+
+    @property
+    def _memory_path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "memory" / "MEMORY.md"
+
+    @property
+    def _history_path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "memory" / "HISTORY.md"
+
+    @property
+    def _soul_path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "SOUL.md"
+
+    def _parse_memory_md(self) -> list[MemoryFact]:
+        """Parse MEMORY.md into a list of MemoryFact objects."""
+        if not self._memory_path.exists():
+            return []
+        content = self._memory_path.read_text(encoding="utf-8")
+        facts: list[MemoryFact] = []
+        current_category = "general"
+        for line in content.splitlines():
+            cat_match = _CATEGORY_RE.match(line)
+            if cat_match:
+                heading = cat_match.group(1).strip()
+                # Normalize known headings
+                if heading == "Long-term Memory":
+                    continue
+                current_category = heading.lower()
+                continue
+            fact_match = _MEMORY_LINE_RE.match(line)
+            if fact_match:
+                facts.append(
+                    MemoryFact(
+                        key=fact_match.group(1).strip(),
+                        value=fact_match.group(2).strip(),
+                        confidence=float(fact_match.group(3)),
+                        category=current_category,
+                    )
+                )
+        return facts
+
+    def _write_memory_md(self, facts: list[MemoryFact]) -> None:
+        """Write facts back to MEMORY.md, grouped by category."""
+        self._memory_path.parent.mkdir(parents=True, exist_ok=True)
+        categories: dict[str, list[MemoryFact]] = {}
+        for fact in facts:
+            categories.setdefault(fact.category, []).append(fact)
+
+        lines: list[str] = ["# Long-term Memory", ""]
+        for cat in sorted(categories.keys()):
+            lines.append(f"## {cat.title()}")
+            for f in categories[cat]:
+                lines.append(f"- {f.key}: {f.value} (confidence: {f.confidence})")
+            lines.append("")
+        self._memory_path.write_text("\n".join(lines), encoding="utf-8")
+
+    async def save_memory(
+        self,
+        key: str,
+        value: str,
+        category: str = "general",
+        confidence: float = 1.0,
+        source_message_id: int | None = None,
+    ) -> MemoryFact:
+        """Save or update a memory fact."""
+        async with self._lock:
+            facts = self._parse_memory_md()
+            # Upsert: update if key exists, else append
+            for fact in facts:
+                if fact.key == key:
+                    fact.value = value
+                    fact.category = category
+                    fact.confidence = confidence
+                    self._write_memory_md(facts)
+                    return fact
+            new_fact = MemoryFact(key=key, value=value, category=category, confidence=confidence)
+            facts.append(new_fact)
+            self._write_memory_md(facts)
+            return new_fact
+
+    async def recall_memories(
+        self,
+        query: str,
+        category: str | None = None,
+        limit: int = 20,
+    ) -> list[MemoryFact]:
+        """Case-insensitive keyword search over keys and values."""
+        facts = self._parse_memory_md()
+        if category:
+            facts = [f for f in facts if f.category == category]
+        pattern = query.lower()
+        matched = [f for f in facts if pattern in f.key.lower() or pattern in f.value.lower()]
+        matched.sort(key=lambda f: f.confidence, reverse=True)
+        return matched[:limit]
+
+    async def get_all_memories(
+        self,
+        category: str | None = None,
+    ) -> list[MemoryFact]:
+        """Get all memory facts, optionally filtered by category."""
+        facts = self._parse_memory_md()
+        if category:
+            facts = [f for f in facts if f.category == category]
+        return facts
+
+    async def delete_memory(self, key: str) -> bool:
+        """Delete a specific memory. Returns True if found and deleted."""
+        async with self._lock:
+            facts = self._parse_memory_md()
+            original_len = len(facts)
+            facts = [f for f in facts if f.key != key]
+            if len(facts) == original_len:
+                return False
+            self._write_memory_md(facts)
+            return True
+
+    async def build_memory_context(self, query: str | None = None) -> str:
+        """Build a MEMORY.md-style text block for injection into the agent prompt."""
+        if query:
+            memories = await self.recall_memories(query)
+        else:
+            memories = await self.get_all_memories()
+
+        client_store = ClientStore(self.contractor_id)
+        clients = await client_store.list_all()
+
+        lines: list[str] = []
+        if memories:
+            lines.append("## Known Facts")
+            for m in memories:
+                lines.append(f"- {m.key}: {m.value} (confidence: {m.confidence})")
+            lines.append("")
+        if clients:
+            lines.append("## Clients")
+            for c in clients:
+                parts = [c.name]
+                if c.phone:
+                    parts.append(f"({c.phone})")
+                if c.address:
+                    parts.append(f": {c.address}")
+                if c.notes:
+                    parts.append(f", {c.notes}")
+                lines.append(f"- {' '.join(parts)}")
+            lines.append("")
+        return "\n".join(lines)
+
+    async def append_history(self, entry: str) -> None:
+        """Append an entry to HISTORY.md."""
+        self._history_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(self._history_path, "a", encoding="utf-8") as f:
+            f.write(entry + "\n")
+
+    def read_soul(self) -> str:
+        """Read SOUL.md content."""
+        if not self._soul_path.exists():
+            return ""
+        raw = self._soul_path.read_text(encoding="utf-8").strip()
+        if raw.startswith("# Soul"):
+            raw = raw[len("# Soul") :].strip()
+        return raw
+
+    def write_soul(self, content: str) -> None:
+        """Write SOUL.md content."""
+        self._soul_path.parent.mkdir(parents=True, exist_ok=True)
+        self._soul_path.write_text(f"# Soul\n\n{content}\n", encoding="utf-8")
+
+
+# ---------------------------------------------------------------------------
+# FileSessionStore
+# ---------------------------------------------------------------------------
+
+
+class FileSessionStore:
+    """File-based session storage using JSONL files. Replaces Conversation + Message models."""
+
+    def __init__(self, contractor_id: int) -> None:
+        self.contractor_id = contractor_id
+        self._lock = asyncio.Lock()
+
+    @property
+    def _sessions_dir(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "sessions"
+
+    def _session_path(self, session_id: str) -> Path:
+        return self._sessions_dir / f"{session_id}.jsonl"
+
+    def _list_session_files(self) -> list[Path]:
+        """List all session files, sorted by name."""
+        sdir = self._sessions_dir
+        if not sdir.exists():
+            return []
+        return sorted(sdir.glob("*.jsonl"))
+
+    def _load_session(self, session_id: str) -> SessionState | None:
+        """Load a session from disk."""
+        path = self._session_path(session_id)
+        if not path.exists():
+            return None
+        lines = _read_jsonl(path)
+        if not lines:
+            return None
+
+        metadata = lines[0] if lines and lines[0].get("_type") == "metadata" else {}
+        messages: list[StoredMessage] = []
+        for line in lines:
+            if line.get("_type") == "metadata":
+                continue
+            messages.append(StoredMessage.model_validate(line))
+
+        return SessionState(
+            session_id=session_id,
+            contractor_id=self.contractor_id,
+            messages=messages,
+            is_active=metadata.get("is_active", True),
+            created_at=metadata.get("created_at", ""),
+            last_message_at=metadata.get("last_message_at", ""),
+            last_compacted_seq=metadata.get("last_compacted_seq", 0),
+        )
+
+    def _write_metadata(self, session_id: str, meta: dict[str, Any]) -> None:
+        """Rewrite the metadata line of a session file."""
+        path = self._session_path(session_id)
+        if not path.exists():
+            return
+        lines = path.read_text(encoding="utf-8").strip().splitlines()
+        if not lines:
+            return
+        # Replace the first line if it's metadata
+        first = json.loads(lines[0]) if lines else {}
+        if first.get("_type") == "metadata":
+            first.update(meta)
+            lines[0] = json.dumps(first, default=str)
+        path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+    async def get_or_create_session(
+        self,
+        timeout_hours: int | None = None,
+    ) -> tuple[SessionState, bool]:
+        """Get active session or create new one. Returns (session, is_new)."""
+        timeout = timeout_hours or settings.conversation_timeout_hours
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=timeout)
+
+        # Find the most recent active session
+        for path in reversed(self._list_session_files()):
+            session_id = path.stem
+            session = self._load_session(session_id)
+            if session is None or not session.is_active:
+                continue
+            if session.last_message_at:
+                try:
+                    last_at = datetime.datetime.fromisoformat(session.last_message_at)
+                    if last_at.tzinfo is None:
+                        last_at = last_at.replace(tzinfo=datetime.UTC)
+                    if last_at >= cutoff:
+                        # Update last_message_at
+                        now = datetime.datetime.now(datetime.UTC).isoformat()
+                        self._write_metadata(session_id, {"last_message_at": now})
+                        session.last_message_at = now
+                        return session, False
+                except (ValueError, TypeError):
+                    pass
+
+        # Create new session
+        now = datetime.datetime.now(datetime.UTC)
+        ts = int(now.timestamp())
+        session_id = f"{self.contractor_id}_{ts}"
+        path = self._session_path(session_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+
+        meta = {
+            "_type": "metadata",
+            "session_id": session_id,
+            "contractor_id": self.contractor_id,
+            "created_at": now.isoformat(),
+            "last_message_at": now.isoformat(),
+            "is_active": True,
+            "last_compacted_seq": 0,
+        }
+        path.write_text(json.dumps(meta, default=str) + "\n", encoding="utf-8")
+
+        session = SessionState(
+            session_id=session_id,
+            contractor_id=self.contractor_id,
+            is_active=True,
+            created_at=now.isoformat(),
+            last_message_at=now.isoformat(),
+            last_compacted_seq=0,
+        )
+        return session, True
+
+    async def add_message(
+        self,
+        session: SessionState,
+        direction: str,
+        body: str,
+        external_message_id: str = "",
+        media_urls_json: str = "[]",
+        processed_context: str = "",
+        tool_interactions_json: str = "",
+    ) -> StoredMessage:
+        """Append a message to the session JSONL file."""
+        async with self._lock:
+            seq = len(session.messages) + 1
+            now = datetime.datetime.now(datetime.UTC).isoformat()
+            msg = StoredMessage(
+                direction=direction,
+                body=body,
+                external_message_id=external_message_id,
+                media_urls_json=media_urls_json,
+                processed_context=processed_context,
+                tool_interactions_json=tool_interactions_json,
+                timestamp=now,
+                seq=seq,
+            )
+            _append_jsonl(self._session_path(session.session_id), msg.model_dump())
+            session.messages.append(msg)
+            # Update last_message_at
+            self._write_metadata(session.session_id, {"last_message_at": now})
+            session.last_message_at = now
+            return msg
+
+    async def update_message(
+        self,
+        session: SessionState,
+        seq: int,
+        **updates: Any,
+    ) -> None:
+        """Update a message by seq number (full file rewrite)."""
+        async with self._lock:
+            path = self._session_path(session.session_id)
+            lines = _read_jsonl(path)
+            for i, line in enumerate(lines):
+                if line.get("_type") == "metadata":
+                    continue
+                if line.get("seq") == seq:
+                    line.update(updates)
+                    lines[i] = line
+                    break
+            # Rewrite file
+            path.write_text(
+                "\n".join(json.dumps(line, default=str) for line in lines) + "\n",
+                encoding="utf-8",
+            )
+            # Update in-memory
+            for msg in session.messages:
+                if msg.seq == seq:
+                    for k, v in updates.items():
+                        if hasattr(msg, k):
+                            setattr(msg, k, v)
+                    break
+
+    def get_last_inbound_timestamp(self) -> datetime.datetime | None:
+        """Scan sessions for the most recent inbound message timestamp."""
+        latest: datetime.datetime | None = None
+        for path in self._list_session_files():
+            for line in _read_jsonl(path):
+                if line.get("_type") == "metadata":
+                    continue
+                if line.get("direction") != "inbound":
+                    continue
+                try:
+                    ts = datetime.datetime.fromisoformat(line["timestamp"])
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=datetime.UTC)
+                    if latest is None or ts > latest:
+                        latest = ts
+                except (ValueError, KeyError, TypeError):
+                    pass
+        return latest
+
+    def get_last_outbound_timestamp(self) -> datetime.datetime | None:
+        """Scan sessions for the most recent outbound message timestamp."""
+        latest: datetime.datetime | None = None
+        for path in self._list_session_files():
+            for line in _read_jsonl(path):
+                if line.get("_type") == "metadata":
+                    continue
+                if line.get("direction") != "outbound":
+                    continue
+                try:
+                    ts = datetime.datetime.fromisoformat(line["timestamp"])
+                    if ts.tzinfo is None:
+                        ts = ts.replace(tzinfo=datetime.UTC)
+                    if latest is None or ts > latest:
+                        latest = ts
+                except (ValueError, KeyError, TypeError):
+                    pass
+        return latest
+
+    async def update_compaction_seq(self, session: SessionState, seq: int) -> None:
+        """Update the last_compacted_seq in session metadata."""
+        self._write_metadata(session.session_id, {"last_compacted_seq": seq})
+        session.last_compacted_seq = seq
+
+    def get_recent_messages(self, count: int = 5) -> list[StoredMessage]:
+        """Get the most recent messages across all sessions."""
+        all_msgs: list[StoredMessage] = []
+        for path in reversed(self._list_session_files()):
+            lines = _read_jsonl(path)
+            for line in lines:
+                if line.get("_type") == "metadata":
+                    continue
+                all_msgs.append(StoredMessage.model_validate(line))
+            if len(all_msgs) >= count:
+                break
+        # Sort by timestamp descending, take the most recent
+        all_msgs.sort(key=lambda m: m.timestamp, reverse=True)
+        return list(reversed(all_msgs[:count]))
+
+
+# ---------------------------------------------------------------------------
+# ClientStore
+# ---------------------------------------------------------------------------
+
+
+class ClientStore:
+    """File-based client storage. Replaces Client model."""
+
+    def __init__(self, contractor_id: int) -> None:
+        self.contractor_id = contractor_id
+        self._lock = asyncio.Lock()
+
+    @property
+    def _path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "clients.json"
+
+    def _load_all(self) -> list[dict[str, Any]]:
+        return _read_json(self._path, [])
+
+    async def list_all(self) -> list[ClientData]:
+        """List all clients."""
+        items = self._load_all()
+        return [ClientData.model_validate(item) for item in items]
+
+    async def get(self, client_id: int) -> ClientData | None:
+        """Get a client by ID."""
+        for item in self._load_all():
+            if item.get("id") == client_id:
+                return ClientData.model_validate(item)
+        return None
+
+    async def create(
+        self, name: str = "", phone: str = "", email: str = "", address: str = "", notes: str = ""
+    ) -> ClientData:
+        """Create a new client."""
+        async with self._lock:
+            items = self._load_all()
+            cid = _next_id(items)
+            client = ClientData(
+                id=cid,
+                name=name,
+                phone=phone,
+                email=email,
+                address=address,
+                notes=notes,
+            )
+            items.append(client.model_dump())
+            _write_json(self._path, items)
+            return client
+
+    async def update(self, client_id: int, **fields: Any) -> ClientData | None:
+        """Update a client's fields."""
+        async with self._lock:
+            items = self._load_all()
+            for i, item in enumerate(items):
+                if item.get("id") == client_id:
+                    for k, v in fields.items():
+                        if v is not None:
+                            item[k] = v
+                    items[i] = item
+                    _write_json(self._path, items)
+                    return ClientData.model_validate(item)
+            return None
+
+    async def delete(self, client_id: int) -> bool:
+        """Delete a client. Returns True if found and deleted."""
+        async with self._lock:
+            items = self._load_all()
+            original_len = len(items)
+            items = [i for i in items if i.get("id") != client_id]
+            if len(items) == original_len:
+                return False
+            _write_json(self._path, items)
+            return True
+
+
+# ---------------------------------------------------------------------------
+# EstimateStore
+# ---------------------------------------------------------------------------
+
+
+class EstimateStore:
+    """File-based estimate storage. Replaces Estimate + EstimateLineItem models."""
+
+    def __init__(self, contractor_id: int) -> None:
+        self.contractor_id = contractor_id
+        self._lock = asyncio.Lock()
+
+    @property
+    def _estimates_dir(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "estimates"
+
+    def _estimate_path(self, estimate_id: int) -> Path:
+        return self._estimates_dir / f"{estimate_id}.json"
+
+    async def list_all(self) -> list[EstimateData]:
+        """List all estimates."""
+        edir = self._estimates_dir
+        if not edir.exists():
+            return []
+        result: list[EstimateData] = []
+        for path in sorted(edir.glob("*.json")):
+            data = _read_json(path)
+            if data:
+                result.append(EstimateData.model_validate(data))
+        return result
+
+    async def get(self, estimate_id: int) -> EstimateData | None:
+        """Get an estimate by ID."""
+        data = _read_json(self._estimate_path(estimate_id))
+        if data is None:
+            return None
+        return EstimateData.model_validate(data)
+
+    async def create(
+        self,
+        description: str = "",
+        total_amount: float = 0.0,
+        status: str = EstimateStatus.DRAFT,
+        client_id: int | None = None,
+        line_items: list[dict[str, Any]] | None = None,
+    ) -> EstimateData:
+        """Create a new estimate."""
+        async with self._lock:
+            # Find next ID across existing estimates
+            existing = await self.list_all()
+            eid = max((e.id for e in existing), default=0) + 1
+
+            items: list[EstimateLineItemData] = []
+            if line_items:
+                for i, li in enumerate(line_items, 1):
+                    items.append(
+                        EstimateLineItemData(
+                            id=i,
+                            description=str(li.get("description", "")),
+                            quantity=float(li.get("quantity", 1)),
+                            unit_price=float(li.get("unit_price", 0)),
+                            total=float(li.get("total", 0)),
+                        )
+                    )
+
+            estimate = EstimateData(
+                id=eid,
+                contractor_id=self.contractor_id,
+                client_id=client_id,
+                description=description,
+                total_amount=total_amount,
+                status=status,
+                line_items=items,
+            )
+            self._estimates_dir.mkdir(parents=True, exist_ok=True)
+            _write_json(self._estimate_path(eid), estimate.model_dump())
+            return estimate
+
+    async def update(self, estimate_id: int, **fields: Any) -> EstimateData | None:
+        """Update an estimate's fields."""
+        async with self._lock:
+            estimate = await self.get(estimate_id)
+            if estimate is None:
+                return None
+            data = estimate.model_dump()
+            data.update({k: v for k, v in fields.items() if v is not None})
+            _write_json(self._estimate_path(estimate_id), data)
+            return EstimateData.model_validate(data)
+
+
+# ---------------------------------------------------------------------------
+# MediaStore
+# ---------------------------------------------------------------------------
+
+
+class MediaStore:
+    """File-based media file manifest. Replaces MediaFile model."""
+
+    def __init__(self, contractor_id: int) -> None:
+        self.contractor_id = contractor_id
+        self._lock = asyncio.Lock()
+
+    @property
+    def _path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "media.json"
+
+    def _load_all(self) -> list[dict[str, Any]]:
+        return _read_json(self._path, [])
+
+    async def list_all(self) -> list[MediaData]:
+        """List all media files."""
+        return [MediaData.model_validate(item) for item in self._load_all()]
+
+    async def create(
+        self,
+        original_url: str = "",
+        mime_type: str = "",
+        processed_text: str = "",
+        storage_url: str = "",
+        storage_path: str = "",
+        message_id: int | None = None,
+    ) -> MediaData:
+        """Create a media file record."""
+        async with self._lock:
+            items = self._load_all()
+            mid = _next_id(items)
+            media = MediaData(
+                id=mid,
+                contractor_id=self.contractor_id,
+                message_id=message_id,
+                original_url=original_url,
+                mime_type=mime_type,
+                processed_text=processed_text,
+                storage_url=storage_url,
+                storage_path=storage_path,
+            )
+            items.append(media.model_dump())
+            _write_json(self._path, items)
+            return media
+
+    async def get_by_url(self, original_url: str) -> MediaData | None:
+        """Find a media record by original URL."""
+        for item in self._load_all():
+            if item.get("original_url") == original_url:
+                return MediaData.model_validate(item)
+        return None
+
+    async def update(self, media_id: int, **fields: Any) -> MediaData | None:
+        """Update a media file record."""
+        async with self._lock:
+            items = self._load_all()
+            for i, item in enumerate(items):
+                if item.get("id") == media_id:
+                    for k, v in fields.items():
+                        if v is not None:
+                            item[k] = v
+                    items[i] = item
+                    _write_json(self._path, items)
+                    return MediaData.model_validate(item)
+            return None
+
+    async def count_by_path_prefix(self, prefix: str) -> int:
+        """Count media files whose storage_path starts with prefix."""
+        return sum(
+            1 for item in self._load_all() if item.get("storage_path", "").startswith(prefix)
+        )
+
+
+# ---------------------------------------------------------------------------
+# HeartbeatStore
+# ---------------------------------------------------------------------------
+
+
+class HeartbeatStore:
+    """File-based heartbeat storage. Replaces HeartbeatChecklistItem + HeartbeatLog."""
+
+    def __init__(self, contractor_id: int) -> None:
+        self.contractor_id = contractor_id
+        self._lock = asyncio.Lock()
+
+    @property
+    def _checklist_path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "heartbeat" / "checklist.json"
+
+    @property
+    def _log_path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "heartbeat" / "log.jsonl"
+
+    def _load_checklist(self) -> list[dict[str, Any]]:
+        return _read_json(self._checklist_path, [])
+
+    async def get_checklist(self) -> list[ChecklistItem]:
+        """Get all checklist items."""
+        return [ChecklistItem.model_validate(item) for item in self._load_checklist()]
+
+    async def add_checklist_item(
+        self,
+        description: str,
+        schedule: str = ChecklistSchedule.DAILY,
+    ) -> ChecklistItem:
+        """Add a checklist item."""
+        async with self._lock:
+            items = self._load_checklist()
+            iid = _next_id(items)
+            item = ChecklistItem(
+                id=iid,
+                contractor_id=self.contractor_id,
+                description=description,
+                schedule=schedule,
+            )
+            items.append(item.model_dump())
+            _write_json(self._checklist_path, items)
+            return item
+
+    async def update_checklist_item(
+        self,
+        item_id: int,
+        **fields: Any,
+    ) -> ChecklistItem | None:
+        """Update a checklist item."""
+        async with self._lock:
+            items = self._load_checklist()
+            for i, item in enumerate(items):
+                if item.get("id") == item_id:
+                    for k, v in fields.items():
+                        if v is not None:
+                            item[k] = v
+                    items[i] = item
+                    _write_json(self._checklist_path, items)
+                    return ChecklistItem.model_validate(item)
+            return None
+
+    async def delete_checklist_item(self, item_id: int) -> bool:
+        """Delete a checklist item."""
+        async with self._lock:
+            items = self._load_checklist()
+            original_len = len(items)
+            items = [i for i in items if i.get("id") != item_id]
+            if len(items) == original_len:
+                return False
+            _write_json(self._checklist_path, items)
+            return True
+
+    async def log_heartbeat(self) -> None:
+        """Append to heartbeat log."""
+        entry = HeartbeatLogEntry(contractor_id=self.contractor_id)
+        _append_jsonl(self._log_path, entry.model_dump())
+
+    async def get_daily_count(self) -> int:
+        """Count heartbeat messages sent today (UTC)."""
+        today = datetime.datetime.now(datetime.UTC).date().isoformat()
+        count = 0
+        for line in _read_jsonl(self._log_path):
+            created = line.get("created_at", "")
+            if created.startswith(today):
+                count += 1
+        return count
+
+    async def get_recent_logs(
+        self,
+        since: datetime.datetime,
+    ) -> list[HeartbeatLogEntry]:
+        """Get heartbeat logs since a given time."""
+        result: list[HeartbeatLogEntry] = []
+        for line in _read_jsonl(self._log_path):
+            try:
+                ts = datetime.datetime.fromisoformat(line.get("created_at", ""))
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=datetime.UTC)
+                if ts >= since:
+                    result.append(HeartbeatLogEntry.model_validate(line))
+            except (ValueError, TypeError):
+                pass
+        return result
+
+
+# ---------------------------------------------------------------------------
+# IdempotencyStore
+# ---------------------------------------------------------------------------
+
+_SEEN_MAX = 10_000
+
+
+class IdempotencyStore:
+    """Global idempotency tracking for webhook deduplication."""
+
+    def __init__(self) -> None:
+        self._lock = asyncio.Lock()
+
+    @property
+    def _path(self) -> Path:
+        return _data_dir() / "seen_messages.json"
+
+    def _load(self) -> list[str]:
+        return _read_json(self._path, [])
+
+    def has_seen(self, external_id: str) -> bool:
+        """Check if an external message ID has been seen."""
+        return external_id in set(self._load())
+
+    async def mark_seen(self, external_id: str) -> None:
+        """Mark an external message ID as seen. Caps at 10K entries."""
+        async with self._lock:
+            seen = self._load()
+            if external_id in seen:
+                return
+            seen.append(external_id)
+            if len(seen) > _SEEN_MAX:
+                seen = seen[-_SEEN_MAX:]
+            _write_json(self._path, seen)
+
+
+# ---------------------------------------------------------------------------
+# LLMUsageStore
+# ---------------------------------------------------------------------------
+
+
+class LLMUsageStore:
+    """Append-only LLM usage log. Replaces LLMUsageLog model."""
+
+    def __init__(self, contractor_id: int) -> None:
+        self.contractor_id = contractor_id
+
+    @property
+    def _path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "llm_usage.jsonl"
+
+    def log(
+        self,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        purpose: str,
+    ) -> None:
+        """Append a usage log entry."""
+        entry = {
+            "contractor_id": self.contractor_id,
+            "model": model,
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": completion_tokens,
+            "total_tokens": prompt_tokens + completion_tokens,
+            "purpose": purpose,
+            "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+        }
+        _append_jsonl(self._path, entry)
+
+
+# ---------------------------------------------------------------------------
+# Module-level singletons / factories
+# ---------------------------------------------------------------------------
+
+_contractor_store: ContractorStore | None = None
+_memory_stores: dict[int, FileMemoryStore] = {}
+_session_stores: dict[int, FileSessionStore] = {}
+_idempotency_store: IdempotencyStore | None = None
+
+
+def get_contractor_store() -> ContractorStore:
+    """Get or create the global ContractorStore."""
+    global _contractor_store
+    if _contractor_store is None:
+        _contractor_store = ContractorStore()
+    return _contractor_store
+
+
+def get_memory_store(contractor_id: int) -> FileMemoryStore:
+    """Get or create a FileMemoryStore for a contractor."""
+    if contractor_id not in _memory_stores:
+        _memory_stores[contractor_id] = FileMemoryStore(contractor_id)
+    return _memory_stores[contractor_id]
+
+
+def get_session_store(contractor_id: int) -> FileSessionStore:
+    """Get or create a FileSessionStore for a contractor."""
+    if contractor_id not in _session_stores:
+        _session_stores[contractor_id] = FileSessionStore(contractor_id)
+    return _session_stores[contractor_id]
+
+
+def get_idempotency_store() -> IdempotencyStore:
+    """Get or create the global IdempotencyStore."""
+    global _idempotency_store
+    if _idempotency_store is None:
+        _idempotency_store = IdempotencyStore()
+    return _idempotency_store
+
+
+def reset_stores() -> None:
+    """Reset all cached store instances. Used by tests."""
+    global _contractor_store, _idempotency_store
+    _contractor_store = None
+    _memory_stores.clear()
+    _session_stores.clear()
+    _idempotency_store = None

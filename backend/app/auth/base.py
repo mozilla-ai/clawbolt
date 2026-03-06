@@ -1,9 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from sqlalchemy.orm import Session
-
-from backend.app.models import Contractor
+from backend.app.agent.file_store import ContractorData
 
 
 class AuthBackend(ABC):
@@ -12,8 +10,8 @@ class AuthBackend(ABC):
         """Return auth config for the frontend."""
 
     @abstractmethod
-    def authenticate_login(self, db: Session, credentials: dict[str, str]) -> Contractor:
-        """Validate credentials and return Contractor."""
+    async def authenticate_login(self, credentials: dict[str, str]) -> ContractorData:
+        """Validate credentials and return ContractorData."""
 
-    def on_contractor_created(self, db: Session, contractor: Contractor) -> None:  # noqa: B027
+    async def on_contractor_created(self, contractor: ContractorData) -> None:  # noqa: B027
         """Hook called after new contractor creation. Override to seed data."""

@@ -11,15 +11,13 @@ import datetime
 import logging
 import zoneinfo
 
-from sqlalchemy.orm import Session
-
+from backend.app.agent.file_store import ContractorData
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import (
     build_soul_prompt,
     get_missing_optional_fields,
 )
 from backend.app.agent.tools.base import Tool
-from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
 
@@ -68,19 +66,17 @@ class SystemPromptBuilder:
 # -----------------------------------------------------------------------
 
 
-def build_identity_section(contractor: Contractor) -> str:
+def build_identity_section(contractor: ContractorData) -> str:
     """Build the 'About <name>' section content."""
     return build_soul_prompt(contractor)
 
 
 async def build_memory_section(
-    db: Session,
     contractor_id: int,
     query: str | None = None,
 ) -> str:
     """Build the memory context section content."""
     ctx = await build_memory_context(
-        db,
         contractor_id,
         query=query[:CONTEXT_QUERY_MAX_LENGTH] if query else None,
     )
@@ -148,7 +144,7 @@ def _to_contractor_time(
         return now
 
 
-def build_date_section(contractor: Contractor) -> str:
+def build_date_section(contractor: ContractorData) -> str:
     """Build a cache-friendly date string in the contractor's local timezone.
 
     Uses date-only granularity (no minutes) to avoid prompt-cache busting.
@@ -158,14 +154,14 @@ def build_date_section(contractor: Contractor) -> str:
     return local.strftime("%A, %Y-%m-%d")
 
 
-def build_local_datetime_section(contractor: Contractor) -> str:
+def build_local_datetime_section(contractor: ContractorData) -> str:
     """Build a human-readable local datetime for the heartbeat evaluator."""
     now = datetime.datetime.now(datetime.UTC)
     local = _to_contractor_time(now, contractor.timezone)
     return local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
 
 
-def build_missing_fields_section(contractor: Contractor) -> str:
+def build_missing_fields_section(contractor: ContractorData) -> str:
     """Build a note about missing optional profile fields, if any."""
     missing = get_missing_optional_fields(contractor)
     if not missing:
@@ -184,21 +180,21 @@ def build_missing_fields_section(contractor: Contractor) -> str:
 
 
 async def build_agent_system_prompt(
-    db: Session,
-    contractor: Contractor,
+    contractor: ContractorData,
     tools: list[Tool],
     message_context: str,
 ) -> str:
     """Assemble the full system prompt for the main agent loop."""
     builder = SystemPromptBuilder()
-    builder.set_preamble("You are Clawbolt, an AI assistant for solo contractors.")
+    assistant = contractor.assistant_name or "Clawbolt"
+    builder.set_preamble(f"You are {assistant}, an AI assistant for solo contractors.")
 
     builder.add_section(
         f"About {contractor.name or 'Contractor'}",
         build_identity_section(contractor),
     )
 
-    memory = await build_memory_section(db, contractor.id, query=message_context)
+    memory = await build_memory_section(contractor.id, query=message_context)
     builder.add_section("Your Memory", memory)
 
     tool_guidelines = build_tool_guidelines_section(tools)
@@ -223,8 +219,7 @@ async def build_agent_system_prompt(
 
 
 async def build_heartbeat_system_prompt(
-    db: Session,
-    contractor: Contractor,
+    contractor: ContractorData,
     flags: list[str],
     recent_messages: str,
 ) -> str:
@@ -237,7 +232,7 @@ async def build_heartbeat_system_prompt(
 
     builder.add_section("About the contractor", build_identity_section(contractor))
 
-    memory = await build_memory_section(db, contractor.id)
+    memory = await build_memory_section(contractor.id)
     builder.add_section("Contractor's memory", memory)
 
     builder.add_section(

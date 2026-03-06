@@ -20,29 +20,27 @@ from typing import Any, Literal, cast
 from any_llm import amessages
 from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
-from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
+from backend.app.agent.file_store import (
+    ChecklistItem,
+    ContractorData,
+    EstimateData,
+    HeartbeatStore,
+    MemoryFact,
+    get_contractor_store,
+    get_session_store,
+)
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt
 from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel, get_default_channel
 from backend.app.config import settings
-from backend.app.database import SessionLocal
 from backend.app.enums import (
     ChecklistSchedule,
     ChecklistStatus,
     EstimateStatus,
     MessageDirection,
-)
-from backend.app.models import (
-    Contractor,
-    Conversation,
-    Estimate,
-    HeartbeatChecklistItem,
-    HeartbeatLog,
-    Memory,
-    Message,
 )
 from backend.app.services.llm_usage import log_llm_usage
 from backend.app.services.messaging import MessagingService
@@ -119,9 +117,9 @@ class CheapCheckResult:
     """Result of deterministic pre-checks for a single contractor."""
 
     flags: list[str] = field(default_factory=list)
-    stale_estimates: list[Estimate] = field(default_factory=list)
-    due_checklist_items: list[HeartbeatChecklistItem] = field(default_factory=list)
-    time_sensitive_memories: list[Memory] = field(default_factory=list)
+    stale_estimates: list[EstimateData] = field(default_factory=list)
+    due_checklist_items: list[ChecklistItem] = field(default_factory=list)
+    time_sensitive_memories: list[MemoryFact] = field(default_factory=list)
 
     @property
     def has_flags(self) -> bool:
@@ -194,7 +192,7 @@ def _to_local_time(
 
 
 def is_within_business_hours(
-    contractor: Contractor,
+    contractor: ContractorData,
     now: datetime.datetime | None = None,
 ) -> bool:
     """Return *True* if *now* falls within the contractor's business hours.
@@ -232,9 +230,8 @@ def is_within_business_hours(
 # ---------------------------------------------------------------------------
 
 
-def run_cheap_checks(
-    db: Session,
-    contractor: Contractor,
+async def run_cheap_checks(
+    contractor: ContractorData,
     now: datetime.datetime | None = None,
 ) -> CheapCheckResult:
     """Run fast, deterministic checks that don't require an LLM call.
@@ -246,37 +243,42 @@ def run_cheap_checks(
     result = CheapCheckResult()
 
     # 1. Stale draft estimates (older than STALE_ESTIMATE_HOURS)
+    from backend.app.agent.file_store import EstimateStore
+
+    estimate_store = EstimateStore(contractor.id)
+    all_estimates = await estimate_store.list_all()
     cutoff = now - datetime.timedelta(hours=STALE_ESTIMATE_HOURS)
-    stale = (
-        db.query(Estimate)
-        .filter(
-            Estimate.contractor_id == contractor.id,
-            Estimate.status == EstimateStatus.DRAFT,
-            Estimate.created_at <= cutoff,
-        )
-        .all()
-    )
+    stale: list[EstimateData] = []
+    for e in all_estimates:
+        if e.status == EstimateStatus.DRAFT:
+            try:
+                created = datetime.datetime.fromisoformat(e.created_at)
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=datetime.UTC)
+                if created <= cutoff:
+                    stale.append(e)
+            except (ValueError, TypeError):
+                pass
     if stale:
-        result.stale_estimates = list(stale)
+        result.stale_estimates = stale
         descs = ", ".join(e.description[:40] for e in stale)
         result.flags.append(f"Stale draft estimate(s) older than 24h: {descs}")
 
     # 2. Due checklist items
-    active_items = (
-        db.query(HeartbeatChecklistItem)
-        .filter(
-            HeartbeatChecklistItem.contractor_id == contractor.id,
-            HeartbeatChecklistItem.status == ChecklistStatus.ACTIVE,
-        )
-        .all()
-    )
-    for item in active_items:
+    heartbeat_store = HeartbeatStore(contractor.id)
+    all_items = await heartbeat_store.get_checklist()
+    for item in all_items:
+        if item.status != ChecklistStatus.ACTIVE:
+            continue
         if _is_checklist_item_due(item, now, tz_name=contractor.timezone or ""):
             result.due_checklist_items.append(item)
             result.flags.append(f"Checklist item due: {item.description}")
 
     # 3. Time-sensitive memory facts
-    memories = db.query(Memory).filter(Memory.contractor_id == contractor.id).all()
+    from backend.app.agent.file_store import get_memory_store
+
+    memory_store = get_memory_store(contractor.id)
+    memories = await memory_store.get_all_memories()
     for mem in memories:
         text = f"{mem.key} {mem.value}"
         if _TIME_KEYWORDS.search(text):
@@ -285,36 +287,33 @@ def run_cheap_checks(
 
     # 4. Idle contractor -- no inbound messages for IDLE_DAYS
     idle_cutoff = now - datetime.timedelta(days=IDLE_DAYS)
-    last_inbound = (
-        db.query(Message.created_at)
-        .join(Conversation, Message.conversation_id == Conversation.id)
-        .filter(
-            Conversation.contractor_id == contractor.id,
-            Message.direction == MessageDirection.INBOUND,
-        )
-        .order_by(Message.created_at.desc())
-        .first()
-    )
+    session_store = get_session_store(contractor.id)
+    last_inbound = session_store.get_last_inbound_timestamp()
     if last_inbound is not None:
-        last_ts = last_inbound[0]
-        if last_ts.tzinfo is None:
-            last_ts = last_ts.replace(tzinfo=datetime.UTC)
-        if last_ts <= idle_cutoff:
-            days = (now - last_ts).days
+        if last_inbound <= idle_cutoff:
+            days = (now - last_inbound).days
             result.flags.append(f"Contractor idle for {days} days -- no recent messages")
     elif contractor.created_at is not None:
         created = contractor.created_at
-        if created.tzinfo is None:
-            created = created.replace(tzinfo=datetime.UTC)
-        if created <= idle_cutoff:
-            days = (now - created).days
-            result.flags.append(f"Contractor idle for {days} days -- no messages since onboarding")
+        if isinstance(created, str):
+            try:
+                created = datetime.datetime.fromisoformat(created)
+            except (ValueError, TypeError):
+                created = None
+        if created is not None:
+            if created.tzinfo is None:
+                created = created.replace(tzinfo=datetime.UTC)
+            if created <= idle_cutoff:
+                days = (now - created).days
+                result.flags.append(
+                    f"Contractor idle for {days} days -- no messages since onboarding"
+                )
 
     return result
 
 
 def _is_checklist_item_due(
-    item: HeartbeatChecklistItem,
+    item: ChecklistItem,
     now: datetime.datetime,
     tz_name: str = "",
 ) -> bool:
@@ -329,7 +328,11 @@ def _is_checklist_item_due(
     if item.last_triggered_at is None:
         return True
 
-    last = item.last_triggered_at
+    last_str = item.last_triggered_at
+    try:
+        last = datetime.datetime.fromisoformat(last_str)
+    except (ValueError, TypeError):
+        return True
     if last.tzinfo is None:
         last = last.replace(tzinfo=datetime.UTC)
     elapsed = now - last
@@ -346,42 +349,27 @@ def _is_checklist_item_due(
 # ---------------------------------------------------------------------------
 
 
-def _load_recent_messages(db: Session, contractor: Contractor) -> str:
+def _load_recent_messages(contractor: ContractorData) -> str:
     """Load recent messages as formatted text for heartbeat context."""
-    conv = (
-        db.query(Conversation)
-        .filter(
-            Conversation.contractor_id == contractor.id,
-            Conversation.is_active.is_(True),
-        )
-        .order_by(Conversation.last_message_at.desc())
-        .first()
-    )
-    if conv is None:
+    session_store = get_session_store(contractor.id)
+    recent = session_store.get_recent_messages(count=HEARTBEAT_RECENT_MESSAGES_COUNT)
+    if not recent:
         return "(no recent messages)"
 
-    recent = (
-        db.query(Message)
-        .filter(Message.conversation_id == conv.id)
-        .order_by(Message.id.desc())
-        .limit(HEARTBEAT_RECENT_MESSAGES_COUNT)
-        .all()
-    )
     lines: list[str] = []
-    for msg in reversed(recent):
+    for msg in recent:
         direction = "Contractor" if msg.direction == MessageDirection.INBOUND else "Clawbolt"
         lines.append(f"[{direction}] {msg.body}")
     return "\n".join(lines) or "(no recent messages)"
 
 
 async def build_heartbeat_context(
-    db: Session,
-    contractor: Contractor,
+    contractor: ContractorData,
     flags: list[str],
 ) -> str:
     """Build the full heartbeat system prompt via the composable builder."""
-    recent_messages = _load_recent_messages(db, contractor)
-    return await build_heartbeat_system_prompt(db, contractor, flags, recent_messages)
+    recent_messages = _load_recent_messages(contractor)
+    return await build_heartbeat_system_prompt(contractor, flags, recent_messages)
 
 
 # ---------------------------------------------------------------------------
@@ -453,8 +441,7 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
 
 
 async def evaluate_heartbeat_need(
-    db: Session,
-    contractor: Contractor,
+    contractor: ContractorData,
     flags: list[str],
     messaging_service: MessagingService | None = None,
 ) -> HeartbeatAction:
@@ -464,7 +451,7 @@ async def evaluate_heartbeat_need(
     If the LLM does not call the tool, defaults to no_action.
     Sends a typing indicator before the LLM call when a messaging_service is provided.
     """
-    prompt = await build_heartbeat_context(db, contractor, flags)
+    prompt = await build_heartbeat_context(contractor, flags)
 
     # Send typing indicator before LLM call
     if messaging_service:
@@ -496,7 +483,7 @@ async def evaluate_heartbeat_need(
         ),
     )
 
-    log_llm_usage(db, contractor.id, model, response, "heartbeat")
+    log_llm_usage(contractor.id, model, response, "heartbeat")
     return _parse_tool_call_response(response)
 
 
@@ -505,25 +492,15 @@ async def evaluate_heartbeat_need(
 # ---------------------------------------------------------------------------
 
 
-def get_daily_heartbeat_count(db: Session, contractor_id: int) -> int:
+async def get_daily_heartbeat_count(contractor_id: int) -> int:
     """Count heartbeat messages sent to a contractor today (UTC).
 
-    Queries the ``heartbeat_log`` table instead of relying on in-memory state
+    Queries the heartbeat log instead of relying on in-memory state
     so that rate limits survive process restarts and work across multiple
     workers.
     """
-    today_start = datetime.datetime.combine(
-        datetime.datetime.now(datetime.UTC).date(), datetime.time.min, tzinfo=datetime.UTC
-    )
-    count: int = (
-        db.query(HeartbeatLog)
-        .filter(
-            HeartbeatLog.contractor_id == contractor_id,
-            HeartbeatLog.created_at >= today_start,
-        )
-        .count()
-    )
-    return count
+    heartbeat_store = HeartbeatStore(contractor_id)
+    return await heartbeat_store.get_daily_count()
 
 
 # ---------------------------------------------------------------------------
@@ -532,8 +509,7 @@ def get_daily_heartbeat_count(db: Session, contractor_id: int) -> int:
 
 
 async def run_heartbeat_for_contractor(
-    db: Session,
-    contractor: Contractor,
+    contractor: ContractorData,
     messaging_service: MessagingService,
     max_daily: int,
 ) -> HeartbeatAction | None:
@@ -553,34 +529,23 @@ async def run_heartbeat_for_contractor(
     if not is_within_business_hours(contractor):
         return None
 
-    # Gate: daily rate limit (persistent via heartbeat_log table)
-    if get_daily_heartbeat_count(db, contractor.id) >= max_daily:
+    # Gate: daily rate limit (persistent via heartbeat log)
+    if await get_daily_heartbeat_count(contractor.id) >= max_daily:
         return None
 
     # Gate: per-contractor frequency override
     freq_minutes = parse_frequency_to_minutes(contractor.heartbeat_frequency)
     if freq_minutes is not None:
-        last_outbound = (
-            db.query(Message.created_at)
-            .join(Conversation, Message.conversation_id == Conversation.id)
-            .filter(
-                Conversation.contractor_id == contractor.id,
-                Message.direction == MessageDirection.OUTBOUND,
-            )
-            .order_by(Message.created_at.desc())
-            .first()
-        )
+        session_store = get_session_store(contractor.id)
+        last_outbound = session_store.get_last_outbound_timestamp()
         if last_outbound is not None:
-            last_ts = last_outbound[0]
-            if last_ts.tzinfo is None:
-                last_ts = last_ts.replace(tzinfo=datetime.UTC)
             now = datetime.datetime.now(datetime.UTC)
-            elapsed = now - last_ts
+            elapsed = now - last_outbound
             if elapsed < datetime.timedelta(minutes=freq_minutes):
                 return None
 
     # Cheap checks -- skip LLM entirely if nothing is flagged
-    check_result = run_cheap_checks(db, contractor)
+    check_result = await run_cheap_checks(contractor)
     if not check_result.has_flags:
         return HeartbeatAction(
             action_type="no_action",
@@ -591,7 +556,7 @@ async def run_heartbeat_for_contractor(
 
     # Something was flagged -- escalate to LLM for message composition
     action = await evaluate_heartbeat_need(
-        db, contractor, check_result.flags, messaging_service=messaging_service
+        contractor, check_result.flags, messaging_service=messaging_service
     )
 
     if action.action_type != "send_message" or not action.message:
@@ -606,26 +571,25 @@ async def run_heartbeat_for_contractor(
         return action
 
     # Record outbound message
-    conv, _ = await get_or_create_conversation(db, contractor.id)
-    outbound = Message(
-        conversation_id=conv.id,
+    session, _ = await get_or_create_conversation(contractor.id)
+    session_store = get_session_store(contractor.id)
+    await session_store.add_message(
+        session=session,
         direction=MessageDirection.OUTBOUND,
         body=action.message,
     )
-    db.add(outbound)
 
     # Record heartbeat log for persistent rate limiting
-    db.add(HeartbeatLog(contractor_id=contractor.id))
-    db.commit()
+    heartbeat_store = HeartbeatStore(contractor.id)
+    await heartbeat_store.log_heartbeat()
 
     # Mark checklist items as triggered
     now = datetime.datetime.now(datetime.UTC)
     for item in check_result.due_checklist_items:
-        item.last_triggered_at = now
+        updates: dict[str, Any] = {"last_triggered_at": now.isoformat()}
         if item.schedule == ChecklistSchedule.ONCE:
-            item.status = ChecklistStatus.COMPLETED
-    if check_result.due_checklist_items:
-        db.commit()
+            updates["status"] = ChecklistStatus.COMPLETED
+        await heartbeat_store.update_checklist_item(item.id, **updates)
 
     return action
 
@@ -679,26 +643,18 @@ class HeartbeatScheduler:
 
     async def tick(self) -> None:
         """Single heartbeat pass: evaluate every onboarded contractor concurrently."""
-        # Use a dedicated session just to fetch the contractor list, then close it.
-        listing_db: Session = SessionLocal()
-        try:
-            contractors = (
-                listing_db.query(Contractor).filter(Contractor.onboarding_complete.is_(True)).all()
-            )
-            # Detach contractor objects so they can be used outside this session
-            listing_db.expunge_all()
-        finally:
-            listing_db.close()
+        store = get_contractor_store()
+        all_contractors = await store.list_all()
+        contractors = [c for c in all_contractors if c.onboarding_complete]
 
         if not contractors:
             return
 
         semaphore = asyncio.Semaphore(settings.heartbeat_concurrency)
 
-        async def _process_one(contractor: Contractor) -> None:
-            """Process a single contractor with its own DB session."""
+        async def _process_one(contractor: ContractorData) -> None:
+            """Process a single contractor."""
             async with semaphore:
-                db: Session = SessionLocal()
                 try:
                     # Route to the contractor's preferred channel, falling
                     # back to the first registered channel.
@@ -710,15 +666,12 @@ class HeartbeatScheduler:
                         messaging_service = get_default_channel()
 
                     await run_heartbeat_for_contractor(
-                        db=db,
                         contractor=contractor,
                         messaging_service=messaging_service,
                         max_daily=settings.heartbeat_max_daily_messages,
                     )
                 except Exception:
                     logger.exception("Heartbeat failed for contractor %d", contractor.id)
-                finally:
-                    db.close()
 
         results = await asyncio.gather(
             *[_process_one(c) for c in contractors],

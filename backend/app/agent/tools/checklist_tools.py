@@ -5,12 +5,11 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.enums import ChecklistSchedule, ChecklistStatus
-from backend.app.models import HeartbeatChecklistItem
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -36,7 +35,7 @@ class RemoveChecklistItemParams(BaseModel):
     item_id: int = Field(description="ID of the checklist item to remove")
 
 
-def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
+def create_checklist_tools(contractor_id: int) -> list[Tool]:
     """Create checklist-related tools for the agent."""
 
     async def add_checklist_item(
@@ -50,27 +49,15 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
-        item = HeartbeatChecklistItem(
-            contractor_id=contractor_id,
-            description=description,
-            schedule=schedule,
-        )
-        db.add(item)
-        db.commit()
-        db.refresh(item)
+        store = HeartbeatStore(contractor_id)
+        item = await store.add_checklist_item(description=description, schedule=schedule)
         return ToolResult(content=f"Added to checklist (#{item.id}, {schedule}): {description}")
 
     async def list_checklist_items() -> ToolResult:
         """List all active checklist items."""
-        items = (
-            db.query(HeartbeatChecklistItem)
-            .filter(
-                HeartbeatChecklistItem.contractor_id == contractor_id,
-                HeartbeatChecklistItem.status == ChecklistStatus.ACTIVE,
-            )
-            .order_by(HeartbeatChecklistItem.id)
-            .all()
-        )
+        store = HeartbeatStore(contractor_id)
+        all_items = await store.get_checklist()
+        items = [i for i in all_items if i.status == ChecklistStatus.ACTIVE]
         if not items:
             return ToolResult(content="No active checklist items.")
         lines = [f"- #{item.id}: {item.description} ({item.schedule})" for item in items]
@@ -78,23 +65,15 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
 
     async def remove_checklist_item(item_id: int) -> ToolResult:
         """Remove a checklist item by ID."""
-        item = (
-            db.query(HeartbeatChecklistItem)
-            .filter(
-                HeartbeatChecklistItem.id == item_id,
-                HeartbeatChecklistItem.contractor_id == contractor_id,
-            )
-            .first()
-        )
-        if not item:
+        store = HeartbeatStore(contractor_id)
+        deleted = await store.delete_checklist_item(item_id)
+        if not deleted:
             return ToolResult(
                 content=f"Checklist item #{item_id} not found.",
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
-        db.delete(item)
-        db.commit()
-        return ToolResult(content=f"Removed checklist item #{item_id}: {item.description}")
+        return ToolResult(content=f"Removed checklist item #{item_id}")
 
     return [
         Tool(
@@ -127,7 +106,7 @@ def create_checklist_tools(db: Session, contractor_id: int) -> list[Tool]:
 
 def _checklist_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for checklist tools, used by the registry."""
-    return create_checklist_tools(ctx.db, ctx.contractor.id)
+    return create_checklist_tools(ctx.contractor.id)
 
 
 def _register() -> None:

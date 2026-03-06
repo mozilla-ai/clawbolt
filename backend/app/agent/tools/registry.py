@@ -20,12 +20,11 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import ContractorData
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
-from backend.app.models import Contractor
 from backend.app.services.messaging import MessagingService
 from backend.app.services.storage_service import StorageBackend
 
@@ -36,8 +35,7 @@ logger = logging.getLogger(__name__)
 class ToolContext:
     """Shared context passed to tool factories during creation."""
 
-    db: Session
-    contractor: Contractor
+    contractor: ContractorData
     storage: StorageBackend | None = None
     messaging_service: MessagingService | None = None
     to_address: str = ""
