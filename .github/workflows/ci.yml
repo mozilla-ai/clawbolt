@@ -53,6 +53,23 @@ jobs:
         with:
           context: .
           push: false
+          load: true
+          tags: clawbolt:ci
+      - name: Validate docker-compose.yml
+        run: docker compose config --quiet
+      - name: Smoke-test container starts
+        run: |
+          docker run -d --name clawbolt-ci -p 8000:8000 clawbolt:ci
+          for i in $(seq 1 30); do
+            if curl -sf http://localhost:8000/health > /dev/null 2>&1; then
+              echo "Health check passed"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Container failed to become healthy"
+          docker logs clawbolt-ci
+          exit 1
 
   integration:
     runs-on: ubuntu-latest
