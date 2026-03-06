@@ -101,6 +101,7 @@ def _make_client(
             "backend.app.agent.ingestion.SessionLocal",
             test_session_factory,
         ),
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
         TestClient(app) as c,
     ):
         yield c
