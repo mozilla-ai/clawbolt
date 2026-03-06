@@ -62,12 +62,6 @@ CONTEXT_TRIM_TARGET_TOKENS = settings.context_trim_target_tokens
 # Conservative default; most models support 128K+ but we leave room for output
 MAX_INPUT_TOKENS = settings.max_input_tokens
 
-# Per-message overhead tokens for role/delimiters/structural framing
-_MESSAGE_OVERHEAD_TOKENS = 4
-# Characters per token ratio for English text (slightly more accurate than 4.0)
-_CHARS_PER_TOKEN = 3.5
-
-
 _SUMMARY_MAX_CHARS = 500
 
 
@@ -114,62 +108,23 @@ def _summarize_dropped_messages(dropped: list[AgentMessage]) -> str:
     return summary[:_SUMMARY_MAX_CHARS]
 
 
-def _estimate_tokens(messages: list[AgentMessage]) -> int:
-    """Estimate token count from typed messages, including tool call content.
+def _total_content_length(messages: list[AgentMessage]) -> int:
+    """Return total character count of all message content.
 
-    Counts content and any tool-call function names + serialized arguments.
-    Adds a small per-message overhead for role and delimiter tokens.
+    Used for rough content-size comparisons in context trimming.
+    For accurate token counts, use response.usage.input_tokens from the API.
     """
     total = 0
     for m in messages:
-        total += _MESSAGE_OVERHEAD_TOKENS
-
         if isinstance(m, (SystemMessage, UserMessage)):
-            if m.content:
-                total += int(len(m.content) / _CHARS_PER_TOKEN)
+            total += len(m.content or "")
         elif isinstance(m, AssistantMessage):
-            if m.content:
-                total += int(len(m.content) / _CHARS_PER_TOKEN)
+            total += len(m.content or "")
             for tc in m.tool_calls:
-                total += int(len(tc.name) / _CHARS_PER_TOKEN)
-                # Estimate from the dict representation of arguments
-                args_str = str(tc.arguments)
-                total += int(len(args_str) / _CHARS_PER_TOKEN)
-        elif isinstance(m, ToolResultMessage) and m.content:
-            total += int(len(m.content) / _CHARS_PER_TOKEN)
-
+                total += len(tc.name) + len(str(tc.arguments))
+        elif isinstance(m, ToolResultMessage):
+            total += len(m.content or "")
     return total
-
-
-def _log_token_estimation_drift(
-    messages: list[AgentMessage],
-    response: MessageResponse,
-) -> None:
-    """Log a warning when estimated token count drifts >30% from actual usage.
-
-    Uses ``response.usage.input_tokens`` (reported by the LLM provider) to
-    compare against our character-ratio estimate.
-    """
-    actual = response.usage.input_tokens
-    if not actual:
-        return
-
-    estimated = _estimate_tokens(messages)
-    if abs(estimated - actual) > actual * 0.3:
-        total_chars = sum(
-            len(m.content or "")
-            for m in messages
-            if isinstance(m, (SystemMessage, UserMessage, AssistantMessage, ToolResultMessage))
-            and m.content
-        )
-        observed_ratio = total_chars / actual if actual else 0.0
-        logger.warning(
-            "Token estimate drift: estimated=%d actual=%d ratio=%.2f (configured=%.1f)",
-            estimated,
-            actual,
-            observed_ratio,
-            _CHARS_PER_TOKEN,
-        )
 
 
 def _format_validation_error(tool_name: str, exc: ValidationError, tool: Tool | None = None) -> str:
@@ -298,6 +253,7 @@ class ClawboltAgent:
         self._tool_context = tool_context
         self._registry = registry
         self._activated_specialists: set[str] = set()
+        self._last_input_tokens: int = 0
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -465,15 +421,21 @@ class ClawboltAgent:
     def _trim_messages(
         messages: list[AgentMessage],
         target_tokens: int = CONTEXT_TRIM_TARGET_TOKENS,
+        input_tokens: int | None = None,
     ) -> list[AgentMessage]:
         """Trim conversation messages to fit within a token budget.
 
+        When *input_tokens* (from ``response.usage.input_tokens``) is provided
+        the budget check uses the actual API-reported token count.  Otherwise
+        falls back to a conservative content-length approximation (4 chars per
+        token).
+
         Keeps the system prompt (first message) and removes the oldest
-        conversation messages until the estimated token count is at or below
-        *target_tokens*. Tool-call / tool-result pairs are treated as atomic
-        units: an ``AssistantMessage`` with ``tool_calls`` is never removed
-        without also removing the ``ToolResultMessage`` entries that follow it
-        (and vice-versa).
+        conversation messages until the content fits within *target_tokens*.
+        Tool-call / tool-result pairs are treated as atomic units: an
+        ``AssistantMessage`` with ``tool_calls`` is never removed without also
+        removing the ``ToolResultMessage`` entries that follow it (and
+        vice-versa).
 
         Dropped messages are summarized and injected as a context note so
         the LLM retains awareness of what was discussed.
@@ -481,7 +443,17 @@ class ClawboltAgent:
         if len(messages) <= 2:
             return messages
 
-        if _estimate_tokens(messages) <= target_tokens:
+        def _tokens_for(msgs: list[AgentMessage]) -> int:
+            """Return actual or approximate token count for *msgs*."""
+            if input_tokens is not None:
+                # Scale the known input_tokens by the content-length ratio
+                # between *msgs* and the original *messages*.
+                orig_len = _total_content_length(messages) or 1
+                return int(input_tokens * _total_content_length(msgs) / orig_len)
+            # Fallback: conservative 4 chars/token approximation.
+            return _total_content_length(msgs) // 4
+
+        if _tokens_for(messages) <= target_tokens:
             return messages
 
         system = messages[0]
@@ -514,7 +486,7 @@ class ClawboltAgent:
             remaining: list[AgentMessage] = [system]
             for blk in blocks:
                 remaining.extend(blk)
-            if _estimate_tokens(remaining) <= target_tokens:
+            if _tokens_for(remaining) <= target_tokens:
                 break
             removed_block = blocks.pop(0)
             dropped.extend(removed_block)
@@ -572,18 +544,20 @@ class ClawboltAgent:
 
         messages.append(UserMessage(content=message_context))
 
-        # Trim oldest conversation history if estimated tokens exceed the limit.
+        # Trim oldest conversation history if content exceeds the limit.
         # Uses the block-based trimmer which preserves tool-call/result pairing
         # and injects a summary of dropped messages.
         original_count = len(messages)
-        messages = self._trim_messages(messages, target_tokens=MAX_INPUT_TOKENS)
+        messages = self._trim_messages(
+            messages,
+            target_tokens=MAX_INPUT_TOKENS,
+            input_tokens=self._last_input_tokens or None,
+        )
         trimmed_count = original_count - len(messages)
         if trimmed_count > 0:
             logger.warning(
-                "Trimmed %d message(s) from conversation history, injected summary "
-                "(estimated %d tokens, limit %d)",
+                "Trimmed %d message(s) from conversation history (limit %d tokens)",
                 trimmed_count,
-                _estimate_tokens(messages),
                 MAX_INPUT_TOKENS,
             )
 
@@ -604,7 +578,8 @@ class ClawboltAgent:
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
             purpose = "agent_main" if _round == 0 else "agent_followup"
             log_llm_usage(self.db, self.contractor.id, settings.llm_model, response, purpose)
-            _log_token_estimation_drift(messages, response)
+            if response.usage and response.usage.input_tokens:
+                self._last_input_tokens = response.usage.input_tokens
 
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)

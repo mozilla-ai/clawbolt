@@ -1,6 +1,6 @@
 import json
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from any_llm import (
@@ -14,8 +14,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.core import (
     ClawboltAgent,
-    _estimate_tokens,
-    _log_token_estimation_drift,
+    _total_content_length,
 )
 from backend.app.agent.messages import (
     AgentMessage,
@@ -564,36 +563,33 @@ async def test_agent_rate_limit_retry_failure_propagates(
 # ---------------------------------------------------------------------------
 
 
-def test_estimate_tokens_returns_reasonable_estimate() -> None:
-    """_estimate_tokens should return a char-based token count with per-message overhead."""
-    messages = [
-        SystemMessage(content="Hello world"),  # 11 chars / 3.5 = 3 + 4 overhead = 7
-        UserMessage(content="How are you?"),  # 12 chars / 3.5 = 3 + 4 overhead = 7
+def test_total_content_length_counts_all_message_types() -> None:
+    """_total_content_length should sum character counts across message types."""
+    messages: list[AgentMessage] = [
+        SystemMessage(content="Hello world"),  # 11 chars
+        UserMessage(content="How are you?"),  # 12 chars
     ]
-    result = _estimate_tokens(messages)
-    # int(11/3.5) + 4 + int(12/3.5) + 4 = 3 + 4 + 3 + 4 = 14
-    assert result == 14
+    result = _total_content_length(messages)
+    assert result == 23
 
 
-def test_estimate_tokens_handles_empty_messages() -> None:
-    """_estimate_tokens should handle empty content, counting only overhead."""
-    messages = [
+def test_total_content_length_handles_empty_messages() -> None:
+    """_total_content_length should return 0 for empty content."""
+    messages: list[AgentMessage] = [
         SystemMessage(content=""),
         UserMessage(content=""),
     ]
-    result = _estimate_tokens(messages)
-    # 2 messages x 4 overhead tokens each = 8
-    assert result == 8
+    assert _total_content_length(messages) == 0
 
 
-def test_estimate_tokens_handles_empty_list() -> None:
-    """_estimate_tokens should return 0 for an empty message list."""
-    assert _estimate_tokens([]) == 0
+def test_total_content_length_handles_empty_list() -> None:
+    """_total_content_length should return 0 for an empty message list."""
+    assert _total_content_length([]) == 0
 
 
-def test_estimate_tokens_counts_tool_call_content() -> None:
-    """_estimate_tokens should include tool_calls function names and arguments."""
-    messages = [
+def test_total_content_length_includes_tool_call_content() -> None:
+    """_total_content_length should include tool call names and arguments."""
+    messages: list[AgentMessage] = [
         AssistantMessage(
             content=None,
             tool_calls=[
@@ -605,78 +601,27 @@ def test_estimate_tokens_counts_tool_call_content() -> None:
             ],
         ),
     ]
-    result = _estimate_tokens(messages)
+    result = _total_content_length(messages)
 
-    # Overhead: 4 tokens
-    # content is None -> 0
-    # tool_calls: "save_fact" = 9 chars -> int(9/3.5) = 2
-    #   arguments dict str repr has variable length, but should be > 0
-    # Total > 4 (overhead only)
-    assert result > 4
+    # Should include "save_fact" (9 chars) + str(arguments)
+    assert result > 9
 
-    # Compare with a message that has no tool_calls -- should be less
-    plain = [AssistantMessage(content=None)]
-    assert _estimate_tokens(plain) < result
+    # Compare with a message that has no tool_calls
+    plain: list[AgentMessage] = [AssistantMessage(content=None)]
+    assert _total_content_length(plain) < result
 
 
-# ---------------------------------------------------------------------------
-# Token estimation drift logging
-# ---------------------------------------------------------------------------
+def test_no_token_estimation_drift_logging(caplog: pytest.LogCaptureFixture) -> None:
+    """Token estimation drift logging should not occur (removed in #431)."""
+    # The old _log_token_estimation_drift would log warnings about token
+    # estimate drift. Verify the function no longer exists on the module.
+    from backend.app.agent import core as agent_core
 
-
-def test_log_token_estimation_drift_warns_when_off(caplog: pytest.LogCaptureFixture) -> None:
-    """_log_token_estimation_drift should warn when estimate drifts more than 30 percent."""
-    messages: list[AgentMessage] = [
-        SystemMessage(content="You are a helpful assistant."),
-        UserMessage(content="Hello, how are you today?"),
-    ]
-    # Build a mock response whose actual input_tokens differs greatly from our estimate.
-    # Our estimate: ~(35 + 26) / 3.5 + 2*4 = ~25 tokens
-    # Set actual to 100 so the estimate (~25) is far below actual.
-    response = MagicMock()
-    usage = MagicMock()
-    usage.input_tokens = 100
-    response.usage = usage
+    assert not hasattr(agent_core, "_log_token_estimation_drift")
+    assert not hasattr(agent_core, "_estimate_tokens")
 
     with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
-        _log_token_estimation_drift(messages, response)
-
-    assert any("Token estimate drift" in rec.message for rec in caplog.records)
-    # Verify logged values contain the key details
-    drift_record = next(r for r in caplog.records if "Token estimate drift" in r.message)
-    assert "estimated=" in drift_record.message
-    assert "actual=100" in drift_record.message
-
-
-def test_log_token_estimation_drift_silent_when_close(caplog: pytest.LogCaptureFixture) -> None:
-    """_log_token_estimation_drift should not warn when estimate is within 30 percent."""
-    messages: list[AgentMessage] = [
-        SystemMessage(content="x" * 350),  # ~100 tokens
-    ]
-    # Our estimate: 350/3.5 + 4 = 104 tokens. Set actual to 100 (4% off).
-    response = MagicMock()
-    usage = MagicMock()
-    usage.input_tokens = 100
-    response.usage = usage
-
-    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
-        _log_token_estimation_drift(messages, response)
-
-    assert not any("Token estimate drift" in rec.message for rec in caplog.records)
-
-
-def test_log_token_estimation_drift_zero_prompt_tokens(caplog: pytest.LogCaptureFixture) -> None:
-    """_log_token_estimation_drift should be silent when input_tokens is 0."""
-    messages: list[AgentMessage] = [
-        SystemMessage(content="Hello"),
-    ]
-    response = MagicMock()
-    usage = MagicMock()
-    usage.input_tokens = 0
-    response.usage = usage
-
-    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
-        _log_token_estimation_drift(messages, response)
+        pass  # No drift logging to trigger
 
     assert not any("Token estimate drift" in rec.message for rec in caplog.records)
 
@@ -694,8 +639,9 @@ def test_trim_messages_preserves_tool_call_result_pairs() -> None:
 
     messages = [system, user1, assistant_tc, tool_result, user2]
 
-    # Use a small budget that forces trimming of some messages
-    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000)
+    # Use a small budget that forces trimming of some messages.
+    # Total content length is ~10500 chars, so ~2625 tokens at 4 chars/token.
+    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=1000)
 
     # The trimmed result should never contain tool_result without assistant_tc
     has_tool_msg = any(isinstance(m, ToolResultMessage) for m in trimmed)
@@ -875,8 +821,8 @@ def test_trim_messages_keeps_system_and_recent() -> None:
     assert len(trimmed) < len(messages)
     # Last message should be the most recent one
     assert trimmed[-1] == messages[-1]
-    # Should fit within the target budget
-    assert _estimate_tokens(trimmed) <= 5000
+    # Should fit within the target budget (4 chars/token approximation)
+    assert _total_content_length(trimmed) // 4 <= 5000
 
 
 @pytest.mark.asyncio()
