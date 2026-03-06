@@ -46,12 +46,26 @@ def test_build_soul_prompt_full_profile() -> None:
         soul_text="I specialize in deck building and exterior renovations.",
     )
     prompt = build_soul_prompt(contractor)
+    assert "Clawbolt" in prompt  # default assistant_name
     assert "Mike Chen" in prompt
     assert "general contracting" in prompt
     assert "Portland, OR" in prompt
     assert "$85/hour" in prompt
     assert "Mon-Fri 7am-5pm" in prompt
     assert "deck building" in prompt
+
+
+def test_build_soul_prompt_uses_assistant_name() -> None:
+    """Soul prompt should use custom assistant_name instead of Clawbolt."""
+    contractor = ContractorData(
+        user_id="test",
+        name="Jake",
+        trade="plumbing",
+        assistant_name="Bolt",
+    )
+    prompt = build_soul_prompt(contractor)
+    assert "You are Bolt, the AI assistant for Jake" in prompt
+    assert "Clawbolt" not in prompt
 
 
 def test_build_soul_prompt_minimal_profile() -> None:
@@ -106,6 +120,14 @@ def test_build_onboarding_prompt() -> None:
     assert "name" in prompt.lower()
     assert "trade" in prompt.lower()
     assert "rate" in prompt.lower()
+
+
+def test_build_onboarding_prompt_includes_personality_discovery() -> None:
+    """Onboarding prompt should include personality/naming discovery."""
+    prompt = build_onboarding_prompt()
+    assert "assistant_name" in prompt
+    assert "soul_text" in prompt
+    assert "personality" in prompt.lower()
 
 
 def test_build_onboarding_prompt_includes_confirmation_instruction() -> None:

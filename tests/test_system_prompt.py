@@ -98,6 +98,7 @@ class TestSectionBuilders:
         contractor.business_hours = "7am-5pm"
         contractor.soul_text = None
         contractor.preferences_json = None
+        contractor.assistant_name = "Clawbolt"
         result = build_identity_section(contractor)
         assert "Mike" in result
         assert "plumbing" in result
@@ -194,6 +195,7 @@ class TestBuildAgentSystemPrompt:
         contractor.business_hours = "8am-6pm"
         contractor.soul_text = None
         contractor.preferences_json = None
+        contractor.assistant_name = "Clawbolt"
         contractor.id = 1
 
         tool = MagicMock()
@@ -220,6 +222,34 @@ class TestBuildAgentSystemPrompt:
         assert "Recall Behavior" in result
 
     @pytest.mark.asyncio
+    async def test_preamble_uses_assistant_name(self) -> None:
+        """Agent prompt preamble should use custom assistant_name."""
+        contractor = MagicMock()
+        contractor.name = "Jake"
+        contractor.trade = "electrician"
+        contractor.location = "Seattle"
+        contractor.hourly_rate = 90
+        contractor.business_hours = "8am-6pm"
+        contractor.soul_text = None
+        contractor.preferences_json = None
+        contractor.assistant_name = "Bolt"
+        contractor.id = 1
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                contractor=contractor,
+                tools=[],
+                message_context="hello",
+            )
+
+        assert "You are Bolt, an AI assistant" in result
+        assert "Clawbolt" not in result.split("\n")[0]
+
+    @pytest.mark.asyncio
     async def test_trade_guidance_only_in_identity_section(self) -> None:
         """Trade guidance should appear in the identity section, not instructions."""
         contractor = MagicMock()
@@ -230,6 +260,7 @@ class TestBuildAgentSystemPrompt:
         contractor.business_hours = None
         contractor.soul_text = None
         contractor.preferences_json = None
+        contractor.assistant_name = "Clawbolt"
         contractor.id = 1
 
         with patch(
@@ -259,6 +290,7 @@ class TestBuildAgentSystemPrompt:
         contractor.business_hours = None
         contractor.soul_text = None
         contractor.preferences_json = None
+        contractor.assistant_name = "Clawbolt"
         contractor.id = 1
 
         with patch(
@@ -285,6 +317,7 @@ class TestBuildAgentSystemPrompt:
         contractor.business_hours = None
         contractor.soul_text = None
         contractor.preferences_json = None
+        contractor.assistant_name = "Clawbolt"
         contractor.id = 1
 
         with patch(
@@ -391,6 +424,7 @@ class TestAgentSystemPromptIncludesDate:
         contractor.business_hours = "8am-6pm"
         contractor.soul_text = None
         contractor.preferences_json = None
+        contractor.assistant_name = "Clawbolt"
         contractor.timezone = "America/Los_Angeles"
         contractor.id = 1
 

@@ -50,6 +50,8 @@ def build_onboarding_system_prompt(contractor: ContractorData) -> str:
         known.append(f"- Trade: {contractor.trade}")
     if contractor.location and contractor.location.strip():
         known.append(f"- Location: {contractor.location}")
+    if contractor.assistant_name and contractor.assistant_name != "Clawbolt":
+        known.append(f"- Your name (the AI): {contractor.assistant_name}")
     if contractor.hourly_rate:
         known.append(f"- Rate: ${contractor.hourly_rate:.0f}/hour")
     if contractor.business_hours and contractor.business_hours.strip():
@@ -126,11 +128,13 @@ class OnboardingSubscriber:
             self._contractor.onboarding_complete = True
 
     def _build_completion_note(self) -> str:
+        assistant = self._contractor.assistant_name or "Clawbolt"
         parts = [f"Name: {self._contractor.name}", f"Trade: {self._contractor.trade}"]
         if self._contractor.location:
             parts.append(f"Location: {self._contractor.location}")
         if self._contractor.hourly_rate:
             parts.append(f"Rate: ${self._contractor.hourly_rate:.0f}/hour")
+        parts.append(f"Your AI: {assistant}")
         summary = "\n".join(f"- {p}" for p in parts)
         return (
             "\n\nSetup complete! Here's what I know about you:\n"

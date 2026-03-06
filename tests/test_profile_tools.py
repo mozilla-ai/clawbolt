@@ -98,14 +98,16 @@ async def test_view_profile_shows_not_set_for_empty_fields(
     """view_profile should show 'Not set' for empty fields."""
     # Clear some fields via the store
     store = get_contractor_store()
-    await store.update(test_contractor.id, hourly_rate=None, business_hours="", soul_text="")
+    await store.update(test_contractor.id, hourly_rate=None, business_hours="")
 
     view_fn = _get_tool_fn(test_contractor, "view_profile")
     result = await view_fn()
     assert result.is_error is False
     assert "Hourly Rate: Not set" in result.content
     assert "Business Hours: Not set" in result.content
-    assert "Soul/Bio: Not set" in result.content
+    # New contractors get a default SOUL.md template, so soul_text is
+    # populated even when never explicitly set by the user.
+    assert "Soul/Bio:" in result.content
 
 
 @pytest.mark.asyncio()
@@ -214,6 +216,7 @@ def test_format_profile_empty_contractor() -> None:
     assert "Location: Not set" in output
     assert "Hourly Rate: Not set" in output
     assert "Business Hours: Not set" in output
+    assert "AI Name: Clawbolt (default)" in output
     assert "Communication Style: Not set" in output
     assert "Soul/Bio: Not set" in output
 
@@ -370,6 +373,19 @@ async def test_update_profile_communication_style(
     assert refreshed is not None
     prefs = json.loads(refreshed.preferences_json)
     assert prefs == {"communication_style": "casual and brief"}
+
+
+@pytest.mark.asyncio()
+async def test_update_profile_assistant_name(test_contractor: ContractorData) -> None:
+    """update_profile should update assistant name."""
+    update_fn = _get_tool_fn(test_contractor, "update_profile")
+    result = await update_fn(assistant_name="Bolt")
+    assert "assistant_name" in result.content
+    assert result.is_error is False
+    store = get_contractor_store()
+    refreshed = await store.get_by_id(test_contractor.id)
+    assert refreshed is not None
+    assert refreshed.assistant_name == "Bolt"
 
 
 @pytest.mark.asyncio()
@@ -543,6 +559,7 @@ def test_extract_all_fields() -> None:
                 "hourly_rate": "$100",
                 "business_hours": "Mon-Fri 8-5",
                 "communication_style": "formal",
+                "assistant_name": "Sparky",
                 "soul_text": "I specialize in rewiring.",
             },
             result="Profile updated: all fields",
@@ -555,6 +572,7 @@ def test_extract_all_fields() -> None:
     assert updates["location"] == "Austin, TX"
     assert updates["hourly_rate"] == 100.0
     assert updates["business_hours"] == "Mon-Fri 8-5"
+    assert updates["assistant_name"] == "Sparky"
     assert updates["soul_text"] == "I specialize in rewiring."
     prefs = json.loads(str(updates["preferences_json"]))
     assert prefs == {"communication_style": "formal"}
@@ -595,6 +613,7 @@ def test_update_profile_tool_schema(test_contractor: ContractorData) -> None:
     assert "hourly_rate" in props
     assert "business_hours" in props
     assert "communication_style" in props
+    assert "assistant_name" in props
     assert "soul_text" in props
     # No required fields since all are optional
     assert "required" not in schema

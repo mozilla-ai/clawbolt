@@ -246,7 +246,7 @@ def test_build_onboarding_system_prompt_new_contractor() -> None:
     contractor = ContractorData(id=1, user_id="brand-new", phone="+15550004444")
 
     prompt = build_onboarding_system_prompt(contractor)
-    assert "Clawbolt" in prompt
+    assert "first conversation" in prompt
     assert "new contractor" in prompt
     assert "You already know" not in prompt
     assert "help them with that request FIRST" in prompt
@@ -266,6 +266,22 @@ def test_build_onboarding_system_prompt_partial_profile() -> None:
     assert "You already know" in prompt
     assert "Sarah" in prompt
     assert "Denver" in prompt
+    assert "Don't re-ask" in prompt
+
+
+def test_build_onboarding_system_prompt_includes_assistant_name() -> None:
+    """Onboarding prompt should include custom assistant_name in known fields."""
+    contractor = ContractorData(
+        id=1,
+        user_id="named-ai-user",
+        phone="+15550006666",
+        name="Jake",
+        assistant_name="Bolt",
+    )
+
+    prompt = build_onboarding_system_prompt(contractor)
+    assert "You already know" in prompt
+    assert "Bolt" in prompt
     assert "Don't re-ask" in prompt
 
 
@@ -849,6 +865,7 @@ async def test_onboarding_completion_message_appended(
     assert "- Name: Jake" in response.reply_text
     assert "- Trade: Plumber" in response.reply_text
     assert "- Location: Portland, OR" in response.reply_text
+    assert "- Your AI: Clawbolt" in response.reply_text
     assert "You can update any of this anytime" in response.reply_text
 
 

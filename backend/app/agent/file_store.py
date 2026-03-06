@@ -67,6 +67,7 @@ class ContractorData(BaseModel):
     timezone: str = ""
     preferred_channel: str = "telegram"
     channel_identifier: str = ""
+    assistant_name: str = "Clawbolt"
     onboarding_complete: bool = False
     is_active: bool = True
     role: str = "user"
@@ -313,10 +314,24 @@ class ContractorStore:
         _write_json(cdir / "contractor.json", data)
 
         # Save SOUL.md
+        soul_path = cdir / "SOUL.md"
         if soul_text:
-            (cdir / "SOUL.md").write_text(f"# Soul\n\n{soul_text}\n", encoding="utf-8")
-        elif (cdir / "SOUL.md").exists():
-            (cdir / "SOUL.md").write_text("# Soul\n", encoding="utf-8")
+            soul_path.write_text(f"# Soul\n\n{soul_text}\n", encoding="utf-8")
+        elif not soul_path.exists():
+            # Seed a meaningful default for brand-new contractors
+            soul_path.write_text(
+                "# Soul\n\n"
+                "Be genuinely helpful, not performatively helpful. Skip the filler\n"
+                "and just help. Actions over words.\n\n"
+                "Have opinions. You're allowed to prefer things, find stuff interesting\n"
+                "or tedious. An assistant with no personality is just a search engine.\n\n"
+                "Be resourceful before asking. Try to figure it out, check context,\n"
+                "search memory. Then ask if you're stuck.\n\n"
+                "Keep it practical. Your contractor is on a job site, not at a desk.\n"
+                "Concise when needed, thorough when it matters.\n\n"
+                "This file is yours to evolve. As you learn who you are, update it.\n",
+                encoding="utf-8",
+            )
 
         # Ensure subdirectories exist
         (cdir / "memory").mkdir(exist_ok=True)

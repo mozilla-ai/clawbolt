@@ -58,6 +58,10 @@ class UpdateProfileParams(BaseModel):
         default=None,
         description="Preferred communication style (e.g. 'casual', 'formal')",
     )
+    assistant_name: str | None = Field(
+        default=None,
+        description="What the contractor calls their AI assistant",
+    )
     soul_text: str | None = Field(
         default=None,
         description="Bio or personality description for the assistant",
@@ -116,6 +120,8 @@ def _format_profile(contractor: ContractorData) -> str:
             pass
     lines.append(f"  Communication Style: {communication_style or 'Not set'}")
 
+    assistant = contractor.assistant_name if contractor.assistant_name != "Clawbolt" else None
+    lines.append(f"  AI Name: {assistant or 'Clawbolt (default)'}")
     lines.append(f"  Soul/Bio: {contractor.soul_text or 'Not set'}")
     lines.append(f"  Onboarding Complete: {'Yes' if contractor.onboarding_complete else 'No'}")
 
@@ -139,6 +145,7 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
         business_hours: str | None = None,
         timezone: str | None = None,
         communication_style: str | None = None,
+        assistant_name: str | None = None,
         soul_text: str | None = None,
     ) -> ToolResult:
         """Update the contractor's profile information."""
@@ -192,6 +199,10 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
             )
             fields_updated.append("communication_style")
 
+        if assistant_name is not None:
+            updates["assistant_name"] = str(assistant_name)
+            fields_updated.append("assistant_name")
+
         if soul_text is not None:
             updates["soul_text"] = str(soul_text)
             fields_updated.append("soul_text")
@@ -212,6 +223,7 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
             "business_hours",
             "timezone",
             "preferences_json",
+            "assistant_name",
             "soul_text",
         }
         safe_updates = {k: v for k, v in updates.items() if k in _allowed_fields}
@@ -242,7 +254,7 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
             description=(
                 "Update the contractor's profile information. "
                 "Use when you learn their name, trade, location, rate, "
-                "business hours, communication style, or bio. "
+                "business hours, communication style, your AI name, or bio. "
                 "Only include fields you want to change."
             ),
             function=update_profile,
@@ -286,7 +298,15 @@ def extract_profile_updates_from_tool_calls(
             continue
         args = tc.args
 
-        for field in ("name", "trade", "location", "business_hours", "timezone", "soul_text"):
+        for field in (
+            "name",
+            "trade",
+            "location",
+            "business_hours",
+            "timezone",
+            "assistant_name",
+            "soul_text",
+        ):
             val = args.get(field)
             if val is not None:
                 updates[field] = str(val)
