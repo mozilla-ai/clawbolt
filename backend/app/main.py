@@ -11,7 +11,16 @@ from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.config import settings
-from backend.app.routers import auth, estimates, health
+from backend.app.routers import (
+    auth,
+    contractor_checklist,
+    contractor_memory,
+    contractor_profile,
+    contractor_sessions,
+    contractor_stats,
+    estimates,
+    health,
+)
 
 logging.basicConfig(
     level=logging.WARNING,
@@ -154,3 +163,8 @@ for _channel in get_manager().channels.values():
     app.include_router(_channel.get_router(), prefix="/api")
 
 app.include_router(estimates.router, prefix="/api")
+app.include_router(contractor_profile.router, prefix="/api")
+app.include_router(contractor_sessions.router, prefix="/api")
+app.include_router(contractor_memory.router, prefix="/api")
+app.include_router(contractor_checklist.router, prefix="/api")
+app.include_router(contractor_stats.router, prefix="/api")

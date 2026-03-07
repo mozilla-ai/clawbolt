@@ -1,8 +1,9 @@
 import datetime
+from typing import Any
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
-from backend.app.enums import EstimateStatus
+from backend.app.enums import ChecklistSchedule, EstimateStatus
 
 
 class HealthResponse(BaseModel):
@@ -74,3 +75,129 @@ class EstimateResponse(EstimateBase):
     pdf_url: str = ""
     storage_path: str = ""
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Contractor profile (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class ContractorProfileResponse(BaseModel):
+    id: int
+    user_id: str
+    name: str
+    phone: str
+    trade: str
+    location: str
+    hourly_rate: float | None
+    business_hours: str
+    timezone: str
+    assistant_name: str
+    soul_text: str
+    preferred_channel: str
+    channel_identifier: str
+    heartbeat_opt_in: bool
+    heartbeat_frequency: str
+    onboarding_complete: bool
+    is_active: bool
+    created_at: str
+    updated_at: str
+
+
+class ContractorProfileUpdate(BaseModel):
+    name: str | None = None
+    phone: str | None = None
+    trade: str | None = None
+    location: str | None = None
+    hourly_rate: float | None = None
+    business_hours: str | None = None
+    timezone: str | None = None
+    assistant_name: str | None = None
+    soul_text: str | None = None
+    heartbeat_opt_in: bool | None = None
+    heartbeat_frequency: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Conversation sessions (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class SessionSummary(BaseModel):
+    id: str
+    start_time: str
+    message_count: int
+    last_message_preview: str = ""
+
+
+class SessionListResponse(BaseModel):
+    sessions: list[SessionSummary]
+    total: int
+    offset: int
+    limit: int
+
+
+class SessionMessage(BaseModel):
+    seq: int
+    direction: str
+    body: str = ""
+    timestamp: str
+    tool_interactions: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class SessionDetailResponse(BaseModel):
+    session_id: str
+    contractor_id: int
+    created_at: str
+    last_message_at: str
+    is_active: bool
+    messages: list[SessionMessage]
+
+
+# ---------------------------------------------------------------------------
+# Memory / facts (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class MemoryFactResponse(BaseModel):
+    key: str
+    value: str
+    category: str
+    confidence: float
+
+
+class MemoryFactUpdate(BaseModel):
+    value: str | None = None
+    category: str | None = None
+    confidence: float | None = None
+
+
+# ---------------------------------------------------------------------------
+# Checklist (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class ChecklistCreateRequest(BaseModel):
+    description: str = Field(..., min_length=1)
+    schedule: str = ChecklistSchedule.DAILY
+
+
+class ChecklistItemResponse(BaseModel):
+    id: int
+    description: str
+    schedule: str
+    status: str
+    created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Overview stats (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class ContractorStatsResponse(BaseModel):
+    total_sessions: int
+    messages_this_month: int
+    active_checklist_items: int
+    total_memory_facts: int
+    last_conversation_at: str | None
