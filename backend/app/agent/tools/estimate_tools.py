@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.file_store import ContractorData, EstimateStore
+from backend.app.agent.file_store import ContractorData, EstimateStore, make_client_slug
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.agent.tools.names import ToolName
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 PDF_BASE_DIR = Path(settings.pdf_storage_dir)
-ESTIMATE_NUMBER_FORMAT = "EST-{:04d}"
 
 logger = logging.getLogger(__name__)
 
@@ -97,16 +96,27 @@ def create_estimate_tools(
 
         total_amount = subtotal
 
+        # Build client slug for folder organization
+        client_slug = (
+            make_client_slug(
+                name=client_name or "",
+                address=client_address or "",
+                folder_scheme=contractor.folder_scheme,
+            )
+            or None
+        )
+
         # Create estimate via file store
         estimate_store = EstimateStore(contractor.id)
         estimate = await estimate_store.create(
             description=description,
             total_amount=total_amount,
             status=EstimateStatus.DRAFT,
+            client_id=client_slug,
             line_items=processed_items,
         )
 
-        estimate_number = ESTIMATE_NUMBER_FORMAT.format(estimate.id)
+        estimate_number = estimate.id  # Already in EST-NNNN format
 
         # Generate PDF
         pdf_data = EstimatePDFData(
@@ -126,26 +136,31 @@ def create_estimate_tools(
 
         pdf_bytes = await generate_estimate_pdf(pdf_data)
 
-        # Save PDF to local storage (per-contractor subdirectory)
-        pdf_dir = PDF_BASE_DIR / str(contractor.id)
+        # Save PDF to local storage, organized by client
+        pdf_dir = PDF_BASE_DIR / str(contractor.id) / (client_slug or "unsorted")
         pdf_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = pdf_dir / f"{estimate.id}.pdf"
         pdf_path.write_bytes(pdf_bytes)
 
         # Also upload to cloud storage if available
+        cloud_path = ""
         if storage:
             try:
                 folder_path = build_folder_path("estimate", client_name, client_address)
                 await storage.create_folder(folder_path)
                 await storage.upload_file(pdf_bytes, folder_path, f"{estimate_number}.pdf")
+                cloud_path = f"{folder_path}/{estimate_number}.pdf"
             except Exception:
                 logger.warning(
                     "Cloud upload failed for estimate %s, local PDF saved successfully",
                     estimate_number,
                 )
 
-        # Update estimate with PDF path
-        await estimate_store.update(estimate.id, pdf_url=str(pdf_path))
+        # Update estimate with PDF path and cloud storage path
+        update_fields: dict[str, str] = {"pdf_url": str(pdf_path)}
+        if cloud_path:
+            update_fields["storage_path"] = cloud_path
+        await estimate_store.update(estimate.id, **update_fields)
 
         return ToolResult(
             content=(
