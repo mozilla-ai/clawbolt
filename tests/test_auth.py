@@ -9,7 +9,7 @@ from backend.app.auth.scoping import get_user_contractor
 
 @pytest.mark.asyncio()
 async def test_get_current_user_creates_local_contractor() -> None:
-    """OSS mode should auto-create a local contractor."""
+    """OSS mode should auto-create a local contractor when store is empty."""
     contractor = await get_current_user()
     assert contractor.user_id == LOCAL_USER_ID
     assert contractor.name == "Local Contractor"
@@ -22,6 +22,23 @@ async def test_get_current_user_returns_same_contractor() -> None:
     c1 = await get_current_user()
     c2 = await get_current_user()
     assert c1.id == c2.id
+
+
+@pytest.mark.asyncio()
+async def test_get_current_user_returns_existing_telegram_contractor() -> None:
+    """When a Telegram-created contractor exists, the dashboard should use it."""
+    store = get_contractor_store()
+    telegram_contractor = await store.create(
+        user_id="telegram_123456789",
+        name="Telegram User",
+        channel_identifier="123456789",
+        preferred_channel="telegram",
+    )
+
+    # get_current_user should return the existing contractor, not create a new one
+    dashboard_user = await get_current_user()
+    assert dashboard_user.id == telegram_contractor.id
+    assert dashboard_user.user_id == "telegram_123456789"
 
 
 def test_auth_config_returns_none_mode(client: TestClient) -> None:
