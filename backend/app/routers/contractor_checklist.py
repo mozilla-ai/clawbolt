@@ -4,7 +4,11 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.agent.file_store import ContractorData, HeartbeatStore
 from backend.app.auth.dependencies import get_current_user
-from backend.app.schemas import ChecklistCreateRequest, ChecklistItemResponse
+from backend.app.schemas import (
+    ChecklistCreateRequest,
+    ChecklistItemResponse,
+    ChecklistUpdateRequest,
+)
 
 router = APIRouter()
 
@@ -45,6 +49,31 @@ async def create_checklist_item(
         schedule=item.schedule,
         status=item.status,
         created_at=item.created_at,
+    )
+
+
+@router.put("/contractor/checklist/{item_id}", response_model=ChecklistItemResponse)
+async def update_checklist_item(
+    item_id: int,
+    body: ChecklistUpdateRequest,
+    current_user: ContractorData = Depends(get_current_user),
+) -> ChecklistItemResponse:
+    """Update a checklist item."""
+    store = HeartbeatStore(current_user.id)
+    updated = await store.update_checklist_item(
+        item_id,
+        description=body.description,
+        schedule=body.schedule,
+        status=body.status,
+    )
+    if not updated:
+        raise HTTPException(status_code=404, detail="Checklist item not found")
+    return ChecklistItemResponse(
+        id=updated.id,
+        description=updated.description,
+        schedule=updated.schedule,
+        status=updated.status,
+        created_at=updated.created_at,
     )
 
 

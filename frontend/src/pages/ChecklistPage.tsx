@@ -13,6 +13,11 @@ export default function ChecklistPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<number | null>(null);
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editDescription, setEditDescription] = useState('');
+  const [editSchedule, setEditSchedule] = useState('');
+  const [editStatus, setEditStatus] = useState('');
+  const [saving, setSaving] = useState(false);
 
   // New item form
   const [newDescription, setNewDescription] = useState('');
@@ -46,6 +51,31 @@ export default function ChecklistPage() {
       alert((err as Error).message);
     } finally {
       setCreating(false);
+    }
+  };
+
+  const startEditing = (item: ChecklistItem) => {
+    setEditingId(item.id);
+    setEditDescription(item.description);
+    setEditSchedule(item.schedule);
+    setEditStatus(item.status);
+  };
+
+  const handleUpdate = async () => {
+    if (editingId === null || !editDescription.trim()) return;
+    setSaving(true);
+    try {
+      const updated = await api.updateChecklistItem(editingId, {
+        description: editDescription.trim(),
+        schedule: editSchedule,
+        status: editStatus,
+      });
+      setItems((prev) => prev.map((item) => (item.id === updated.id ? updated : item)));
+      setEditingId(null);
+    } catch (err) {
+      alert((err as Error).message);
+    } finally {
+      setSaving(false);
     }
   };
 
@@ -118,52 +148,112 @@ export default function ChecklistPage() {
       ) : (
         <div className="space-y-2">
           {items.map((item) => (
-            <Card key={item.id} className="flex items-center justify-between gap-3">
-              <div className="min-w-0 flex-1">
-                <p className="text-sm">{item.description}</p>
-                <div className="flex items-center gap-2 mt-1">
-                  <Badge>{item.schedule}</Badge>
-                  <Badge className={
-                    item.status === 'active'
-                      ? 'bg-success-bg text-success-text'
-                      : ''
-                  }>
-                    {item.status}
-                  </Badge>
-                  <span className="text-[10px] text-muted-foreground">
-                    Added {new Date(item.created_at).toLocaleDateString()}
-                  </span>
+            <Card key={item.id}>
+              {editingId === item.id ? (
+                <div className="space-y-2">
+                  <Input
+                    value={editDescription}
+                    onChange={(e) => setEditDescription(e.target.value)}
+                  />
+                  <div className="flex gap-2 items-end flex-wrap">
+                    <div className="w-36">
+                      <label className="text-xs font-medium text-muted-foreground block mb-1">
+                        Schedule
+                      </label>
+                      <Select
+                        value={editSchedule}
+                        onChange={(e) => setEditSchedule(e.target.value)}
+                      >
+                        <option value="daily">Daily</option>
+                        <option value="weekdays">Weekdays</option>
+                        <option value="weekly">Weekly</option>
+                        <option value="monthly">Monthly</option>
+                      </Select>
+                    </div>
+                    <div className="w-36">
+                      <label className="text-xs font-medium text-muted-foreground block mb-1">
+                        Status
+                      </label>
+                      <Select
+                        value={editStatus}
+                        onChange={(e) => setEditStatus(e.target.value)}
+                      >
+                        <option value="active">Active</option>
+                        <option value="paused">Paused</option>
+                        <option value="completed">Completed</option>
+                      </Select>
+                    </div>
+                    <div className="flex gap-1">
+                      <Button size="sm" onClick={handleUpdate} disabled={saving}>
+                        {saving ? 'Saving...' : 'Save'}
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setEditingId(null)}
+                      >
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
                 </div>
-              </div>
-              <div className="shrink-0">
-                {deleteConfirm === item.id ? (
-                  <div className="flex gap-1">
-                    <Button
-                      variant="danger"
-                      size="sm"
-                      onClick={() => handleDelete(item.id)}
-                    >
-                      Confirm
-                    </Button>
+              ) : (
+                <div className="flex items-center justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <p className="text-sm">{item.description}</p>
+                    <div className="flex items-center gap-2 mt-1">
+                      <Badge>{item.schedule}</Badge>
+                      <Badge className={
+                        item.status === 'active'
+                          ? 'bg-success-bg text-success-text'
+                          : ''
+                      }>
+                        {item.status}
+                      </Badge>
+                      <span className="text-[10px] text-muted-foreground">
+                        Added {new Date(item.created_at).toLocaleDateString()}
+                      </span>
+                    </div>
+                  </div>
+                  <div className="shrink-0 flex gap-1">
                     <Button
                       variant="ghost"
                       size="sm"
-                      onClick={() => setDeleteConfirm(null)}
+                      onClick={() => startEditing(item)}
+                      aria-label={`Edit ${item.description}`}
                     >
-                      Cancel
+                      Edit
                     </Button>
+                    {deleteConfirm === item.id ? (
+                      <div className="flex gap-1">
+                        <Button
+                          variant="danger"
+                          size="sm"
+                          onClick={() => handleDelete(item.id)}
+                        >
+                          Confirm
+                        </Button>
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setDeleteConfirm(null)}
+                        >
+                          Cancel
+                        </Button>
+                      </div>
+                    ) : (
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={() => setDeleteConfirm(item.id)}
+                        aria-label={`Delete ${item.description}`}
+                      >
+                        Delete
+                      </Button>
+                    )}
                   </div>
-                ) : (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setDeleteConfirm(item.id)}
-                    aria-label={`Delete ${item.description}`}
-                  >
-                    Delete
-                  </Button>
-                )}
-              </div>
+                </div>
+              )}
             </Card>
           ))}
         </div>
