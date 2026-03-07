@@ -93,7 +93,10 @@ export default function AppShell() {
         }`}
       >
         <div className="p-4 border-b border-border">
-          <h1 className="text-lg font-bold text-foreground">Clawbolt</h1>
+          <div className="flex items-center gap-2">
+            <img src="/clawbolt.png" alt="" className="w-7 h-7" />
+            <h1 className="text-lg font-bold text-foreground">Clawbolt</h1>
+          </div>
           {profile && (
             <p className="text-xs text-muted-foreground mt-0.5 truncate">
               {profile.name || profile.trade || 'Dashboard'}
@@ -121,12 +124,6 @@ export default function AppShell() {
             </NavLink>
           ))}
         </nav>
-
-        {!profile?.onboarding_complete && (
-          <div className="mx-2 mb-2 p-3 rounded-[--radius-md] bg-info-bg border border-info-border text-info-text text-xs">
-            Start chatting with your assistant using the Chat page or connect via Telegram.
-          </div>
-        )}
 
         <div className="p-2 border-t border-border text-xs text-muted-foreground space-y-1">
           <div className="flex gap-2 px-3 py-1">
@@ -171,6 +168,7 @@ export default function AppShell() {
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
           </button>
+          <img src="/clawbolt.png" alt="" className="w-6 h-6" />
           <h1 className="text-lg font-bold text-foreground">Clawbolt</h1>
         </header>
 

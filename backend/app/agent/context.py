@@ -250,4 +250,10 @@ async def get_or_create_conversation(
     Returns (session, is_new).
     """
     session_store = get_session_store(contractor_id)
+
+    if external_session_id is not None:
+        session = session_store._load_session(external_session_id)
+        if session is not None and session.contractor_id == contractor_id:
+            return session, False
+
     return await session_store.get_or_create_session(timeout_hours=timeout_hours)
