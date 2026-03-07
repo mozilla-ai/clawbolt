@@ -158,6 +158,14 @@ function SessionDetailView({ sessionId }: { sessionId: string }) {
           <div className="mb-4 flex items-center gap-3">
             <h2 className="text-xl font-semibold">Conversation</h2>
             {session.is_active && <Badge>Active</Badge>}
+            <Button
+              variant="secondary"
+              size="sm"
+              className="ml-auto"
+              onClick={() => navigate(`/app/chat?session=${session.session_id}`)}
+            >
+              Resume in Chat
+            </Button>
           </div>
           <p className="text-xs text-muted-foreground mb-4">
             Started: {new Date(session.created_at).toLocaleString()}
