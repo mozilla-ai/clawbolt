@@ -21,7 +21,8 @@ Storage layout::
             {session_id}.jsonl
           clients.json
           estimates/
-            {estimate_id}.json
+            {client_slug}/
+              EST-0001.json
           media.json
           heartbeat/
             checklist.json
@@ -74,6 +75,7 @@ class ContractorData(BaseModel):
     preferences_json: str = "{}"
     heartbeat_opt_in: bool = True
     heartbeat_frequency: str = ""
+    folder_scheme: str = "by_client"
     created_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.UTC)
     )
@@ -124,7 +126,7 @@ class SessionState(BaseModel):
 class ClientData(BaseModel):
     """Replaces the Client ORM model."""
 
-    id: int = 0
+    id: str = ""
     name: str = ""
     phone: str = ""
     email: str = ""
@@ -146,13 +148,14 @@ class EstimateLineItemData(BaseModel):
 class EstimateData(BaseModel):
     """Replaces the Estimate + EstimateLineItem ORM models."""
 
-    id: int = 0
+    id: str = ""
     contractor_id: int = 0
-    client_id: int | None = None
+    client_id: str | None = None
     description: str = ""
     total_amount: float = 0.0
     status: str = EstimateStatus.DRAFT
     pdf_url: str = ""
+    storage_path: str = ""
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
     line_items: list[EstimateLineItemData] = Field(default_factory=list)
 
@@ -160,7 +163,7 @@ class EstimateData(BaseModel):
 class MediaData(BaseModel):
     """Replaces the MediaFile ORM model."""
 
-    id: int = 0
+    id: str = ""
     message_id: int | None = None
     contractor_id: int = 0
     original_url: str = ""
@@ -266,6 +269,57 @@ def _next_id(items: list[dict[str, Any]]) -> int:
     if not items:
         return 1
     return max(item.get("id", 0) for item in items) + 1
+
+
+def slugify(text: str, max_length: int = 60) -> str:
+    """Convert text to a filesystem-safe slug.
+
+    Example: "John Smith - 116 Virginia Ave" -> "john_smith_116_virginia_ave"
+    """
+    slug = text.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s_-]+", "_", slug)
+    return slug[:max_length].rstrip("_")
+
+
+def _unique_slug(base_slug: str, existing_ids: set[str]) -> str:
+    """Return a unique slug by appending a counter suffix if needed."""
+    if base_slug not in existing_ids:
+        return base_slug
+    counter = 2
+    while f"{base_slug}_{counter}" in existing_ids:
+        counter += 1
+    return f"{base_slug}_{counter}"
+
+
+def make_client_slug(
+    name: str = "",
+    address: str = "",
+    folder_scheme: str = "by_client",
+) -> str:
+    """Build a client slug based on the folder scheme preference.
+
+    folder_scheme options:
+        "by_client" (default): slug from client name
+        "by_address": slug from address
+        "by_client_and_address": slug from "name address"
+    """
+    if folder_scheme == "by_address" and address.strip():
+        return slugify(address)
+    if folder_scheme == "by_client_and_address":
+        parts = []
+        if name.strip():
+            parts.append(name.strip())
+        if address.strip():
+            parts.append(address.strip())
+        if parts:
+            return slugify(" ".join(parts))
+    # Default: by_client, or fallback when preferred field is empty
+    if name.strip():
+        return slugify(name)
+    if address.strip():
+        return slugify(address)
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -891,20 +945,30 @@ class ClientStore:
         items = self._load_all()
         return [ClientData.model_validate(item) for item in items]
 
-    async def get(self, client_id: int) -> ClientData | None:
-        """Get a client by ID."""
+    async def get(self, client_id: str) -> ClientData | None:
+        """Get a client by ID (slug)."""
         for item in self._load_all():
             if item.get("id") == client_id:
                 return ClientData.model_validate(item)
         return None
 
     async def create(
-        self, name: str = "", phone: str = "", email: str = "", address: str = "", notes: str = ""
+        self,
+        name: str = "",
+        phone: str = "",
+        email: str = "",
+        address: str = "",
+        notes: str = "",
+        folder_scheme: str = "by_client",
     ) -> ClientData:
-        """Create a new client."""
+        """Create a new client with a slug-based ID."""
         async with self._lock:
             items = self._load_all()
-            cid = _next_id(items)
+            base_slug = make_client_slug(name, address, folder_scheme)
+            if not base_slug:
+                base_slug = "client"
+            existing_ids = {item.get("id", "") for item in items}
+            cid = _unique_slug(base_slug, existing_ids)
             client = ClientData(
                 id=cid,
                 name=name,
@@ -917,7 +981,7 @@ class ClientStore:
             _write_json(self._path, items)
             return client
 
-    async def update(self, client_id: int, **fields: Any) -> ClientData | None:
+    async def update(self, client_id: str, **fields: Any) -> ClientData | None:
         """Update a client's fields."""
         async with self._lock:
             items = self._load_all()
@@ -931,7 +995,7 @@ class ClientStore:
                     return ClientData.model_validate(item)
             return None
 
-    async def delete(self, client_id: int) -> bool:
+    async def delete(self, client_id: str) -> bool:
         """Delete a client. Returns True if found and deleted."""
         async with self._lock:
             items = self._load_all()
@@ -949,7 +1013,16 @@ class ClientStore:
 
 
 class EstimateStore:
-    """File-based estimate storage. Replaces Estimate + EstimateLineItem models."""
+    """File-based estimate storage. Replaces Estimate + EstimateLineItem models.
+
+    Estimates are organized under client subdirectories::
+
+        estimates/
+          {client_slug}/
+            EST-0001.json
+          unsorted/
+            EST-0003.json
+    """
 
     def __init__(self, contractor_id: int) -> None:
         self.contractor_id = contractor_id
@@ -959,41 +1032,72 @@ class EstimateStore:
     def _estimates_dir(self) -> Path:
         return _contractor_dir(self.contractor_id) / "estimates"
 
-    def _estimate_path(self, estimate_id: int) -> Path:
-        return self._estimates_dir / f"{estimate_id}.json"
+    def _estimate_path(self, estimate_id: str, client_id: str | None = None) -> Path:
+        folder = client_id if client_id else "unsorted"
+        return self._estimates_dir / folder / f"{estimate_id}.json"
+
+    def _find_estimate_path(self, estimate_id: str) -> Path | None:
+        """Search all subdirectories for an estimate by ID."""
+        edir = self._estimates_dir
+        if not edir.exists():
+            return None
+        for path in edir.rglob(f"{estimate_id}.json"):
+            return path
+        return None
 
     async def list_all(self) -> list[EstimateData]:
-        """List all estimates."""
+        """List all estimates across all client subdirectories."""
         edir = self._estimates_dir
         if not edir.exists():
             return []
         result: list[EstimateData] = []
-        for path in sorted(edir.glob("*.json")):
+        for path in sorted(edir.rglob("*.json")):
             data = _read_json(path)
             if data:
                 result.append(EstimateData.model_validate(data))
         return result
 
-    async def get(self, estimate_id: int) -> EstimateData | None:
+    async def get(self, estimate_id: str) -> EstimateData | None:
         """Get an estimate by ID."""
-        data = _read_json(self._estimate_path(estimate_id))
+        path = self._find_estimate_path(estimate_id)
+        if path is None:
+            return None
+        data = _read_json(path)
         if data is None:
             return None
         return EstimateData.model_validate(data)
+
+    def _next_estimate_number(self, existing: list[EstimateData]) -> int:
+        """Get the next sequential estimate number across all estimates."""
+        max_num = 0
+        for e in existing:
+            # Parse number from "EST-0001" format
+            if e.id.startswith("EST-"):
+                try:
+                    num = int(e.id[4:])
+                    max_num = max(max_num, num)
+                except ValueError:
+                    pass
+        return max_num + 1
 
     async def create(
         self,
         description: str = "",
         total_amount: float = 0.0,
         status: str = EstimateStatus.DRAFT,
-        client_id: int | None = None,
+        client_id: str | None = None,
         line_items: list[dict[str, Any]] | None = None,
     ) -> EstimateData:
-        """Create a new estimate."""
+        """Create a new estimate.
+
+        Args:
+            client_id: Client slug used as the subdirectory name.
+                       Falls back to "unsorted" when not provided.
+        """
         async with self._lock:
-            # Find next ID across existing estimates
             existing = await self.list_all()
-            eid = max((e.id for e in existing), default=0) + 1
+            num = self._next_estimate_number(existing)
+            eid = f"EST-{num:04d}"
 
             items: list[EstimateLineItemData] = []
             if line_items:
@@ -1017,11 +1121,12 @@ class EstimateStore:
                 status=status,
                 line_items=items,
             )
-            self._estimates_dir.mkdir(parents=True, exist_ok=True)
-            _write_json(self._estimate_path(eid), estimate.model_dump())
+            path = self._estimate_path(eid, client_id)
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _write_json(path, estimate.model_dump())
             return estimate
 
-    async def update(self, estimate_id: int, **fields: Any) -> EstimateData | None:
+    async def update(self, estimate_id: str, **fields: Any) -> EstimateData | None:
         """Update an estimate's fields."""
         async with self._lock:
             estimate = await self.get(estimate_id)
@@ -1029,7 +1134,10 @@ class EstimateStore:
                 return None
             data = estimate.model_dump()
             data.update({k: v for k, v in fields.items() if v is not None})
-            _write_json(self._estimate_path(estimate_id), data)
+            path = self._find_estimate_path(estimate_id)
+            if path is None:
+                return None
+            _write_json(path, data)
             return EstimateData.model_validate(data)
 
 
@@ -1056,6 +1164,19 @@ class MediaStore:
         """List all media files."""
         return [MediaData.model_validate(item) for item in self._load_all()]
 
+    def _next_media_id(self, items: list[dict[str, Any]]) -> str:
+        """Generate the next sequential media ID string."""
+        max_num = 0
+        for item in items:
+            mid = str(item.get("id", ""))
+            if mid.startswith("media-"):
+                try:
+                    num = int(mid[6:])
+                    max_num = max(max_num, num)
+                except ValueError:
+                    pass
+        return f"media-{max_num + 1:03d}"
+
     async def create(
         self,
         original_url: str = "",
@@ -1068,7 +1189,7 @@ class MediaStore:
         """Create a media file record."""
         async with self._lock:
             items = self._load_all()
-            mid = _next_id(items)
+            mid = self._next_media_id(items)
             media = MediaData(
                 id=mid,
                 contractor_id=self.contractor_id,
@@ -1090,12 +1211,12 @@ class MediaStore:
                 return MediaData.model_validate(item)
         return None
 
-    async def update(self, media_id: int, **fields: Any) -> MediaData | None:
+    async def update(self, media_id: str, **fields: Any) -> MediaData | None:
         """Update a media file record."""
         async with self._lock:
             items = self._load_all()
             for i, item in enumerate(items):
-                if item.get("id") == media_id:
+                if str(item.get("id", "")) == media_id:
                     for k, v in fields.items():
                         if v is not None:
                             item[k] = v

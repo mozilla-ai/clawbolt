@@ -68,8 +68,9 @@ class EstimateBase(BaseModel):
 
 
 class EstimateResponse(EstimateBase):
-    id: int
+    id: str
     contractor_id: int
-    client_id: int | None = None
+    client_id: str | None = None
     pdf_url: str = ""
+    storage_path: str = ""
     created_at: str

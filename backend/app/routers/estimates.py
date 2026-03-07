@@ -19,7 +19,7 @@ PDF_BASE_DIR = Path(settings.pdf_storage_dir)
 
 @router.get("/estimates/{estimate_id}/pdf")
 async def serve_estimate_pdf(
-    estimate_id: int,
+    estimate_id: str,
     current_user: ContractorData = Depends(get_current_user),
 ) -> Response:
     """Serve a generated estimate PDF by estimate ID."""
@@ -29,7 +29,12 @@ async def serve_estimate_pdf(
     if not estimate:
         raise HTTPException(status_code=404, detail="Estimate not found")
 
-    pdf_path = PDF_BASE_DIR / str(current_user.id) / f"{estimate_id}.pdf"
+    # Look for PDF under client subfolder, then fallback to flat path
+    client_folder = estimate.client_id or "unsorted"
+    pdf_path = PDF_BASE_DIR / str(current_user.id) / client_folder / f"{estimate_id}.pdf"
+    if not pdf_path.exists():
+        # Fallback: old-style flat path for pre-existing PDFs
+        pdf_path = PDF_BASE_DIR / str(current_user.id) / f"{estimate_id}.pdf"
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="Estimate PDF not found")
 
