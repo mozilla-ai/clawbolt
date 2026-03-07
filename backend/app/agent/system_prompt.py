@@ -17,6 +17,7 @@ from backend.app.agent.profile import (
     build_soul_prompt,
     get_missing_optional_fields,
 )
+from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.base import Tool
 
 logger = logging.getLogger(__name__)
@@ -89,13 +90,7 @@ def build_instructions_section() -> str:
     Trade-specific guidance is handled by the soul prompt (identity section),
     so this section only contains universal behavioral rules.
     """
-    return (
-        "- Be concise and practical. Contractors are busy.\n"
-        "- You can ONLY communicate via this chat. You cannot send emails, "
-        "make phone calls, or contact clients directly.\n"
-        "- Always be helpful, friendly, and professional.\n"
-        "- Keep replies concise. Contractors are on the job site."
-    )
+    return load_prompt("instructions")
 
 
 def build_tool_guidelines_section(tools: list[Tool]) -> str:
@@ -108,26 +103,12 @@ def build_tool_guidelines_section(tools: list[Tool]) -> str:
 
 def build_proactive_section() -> str:
     """Build the proactive messaging rules section content."""
-    return (
-        "You will proactively reach out during business hours when something needs attention:\n"
-        "- A draft estimate has been sitting unsent for over 24 hours\n"
-        "- A scheduled checklist item is due\n"
-        "- A follow-up reminder or deadline is approaching\n"
-        "- You haven't heard from the contractor in a few days"
-    )
+    return load_prompt("proactive")
 
 
 def build_recall_section() -> str:
     """Build the recall behavior section content."""
-    return (
-        "When the contractor asks a question about their business, clients, or past work:\n"
-        "1. Search your memory for relevant information.\n"
-        "2. If you find relevant facts, use them to answer clearly and concisely.\n"
-        "3. If you don't find anything, say so honestly -- don't make things up.\n"
-        "4. If the question is about general knowledge (not their specific business), "
-        "answer from your training.\n"
-        '5. For "what do you know about me?" questions, summarize key facts by category.'
-    )
+    return load_prompt("recall")
 
 
 def _to_contractor_time(
@@ -225,10 +206,7 @@ async def build_heartbeat_system_prompt(
 ) -> str:
     """Assemble the system prompt for the heartbeat evaluator."""
     builder = SystemPromptBuilder()
-    builder.set_preamble(
-        "You are Clawbolt's heartbeat evaluator. Your job is to compose a short, "
-        "actionable message for the contractor based on the flags below."
-    )
+    builder.set_preamble(load_prompt("heartbeat_preamble"))
 
     builder.add_section("About the contractor", build_identity_section(contractor))
 
@@ -250,16 +228,6 @@ async def build_heartbeat_system_prompt(
         build_local_datetime_section(contractor),
     )
 
-    rules = (
-        "- The pre-checks already decided something needs attention. Your job is to "
-        "compose one concise, helpful message.\n"
-        "- Combine multiple flags into a single message when possible.\n"
-        "- Keep the message under 160 characters.\n"
-        "- Be direct and actionable, no fluff.\n"
-        "- If after reviewing the flags you believe none actually warrant a message "
-        'right now, you may still choose "no_action".\n'
-        "- Use the compose_message tool to return your decision."
-    )
-    builder.add_section("Rules", rules)
+    builder.add_section("Rules", load_prompt("heartbeat_rules"))
 
     return builder.build()

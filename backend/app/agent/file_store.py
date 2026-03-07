@@ -42,6 +42,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
+from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
 from backend.app.enums import ChecklistSchedule, ChecklistStatus, EstimateStatus
 
@@ -374,16 +375,7 @@ class ContractorStore:
         elif not soul_path.exists():
             # Seed a meaningful default for brand-new contractors
             soul_path.write_text(
-                "# Soul\n\n"
-                "Be genuinely helpful, not performatively helpful. Skip the filler\n"
-                "and just help. Actions over words.\n\n"
-                "Have opinions. You're allowed to prefer things, find stuff interesting\n"
-                "or tedious. An assistant with no personality is just a search engine.\n\n"
-                "Be resourceful before asking. Try to figure it out, check context,\n"
-                "search memory. Then ask if you're stuck.\n\n"
-                "Keep it practical. Your contractor is on a job site, not at a desk.\n"
-                "Concise when needed, thorough when it matters.\n\n"
-                "This file is yours to evolve. As you learn who you are, update it.\n",
+                f"# Soul\n\n{load_prompt('default_soul')}\n",
                 encoding="utf-8",
             )
 
