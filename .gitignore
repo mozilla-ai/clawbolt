@@ -35,6 +35,10 @@ clawbolt-premium/
 clawbolt-infra/
 data/
 
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
 # Docs site
 docs/node_modules/
 docs/dist/

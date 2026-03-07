@@ -1,0 +1,113 @@
+@import "tailwindcss";
+
+@theme {
+  --color-background: #fafafa;
+  --color-card: #ffffff;
+  --color-panel: #f5f4f2;
+  --color-foreground: #1a1a2e;
+  --color-muted-foreground: #6b7280;
+  --color-primary: #2563eb;
+  --color-primary-hover: #1d4ed8;
+  --color-primary-light: #dbeafe;
+  --color-border: #e5e7eb;
+  --color-danger: #dc2626;
+  --color-danger-light: #fee2e2;
+  --color-danger-hover: #fecaca;
+  --color-warning-bg: #fef3c7;
+  --color-warning-border: #fcd34d;
+  --color-warning-text: #92400e;
+  --color-error-bg: #fee2e2;
+  --color-error-border: #fca5a5;
+  --color-error-text: #991b1b;
+  --color-success: #16a34a;
+  --color-success-bg: #d1fae5;
+  --color-success-text: #065f46;
+  --color-info-bg: #dbeafe;
+  --color-info-border: #93c5fd;
+  --color-info-text: #1e40af;
+  --color-header-bg-from: #ffffff;
+  --color-header-bg-to: #f8fafc;
+  --color-header-text: #1a1a2e;
+  --color-header-border: #e5e7eb;
+  --color-secondary-hover: #f3f4f6;
+  --color-selected-bg: #eff6ff;
+  --color-focus-bg: #f8fafc;
+
+  --font-ui: 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-full: 9999px;
+
+  --shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.12);
+
+  --animate-spin: spin 0.8s linear infinite;
+  --animate-overlay-in: overlay-in 150ms ease-out;
+  --animate-dialog-in: dialog-in 150ms ease-out;
+}
+
+@keyframes overlay-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes dialog-in {
+  from { opacity: 0; transform: translate(-50%, -50%) scale(0.96); }
+  to { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+}
+
+@layer base {
+  html {
+    overflow-x: hidden;
+  }
+
+  html[data-theme="dark"] {
+    --color-background: #0f172a;
+    --color-card: #1e293b;
+    --color-panel: #0f172a;
+    --color-foreground: #e2e8f0;
+    --color-muted-foreground: #94a3b8;
+    --color-primary: #3b82f6;
+    --color-primary-hover: #60a5fa;
+    --color-primary-light: #1e3a5f;
+    --color-border: #334155;
+    --color-danger: #ef4444;
+    --color-danger-light: #3b1c1c;
+    --color-danger-hover: #4a2020;
+    --color-warning-bg: #422006;
+    --color-warning-border: #a16207;
+    --color-warning-text: #fcd34d;
+    --color-error-bg: #3b1c1c;
+    --color-error-border: #7f1d1d;
+    --color-error-text: #fca5a5;
+    --color-success: #34d399;
+    --color-success-bg: #064e3b;
+    --color-success-text: #6ee7b7;
+    --color-info-bg: #1e3a5f;
+    --color-info-border: #2563eb;
+    --color-info-text: #93c5fd;
+    --color-header-bg-from: #0f172a;
+    --color-header-bg-to: #1e293b;
+    --color-header-text: #e2e8f0;
+    --color-header-border: #334155;
+    --color-secondary-hover: #334155;
+    --color-selected-bg: #1e293b;
+    --color-focus-bg: #0f172a;
+    --shadow-sm: 0 2px 8px rgba(0, 0, 0, 0.3);
+    --shadow-md: 0 4px 24px rgba(0, 0, 0, 0.4);
+    --shadow-lg: 0 8px 32px rgba(0, 0, 0, 0.5);
+  }
+
+  body {
+    font-family: var(--font-ui);
+    background: var(--color-background);
+    color: var(--color-foreground);
+    min-height: 100vh;
+    line-height: 1.5;
+    overflow-x: hidden;
+  }
+}
