@@ -1,6 +1,7 @@
 import type {
   AuthConfig,
   AuthUser,
+  ChatResponse,
   ChecklistItem,
   ContractorProfile,
   ContractorProfileUpdate,
@@ -115,6 +116,14 @@ const api = {
 
   // Stats
   getStats: () => _fetch<ContractorStats>('/api/contractor/stats'),
+
+  // Chat
+  sendChatMessage: (message: string) =>
+    _fetch<ChatResponse>('/api/contractor/chat', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    }),
 };
 
 export default api;

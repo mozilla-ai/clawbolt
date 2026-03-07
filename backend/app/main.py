@@ -13,6 +13,7 @@ from fastapi.staticfiles import StaticFiles
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
 from backend.app.channels.telegram import TelegramChannel
+from backend.app.channels.webchat import WebChatChannel
 from backend.app.config import settings
 from backend.app.routers import (
     auth,
@@ -38,6 +39,7 @@ logger = logging.getLogger(__name__)
 # -- Build and register channels at module scope ----------------------------
 
 register_channel(TelegramChannel(bot_token=settings.telegram_bot_token))
+register_channel(WebChatChannel())
 
 
 async def _verify_llm_settings() -> None:
