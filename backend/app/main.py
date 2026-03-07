@@ -1,11 +1,14 @@
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from any_llm import amessages
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
@@ -168,3 +171,20 @@ app.include_router(contractor_sessions.router, prefix="/api")
 app.include_router(contractor_memory.router, prefix="/api")
 app.include_router(contractor_checklist.router, prefix="/api")
 app.include_router(contractor_stats.router, prefix="/api")
+
+# ---------------------------------------------------------------------------
+# Static file serving (built frontend)
+# ---------------------------------------------------------------------------
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
+        """Serve the SPA index.html for all non-API routes."""
+        file_path = _FRONTEND_DIST / full_path
+        if file_path.is_file() and ".." not in full_path:
+            return FileResponse(file_path)
+        return FileResponse(_FRONTEND_DIST / "index.html")
