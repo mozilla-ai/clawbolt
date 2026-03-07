@@ -177,7 +177,7 @@ function SessionDetailView({ sessionId }: { sessionId: string }) {
 }
 
 function MessageBubble({ message }: { message: SessionMessage }) {
-  const isUser = message.direction === 'incoming';
+  const isUser = message.direction === 'inbound';
 
   return (
     <div className={`flex ${isUser ? 'justify-end' : 'justify-start'}`}>
