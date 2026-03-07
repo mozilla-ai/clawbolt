@@ -18,6 +18,7 @@ export interface AppShellContext {
 
 const NAV_ITEMS = [
   { to: '/app', label: 'Overview', icon: OverviewIcon, end: true },
+  { to: '/app/chat', label: 'Chat', icon: ChatIcon, end: false },
   { to: '/app/conversations', label: 'Conversations', icon: ConversationsIcon, end: false },
   { to: '/app/memory', label: 'Memory', icon: MemoryIcon, end: false },
   { to: '/app/checklist', label: 'Checklist', icon: ChecklistIcon, end: false },
@@ -123,7 +124,7 @@ export default function AppShell() {
 
         {!profile?.onboarding_complete && (
           <div className="mx-2 mb-2 p-3 rounded-[--radius-md] bg-info-bg border border-info-border text-info-text text-xs">
-            Connect with your assistant on Telegram to get started.
+            Start chatting with your assistant using the Chat page or connect via Telegram.
           </div>
         )}
 
@@ -184,6 +185,14 @@ export default function AppShell() {
 }
 
 // --- Nav icons (inline SVG) ---
+
+function ChatIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+    </svg>
+  );
+}
 
 function OverviewIcon() {
   return (
