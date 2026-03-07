@@ -139,7 +139,7 @@ class OnboardingSubscriber:
         return (
             "\n\nSetup complete! Here's what I know about you:\n"
             f"{summary}\n\n"
-            "You can update any of this anytime. I'm ready to help!"
+            "You can update any of this anytime. Now let's get to work."
         )
 
     def finalize(self, response: AgentResponse) -> None:
