@@ -69,6 +69,11 @@ async def test_generate_estimate_with_client_info(
     assert "EST-0001" in result.content
     assert "$8,500.00" in result.content
 
+    # Verify estimate is filed under the client slug
+    store = EstimateStore(test_contractor.id)
+    estimates = await store.list_all()
+    assert estimates[0].client_id == "john_johnson"
+
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_pdf_generated(
@@ -90,7 +95,10 @@ async def test_generate_estimate_pdf_generated(
     store = EstimateStore(test_contractor.id)
     estimates = await store.list_all()
     assert len(estimates) == 1
-    pdf_path = tmp_path / "estimates" / str(test_contractor.id) / f"{estimates[0].id}.pdf"
+    # Without client info, PDFs go under the "unsorted" subfolder
+    pdf_path = (
+        tmp_path / "estimates" / str(test_contractor.id) / "unsorted" / f"{estimates[0].id}.pdf"
+    )
     assert pdf_path.exists()
     assert pdf_path.stat().st_size > 0
 
@@ -250,7 +258,8 @@ def test_serve_estimate_pdf_endpoint(
     )
 
     # Create a test PDF file in the temp directory (patched via _use_tmp_pdf_dir)
-    contractor_dir = tmp_path / "estimates" / str(test_contractor.id)
+    # Estimates without client_id go under "unsorted"
+    contractor_dir = tmp_path / "estimates" / str(test_contractor.id) / "unsorted"
     contractor_dir.mkdir(parents=True, exist_ok=True)
     test_pdf = contractor_dir / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 test content")
@@ -292,7 +301,7 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, tmp_path: Pa
     )
 
     # Create the PDF file so we can verify auth blocks access, not file absence
-    contractor_dir = tmp_path / "estimates" / str(other_contractor.id)
+    contractor_dir = tmp_path / "estimates" / str(other_contractor.id) / "unsorted"
     contractor_dir.mkdir(parents=True, exist_ok=True)
     test_pdf = contractor_dir / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 secret content")
@@ -362,7 +371,9 @@ async def test_generate_estimate_no_storage_still_saves_locally(
     store = EstimateStore(test_contractor.id)
     estimates = await store.list_all()
     assert len(estimates) == 1
-    pdf_path = tmp_path / "estimates" / str(test_contractor.id) / f"{estimates[0].id}.pdf"
+    pdf_path = (
+        tmp_path / "estimates" / str(test_contractor.id) / "unsorted" / f"{estimates[0].id}.pdf"
+    )
     assert pdf_path.exists()
 
 
@@ -407,9 +418,11 @@ async def test_generate_estimate_cloud_upload_failure_does_not_kill_call(
     assert "EST-0001" in result.content
     assert "$2,000.00" in result.content
 
-    # Verify local PDF was saved
+    # Verify local PDF was saved (client_name="John Smith" -> john_smith subfolder)
     store = EstimateStore(test_contractor.id)
     estimates = await store.list_all()
     assert len(estimates) == 1
-    pdf_path = tmp_path / "estimates" / str(test_contractor.id) / f"{estimates[0].id}.pdf"
+    pdf_path = (
+        tmp_path / "estimates" / str(test_contractor.id) / "john_smith" / f"{estimates[0].id}.pdf"
+    )
     assert pdf_path.exists()

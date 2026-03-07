@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import datetime
 import logging
-import re
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
 from backend.app.agent.file_store import ContractorData, MediaStore
+from backend.app.agent.file_store import slugify as _store_slugify
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
@@ -87,10 +87,7 @@ class OrganizeFileParams(BaseModel):
 
 def _slugify(text: str, max_length: int = DESCRIPTION_SLUG_MAX_LENGTH) -> str:
     """Convert text to a filesystem-safe slug."""
-    slug = text.lower().strip()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s_]+", "_", slug)
-    return slug[:max_length].rstrip("_")
+    return _store_slugify(text, max_length)
 
 
 def _build_client_folder(

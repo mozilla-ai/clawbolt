@@ -23,7 +23,7 @@ async def get_user_contractor(
 
 async def get_user_client(
     user: ContractorData,
-    client_id: int,
+    client_id: str,
 ) -> None:
     """Verify a client exists and belongs to the current user's contractor. 404 on mismatch."""
     client_store = ClientStore(user.id)
@@ -34,7 +34,7 @@ async def get_user_client(
 
 async def get_user_estimate(
     user: ContractorData,
-    estimate_id: int,
+    estimate_id: str,
 ) -> None:
     """Verify an estimate exists and belongs to the current user's contractor. 404 on mismatch."""
     estimate_store = EstimateStore(user.id)
