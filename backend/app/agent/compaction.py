@@ -16,28 +16,12 @@ from any_llm.types.messages import MessageResponse
 from backend.app.agent.llm_parsing import get_response_text
 from backend.app.agent.memory import save_memory
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
+from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
 
 logger = logging.getLogger(__name__)
 
-COMPACTION_SYSTEM_PROMPT = (
-    "You are a fact-extraction assistant. You will receive a block of conversation "
-    "messages between a contractor and their AI assistant. Extract durable facts worth "
-    "remembering long-term, such as:\n"
-    "- Client names, phone numbers, addresses\n"
-    "- Pricing decisions or quoted rates\n"
-    "- Material preferences or supplier names\n"
-    "- Job details, measurements, or scheduling commitments\n"
-    "- Business preferences or policies\n\n"
-    "Return a JSON array of objects, each with:\n"
-    '  {"key": "<short_snake_case_identifier>", "value": "<fact>", "category": "<category>"}\n\n'
-    "Valid categories: pricing, client, job, supplier, scheduling, general\n\n"
-    "Rules:\n"
-    "- Only extract facts that would be useful in future conversations.\n"
-    "- Skip greetings, small talk, and transient information.\n"
-    "- If there are no durable facts, return an empty array: []\n"
-    "- Return ONLY the JSON array, no other text."
-)
+COMPACTION_SYSTEM_PROMPT = load_prompt("compaction")
 
 
 def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
