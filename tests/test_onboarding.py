@@ -309,6 +309,16 @@ def test_build_onboarding_prompt_mentions_update_profile() -> None:
     assert "update_profile" in prompt
 
 
+def test_build_onboarding_prompt_lighthearted_tone() -> None:
+    """Onboarding prompt should use lighthearted, conversational tone (issue #446)."""
+    from backend.app.agent.profile import build_onboarding_prompt
+
+    prompt = build_onboarding_prompt()
+    assert "woke up" in prompt
+    assert "Have fun with it" in prompt
+    assert "not a form" in prompt
+
+
 # --- Fixtures ---
 
 
