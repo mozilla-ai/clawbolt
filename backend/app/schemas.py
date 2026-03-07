@@ -182,6 +182,12 @@ class ChecklistCreateRequest(BaseModel):
     schedule: str = ChecklistSchedule.DAILY
 
 
+class ChecklistUpdateRequest(BaseModel):
+    description: str | None = None
+    schedule: str | None = None
+    status: str | None = None
+
+
 class ChecklistItemResponse(BaseModel):
     id: int
     description: str

@@ -57,3 +57,45 @@ def test_delete_checklist_item_not_found(client: TestClient) -> None:
 def test_create_checklist_empty_description(client: TestClient) -> None:
     resp = client.post("/api/contractor/checklist", json={"description": ""})
     assert resp.status_code == 422
+
+
+def test_update_checklist_item(client: TestClient) -> None:
+    resp = client.post("/api/contractor/checklist", json={"description": "Original"})
+    item_id = resp.json()["id"]
+
+    resp = client.put(
+        f"/api/contractor/checklist/{item_id}",
+        json={"description": "Updated", "schedule": "weekdays", "status": "paused"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["description"] == "Updated"
+    assert data["schedule"] == "weekdays"
+    assert data["status"] == "paused"
+
+
+def test_update_checklist_partial(client: TestClient) -> None:
+    """Only provided fields should change."""
+    resp = client.post(
+        "/api/contractor/checklist",
+        json={"description": "My task", "schedule": "daily"},
+    )
+    item_id = resp.json()["id"]
+
+    resp = client.put(
+        f"/api/contractor/checklist/{item_id}",
+        json={"status": "completed"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["description"] == "My task"
+    assert data["schedule"] == "daily"
+    assert data["status"] == "completed"
+
+
+def test_update_checklist_not_found(client: TestClient) -> None:
+    resp = client.put(
+        "/api/contractor/checklist/9999",
+        json={"description": "nope"},
+    )
+    assert resp.status_code == 404

@@ -92,6 +92,12 @@ export interface ChecklistItem {
   created_at: string;
 }
 
+export interface ChecklistItemUpdate {
+  description?: string;
+  schedule?: string;
+  status?: string;
+}
+
 export interface ContractorStats {
   total_sessions: number;
   messages_this_month: number;

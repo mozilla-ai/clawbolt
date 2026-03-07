@@ -3,6 +3,7 @@ import type {
   AuthUser,
   ChatResponse,
   ChecklistItem,
+  ChecklistItemUpdate,
   ContractorProfile,
   ContractorProfileUpdate,
   ContractorStats,
@@ -108,6 +109,12 @@ const api = {
   createChecklistItem: (body: { description: string; schedule?: string }) =>
     _fetch<ChecklistItem>('/api/contractor/checklist', {
       method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  updateChecklistItem: (id: number, body: ChecklistItemUpdate) =>
+    _fetch<ChecklistItem>(`/api/contractor/checklist/${id}`, {
+      method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
