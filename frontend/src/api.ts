@@ -125,11 +125,11 @@ const api = {
   getStats: () => _fetch<ContractorStats>('/api/contractor/stats'),
 
   // Chat
-  sendChatMessage: (message: string) =>
+  sendChatMessage: (message: string, sessionId?: string) =>
     _fetch<ChatResponse>('/api/contractor/chat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, ...(sessionId ? { session_id: sessionId } : {}) }),
     }),
 };
 

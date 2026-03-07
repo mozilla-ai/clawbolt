@@ -132,3 +132,62 @@ def test_chat_returns_same_session(
         )
 
     assert resp1.json()["session_id"] == resp2.json()["session_id"]
+
+
+def test_chat_with_explicit_session_id(
+    webchat_client: TestClient,
+    webchat_contractor: ContractorData,
+) -> None:
+    """Sending session_id should resume that session."""
+    with patch(
+        "backend.app.agent.router.run_agent",
+        new_callable=AsyncMock,
+    ) as mock_agent:
+        from backend.app.agent.core import AgentResponse
+
+        mock_agent.return_value = AgentResponse(reply_text="Reply 1")
+        resp1 = webchat_client.post(
+            "/api/contractor/chat",
+            json={"message": "First message"},
+        )
+        session_id = resp1.json()["session_id"]
+
+        mock_agent.return_value = AgentResponse(reply_text="Reply 2")
+        resp2 = webchat_client.post(
+            "/api/contractor/chat",
+            json={"message": "Second message", "session_id": session_id},
+        )
+
+    assert resp2.status_code == 200
+    assert resp2.json()["session_id"] == session_id
+
+
+def test_chat_with_invalid_session_id(webchat_client: TestClient) -> None:
+    """Invalid session_id format should return 422."""
+    resp = webchat_client.post(
+        "/api/contractor/chat",
+        json={"message": "Hello", "session_id": "../../bad"},
+    )
+    assert resp.status_code == 422
+
+
+def test_chat_with_nonexistent_session_id(
+    webchat_client: TestClient,
+    webchat_contractor: ContractorData,
+) -> None:
+    """Valid-format but nonexistent session_id should create a new session."""
+    with patch(
+        "backend.app.agent.router.run_agent",
+        new_callable=AsyncMock,
+    ) as mock_agent:
+        from backend.app.agent.core import AgentResponse
+
+        mock_agent.return_value = AgentResponse(reply_text="Hello!")
+        resp = webchat_client.post(
+            "/api/contractor/chat",
+            json={"message": "Hello", "session_id": "9999_9999"},
+        )
+
+    assert resp.status_code == 200
+    # A new session should have been created (not the requested one)
+    assert resp.json()["session_id"] != "9999_9999"

@@ -9,7 +9,7 @@ in the Conversations page.
 import logging
 
 from fastapi import APIRouter, Depends
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from backend.app.agent.concurrency import contractor_locks
 from backend.app.agent.context import get_or_create_conversation
@@ -33,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 class _ChatRequest(BaseModel):
     message: str
+    session_id: str | None = Field(default=None, pattern=r"^\d+_\d+$")
 
 
 class _ChatResponse(BaseModel):
@@ -74,7 +75,9 @@ class WebChatChannel(BaseChannel):
             contractor: ContractorData = Depends(get_current_user),
         ) -> _ChatResponse:
             """Send a message and receive the agent's response."""
-            session, _ = await get_or_create_conversation(contractor.id)
+            session, _ = await get_or_create_conversation(
+                contractor.id, external_session_id=body.session_id
+            )
 
             session_store = get_session_store(contractor.id)
             message = await session_store.add_message(

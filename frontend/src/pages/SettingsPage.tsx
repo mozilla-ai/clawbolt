@@ -41,6 +41,7 @@ export default function SettingsPage() {
                 <TabsTrigger value="profile">Profile</TabsTrigger>
                 <TabsTrigger value="assistant">Assistant</TabsTrigger>
                 <TabsTrigger value="heartbeat">Heartbeat</TabsTrigger>
+                <TabsTrigger value="channels">Channels</TabsTrigger>
               </>
             )}
             {extraTabs.map((t) => (
@@ -63,6 +64,7 @@ export default function SettingsPage() {
           <TabsTrigger value="profile">Profile</TabsTrigger>
           <TabsTrigger value="assistant">Assistant</TabsTrigger>
           <TabsTrigger value="heartbeat">Heartbeat</TabsTrigger>
+          <TabsTrigger value="channels">Channels</TabsTrigger>
           {extraTabs.map((t) => (
             <TabsTrigger key={t.key} value={t.key}>{t.label}</TabsTrigger>
           ))}
@@ -78,6 +80,10 @@ export default function SettingsPage() {
 
         <TabsContent value="heartbeat">
           {profile && <HeartbeatTab profile={profile} onSaved={reloadProfile} />}
+        </TabsContent>
+
+        <TabsContent value="channels">
+          {profile && <ChannelsTab profile={profile} />}
         </TabsContent>
       </Tabs>
     </div>
@@ -297,6 +303,43 @@ function HeartbeatTab({
             {saving ? 'Saving...' : 'Save Heartbeat Settings'}
           </Button>
         </div>
+      </div>
+    </Card>
+  );
+}
+
+// --- Channels Tab ---
+
+function ChannelsTab({
+  profile,
+}: {
+  profile: { channel_identifier: string; preferred_channel: string };
+}) {
+  const connected = !!profile.channel_identifier;
+
+  return (
+    <Card>
+      <div className="grid gap-4">
+        <Field label="Telegram">
+          {connected ? (
+            <div className="flex items-center gap-2">
+              <span className="inline-flex items-center gap-1.5 text-sm">
+                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                Connected
+              </span>
+              <span className="text-xs text-muted-foreground">
+                Chat ID: {profile.channel_identifier}
+              </span>
+            </div>
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              Send a message to your bot on Telegram to connect.
+            </p>
+          )}
+        </Field>
+        <Field label="Active Channel">
+          <p className="text-sm">{profile.preferred_channel || 'webchat'}</p>
+        </Field>
       </div>
     </Card>
   );
