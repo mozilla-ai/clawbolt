@@ -1,6 +1,8 @@
 import type {
   AuthConfig,
   AuthUser,
+  ChannelConfig,
+  ChannelConfigUpdate,
   ChatResponse,
   ChecklistItem,
   ChecklistItemUpdate,
@@ -120,6 +122,15 @@ const api = {
     }),
   deleteChecklistItem: (id: number) =>
     _fetchVoid(`/api/contractor/checklist/${id}`, { method: 'DELETE' }),
+
+  // Channel config
+  getChannelConfig: () => _fetch<ChannelConfig>('/api/contractor/channels/config'),
+  updateChannelConfig: (body: ChannelConfigUpdate) =>
+    _fetch<ChannelConfig>('/api/contractor/channels/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
 
   // Stats
   getStats: () => _fetch<ContractorStats>('/api/contractor/stats'),

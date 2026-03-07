@@ -207,3 +207,18 @@ class ContractorStatsResponse(BaseModel):
     active_checklist_items: int
     total_memory_facts: int
     last_conversation_at: str | None
+
+
+# ---------------------------------------------------------------------------
+# Channel config (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class ChannelConfigResponse(BaseModel):
+    telegram_bot_token_set: bool
+    telegram_allowed_usernames: str
+
+
+class ChannelConfigUpdate(BaseModel):
+    telegram_bot_token: str | None = None
+    telegram_allowed_usernames: str | None = None

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { useOutletContext, useParams, useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
@@ -8,7 +8,7 @@ import Select from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import api from '@/api';
-import type { ContractorProfileUpdate } from '@/types';
+import type { ChannelConfig, ContractorProfileUpdate } from '@/types';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
   getExtraSettingsTabs,
@@ -316,11 +316,91 @@ function ChannelsTab({
   profile: { channel_identifier: string; preferred_channel: string };
 }) {
   const connected = !!profile.channel_identifier;
+  const [config, setConfig] = useState<ChannelConfig | null>(null);
+  const [botToken, setBotToken] = useState('');
+  const [allowedUsernames, setAllowedUsernames] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    api.getChannelConfig().then((cfg) => {
+      setConfig(cfg);
+      setAllowedUsernames(cfg.telegram_allowed_usernames);
+    }).catch(() => {
+      // ignore fetch errors on mount
+    });
+  }, []);
+
+  const handleSave = useCallback(async () => {
+    setSaving(true);
+    try {
+      const body: Record<string, string> = {};
+      if (botToken) body.telegram_bot_token = botToken;
+      if (config && allowedUsernames !== config.telegram_allowed_usernames) {
+        body.telegram_allowed_usernames = allowedUsernames;
+      }
+      if (Object.keys(body).length === 0) {
+        toast.error('No changes to save');
+        setSaving(false);
+        return;
+      }
+      const updated = await api.updateChannelConfig(body);
+      setConfig(updated);
+      setBotToken('');
+      toast.success('Channel config updated');
+    } catch (e) {
+      toast.error((e as Error).message);
+    } finally {
+      setSaving(false);
+    }
+  }, [botToken, allowedUsernames, config]);
 
   return (
     <Card>
       <div className="grid gap-4">
-        <Field label="Telegram">
+        <Field label="Bot Token">
+          {config === null ? (
+            <p className="text-sm text-muted-foreground">Loading...</p>
+          ) : (
+            <>
+              <div className="mb-2">
+                {config.telegram_bot_token_set ? (
+                  <span className="inline-flex items-center gap-1.5 text-sm">
+                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                    Configured
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1.5 text-sm">
+                    <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                    Not configured
+                  </span>
+                )}
+              </div>
+              <Input
+                type="password"
+                value={botToken}
+                onChange={(e) => setBotToken(e.target.value)}
+                placeholder={config.telegram_bot_token_set ? 'Enter new token to replace' : 'Paste bot token from @BotFather'}
+              />
+            </>
+          )}
+        </Field>
+        <Field label="Allowed Usernames">
+          <Input
+            value={allowedUsernames}
+            onChange={(e) => setAllowedUsernames(e.target.value)}
+            placeholder='Comma-separated @usernames, or * for all'
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Controls which Telegram users can message your bot.
+          </p>
+        </Field>
+        <div className="flex justify-end">
+          <Button onClick={handleSave} disabled={saving || config === null}>
+            {saving ? 'Saving...' : 'Save Channel Config'}
+          </Button>
+        </div>
+        <hr className="border-border" />
+        <Field label="User Connection">
           {connected ? (
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 text-sm">
