@@ -63,7 +63,7 @@ function SessionListView() {
         </Card>
       ) : sessions.length === 0 ? (
         <Card className="text-center py-8">
-          <p className="text-sm text-muted-foreground">No conversations yet. Start chatting on Telegram!</p>
+          <p className="text-sm text-muted-foreground">No conversations yet. Start chatting via the Chat page or Telegram!</p>
         </Card>
       ) : (
         <>

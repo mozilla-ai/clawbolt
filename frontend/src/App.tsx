@@ -5,6 +5,7 @@ import OverviewPage from '@/pages/OverviewPage';
 import ConversationsPage from '@/pages/ConversationsPage';
 import MemoryPage from '@/pages/MemoryPage';
 import SettingsPage from '@/pages/SettingsPage';
+import ChatPage from '@/pages/ChatPage';
 import ChecklistPage from '@/pages/ChecklistPage';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -37,6 +38,7 @@ export default function App() {
       {/* Authenticated app */}
       <Route path="/app" element={<AppShell />}>
         <Route index element={<OverviewPage />} />
+        <Route path="chat" element={<ChatPage />} />
         <Route path="conversations" element={<ConversationsPage />} />
         <Route path="conversations/:sessionId" element={<ConversationsPage />} />
         <Route path="memory" element={<MemoryPage />} />

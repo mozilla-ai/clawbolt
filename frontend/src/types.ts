@@ -112,3 +112,8 @@ export interface AuthUser {
   name: string;
   role?: string;
 }
+
+export interface ChatResponse {
+  reply: string;
+  session_id: string;
+}
