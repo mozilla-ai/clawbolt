@@ -94,6 +94,28 @@ def test_get_session_detail(client: TestClient, test_contractor: ContractorData)
     assert data["messages"][1]["tool_interactions"][0]["tool"] == "save_fact"
 
 
+def test_session_direction_values(client: TestClient, test_contractor: ContractorData) -> None:
+    """API response direction values must be 'inbound'/'outbound' (not 'incoming'/'outgoing')."""
+    _create_session(
+        test_contractor,
+        "1_300",
+        [
+            {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
+            {
+                "direction": "outbound",
+                "body": "Hello!",
+                "timestamp": "2025-01-15T10:02:00",
+                "seq": 2,
+            },
+        ],
+    )
+    resp = client.get("/api/contractor/sessions/1_300")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["messages"][0]["direction"] == "inbound"
+    assert data["messages"][1]["direction"] == "outbound"
+
+
 def test_get_session_not_found(client: TestClient) -> None:
     resp = client.get("/api/contractor/sessions/nonexistent")
     assert resp.status_code == 404
