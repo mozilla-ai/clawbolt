@@ -68,7 +68,12 @@ async def _get_or_create_contractor(channel: str, sender_id: str) -> ContractorD
     if len(all_contractors) == 1:
         contractor = all_contractors[0]
         store.link_channel(channel, sender_id, contractor.id)
-        return contractor
+        contractor = await store.update(
+            contractor.id,
+            channel_identifier=sender_id,
+            preferred_channel=channel,
+        )
+        return contractor  # type: ignore[return-value]
 
     contractor = await store.create(
         user_id=f"{channel}_{sender_id}",
