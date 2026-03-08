@@ -35,18 +35,34 @@ export default function ChatPage() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+  const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nextId = useRef(1);
 
+  // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
+  // bug that occurs when scrollIntoView fires during keyboard dismissal.
   const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    const el = scrollContainerRef.current;
+    if (el) {
+      el.scrollTop = el.scrollHeight;
+    }
   }, []);
 
   useEffect(() => {
     scrollToBottom();
   }, [messages, scrollToBottom]);
+
+  // Prevent iOS Safari auto-zoom on input focus. Since iOS 10, maximum-scale=1
+  // only blocks automatic zoom (not user pinch-zoom), so accessibility is preserved.
+  // Applied only on iOS to avoid disabling pinch-zoom on Android.
+  useEffect(() => {
+    if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) return;
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+    if (meta && !meta.content.includes('maximum-scale')) {
+      meta.setAttribute('content', meta.content + ', maximum-scale=1');
+    }
+  }, []);
 
   // Load recent sessions for the selector
   useEffect(() => {
@@ -179,7 +195,7 @@ export default function ChatPage() {
             <select
               value={activeSessionId ?? '__new__'}
               onChange={(e) => handleSessionChange(e.target.value)}
-              className="px-2 py-1.5 text-xs bg-card border border-border rounded-[--radius-md] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors max-w-[200px]"
+              className="px-2 py-1.5 text-base sm:text-xs bg-card border border-border rounded-[--radius-md] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors max-w-[200px]"
             >
               <option value="__new__">New conversation</option>
               {sessions.map((s) => (
@@ -195,7 +211,7 @@ export default function ChatPage() {
       </div>
 
       {/* Messages area */}
-      <div className="flex-1 overflow-y-auto min-h-0 pb-4">
+      <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 pb-4">
         {loadingHistory ? (
           <div className="flex justify-center py-12"><Spinner /></div>
         ) : messages.length === 0 ? (
@@ -270,8 +286,6 @@ export default function ChatPage() {
                 </div>
               </div>
             )}
-
-            <div ref={messagesEndRef} />
           </div>
         )}
       </div>
