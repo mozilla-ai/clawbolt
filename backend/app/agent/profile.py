@@ -101,6 +101,7 @@ async def update_contractor_profile(
         "location",
         "hourly_rate",
         "soul_text",
+        "user_text",
         "business_hours",
         "timezone",
         "preferences_json",
