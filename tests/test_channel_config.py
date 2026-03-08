@@ -92,13 +92,38 @@ def test_update_channel_config_persists_to_dotenv(
     settings.telegram_bot_token = ""
 
 
-def test_update_channel_config_null_token_coerced_to_empty(
+def test_update_channel_config_null_token_is_ignored(
     client: TestClient, _set_bot_token: None
 ) -> None:
-    """PUT with null token should coerce to empty string, not set None."""
+    """PUT with null token should be ignored, preserving the existing value."""
+    resp = client.put(
+        "/api/contractor/channels/config",
+        json={"telegram_bot_token": None, "telegram_allowed_usernames": "user1"},
+    )
+    assert resp.status_code == 200
+    assert resp.json()["telegram_bot_token_set"] is True
+    assert settings.telegram_bot_token == "test-token-123"
+
+
+def test_update_channel_config_null_only_returns_400(
+    client: TestClient, _set_bot_token: None
+) -> None:
+    """PUT with only null fields should return 400 (no effective updates)."""
     resp = client.put(
         "/api/contractor/channels/config",
         json={"telegram_bot_token": None},
+    )
+    assert resp.status_code == 400
+    assert settings.telegram_bot_token == "test-token-123"
+
+
+def test_update_channel_config_empty_string_clears_token(
+    client: TestClient, _set_bot_token: None
+) -> None:
+    """PUT with empty string explicitly clears the token."""
+    resp = client.put(
+        "/api/contractor/channels/config",
+        json={"telegram_bot_token": ""},
     )
     assert resp.status_code == 200
     assert resp.json()["telegram_bot_token_set"] is False

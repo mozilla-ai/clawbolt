@@ -99,7 +99,7 @@ async def update_channel_config(
     _current_user: ContractorData = Depends(get_current_user),
 ) -> ChannelConfigResponse:
     """Update server-level channel configuration."""
-    updates = body.model_dump(exclude_unset=True)
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -107,15 +107,14 @@ async def update_channel_config(
     env_exists = env_path.is_file()
 
     for field, value in updates.items():
-        str_value = value or ""
         # Update the in-memory settings singleton
-        setattr(settings, field, str_value)
+        setattr(settings, field, value)
 
         # Persist to .env if it exists
         if env_exists:
             from dotenv import set_key
 
-            set_key(str(env_path), _ENV_KEY_MAP[field], str_value)
+            set_key(str(env_path), _ENV_KEY_MAP[field], value)
 
     # If the bot token changed, reset the live TelegramChannel instance
     if "telegram_bot_token" in updates:
