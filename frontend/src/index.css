@@ -119,4 +119,13 @@
       font-size: 16px;
     }
   }
+
+  /* Prevent double-tap-to-zoom on interactive elements (iOS Safari) */
+  button,
+  input,
+  select,
+  textarea,
+  a {
+    touch-action: manipulation;
+  }
 }
