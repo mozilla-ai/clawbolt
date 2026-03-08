@@ -12,6 +12,7 @@ export interface ContractorProfile {
   timezone: string;
   assistant_name: string;
   soul_text: string;
+  user_text: string;
   preferred_channel: string;
   channel_identifier: string;
   heartbeat_opt_in: boolean;
@@ -32,6 +33,7 @@ export interface ContractorProfileUpdate {
   timezone?: string;
   assistant_name?: string;
   soul_text?: string;
+  user_text?: string;
   heartbeat_opt_in?: boolean;
   heartbeat_frequency?: string;
 }
