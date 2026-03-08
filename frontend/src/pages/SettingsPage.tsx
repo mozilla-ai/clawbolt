@@ -158,12 +158,60 @@ function ProfileTab({
         </Field>
         <Field label="Timezone">
           <Select value={form.timezone} onChange={set('timezone')}>
-            <option value="America/New_York">Eastern (ET)</option>
-            <option value="America/Chicago">Central (CT)</option>
-            <option value="America/Denver">Mountain (MT)</option>
-            <option value="America/Los_Angeles">Pacific (PT)</option>
-            <option value="America/Anchorage">Alaska (AKT)</option>
-            <option value="Pacific/Honolulu">Hawaii (HT)</option>
+            <optgroup label="Americas">
+              <option value="America/New_York">Eastern (ET)</option>
+              <option value="America/Chicago">Central (CT)</option>
+              <option value="America/Denver">Mountain (MT)</option>
+              <option value="America/Los_Angeles">Pacific (PT)</option>
+              <option value="America/Anchorage">Alaska (AKT)</option>
+              <option value="Pacific/Honolulu">Hawaii (HT)</option>
+              <option value="America/Phoenix">Arizona (no DST)</option>
+              <option value="America/Toronto">Toronto (ET)</option>
+              <option value="America/Vancouver">Vancouver (PT)</option>
+              <option value="America/Mexico_City">Mexico City (CST)</option>
+              <option value="America/Sao_Paulo">Sao Paulo (BRT)</option>
+              <option value="America/Argentina/Buenos_Aires">Buenos Aires (ART)</option>
+              <option value="America/Bogota">Bogota (COT)</option>
+            </optgroup>
+            <optgroup label="Europe">
+              <option value="Europe/London">London (GMT/BST)</option>
+              <option value="Europe/Paris">Paris (CET)</option>
+              <option value="Europe/Berlin">Berlin (CET)</option>
+              <option value="Europe/Madrid">Madrid (CET)</option>
+              <option value="Europe/Rome">Rome (CET)</option>
+              <option value="Europe/Amsterdam">Amsterdam (CET)</option>
+              <option value="Europe/Zurich">Zurich (CET)</option>
+              <option value="Europe/Stockholm">Stockholm (CET)</option>
+              <option value="Europe/Athens">Athens (EET)</option>
+              <option value="Europe/Istanbul">Istanbul (TRT)</option>
+              <option value="Europe/Moscow">Moscow (MSK)</option>
+            </optgroup>
+            <optgroup label="Asia / Pacific">
+              <option value="Asia/Dubai">Dubai (GST)</option>
+              <option value="Asia/Kolkata">India (IST)</option>
+              <option value="Asia/Singapore">Singapore (SGT)</option>
+              <option value="Asia/Hong_Kong">Hong Kong (HKT)</option>
+              <option value="Asia/Shanghai">Shanghai (CST)</option>
+              <option value="Asia/Tokyo">Tokyo (JST)</option>
+              <option value="Asia/Seoul">Seoul (KST)</option>
+              <option value="Asia/Jakarta">Jakarta (WIB)</option>
+              <option value="Asia/Manila">Manila (PHT)</option>
+            </optgroup>
+            <optgroup label="Oceania">
+              <option value="Australia/Sydney">Sydney (AEST)</option>
+              <option value="Australia/Melbourne">Melbourne (AEST)</option>
+              <option value="Australia/Perth">Perth (AWST)</option>
+              <option value="Australia/Brisbane">Brisbane (AEST, no DST)</option>
+              <option value="Pacific/Auckland">Auckland (NZST)</option>
+            </optgroup>
+            <optgroup label="Africa / Middle East">
+              <option value="Africa/Cairo">Cairo (EET)</option>
+              <option value="Africa/Lagos">Lagos (WAT)</option>
+              <option value="Africa/Johannesburg">Johannesburg (SAST)</option>
+              <option value="Africa/Nairobi">Nairobi (EAT)</option>
+              <option value="Asia/Riyadh">Riyadh (AST)</option>
+              <option value="Asia/Tehran">Tehran (IRST)</option>
+            </optgroup>
           </Select>
         </Field>
         <div className="flex justify-end">
@@ -240,6 +288,18 @@ function AssistantTab({
 
 // --- Heartbeat Tab ---
 
+const HEARTBEAT_PRESETS = [
+  { value: '15m', label: 'Every 15 minutes' },
+  { value: '30m', label: 'Every 30 minutes' },
+  { value: '1h', label: 'Every hour' },
+  { value: '2h', label: 'Every 2 hours' },
+  { value: '4h', label: 'Every 4 hours' },
+  { value: '8h', label: 'Every 8 hours' },
+  { value: 'daily', label: 'Daily' },
+  { value: 'weekdays', label: 'Weekdays only' },
+  { value: 'weekly', label: 'Weekly' },
+] as const;
+
 function HeartbeatTab({
   profile,
   onSaved,
@@ -247,18 +307,24 @@ function HeartbeatTab({
   profile: { heartbeat_opt_in: boolean; heartbeat_frequency: string };
   onSaved: () => void;
 }) {
+  const isPreset = HEARTBEAT_PRESETS.some((p) => p.value === profile.heartbeat_frequency);
   const [form, setForm] = useState({
     heartbeat_opt_in: profile.heartbeat_opt_in,
-    heartbeat_frequency: profile.heartbeat_frequency,
+    heartbeat_frequency: isPreset ? profile.heartbeat_frequency : 'custom',
+    custom_frequency: isPreset ? '' : profile.heartbeat_frequency,
   });
   const [saving, setSaving] = useState(false);
+
+  const effectiveFrequency = form.heartbeat_frequency === 'custom'
+    ? form.custom_frequency
+    : form.heartbeat_frequency;
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
       await api.updateProfile({
         heartbeat_opt_in: form.heartbeat_opt_in,
-        heartbeat_frequency: form.heartbeat_frequency,
+        heartbeat_frequency: effectiveFrequency,
       });
       onSaved();
       toast.success('Heartbeat settings updated');
@@ -267,7 +333,7 @@ function HeartbeatTab({
     } finally {
       setSaving(false);
     }
-  }, [form, onSaved]);
+  }, [form, effectiveFrequency, onSaved]);
 
   return (
     <Card>
@@ -281,7 +347,7 @@ function HeartbeatTab({
             className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
           />
           <label htmlFor="heartbeat-opt-in" className="text-sm">
-            Enable daily heartbeat check-ins
+            Enable heartbeat check-ins
           </label>
         </div>
         <p className="text-xs text-muted-foreground">
@@ -293,11 +359,25 @@ function HeartbeatTab({
             onChange={(e) => setForm((prev) => ({ ...prev, heartbeat_frequency: e.target.value }))}
             disabled={!form.heartbeat_opt_in}
           >
-            <option value="daily">Daily</option>
-            <option value="weekdays">Weekdays only</option>
-            <option value="weekly">Weekly</option>
+            {HEARTBEAT_PRESETS.map((p) => (
+              <option key={p.value} value={p.value}>{p.label}</option>
+            ))}
+            <option value="custom">Custom interval</option>
           </Select>
         </Field>
+        {form.heartbeat_frequency === 'custom' && (
+          <Field label="Custom Interval">
+            <Input
+              value={form.custom_frequency}
+              onChange={(e) => setForm((prev) => ({ ...prev, custom_frequency: e.target.value }))}
+              disabled={!form.heartbeat_opt_in}
+              placeholder="e.g. 45m, 3h, 2d"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              Use a number followed by m (minutes), h (hours), or d (days).
+            </p>
+          </Field>
+        )}
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={saving}>
             {saving ? 'Saving...' : 'Save Heartbeat Settings'}
