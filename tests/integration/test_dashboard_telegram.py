@@ -208,6 +208,20 @@ class TestMultiChannelSingleTenant:
 
         assert tg_contractor.id == web_contractor.id
 
+    def test_telegram_link_sets_channel_identifier(self) -> None:
+        """Linking a Telegram chat to an existing contractor persists channel_identifier."""
+        store = get_contractor_store()
+        asyncio.get_event_loop().run_until_complete(
+            store.create(user_id="local@clawbolt.local", name="Web User")
+        )
+
+        tg_contractor = asyncio.get_event_loop().run_until_complete(
+            _get_or_create_contractor("telegram", "11223344")
+        )
+
+        assert tg_contractor.channel_identifier == "11223344"
+        assert tg_contractor.preferred_channel == "telegram"
+
     def test_telegram_sessions_visible_in_dashboard_after_web_signup(self) -> None:
         """Sessions created via Telegram appear in dashboard when web created first."""
         store = get_contractor_store()
