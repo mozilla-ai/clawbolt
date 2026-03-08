@@ -9,7 +9,7 @@ from backend.app.schemas import MemoryFactResponse, MemoryFactUpdate
 router = APIRouter()
 
 
-@router.get("/contractor/memory", response_model=list[MemoryFactResponse])
+@router.get("/user/memory", response_model=list[MemoryFactResponse])
 async def list_memory(
     category: str | None = None,
     current_user: ContractorData = Depends(get_current_user),
@@ -28,7 +28,7 @@ async def list_memory(
     ]
 
 
-@router.put("/contractor/memory/{key}", response_model=MemoryFactResponse)
+@router.put("/user/memory/{key}", response_model=MemoryFactResponse)
 async def update_memory(
     key: str,
     body: MemoryFactUpdate,
@@ -59,7 +59,7 @@ async def update_memory(
     )
 
 
-@router.delete("/contractor/memory/{key}", status_code=204)
+@router.delete("/user/memory/{key}", status_code=204)
 async def delete_memory(
     key: str,
     current_user: ContractorData = Depends(get_current_user),

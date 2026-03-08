@@ -17,7 +17,7 @@ from backend.app.schemas import ContractorStatsResponse
 router = APIRouter()
 
 
-@router.get("/contractor/stats", response_model=ContractorStatsResponse)
+@router.get("/user/stats", response_model=ContractorStatsResponse)
 async def get_stats(
     current_user: ContractorData = Depends(get_current_user),
 ) -> ContractorStatsResponse:

@@ -113,7 +113,7 @@ class TestDashboardSeesTelegramData:
         real_auth_client: TestClient,
         telegram_contractor: ContractorData,
     ) -> None:
-        resp = real_auth_client.get("/api/contractor/profile")
+        resp = real_auth_client.get("/api/user/profile")
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "Telegram User"
@@ -143,7 +143,7 @@ class TestDashboardSeesTelegramData:
                 },
             ],
         )
-        resp = real_auth_client.get("/api/contractor/sessions")
+        resp = real_auth_client.get("/api/user/sessions")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total"] == 1
@@ -156,7 +156,7 @@ class TestDashboardSeesTelegramData:
         telegram_contractor: ContractorData,
     ) -> None:
         _seed_memory(telegram_contractor)
-        resp = real_auth_client.get("/api/contractor/memory")
+        resp = real_auth_client.get("/api/user/memory")
         assert resp.status_code == 200
         facts = resp.json()
         assert len(facts) == 2
@@ -182,7 +182,7 @@ class TestDashboardSeesTelegramData:
             ],
         )
         _seed_memory(telegram_contractor)
-        resp = real_auth_client.get("/api/contractor/stats")
+        resp = real_auth_client.get("/api/user/stats")
         assert resp.status_code == 200
         data = resp.json()
         assert data["total_sessions"] == 1
@@ -258,7 +258,7 @@ class TestMultiChannelSingleTenant:
             patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
             TestClient(app) as c,
         ):
-            resp = c.get("/api/contractor/sessions")
+            resp = c.get("/api/user/sessions")
             assert resp.status_code == 200
             data = resp.json()
             assert data["total"] == 1

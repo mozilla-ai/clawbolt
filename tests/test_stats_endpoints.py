@@ -10,7 +10,7 @@ from backend.app.config import settings
 
 
 def test_stats_empty(client: TestClient) -> None:
-    resp = client.get("/api/contractor/stats")
+    resp = client.get("/api/user/stats")
     assert resp.status_code == 200
     data = resp.json()
     assert data["total_sessions"] == 0
@@ -38,7 +38,7 @@ def test_stats_with_data(client: TestClient, test_contractor: ContractorData) ->
     path.write_text(json.dumps(meta) + "\n" + json.dumps(msg) + "\n", encoding="utf-8")
 
     # Create a checklist item
-    client.post("/api/contractor/checklist", json={"description": "Check site"})
+    client.post("/api/user/checklist", json={"description": "Check site"})
 
     # Create memory
     mem_dir = Path(settings.contractor_data_dir) / str(test_contractor.id) / "memory"
@@ -48,7 +48,7 @@ def test_stats_with_data(client: TestClient, test_contractor: ContractorData) ->
         encoding="utf-8",
     )
 
-    resp = client.get("/api/contractor/stats")
+    resp = client.get("/api/user/stats")
     assert resp.status_code == 200
     data = resp.json()
     assert data["total_sessions"] == 1
