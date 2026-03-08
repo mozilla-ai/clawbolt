@@ -157,8 +157,8 @@ class TestSectionBuilders:
     def test_build_proactive_section(self) -> None:
         """Should contain proactive messaging rules."""
         result = build_proactive_section()
-        assert "draft estimate" in result
         assert "checklist" in result
+        assert "reminder" in result
 
     def test_build_recall_section(self) -> None:
         """Should contain recall behavior rules."""
