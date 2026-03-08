@@ -329,7 +329,7 @@ export default function ChatPage() {
             onChange={(e) => setInput(e.target.value)}
             placeholder="Type a message..."
             disabled={sending}
-            className="flex-1 px-3 py-2.5 sm:py-2 text-sm bg-card border border-border rounded-[--radius-md] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors disabled:opacity-50"
+            className="flex-1 px-3 py-2.5 sm:py-2 text-base sm:text-sm bg-card border border-border rounded-[--radius-md] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors disabled:opacity-50"
             autoComplete="off"
           />
           <Button type="submit" disabled={!canSend}>
