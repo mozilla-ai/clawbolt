@@ -1,4 +1,3 @@
-import json
 import logging
 from typing import Any
 
@@ -134,15 +133,6 @@ def build_soul_prompt(contractor: ContractorData) -> str:
     if contractor.location:
         lines.append(f"Based in {contractor.location}.")
 
-    if contractor.hourly_rate:
-        lines.append(f"Standard rate: ${contractor.hourly_rate:.0f}/hour.")
-
-    if contractor.business_hours:
-        lines.append(f"Business hours: {contractor.business_hours}.")
-
-    if contractor.timezone:
-        lines.append(f"Timezone: {contractor.timezone}.")
-
     # Layer 2: trade-specific defaults (only when no custom soul_text)
     if not contractor.soul_text:
         trade_guidance = get_trade_defaults(trade)
@@ -153,28 +143,7 @@ def build_soul_prompt(contractor: ContractorData) -> str:
     if contractor.soul_text:
         lines.append(f"\n{contractor.soul_text}")
 
-    # Layer 4: communication style from preferences
-    if contractor.preferences_json and contractor.preferences_json != "{}":
-        try:
-            prefs = json.loads(contractor.preferences_json)
-            if isinstance(prefs, dict):
-                style = prefs.get("communication_style")
-                if style:
-                    lines.append(f"Communication style: {style}.")
-        except (json.JSONDecodeError, TypeError):
-            logger.debug("Could not parse preferences_json for contractor %s", contractor.user_id)
-
     return "\n".join(lines)
-
-
-def get_missing_optional_fields(contractor: ContractorData) -> list[str]:
-    """Return labels for optional profile fields that are still empty."""
-    optional: dict[str, str] = {
-        "hourly_rate": "rates",
-        "business_hours": "business hours",
-        "timezone": "timezone",
-    }
-    return [label for field, label in optional.items() if not getattr(contractor, field, None)]
 
 
 def build_onboarding_prompt() -> str:

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import logging
 from typing import TYPE_CHECKING
 
@@ -52,21 +51,6 @@ def build_onboarding_system_prompt(contractor: ContractorData) -> str:
         known.append(f"- Location: {contractor.location}")
     if contractor.assistant_name and contractor.assistant_name != "Clawbolt":
         known.append(f"- Your name (the AI): {contractor.assistant_name}")
-    if contractor.hourly_rate:
-        known.append(f"- Rate: ${contractor.hourly_rate:.0f}/hour")
-    if contractor.business_hours and contractor.business_hours.strip():
-        known.append(f"- Business hours: {contractor.business_hours}")
-    if contractor.timezone and contractor.timezone.strip():
-        known.append(f"- Timezone: {contractor.timezone}")
-    if contractor.preferences_json and contractor.preferences_json != "{}":
-        try:
-            prefs = json.loads(contractor.preferences_json)
-            if isinstance(prefs, dict):
-                style = prefs.get("communication_style")
-                if style:
-                    known.append(f"- Communication style: {style}")
-        except (json.JSONDecodeError, TypeError):
-            pass
 
     parts = [base]
     if known:
@@ -132,8 +116,6 @@ class OnboardingSubscriber:
         parts = [f"Name: {self._contractor.name}", f"Trade: {self._contractor.trade}"]
         if self._contractor.location:
             parts.append(f"Location: {self._contractor.location}")
-        if self._contractor.hourly_rate:
-            parts.append(f"Rate: ${self._contractor.hourly_rate:.0f}/hour")
         parts.append(f"Your AI: {assistant}")
         summary = "\n".join(f"- {p}" for p in parts)
         return (

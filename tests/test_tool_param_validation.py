@@ -357,13 +357,10 @@ def test_update_profile_params_accepts_all_fields() -> None:
         name="Jane Doe",
         trade="electrician",
         location="Portland, OR",
-        hourly_rate="$85/hr",
-        business_hours="Mon-Fri 7am-5pm",
-        communication_style="casual",
-        soul_text="Friendly and efficient",
+        assistant_name="Bolt",
     )
     assert p.name == "Jane Doe"
-    assert p.hourly_rate == "$85/hr"
+    assert p.assistant_name == "Bolt"
 
 
 # ---------------------------------------------------------------------------
