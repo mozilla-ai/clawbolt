@@ -55,7 +55,7 @@ def _resolve_path(contractor_id: int, relative_path: str) -> tuple[Path, str | N
 
     Returns (resolved_path, error_message).  error_message is None on success.
     """
-    base = Path(settings.contractor_data_dir) / str(contractor_id)
+    base = Path(settings.data_dir) / str(contractor_id)
     try:
         resolved = (base / relative_path).resolve()
     except (ValueError, OSError):

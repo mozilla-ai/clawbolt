@@ -23,7 +23,7 @@ from tests.mocks.llm import make_text_response, make_tool_call_response
 
 def _ensure_session_on_disk(contractor: ContractorData, session: SessionState) -> None:
     """Create the contractor directory and session file so file-store writes succeed."""
-    cdir = Path(settings.contractor_data_dir) / str(contractor.id)
+    cdir = Path(settings.data_dir) / str(contractor.id)
     sessions_dir = cdir / "sessions"
     sessions_dir.mkdir(parents=True, exist_ok=True)
     session_path = sessions_dir / f"{session.session_id}.jsonl"
@@ -38,8 +38,8 @@ def _ensure_session_on_disk(contractor: ContractorData, session: SessionState) -
         for msg in session.messages:
             lines.append(json.dumps(msg.model_dump(), default=str))
         session_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
-    # Also write contractor.json so the store can reload the contractor
-    contractor_json = cdir / "contractor.json"
+    # Also write user.json so the store can reload the contractor
+    contractor_json = cdir / "user.json"
     if not contractor_json.exists():
         data = contractor.model_dump()
         data.pop("soul_text", None)

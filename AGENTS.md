@@ -33,15 +33,15 @@ uv run ty check --python .venv backend/ tests/
 
 ## Storage
 
-All data is stored as files under `data/contractors/` (configurable via `CONTRACTOR_DATA_DIR`). No database is required.
+All data is stored as files under `data/users/` (configurable via `DATA_DIR`). No database is required.
 
 ```
 data/
-  contractor_index.json              # Channel -> contractor_id routing
+  user_index.json                    # Channel -> user_id routing
   seen_messages.json                 # Webhook idempotency (capped at 10K)
-  contractors/
+  users/
     {id}/
-      contractor.json                # Profile data
+      user.json                      # Profile data
       SOUL.md                        # Personality/behavioral guidance
       memory/
         MEMORY.md                    # Structured facts by category
@@ -86,7 +86,7 @@ Data classes (Pydantic BaseModel, replace ORM models):
 ## Testing
 
 - pytest with FastAPI `TestClient`
-- File stores isolated per test via `tmp_path` + `settings.contractor_data_dir` patch
+- File stores isolated per test via `tmp_path` + `settings.data_dir` patch
 - `reset_stores()` clears cached store singletons between tests
 - Override `get_current_user` via FastAPI dependency injection
 - Mock ALL external services: Telegram, LLM (any-llm), faster-whisper, Dropbox/Drive
@@ -94,7 +94,7 @@ Data classes (Pydantic BaseModel, replace ORM models):
 
 ## Architecture
 
-- **File-based storage**: all data in JSON/JSONL/Markdown files under `data/contractors/`. No database. See `backend/app/agent/file_store.py`.
+- **File-based storage**: all data in JSON/JSONL/Markdown files under `data/users/`. No database. See `backend/app/agent/file_store.py`.
 - **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). OSS is single-tenant; premium adds multi-tenant auth via plugin.
 - **`user_id` scoping** on every data class and endpoint from day one
 - **MessagingService protocol**: channel-agnostic interface in `services/messaging.py` with Telegram implementation in `channels/telegram.py`

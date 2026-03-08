@@ -89,10 +89,7 @@ def test_chat_endpoint_persists_messages(
 
     # Read the session JSONL file directly to verify persistence
     session_path = (
-        Path(settings.contractor_data_dir)
-        / str(webchat_contractor.id)
-        / "sessions"
-        / f"{session_id}.jsonl"
+        Path(settings.data_dir) / str(webchat_contractor.id) / "sessions" / f"{session_id}.jsonl"
     )
     assert session_path.exists()
     lines = [json.loads(line) for line in session_path.read_text().strip().split("\n")]

@@ -41,7 +41,7 @@ def _make_scope(
 @pytest.fixture()
 def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
     """TestClient that does NOT override the rate limiter, so rate limiting is active."""
-    with patch.object(settings, "contractor_data_dir", str(tmp_path)):
+    with patch.object(settings, "data_dir", str(tmp_path)):
         reset_stores()
 
         store = get_contractor_store()

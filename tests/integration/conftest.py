@@ -21,7 +21,7 @@ skip_without_anthropic_key = pytest.mark.skipif(
 @pytest.fixture(autouse=True)
 def _isolate_file_stores(tmp_path: object) -> Generator[None]:
     """Point file stores at a temp directory and reset caches for each test."""
-    with patch.object(settings, "contractor_data_dir", str(tmp_path)):
+    with patch.object(settings, "data_dir", str(tmp_path)):
         reset_stores()
         yield
     reset_stores()

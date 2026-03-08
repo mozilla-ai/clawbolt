@@ -72,7 +72,7 @@ def _create_session(
     messages: list[dict],
 ) -> None:
     """Write a JSONL session file for the given contractor."""
-    base = Path(settings.contractor_data_dir) / str(contractor.id) / "sessions"
+    base = Path(settings.data_dir) / str(contractor.id) / "sessions"
     base.mkdir(parents=True, exist_ok=True)
     lines = [
         json.dumps(
@@ -94,7 +94,7 @@ def _create_session(
 
 def _seed_memory(contractor: ContractorData) -> None:
     """Write a MEMORY.md for the given contractor."""
-    mem_dir = Path(settings.contractor_data_dir) / str(contractor.id) / "memory"
+    mem_dir = Path(settings.data_dir) / str(contractor.id) / "memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
     (mem_dir / "MEMORY.md").write_text(
         "# Long-term Memory\n\n"

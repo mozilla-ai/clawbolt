@@ -24,7 +24,7 @@ def _get_tool_fn(contractor_id: int, tool_name: str) -> Callable[..., Awaitable[
 
 
 def _contractor_dir(contractor: ContractorData) -> Path:
-    return Path(settings.contractor_data_dir) / str(contractor.id)
+    return Path(settings.data_dir) / str(contractor.id)
 
 
 # --- read_file tests ---
