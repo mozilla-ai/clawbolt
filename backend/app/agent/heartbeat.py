@@ -66,7 +66,7 @@ class ComposeMessageParams(BaseModel):
 COMPOSE_MESSAGE_TOOL: dict[str, Any] = {
     "name": ToolName.COMPOSE_MESSAGE,
     "description": (
-        "Compose a proactive message to send to the contractor, or decide no message is needed."
+        "Compose a proactive message to send to the user, or decide no message is needed."
     ),
     "input_schema": ComposeMessageParams.model_json_schema(),
 }
@@ -292,7 +292,7 @@ async def run_cheap_checks(
     if last_inbound is not None:
         if last_inbound <= idle_cutoff:
             days = (now - last_inbound).days
-            result.flags.append(f"Contractor idle for {days} days -- no recent messages")
+            result.flags.append(f"User idle for {days} days -- no recent messages")
     elif contractor.created_at is not None:
         created = contractor.created_at
         if isinstance(created, str):
@@ -305,9 +305,7 @@ async def run_cheap_checks(
                 created = created.replace(tzinfo=datetime.UTC)
             if created <= idle_cutoff:
                 days = (now - created).days
-                result.flags.append(
-                    f"Contractor idle for {days} days -- no messages since onboarding"
-                )
+                result.flags.append(f"User idle for {days} days -- no messages since onboarding")
 
     return result
 
@@ -358,7 +356,7 @@ def _load_recent_messages(contractor: ContractorData) -> str:
 
     lines: list[str] = []
     for msg in recent:
-        direction = "Contractor" if msg.direction == MessageDirection.INBOUND else "Clawbolt"
+        direction = "User" if msg.direction == MessageDirection.INBOUND else "Assistant"
         lines.append(f"[{direction}] {msg.body}")
     return "\n".join(lines) or "(no recent messages)"
 
