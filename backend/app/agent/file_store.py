@@ -418,6 +418,14 @@ class ContractorStore:
             index[key] = contractor.id
         _write_json(idx_path, index)
 
+    def link_channel(self, channel: str, channel_identifier: str, contractor_id: int) -> None:
+        """Add a channel mapping to the index for an existing contractor."""
+        idx_path = _index_path()
+        index: dict[str, int] = _read_json(idx_path, {})
+        key = f"{channel}:{channel_identifier}"
+        index[key] = contractor_id
+        _write_json(idx_path, index)
+
     def _next_contractor_id(self) -> int:
         """Get the next contractor ID by scanning existing directories."""
         dirs = self._all_dirs()
