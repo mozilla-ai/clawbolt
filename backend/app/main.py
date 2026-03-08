@@ -24,6 +24,7 @@ from backend.app.routers import (
     user_profile,
     user_sessions,
     user_stats,
+    user_tools,
 )
 
 logging.basicConfig(
@@ -173,6 +174,7 @@ app.include_router(user_sessions.router, prefix="/api")
 app.include_router(user_memory.router, prefix="/api")
 app.include_router(user_checklist.router, prefix="/api")
 app.include_router(user_stats.router, prefix="/api")
+app.include_router(user_tools.router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Static file serving (built frontend)

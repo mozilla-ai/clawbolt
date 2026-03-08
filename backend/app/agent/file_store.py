@@ -202,6 +202,15 @@ class MemoryFact(BaseModel):
     confidence: float = 1.0
 
 
+class ToolConfigEntry(BaseModel):
+    """A single tool group entry in a user's tool_config.json."""
+
+    name: str = ""
+    description: str = ""
+    category: str = "domain"
+    enabled: bool = True
+
+
 # ---------------------------------------------------------------------------
 # Helper utilities
 # ---------------------------------------------------------------------------
@@ -1462,6 +1471,43 @@ class LLMUsageStore:
             "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
         }
         _append_jsonl(self._path, entry)
+
+
+# ---------------------------------------------------------------------------
+# ToolConfigStore
+# ---------------------------------------------------------------------------
+
+
+class ToolConfigStore:
+    """File-based storage for per-user tool configuration.
+
+    Stores a list of ``ToolConfigEntry`` objects in
+    ``data/users/{id}/tool_config.json``.
+    """
+
+    def __init__(self, contractor_id: int) -> None:
+        self.contractor_id = contractor_id
+        self._lock = asyncio.Lock()
+
+    @property
+    def _path(self) -> Path:
+        return _user_dir(self.contractor_id) / "tool_config.json"
+
+    async def load(self) -> list[ToolConfigEntry]:
+        """Load tool config entries. Returns empty list if no config exists."""
+        raw = _read_json(self._path, [])
+        return [ToolConfigEntry.model_validate(item) for item in raw]
+
+    async def save(self, entries: list[ToolConfigEntry]) -> list[ToolConfigEntry]:
+        """Save tool config entries and return them."""
+        async with self._lock:
+            _write_json(self._path, [e.model_dump() for e in entries])
+        return entries
+
+    async def get_disabled_tool_names(self) -> set[str]:
+        """Return the set of tool group names that are disabled."""
+        entries = await self.load()
+        return {e.name for e in entries if not e.enabled}
 
 
 # ---------------------------------------------------------------------------

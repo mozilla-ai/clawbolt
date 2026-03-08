@@ -13,6 +13,8 @@ import type {
   MemoryFactUpdate,
   SessionDetail,
   SessionListResponse,
+  ToolConfigResponse,
+  ToolConfigUpdateEntry,
 } from '@/types';
 import { getAccessToken, setAccessToken, setRefreshToken } from '@/lib/api-client';
 import { tryRestoreSession as _tryRestoreSession } from '@/extensions';
@@ -130,6 +132,15 @@ const api = {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
+    }),
+
+  // Tool config
+  getToolConfig: () => _fetch<ToolConfigResponse>('/api/user/tools'),
+  updateToolConfig: (tools: ToolConfigUpdateEntry[]) =>
+    _fetch<ToolConfigResponse>('/api/user/tools', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ tools }),
     }),
 
   // Stats

@@ -127,3 +127,19 @@ export interface ChannelConfigUpdate {
   telegram_bot_token?: string;
   telegram_allowed_usernames?: string;
 }
+
+export interface ToolConfigEntry {
+  name: string;
+  description: string;
+  category: string;
+  enabled: boolean;
+}
+
+export interface ToolConfigResponse {
+  tools: ToolConfigEntry[];
+}
+
+export interface ToolConfigUpdateEntry {
+  name: string;
+  enabled: boolean;
+}
