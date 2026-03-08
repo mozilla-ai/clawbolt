@@ -136,12 +136,22 @@ const api = {
   getStats: () => _fetch<ContractorStats>('/api/contractor/stats'),
 
   // Chat
-  sendChatMessage: (message: string, sessionId?: string) =>
-    _fetch<ChatResponse>('/api/contractor/chat', {
+  sendChatMessage: (message: string, sessionId?: string, files?: File[]) => {
+    const formData = new FormData();
+    formData.append('message', message);
+    if (sessionId) {
+      formData.append('session_id', sessionId);
+    }
+    if (files) {
+      for (const file of files) {
+        formData.append('files', file);
+      }
+    }
+    return _fetch<ChatResponse>('/api/contractor/chat', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ message, ...(sessionId ? { session_id: sessionId } : {}) }),
-    }),
+      body: formData,
+    });
+  },
 };
 
 export default api;

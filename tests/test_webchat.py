@@ -1,5 +1,6 @@
 """Tests for the web chat channel endpoint."""
 
+import io
 import json
 from collections.abc import Generator
 from pathlib import Path
@@ -57,7 +58,7 @@ def test_chat_endpoint_returns_reply(
 
         resp = webchat_client.post(
             "/api/contractor/chat",
-            json={"message": "Hi there"},
+            data={"message": "Hi there"},
         )
 
     assert resp.status_code == 200
@@ -81,7 +82,7 @@ def test_chat_endpoint_persists_messages(
 
         resp = webchat_client.post(
             "/api/contractor/chat",
-            json={"message": "Remember my rate is 85"},
+            data={"message": "Remember my rate is 85"},
         )
         assert resp.status_code == 200
         session_id = resp.json()["session_id"]
@@ -103,8 +104,8 @@ def test_chat_endpoint_persists_messages(
 
 
 def test_chat_endpoint_missing_body(webchat_client: TestClient) -> None:
-    """Missing body should return 422."""
-    resp = webchat_client.post("/api/contractor/chat", json={})
+    """Empty request (no message, no files) should return 422."""
+    resp = webchat_client.post("/api/contractor/chat", data={"message": ""})
     assert resp.status_code == 422
 
 
@@ -122,13 +123,13 @@ def test_chat_returns_same_session(
         mock_agent.return_value = AgentResponse(reply_text="Reply 1")
         resp1 = webchat_client.post(
             "/api/contractor/chat",
-            json={"message": "First message"},
+            data={"message": "First message"},
         )
 
         mock_agent.return_value = AgentResponse(reply_text="Reply 2")
         resp2 = webchat_client.post(
             "/api/contractor/chat",
-            json={"message": "Second message"},
+            data={"message": "Second message"},
         )
 
     assert resp1.json()["session_id"] == resp2.json()["session_id"]
@@ -148,14 +149,14 @@ def test_chat_with_explicit_session_id(
         mock_agent.return_value = AgentResponse(reply_text="Reply 1")
         resp1 = webchat_client.post(
             "/api/contractor/chat",
-            json={"message": "First message"},
+            data={"message": "First message"},
         )
         session_id = resp1.json()["session_id"]
 
         mock_agent.return_value = AgentResponse(reply_text="Reply 2")
         resp2 = webchat_client.post(
             "/api/contractor/chat",
-            json={"message": "Second message", "session_id": session_id},
+            data={"message": "Second message", "session_id": session_id},
         )
 
     assert resp2.status_code == 200
@@ -166,7 +167,7 @@ def test_chat_with_invalid_session_id(webchat_client: TestClient) -> None:
     """Invalid session_id format should return 422."""
     resp = webchat_client.post(
         "/api/contractor/chat",
-        json={"message": "Hello", "session_id": "../../bad"},
+        data={"message": "Hello", "session_id": "../../bad"},
     )
     assert resp.status_code == 422
 
@@ -185,9 +186,127 @@ def test_chat_with_nonexistent_session_id(
         mock_agent.return_value = AgentResponse(reply_text="Hello!")
         resp = webchat_client.post(
             "/api/contractor/chat",
-            json={"message": "Hello", "session_id": "9999_9999"},
+            data={"message": "Hello", "session_id": "9999_9999"},
         )
 
     assert resp.status_code == 200
     # A new session should have been created (not the requested one)
     assert resp.json()["session_id"] != "9999_9999"
+
+
+# ---------------------------------------------------------------------------
+# File upload tests
+# ---------------------------------------------------------------------------
+
+
+def test_chat_with_image_upload(
+    webchat_client: TestClient,
+    webchat_contractor: ContractorData,
+) -> None:
+    """Upload an image with text; verify downloaded_media reaches the agent."""
+    with patch(
+        "backend.app.agent.router.run_agent",
+        new_callable=AsyncMock,
+    ) as mock_agent:
+        from backend.app.agent.core import AgentResponse
+
+        mock_agent.return_value = AgentResponse(reply_text="Nice photo!")
+
+        # 1x1 red PNG
+        png_bytes = (
+            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+            b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
+            b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+        )
+        resp = webchat_client.post(
+            "/api/contractor/chat",
+            data={"message": "Check this out"},
+            files=[("files", ("photo.png", io.BytesIO(png_bytes), "image/png"))],
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == "Nice photo!"
+
+    # Verify downloaded_media was passed to run_agent
+    call_kwargs = mock_agent.call_args.kwargs
+    dm = call_kwargs["downloaded_media"]
+    assert len(dm) == 1
+    assert dm[0].mime_type == "image/png"
+    assert dm[0].filename == "photo.png"
+    assert dm[0].content == png_bytes
+
+
+def test_chat_with_files_only(
+    webchat_client: TestClient,
+    webchat_contractor: ContractorData,
+) -> None:
+    """Upload a file without text; should still succeed."""
+    with patch(
+        "backend.app.agent.router.run_agent",
+        new_callable=AsyncMock,
+    ) as mock_agent:
+        from backend.app.agent.core import AgentResponse
+
+        mock_agent.return_value = AgentResponse(reply_text="Got your file!")
+
+        resp = webchat_client.post(
+            "/api/contractor/chat",
+            files=[("files", ("doc.pdf", io.BytesIO(b"%PDF-1.4 test"), "application/pdf"))],
+        )
+
+    assert resp.status_code == 200
+    assert resp.json()["reply"] == "Got your file!"
+
+
+def test_chat_no_message_no_files(webchat_client: TestClient) -> None:
+    """Empty request with no text and no files should return 422."""
+    resp = webchat_client.post("/api/contractor/chat", data={"message": "  "})
+    assert resp.status_code == 422
+
+
+def test_chat_file_too_large(
+    webchat_client: TestClient,
+    webchat_contractor: ContractorData,
+) -> None:
+    """Oversized file should return 422."""
+    with patch.object(settings, "max_media_size_bytes", 10):
+        resp = webchat_client.post(
+            "/api/contractor/chat",
+            data={"message": "here is a big file"},
+            files=[("files", ("big.bin", io.BytesIO(b"x" * 100), "application/octet-stream"))],
+        )
+
+    assert resp.status_code == 422
+    assert "too large" in resp.json()["detail"].lower()
+
+
+def test_chat_multiple_files(
+    webchat_client: TestClient,
+    webchat_contractor: ContractorData,
+) -> None:
+    """Multiple files in one request should all reach the agent."""
+    with patch(
+        "backend.app.agent.router.run_agent",
+        new_callable=AsyncMock,
+    ) as mock_agent:
+        from backend.app.agent.core import AgentResponse
+
+        mock_agent.return_value = AgentResponse(reply_text="Got them all!")
+
+        resp = webchat_client.post(
+            "/api/contractor/chat",
+            data={"message": "Multiple attachments"},
+            files=[
+                ("files", ("a.png", io.BytesIO(b"img1"), "image/png")),
+                ("files", ("b.pdf", io.BytesIO(b"pdf1"), "application/pdf")),
+                ("files", ("c.mp3", io.BytesIO(b"audio1"), "audio/mpeg")),
+            ],
+        )
+
+    assert resp.status_code == 200
+    call_kwargs = mock_agent.call_args.kwargs
+    dm = call_kwargs["downloaded_media"]
+    assert len(dm) == 3
+    filenames = {m.filename for m in dm}
+    assert filenames == {"a.png", "b.pdf", "c.mp3"}
