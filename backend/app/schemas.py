@@ -94,6 +94,7 @@ class ContractorProfileResponse(BaseModel):
     timezone: str
     assistant_name: str
     soul_text: str
+    user_text: str
     preferred_channel: str
     channel_identifier: str
     heartbeat_opt_in: bool
@@ -114,6 +115,7 @@ class ContractorProfileUpdate(BaseModel):
     timezone: str | None = None
     assistant_name: str | None = None
     soul_text: str | None = None
+    user_text: str | None = None
     heartbeat_opt_in: bool | None = None
     heartbeat_frequency: str | None = None
 

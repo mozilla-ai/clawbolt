@@ -30,6 +30,7 @@ def _profile_response(c: ContractorData) -> ContractorProfileResponse:
         timezone=c.timezone,
         assistant_name=c.assistant_name,
         soul_text=c.soul_text,
+        user_text=c.user_text,
         preferred_channel=c.preferred_channel,
         channel_identifier=c.channel_identifier,
         heartbeat_opt_in=c.heartbeat_opt_in,

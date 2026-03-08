@@ -14,6 +14,7 @@ Storage layout::
         {contractor_id}/
           contractor.json
           SOUL.md
+          USER.md
           memory/
             MEMORY.md
             HISTORY.md
@@ -65,6 +66,7 @@ class ContractorData(BaseModel):
     location: str = ""
     hourly_rate: float | None = None
     soul_text: str = ""
+    user_text: str = ""
     business_hours: str = ""
     timezone: str = ""
     preferred_channel: str = "telegram"
@@ -352,10 +354,16 @@ class ContractorStore:
         soul_path = _contractor_dir(contractor_id) / "SOUL.md"
         if soul_path.exists():
             raw = soul_path.read_text(encoding="utf-8").strip()
-            # Strip the "# Soul" header if present
             if raw.startswith("# Soul"):
                 raw = raw[len("# Soul") :].strip()
             contractor.soul_text = raw
+        # Load user_text from USER.md
+        user_path = _contractor_dir(contractor_id) / "USER.md"
+        if user_path.exists():
+            raw = user_path.read_text(encoding="utf-8").strip()
+            if raw.startswith("# User"):
+                raw = raw[len("# User") :].strip()
+            contractor.user_text = raw
         return contractor
 
     def _save(self, contractor: ContractorData) -> None:
@@ -363,9 +371,10 @@ class ContractorStore:
         cdir = _contractor_dir(contractor.id)
         cdir.mkdir(parents=True, exist_ok=True)
 
-        # Save contractor.json (exclude soul_text, it goes to SOUL.md)
+        # Save contractor.json (exclude soul_text/user_text, they go to .md files)
         data = contractor.model_dump()
         soul_text = data.pop("soul_text", "")
+        user_text = data.pop("user_text", "")
         _write_json(cdir / "contractor.json", data)
 
         # Save SOUL.md
@@ -376,6 +385,16 @@ class ContractorStore:
             # Seed a meaningful default for brand-new contractors
             soul_path.write_text(
                 f"# Soul\n\n{load_prompt('default_soul')}\n",
+                encoding="utf-8",
+            )
+
+        # Save USER.md
+        user_path = cdir / "USER.md"
+        if user_text:
+            user_path.write_text(f"# User\n\n{user_text}\n", encoding="utf-8")
+        elif not user_path.exists():
+            user_path.write_text(
+                f"# User\n\n{load_prompt('default_user')}\n",
                 encoding="utf-8",
             )
 
@@ -668,6 +687,24 @@ class FileMemoryStore:
         """Write SOUL.md content."""
         self._soul_path.parent.mkdir(parents=True, exist_ok=True)
         self._soul_path.write_text(f"# Soul\n\n{content}\n", encoding="utf-8")
+
+    @property
+    def _user_path(self) -> Path:
+        return _contractor_dir(self.contractor_id) / "USER.md"
+
+    def read_user(self) -> str:
+        """Read USER.md content."""
+        if not self._user_path.exists():
+            return ""
+        raw = self._user_path.read_text(encoding="utf-8").strip()
+        if raw.startswith("# User"):
+            raw = raw[len("# User") :].strip()
+        return raw
+
+    def write_user(self, content: str) -> None:
+        """Write USER.md content."""
+        self._user_path.parent.mkdir(parents=True, exist_ok=True)
+        self._user_path.write_text(f"# User\n\n{content}\n", encoding="utf-8")
 
 
 # ---------------------------------------------------------------------------

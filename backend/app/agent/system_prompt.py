@@ -72,6 +72,11 @@ def build_identity_section(contractor: ContractorData) -> str:
     return build_soul_prompt(contractor)
 
 
+def build_user_section(contractor: ContractorData) -> str:
+    """Build the user profile section from USER.md content."""
+    return contractor.user_text or ""
+
+
 async def build_memory_section(
     contractor_id: int,
     query: str | None = None,
@@ -175,6 +180,8 @@ async def build_agent_system_prompt(
         build_identity_section(contractor),
     )
 
+    builder.add_section("About Your User", build_user_section(contractor))
+
     memory = await build_memory_section(contractor.id, query=message_context)
     builder.add_section("Your Memory", memory)
 
@@ -209,6 +216,7 @@ async def build_heartbeat_system_prompt(
     builder.set_preamble(load_prompt("heartbeat_preamble"))
 
     builder.add_section("About the contractor", build_identity_section(contractor))
+    builder.add_section("About the user", build_user_section(contractor))
 
     memory = await build_memory_section(contractor.id)
     builder.add_section("Contractor's memory", memory)

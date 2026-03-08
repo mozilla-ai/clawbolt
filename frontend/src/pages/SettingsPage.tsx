@@ -230,12 +230,13 @@ function AssistantTab({
   profile,
   onSaved,
 }: {
-  profile: { assistant_name: string; soul_text: string };
+  profile: { assistant_name: string; soul_text: string; user_text: string };
   onSaved: () => void;
 }) {
   const [form, setForm] = useState({
     assistant_name: profile.assistant_name,
     soul_text: profile.soul_text,
+    user_text: profile.user_text,
   });
   const [saving, setSaving] = useState(false);
 
@@ -245,6 +246,7 @@ function AssistantTab({
       await api.updateProfile({
         assistant_name: form.assistant_name,
         soul_text: form.soul_text,
+        user_text: form.user_text,
       });
       onSaved();
       toast.success('Assistant settings updated');
@@ -274,6 +276,17 @@ function AssistantTab({
           />
           <p className="text-xs text-muted-foreground mt-1">
             This guides your assistant's personality and communication style.
+          </p>
+        </Field>
+        <Field label="About You / USER">
+          <Textarea
+            value={form.user_text}
+            onChange={(e) => setForm((prev) => ({ ...prev, user_text: e.target.value }))}
+            rows={6}
+            placeholder="Tell your assistant about yourself: your name, preferences, what projects you're working on..."
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Helps your assistant personalize responses. Updated over time as it learns about you.
           </p>
         </Field>
         <div className="flex justify-end">
