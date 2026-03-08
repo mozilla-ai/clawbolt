@@ -51,15 +51,30 @@ class InboundMessage:
 
 
 async def _get_or_create_contractor(channel: str, sender_id: str) -> ContractorData:
-    """Look up or create a contractor by channel-specific sender ID."""
+    """Look up or create a contractor by channel-specific sender ID.
+
+    In single-tenant (OSS) mode there should be exactly one contractor shared
+    across all channels.  When a new channel arrives and a contractor already
+    exists, link the channel to that contractor instead of creating a duplicate.
+    """
     store = get_contractor_store()
     contractor = await store.get_by_channel(sender_id)
-    if contractor is None:
-        contractor = await store.create(
-            user_id=f"{channel}_{sender_id}",
-            channel_identifier=sender_id,
-            preferred_channel=channel,
-        )
+    if contractor is not None:
+        return contractor
+
+    # Reuse the sole existing contractor (single-tenant OSS) so sessions from
+    # every channel are visible in the dashboard.
+    all_contractors = await store.list_all()
+    if len(all_contractors) == 1:
+        contractor = all_contractors[0]
+        store.link_channel(channel, sender_id, contractor.id)
+        return contractor
+
+    contractor = await store.create(
+        user_id=f"{channel}_{sender_id}",
+        channel_identifier=sender_id,
+        preferred_channel=channel,
+    )
     return contractor
 
 
