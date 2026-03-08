@@ -1,10 +1,10 @@
 """Profile introspection and update tools for the agent.
 
 Provides view_profile for introspection and update_profile for modification
-of core identity fields (name, trade, location, assistant name).
+of core identity fields (name, assistant name).
 
-Business details like rates, hours, timezone, and communication preferences
-are stored in USER.md via the generic workspace file tools instead.
+Business details like trade, location, rates, hours, timezone, and communication
+preferences are stored in USER.md via the generic workspace file tools instead.
 """
 
 from __future__ import annotations
@@ -33,14 +33,6 @@ class UpdateProfileParams(BaseModel):
     """Parameters for the update_profile tool."""
 
     name: str | None = Field(default=None, description="Contractor's full name")
-    trade: str | None = Field(
-        default=None,
-        description="Trade or profession (e.g. plumber, electrician)",
-    )
-    location: str | None = Field(
-        default=None,
-        description="City or region where they work",
-    )
     assistant_name: str | None = Field(
         default=None,
         description="What the contractor calls their AI assistant",
@@ -56,14 +48,12 @@ def _format_profile(contractor: ContractorData) -> str:
     lines: list[str] = []
     lines.append("Contractor Profile:")
     lines.append(f"  Name: {contractor.name or 'Not set'}")
-    lines.append(f"  Trade: {contractor.trade or 'Not set'}")
-    lines.append(f"  Location: {contractor.location or 'Not set'}")
 
     assistant = contractor.assistant_name if contractor.assistant_name != "Clawbolt" else None
     lines.append(f"  AI Name: {assistant or 'Clawbolt (default)'}")
     lines.append(f"  Onboarding Complete: {'Yes' if contractor.onboarding_complete else 'No'}")
     lines.append("")
-    lines.append("For more details (rates, hours, preferences), read USER.md.")
+    lines.append("For more details (trade, location, rates, hours, preferences), read USER.md.")
 
     return "\n".join(lines)
 
@@ -79,8 +69,6 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
 
     async def update_profile(
         name: str | None = None,
-        trade: str | None = None,
-        location: str | None = None,
         assistant_name: str | None = None,
     ) -> ToolResult:
         """Update the contractor's core profile fields."""
@@ -90,14 +78,6 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
         if name is not None:
             updates["name"] = str(name)
             fields_updated.append("name")
-
-        if trade is not None:
-            updates["trade"] = str(trade)
-            fields_updated.append("trade")
-
-        if location is not None:
-            updates["location"] = str(location)
-            fields_updated.append("location")
 
         if assistant_name is not None:
             updates["assistant_name"] = str(assistant_name)
@@ -111,7 +91,7 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
             )
 
         # Defense-in-depth: only allow known profile fields to be updated.
-        _allowed_fields = {"name", "trade", "location", "assistant_name"}
+        _allowed_fields = {"name", "assistant_name"}
         safe_updates = {k: v for k, v in updates.items() if k in _allowed_fields}
 
         store = get_contractor_store()
@@ -139,15 +119,15 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
         Tool(
             name=ToolName.UPDATE_PROFILE,
             description=(
-                "Update core profile fields: name, trade, location, or AI assistant name. "
-                "For other details (rates, hours, preferences, personality), "
+                "Update core profile fields: name or AI assistant name. "
+                "For other details (trade, location, rates, hours, preferences, personality), "
                 "use write_file or edit_file on USER.md or SOUL.md instead."
             ),
             function=update_profile,
             params_model=UpdateProfileParams,
             tags={ToolTags.MODIFIES_PROFILE},
             usage_hint=(
-                "Use this for name, trade, location, and assistant name. "
+                "Use this for name and assistant name. "
                 "Use write_file/edit_file for everything else (USER.md, SOUL.md)."
             ),
         ),
@@ -187,7 +167,7 @@ def extract_profile_updates_from_tool_calls(
             continue
         args = tc.args
 
-        for field in ("name", "trade", "location", "assistant_name"):
+        for field in ("name", "assistant_name"):
             val = args.get(field)
             if val is not None:
                 updates[field] = str(val)

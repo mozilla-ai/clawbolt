@@ -47,9 +47,6 @@ def contractor() -> ContractorData:
         user_id="hb-user-001",
         name="Mike the Plumber",
         phone="+15559990000",
-        trade="Plumber",
-        location="Portland, OR",
-        business_hours="7am-5pm",
         onboarding_complete=True,
     )
 
@@ -61,9 +58,7 @@ def contractor_no_hours() -> ContractorData:
         user_id="hb-user-002",
         name="Jane Electric",
         phone="+15559990001",
-        trade="Electrician",
         onboarding_complete=True,
-        business_hours="",
     )
 
 
@@ -74,9 +69,6 @@ def contractor_with_timezone() -> ContractorData:
         user_id="hb-user-003",
         name="Carlos Roofing",
         phone="+15559990002",
-        trade="Roofer",
-        location="Los Angeles, CA",
-        business_hours="7am-5pm",
         timezone="America/Los_Angeles",
         onboarding_complete=True,
     )
@@ -139,49 +131,38 @@ class TestParseBusinessHours:
 
 
 class TestIsWithinBusinessHours:
-    def test_within_hours(self, contractor: ContractorData) -> None:
-        # 10 AM -- within 7am-5pm
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is True
-
-    def test_before_hours(self, contractor: ContractorData) -> None:
-        # 5 AM -- before 7am-5pm
-        now = datetime.datetime(2025, 6, 15, 5, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is False
-
-    def test_after_hours(self, contractor: ContractorData) -> None:
-        # 8 PM -- after 7am-5pm
-        now = datetime.datetime(2025, 6, 15, 20, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is False
-
-    def test_at_boundary_start(self, contractor: ContractorData) -> None:
-        # Exactly 7 AM -- should be within
-        now = datetime.datetime(2025, 6, 15, 7, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is True
-
-    def test_at_boundary_end(self, contractor: ContractorData) -> None:
-        # Exactly 5 PM (17:00) -- should be outside (end is exclusive)
-        now = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is False
-
     @patch("backend.app.agent.heartbeat.settings")
-    def test_fallback_quiet_hours(
-        self, mock_settings: MagicMock, contractor_no_hours: ContractorData
+    def test_outside_quiet_hours(
+        self, mock_settings: MagicMock, contractor: ContractorData
     ) -> None:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
         # 10 AM -- outside quiet hours, should be True
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor_no_hours, now) is True
+        assert is_within_business_hours(contractor, now) is True
+
+    @patch("backend.app.agent.heartbeat.settings")
+    def test_inside_quiet_hours_evening(
+        self, mock_settings: MagicMock, contractor: ContractorData
+    ) -> None:
+        mock_settings.heartbeat_quiet_hours_start = 20
+        mock_settings.heartbeat_quiet_hours_end = 7
 
         # 22:00 -- inside quiet hours, should be False
         now = datetime.datetime(2025, 6, 15, 22, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor_no_hours, now) is False
+        assert is_within_business_hours(contractor, now) is False
+
+    @patch("backend.app.agent.heartbeat.settings")
+    def test_inside_quiet_hours_early_morning(
+        self, mock_settings: MagicMock, contractor: ContractorData
+    ) -> None:
+        mock_settings.heartbeat_quiet_hours_start = 20
+        mock_settings.heartbeat_quiet_hours_end = 7
 
         # 3 AM -- inside quiet hours, should be False
         now = datetime.datetime(2025, 6, 15, 3, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor_no_hours, now) is False
+        assert is_within_business_hours(contractor, now) is False
 
 
 class TestToLocalTime:
@@ -211,53 +192,55 @@ class TestToLocalTime:
 
 
 class TestIsWithinBusinessHoursTimezone:
-    """Tests for timezone-correct business hour checks."""
+    """Tests for timezone-correct quiet hour checks."""
 
-    def test_utc_afternoon_is_morning_in_pacific(
-        self, contractor_with_timezone: ContractorData
+    @patch("backend.app.agent.heartbeat.settings")
+    def test_timezone_converts_before_quiet_check(
+        self, mock_settings: MagicMock, contractor_with_timezone: ContractorData
     ) -> None:
-        # 2 PM UTC -> 7 AM Pacific (PDT). Business hours are 7am-5pm, so within.
+        mock_settings.heartbeat_quiet_hours_start = 20
+        mock_settings.heartbeat_quiet_hours_end = 7
+
+        # 2 PM UTC -> 7 AM Pacific (PDT). Outside quiet hours.
         now = datetime.datetime(2025, 6, 15, 14, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor_with_timezone, now) is True
 
-    def test_utc_evening_is_afternoon_in_pacific(
-        self, contractor_with_timezone: ContractorData
-    ) -> None:
-        # 11 PM UTC -> 4 PM Pacific (PDT). Business hours 7am-5pm, so within.
-        now = datetime.datetime(2025, 6, 15, 23, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor_with_timezone, now) is True
-
-    def test_utc_midnight_is_evening_in_pacific(
-        self, contractor_with_timezone: ContractorData
-    ) -> None:
-        # 1 AM UTC (next day) -> 6 PM Pacific (PDT). After 5pm, so outside.
-        now = datetime.datetime(2025, 6, 16, 1, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor_with_timezone, now) is False
-
+    @patch("backend.app.agent.heartbeat.settings")
     def test_utc_morning_is_night_in_pacific(
-        self, contractor_with_timezone: ContractorData
+        self, mock_settings: MagicMock, contractor_with_timezone: ContractorData
     ) -> None:
-        # 5 AM UTC -> 10 PM Pacific (PDT, previous day). Outside 7am-5pm.
+        mock_settings.heartbeat_quiet_hours_start = 20
+        mock_settings.heartbeat_quiet_hours_end = 7
+
+        # 5 AM UTC -> 10 PM Pacific (PDT, previous day). Inside quiet hours.
         now = datetime.datetime(2025, 6, 15, 5, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor_with_timezone, now) is False
 
-    def test_no_timezone_uses_utc(self, contractor: ContractorData) -> None:
-        # Contractor without timezone field set uses UTC directly.
-        # 10 AM UTC, business hours 7am-5pm -> within.
+    @patch("backend.app.agent.heartbeat.settings")
+    def test_no_timezone_uses_utc(
+        self, mock_settings: MagicMock, contractor: ContractorData
+    ) -> None:
+        mock_settings.heartbeat_quiet_hours_start = 20
+        mock_settings.heartbeat_quiet_hours_end = 7
+
+        # Contractor without timezone uses UTC directly.
+        # 10 AM UTC, outside quiet hours.
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(contractor, now) is True
 
-    def test_invalid_timezone_falls_back_to_utc(self) -> None:
+    @patch("backend.app.agent.heartbeat.settings")
+    def test_invalid_timezone_falls_back_to_utc(self, mock_settings: MagicMock) -> None:
+        mock_settings.heartbeat_quiet_hours_start = 20
+        mock_settings.heartbeat_quiet_hours_end = 7
+
         c = ContractorData(
             id=99,
             user_id="hb-user-bad-tz",
             name="Bad TZ",
-            trade="Plumber",
-            business_hours="7am-5pm",
             timezone="Invalid/Timezone",
             onboarding_complete=True,
         )
-        # 10 AM UTC -> falls back to UTC -> within 7am-5pm
+        # 10 AM UTC -> falls back to UTC -> outside quiet hours
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
         assert is_within_business_hours(c, now) is True
 
@@ -482,7 +465,6 @@ class TestRunCheapChecks:
             user_id="hb-idle-001",
             name="Old Timer",
             phone="+15559990099",
-            trade="Carpenter",
             onboarding_complete=True,
             created_at=now - datetime.timedelta(days=7),
         )
@@ -502,7 +484,6 @@ class TestRunCheapChecks:
             user_id="hb-new-001",
             name="Fresh Start",
             phone="+15559990098",
-            trade="Plumber",
             onboarding_complete=True,
             created_at=now - datetime.timedelta(hours=6),
         )

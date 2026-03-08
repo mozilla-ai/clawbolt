@@ -39,8 +39,6 @@ def telegram_contractor() -> ContractorData:
             user_id="telegram_123456789",
             name="Telegram User",
             phone="+15551234567",
-            trade="Electrician",
-            location="Seattle, WA",
             channel_identifier="123456789",
             preferred_channel="telegram",
         )
@@ -117,8 +115,6 @@ class TestDashboardSeesTelegramData:
         assert resp.status_code == 200
         data = resp.json()
         assert data["name"] == "Telegram User"
-        assert data["trade"] == "Electrician"
-        assert data["location"] == "Seattle, WA"
 
     def test_sessions_returns_telegram_sessions(
         self,

@@ -43,8 +43,6 @@ def _make_client(
                 user_id="secret-test-user",
                 name="Secret Test",
                 phone="+15550000000",
-                trade="Plumber",
-                location="Denver, CO",
                 channel_identifier="999999",
                 preferred_channel="telegram",
             )

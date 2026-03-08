@@ -99,7 +99,7 @@ export default function AppShell() {
           </div>
           {profile && (
             <p className="text-xs text-muted-foreground mt-0.5 truncate">
-              {profile.name || profile.trade || 'Dashboard'}
+              {profile.name || 'Dashboard'}
             </p>
           )}
         </div>

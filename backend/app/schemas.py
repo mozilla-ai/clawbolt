@@ -13,10 +13,6 @@ class HealthResponse(BaseModel):
 class ContractorBase(BaseModel):
     name: str = ""
     phone: str = ""
-    trade: str = ""
-    location: str = ""
-    hourly_rate: float | None = None
-    business_hours: str = ""
 
 
 class ContractorCreate(ContractorBase):
@@ -87,10 +83,6 @@ class ContractorProfileResponse(BaseModel):
     user_id: str
     name: str
     phone: str
-    trade: str
-    location: str
-    hourly_rate: float | None
-    business_hours: str
     timezone: str
     assistant_name: str
     soul_text: str
@@ -108,10 +100,6 @@ class ContractorProfileResponse(BaseModel):
 class ContractorProfileUpdate(BaseModel):
     name: str | None = None
     phone: str | None = None
-    trade: str | None = None
-    location: str | None = None
-    hourly_rate: float | None = None
-    business_hours: str | None = None
     timezone: str | None = None
     assistant_name: str | None = None
     soul_text: str | None = None

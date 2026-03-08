@@ -5,10 +5,6 @@ export interface ContractorProfile {
   user_id: string;
   name: string;
   phone: string;
-  trade: string;
-  location: string;
-  hourly_rate: number | null;
-  business_hours: string;
   timezone: string;
   assistant_name: string;
   soul_text: string;
@@ -26,10 +22,6 @@ export interface ContractorProfile {
 export interface ContractorProfileUpdate {
   name?: string;
   phone?: string;
-  trade?: string;
-  location?: string;
-  hourly_rate?: number | null;
-  business_hours?: string;
   timezone?: string;
   assistant_name?: string;
   soul_text?: string;

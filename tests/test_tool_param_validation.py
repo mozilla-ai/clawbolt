@@ -347,16 +347,13 @@ def test_update_profile_params_accepts_partial_update() -> None:
     """UpdateProfileParams should accept partial updates with all fields optional."""
     p = UpdateProfileParams(name="Jane Doe")
     assert p.name == "Jane Doe"
-    assert p.trade is None
-    assert p.location is None
+    assert p.assistant_name is None
 
 
 def test_update_profile_params_accepts_all_fields() -> None:
     """UpdateProfileParams should accept all fields together."""
     p = UpdateProfileParams(
         name="Jane Doe",
-        trade="electrician",
-        location="Portland, OR",
         assistant_name="Bolt",
     )
     assert p.name == "Jane Doe"
