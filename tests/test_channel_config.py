@@ -1,5 +1,6 @@
 """Tests for channel config GET/PUT endpoints."""
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,20 +11,20 @@ from backend.app.config import settings
 
 
 @pytest.fixture()
-def _set_bot_token() -> None:
+def _set_bot_token() -> Iterator[None]:
     """Ensure settings has a known bot token for tests that need it."""
     original = settings.telegram_bot_token
     settings.telegram_bot_token = "test-token-123"
-    yield  # type: ignore[misc]
+    yield
     settings.telegram_bot_token = original
 
 
 @pytest.fixture()
-def _clear_bot_token() -> None:
+def _clear_bot_token() -> Iterator[None]:
     """Ensure settings has no bot token."""
     original = settings.telegram_bot_token
     settings.telegram_bot_token = ""
-    yield  # type: ignore[misc]
+    yield
     settings.telegram_bot_token = original
 
 

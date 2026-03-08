@@ -9,7 +9,9 @@ from backend.app.agent.file_store import ContractorData
 from backend.app.config import settings
 
 
-def _create_session(contractor: ContractorData, session_id: str, messages: list[dict]) -> None:  # type: ignore[type-arg]
+def _create_session(
+    contractor: ContractorData, session_id: str, messages: list[dict[str, object]]
+) -> None:
     """Create a test session JSONL file."""
     base = Path(settings.contractor_data_dir) / str(contractor.id) / "sessions"
     base.mkdir(parents=True, exist_ok=True)
