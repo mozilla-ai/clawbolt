@@ -152,7 +152,11 @@ export default function ChatPage() {
       toast.error(msg);
     } finally {
       setSending(false);
-      inputRef.current?.focus();
+      // Re-focus input on desktop only; on mobile, programmatic focus
+      // triggers iOS Safari auto-zoom and forces the keyboard open.
+      if (window.matchMedia('(min-width: 640px)').matches) {
+        inputRef.current?.focus();
+      }
     }
   };
 
