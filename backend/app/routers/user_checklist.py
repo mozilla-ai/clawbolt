@@ -13,7 +13,7 @@ from backend.app.schemas import (
 router = APIRouter()
 
 
-@router.get("/contractor/checklist", response_model=list[ChecklistItemResponse])
+@router.get("/user/checklist", response_model=list[ChecklistItemResponse])
 async def list_checklist(
     current_user: ContractorData = Depends(get_current_user),
 ) -> list[ChecklistItemResponse]:
@@ -32,7 +32,7 @@ async def list_checklist(
     ]
 
 
-@router.post("/contractor/checklist", response_model=ChecklistItemResponse, status_code=201)
+@router.post("/user/checklist", response_model=ChecklistItemResponse, status_code=201)
 async def create_checklist_item(
     body: ChecklistCreateRequest,
     current_user: ContractorData = Depends(get_current_user),
@@ -52,7 +52,7 @@ async def create_checklist_item(
     )
 
 
-@router.put("/contractor/checklist/{item_id}", response_model=ChecklistItemResponse)
+@router.put("/user/checklist/{item_id}", response_model=ChecklistItemResponse)
 async def update_checklist_item(
     item_id: int,
     body: ChecklistUpdateRequest,
@@ -77,7 +77,7 @@ async def update_checklist_item(
     )
 
 
-@router.delete("/contractor/checklist/{item_id}", status_code=204)
+@router.delete("/user/checklist/{item_id}", status_code=204)
 async def delete_checklist_item(
     item_id: int,
     current_user: ContractorData = Depends(get_current_user),

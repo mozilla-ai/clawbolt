@@ -78,9 +78,9 @@ const api = {
   tryRestoreSession: _tryRestoreSession as () => Promise<AuthUser | null>,
 
   // Profile
-  getProfile: () => _fetch<ContractorProfile>('/api/contractor/profile'),
+  getProfile: () => _fetch<ContractorProfile>('/api/user/profile'),
   updateProfile: (body: ContractorProfileUpdate) =>
-    _fetch<ContractorProfile>('/api/contractor/profile', {
+    _fetch<ContractorProfile>('/api/user/profile', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
@@ -88,52 +88,52 @@ const api = {
 
   // Sessions
   listSessions: (offset = 0, limit = 20) =>
-    _fetch<SessionListResponse>(`/api/contractor/sessions?offset=${offset}&limit=${limit}`),
+    _fetch<SessionListResponse>(`/api/user/sessions?offset=${offset}&limit=${limit}`),
   getSession: (sessionId: string) =>
-    _fetch<SessionDetail>(`/api/contractor/sessions/${encodeURIComponent(sessionId)}`),
+    _fetch<SessionDetail>(`/api/user/sessions/${encodeURIComponent(sessionId)}`),
 
   // Memory
   listMemoryFacts: (category?: string) => {
     const params = category ? `?category=${encodeURIComponent(category)}` : '';
-    return _fetch<MemoryFact[]>(`/api/contractor/memory${params}`);
+    return _fetch<MemoryFact[]>(`/api/user/memory${params}`);
   },
   updateMemoryFact: (key: string, body: MemoryFactUpdate) =>
-    _fetch<MemoryFact>(`/api/contractor/memory/${encodeURIComponent(key)}`, {
+    _fetch<MemoryFact>(`/api/user/memory/${encodeURIComponent(key)}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
   deleteMemoryFact: (key: string) =>
-    _fetchVoid(`/api/contractor/memory/${encodeURIComponent(key)}`, { method: 'DELETE' }),
+    _fetchVoid(`/api/user/memory/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   // Checklist
-  listChecklist: () => _fetch<ChecklistItem[]>('/api/contractor/checklist'),
+  listChecklist: () => _fetch<ChecklistItem[]>('/api/user/checklist'),
   createChecklistItem: (body: { description: string; schedule?: string }) =>
-    _fetch<ChecklistItem>('/api/contractor/checklist', {
+    _fetch<ChecklistItem>('/api/user/checklist', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
   updateChecklistItem: (id: number, body: ChecklistItemUpdate) =>
-    _fetch<ChecklistItem>(`/api/contractor/checklist/${id}`, {
+    _fetch<ChecklistItem>(`/api/user/checklist/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
   deleteChecklistItem: (id: number) =>
-    _fetchVoid(`/api/contractor/checklist/${id}`, { method: 'DELETE' }),
+    _fetchVoid(`/api/user/checklist/${id}`, { method: 'DELETE' }),
 
   // Channel config
-  getChannelConfig: () => _fetch<ChannelConfig>('/api/contractor/channels/config'),
+  getChannelConfig: () => _fetch<ChannelConfig>('/api/user/channels/config'),
   updateChannelConfig: (body: ChannelConfigUpdate) =>
-    _fetch<ChannelConfig>('/api/contractor/channels/config', {
+    _fetch<ChannelConfig>('/api/user/channels/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
 
   // Stats
-  getStats: () => _fetch<ContractorStats>('/api/contractor/stats'),
+  getStats: () => _fetch<ContractorStats>('/api/user/stats'),
 
   // Chat
   sendChatMessage: (message: string, sessionId?: string, files?: File[]) => {
@@ -147,7 +147,7 @@ const api = {
         formData.append('files', file);
       }
     }
-    return _fetch<ChatResponse>('/api/contractor/chat', {
+    return _fetch<ChatResponse>('/api/user/chat', {
       method: 'POST',
       body: formData,
     });

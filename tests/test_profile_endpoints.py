@@ -4,7 +4,7 @@ from fastapi.testclient import TestClient
 
 
 def test_get_profile(client: TestClient) -> None:
-    resp = client.get("/api/contractor/profile")
+    resp = client.get("/api/user/profile")
     assert resp.status_code == 200
     data = resp.json()
     assert data["name"] == "Test Contractor"
@@ -19,7 +19,7 @@ def test_get_profile(client: TestClient) -> None:
 
 def test_update_profile_partial(client: TestClient) -> None:
     resp = client.put(
-        "/api/contractor/profile",
+        "/api/user/profile",
         json={"name": "Updated Name", "hourly_rate": 85.0},
     )
     assert resp.status_code == 200
@@ -31,7 +31,7 @@ def test_update_profile_partial(client: TestClient) -> None:
 
 def test_update_profile_soul_text(client: TestClient) -> None:
     resp = client.put(
-        "/api/contractor/profile",
+        "/api/user/profile",
         json={"soul_text": "Be friendly.", "assistant_name": "Bolt"},
     )
     assert resp.status_code == 200
@@ -41,11 +41,11 @@ def test_update_profile_soul_text(client: TestClient) -> None:
 
 
 def test_update_profile_empty_body(client: TestClient) -> None:
-    resp = client.put("/api/contractor/profile", json={})
+    resp = client.put("/api/user/profile", json={})
     assert resp.status_code == 400
 
 
 def test_update_returns_updated_values(client: TestClient) -> None:
-    resp = client.put("/api/contractor/profile", json={"trade": "Electrician"})
+    resp = client.put("/api/user/profile", json={"trade": "Electrician"})
     assert resp.status_code == 200
     assert resp.json()["trade"] == "Electrician"

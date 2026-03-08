@@ -17,13 +17,13 @@ from backend.app.channels.webchat import WebChatChannel
 from backend.app.config import settings
 from backend.app.routers import (
     auth,
-    contractor_checklist,
-    contractor_memory,
-    contractor_profile,
-    contractor_sessions,
-    contractor_stats,
     estimates,
     health,
+    user_checklist,
+    user_memory,
+    user_profile,
+    user_sessions,
+    user_stats,
 )
 
 logging.basicConfig(
@@ -168,11 +168,11 @@ for _channel in get_manager().channels.values():
     app.include_router(_channel.get_router(), prefix="/api")
 
 app.include_router(estimates.router, prefix="/api")
-app.include_router(contractor_profile.router, prefix="/api")
-app.include_router(contractor_sessions.router, prefix="/api")
-app.include_router(contractor_memory.router, prefix="/api")
-app.include_router(contractor_checklist.router, prefix="/api")
-app.include_router(contractor_stats.router, prefix="/api")
+app.include_router(user_profile.router, prefix="/api")
+app.include_router(user_sessions.router, prefix="/api")
+app.include_router(user_memory.router, prefix="/api")
+app.include_router(user_checklist.router, prefix="/api")
+app.include_router(user_stats.router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Static file serving (built frontend)

@@ -35,7 +35,7 @@ def _create_session(
 
 
 def test_list_sessions_empty(client: TestClient) -> None:
-    resp = client.get("/api/contractor/sessions")
+    resp = client.get("/api/user/sessions")
     assert resp.status_code == 200
     data = resp.json()
     assert data["sessions"] == []
@@ -56,7 +56,7 @@ def test_list_sessions(client: TestClient, test_contractor: ContractorData) -> N
             },
         ],
     )
-    resp = client.get("/api/contractor/sessions")
+    resp = client.get("/api/user/sessions")
     assert resp.status_code == 200
     data = resp.json()
     assert data["total"] == 1
@@ -86,7 +86,7 @@ def test_get_session_detail(client: TestClient, test_contractor: ContractorData)
             },
         ],
     )
-    resp = client.get("/api/contractor/sessions/1_200")
+    resp = client.get("/api/user/sessions/1_200")
     assert resp.status_code == 200
     data = resp.json()
     assert data["session_id"] == "1_200"
@@ -111,7 +111,7 @@ def test_session_direction_values(client: TestClient, test_contractor: Contracto
             },
         ],
     )
-    resp = client.get("/api/contractor/sessions/1_300")
+    resp = client.get("/api/user/sessions/1_300")
     assert resp.status_code == 200
     data = resp.json()
     assert data["messages"][0]["direction"] == "inbound"
@@ -119,7 +119,7 @@ def test_session_direction_values(client: TestClient, test_contractor: Contracto
 
 
 def test_get_session_not_found(client: TestClient) -> None:
-    resp = client.get("/api/contractor/sessions/nonexistent")
+    resp = client.get("/api/user/sessions/nonexistent")
     assert resp.status_code == 404
 
 
@@ -137,7 +137,7 @@ def test_list_sessions_pagination(client: TestClient, test_contractor: Contracto
                 }
             ],
         )
-    resp = client.get("/api/contractor/sessions?offset=0&limit=2")
+    resp = client.get("/api/user/sessions?offset=0&limit=2")
     data = resp.json()
     assert data["total"] == 5
     assert len(data["sessions"]) == 2

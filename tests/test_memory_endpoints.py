@@ -24,14 +24,14 @@ def _seed_memory(contractor: ContractorData) -> None:
 
 
 def test_list_memory_empty(client: TestClient) -> None:
-    resp = client.get("/api/contractor/memory")
+    resp = client.get("/api/user/memory")
     assert resp.status_code == 200
     assert resp.json() == []
 
 
 def test_list_memory(client: TestClient, test_contractor: ContractorData) -> None:
     _seed_memory(test_contractor)
-    resp = client.get("/api/contractor/memory")
+    resp = client.get("/api/user/memory")
     assert resp.status_code == 200
     facts = resp.json()
     assert len(facts) == 3
@@ -42,7 +42,7 @@ def test_list_memory(client: TestClient, test_contractor: ContractorData) -> Non
 
 def test_list_memory_filter_category(client: TestClient, test_contractor: ContractorData) -> None:
     _seed_memory(test_contractor)
-    resp = client.get("/api/contractor/memory?category=business")
+    resp = client.get("/api/user/memory?category=business")
     assert resp.status_code == 200
     facts = resp.json()
     assert len(facts) == 2
@@ -52,7 +52,7 @@ def test_list_memory_filter_category(client: TestClient, test_contractor: Contra
 def test_update_memory(client: TestClient, test_contractor: ContractorData) -> None:
     _seed_memory(test_contractor)
     resp = client.put(
-        "/api/contractor/memory/hourly_rate",
+        "/api/user/memory/hourly_rate",
         json={"value": "85"},
     )
     assert resp.status_code == 200
@@ -64,7 +64,7 @@ def test_update_memory(client: TestClient, test_contractor: ContractorData) -> N
 def test_update_memory_not_found(client: TestClient, test_contractor: ContractorData) -> None:
     _seed_memory(test_contractor)
     resp = client.put(
-        "/api/contractor/memory/nonexistent",
+        "/api/user/memory/nonexistent",
         json={"value": "test"},
     )
     assert resp.status_code == 404
@@ -72,14 +72,14 @@ def test_update_memory_not_found(client: TestClient, test_contractor: Contractor
 
 def test_delete_memory(client: TestClient, test_contractor: ContractorData) -> None:
     _seed_memory(test_contractor)
-    resp = client.delete("/api/contractor/memory/hourly_rate")
+    resp = client.delete("/api/user/memory/hourly_rate")
     assert resp.status_code == 204
     # Verify it's gone
-    resp = client.get("/api/contractor/memory")
+    resp = client.get("/api/user/memory")
     keys = {f["key"] for f in resp.json()}
     assert "hourly_rate" not in keys
 
 
 def test_delete_memory_not_found(client: TestClient) -> None:
-    resp = client.delete("/api/contractor/memory/nonexistent")
+    resp = client.delete("/api/user/memory/nonexistent")
     assert resp.status_code == 404

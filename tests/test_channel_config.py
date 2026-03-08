@@ -30,7 +30,7 @@ def _clear_bot_token() -> Iterator[None]:
 
 def test_get_channel_config_token_set(client: TestClient, _set_bot_token: None) -> None:
     """GET returns telegram_bot_token_set=True when token is configured."""
-    resp = client.get("/api/contractor/channels/config")
+    resp = client.get("/api/user/channels/config")
     assert resp.status_code == 200
     data = resp.json()
     assert data["telegram_bot_token_set"] is True
@@ -40,7 +40,7 @@ def test_get_channel_config_token_set(client: TestClient, _set_bot_token: None) 
 
 def test_get_channel_config_token_not_set(client: TestClient, _clear_bot_token: None) -> None:
     """GET returns telegram_bot_token_set=False when token is empty."""
-    resp = client.get("/api/contractor/channels/config")
+    resp = client.get("/api/user/channels/config")
     assert resp.status_code == 200
     data = resp.json()
     assert data["telegram_bot_token_set"] is False
@@ -49,7 +49,7 @@ def test_get_channel_config_token_not_set(client: TestClient, _clear_bot_token: 
 def test_update_channel_config_token(client: TestClient, _clear_bot_token: None) -> None:
     """PUT with a new token updates settings in-memory and GET reflects change."""
     resp = client.put(
-        "/api/contractor/channels/config",
+        "/api/user/channels/config",
         json={"telegram_bot_token": "new-bot-token-456"},
     )
     assert resp.status_code == 200
@@ -60,7 +60,7 @@ def test_update_channel_config_token(client: TestClient, _clear_bot_token: None)
     assert settings.telegram_bot_token == "new-bot-token-456"
 
     # GET should also reflect the change
-    resp2 = client.get("/api/contractor/channels/config")
+    resp2 = client.get("/api/user/channels/config")
     assert resp2.json()["telegram_bot_token_set"] is True
 
     # Clean up
@@ -75,11 +75,11 @@ def test_update_channel_config_persists_to_dotenv(
     env_file.write_text("# existing config\n")
 
     with patch(
-        "backend.app.routers.contractor_profile.Path",
+        "backend.app.routers.user_profile.Path",
         return_value=env_file,
     ):
         resp = client.put(
-            "/api/contractor/channels/config",
+            "/api/user/channels/config",
             json={"telegram_bot_token": "persisted-token"},
         )
 
@@ -97,7 +97,7 @@ def test_update_channel_config_null_token_is_ignored(
 ) -> None:
     """PUT with null token should be ignored, preserving the existing value."""
     resp = client.put(
-        "/api/contractor/channels/config",
+        "/api/user/channels/config",
         json={"telegram_bot_token": None, "telegram_allowed_usernames": "user1"},
     )
     assert resp.status_code == 200
@@ -110,7 +110,7 @@ def test_update_channel_config_null_only_returns_400(
 ) -> None:
     """PUT with only null fields should return 400 (no effective updates)."""
     resp = client.put(
-        "/api/contractor/channels/config",
+        "/api/user/channels/config",
         json={"telegram_bot_token": None},
     )
     assert resp.status_code == 400
@@ -122,7 +122,7 @@ def test_update_channel_config_empty_string_clears_token(
 ) -> None:
     """PUT with empty string explicitly clears the token."""
     resp = client.put(
-        "/api/contractor/channels/config",
+        "/api/user/channels/config",
         json={"telegram_bot_token": ""},
     )
     assert resp.status_code == 200
