@@ -47,19 +47,19 @@ def _ensure_session_on_disk(contractor: ContractorData, session: SessionState) -
 
 
 def test_is_onboarding_needed_new_contractor() -> None:
-    """New contractor with no name/trade should need onboarding."""
+    """New contractor with no name should need onboarding."""
     contractor = ContractorData(id=1, user_id="new-user", phone="+15550001111")
     assert is_onboarding_needed(contractor) is True
 
 
 def test_is_onboarding_needed_partial_profile() -> None:
-    """Contractor with name but no trade still needs onboarding."""
+    """Contractor with name should not need onboarding (name is the only required field)."""
     contractor = ContractorData(id=1, user_id="partial-user", phone="+15550002222", name="Mike")
-    assert is_onboarding_needed(contractor) is True
+    assert is_onboarding_needed(contractor) is False
 
 
 def test_is_onboarding_needed_complete_profile(test_contractor: ContractorData) -> None:
-    """Contractor with name, trade, and location does not need onboarding."""
+    """Contractor with name does not need onboarding."""
     assert is_onboarding_needed(test_contractor) is False
 
 
@@ -70,7 +70,6 @@ def test_is_onboarding_needed_respects_flag() -> None:
         user_id="flagged-user",
         phone="+15550007777",
         name="",
-        trade="",
         onboarding_complete=True,
     )
     assert is_onboarding_needed(contractor) is False
@@ -78,25 +77,15 @@ def test_is_onboarding_needed_respects_flag() -> None:
 
 def test_is_onboarding_needed_empty_strings() -> None:
     """Empty strings should still trigger onboarding."""
-    contractor = ContractorData(id=1, user_id="empty-user", phone="+15550003333", name="", trade="")
+    contractor = ContractorData(id=1, user_id="empty-user", phone="+15550003333", name="")
     assert is_onboarding_needed(contractor) is True
 
 
-def test_required_profile_fields_includes_location() -> None:
-    """REQUIRED_PROFILE_FIELDS should include location."""
-    assert "location" in REQUIRED_PROFILE_FIELDS
-
-
-def test_is_onboarding_needed_name_trade_but_no_location() -> None:
-    """Contractor with name and trade but no location still needs onboarding."""
-    contractor = ContractorData(
-        id=1,
-        user_id="no-location-user",
-        phone="+15550006666",
-        name="Jake",
-        trade="Plumber",
-    )
-    assert is_onboarding_needed(contractor) is True
+def test_required_profile_fields_only_name() -> None:
+    """REQUIRED_PROFILE_FIELDS should only include name."""
+    assert "name" in REQUIRED_PROFILE_FIELDS
+    assert "trade" not in REQUIRED_PROFILE_FIELDS
+    assert "location" not in REQUIRED_PROFILE_FIELDS
 
 
 def test_build_onboarding_system_prompt_new_contractor() -> None:
@@ -117,13 +106,11 @@ def test_build_onboarding_system_prompt_partial_profile() -> None:
         user_id="partial-user",
         phone="+15550005555",
         name="Sarah",
-        location="Denver, CO",
     )
 
     prompt = build_onboarding_system_prompt(contractor)
     assert "You already know" in prompt
     assert "Sarah" in prompt
-    assert "Denver" in prompt
     assert "Don't re-ask" in prompt
 
 
@@ -339,36 +326,28 @@ async def test_profile_updates_post_onboarding_single_field(
     test_contractor: ContractorData,
     mock_messaging: MessagingService,
 ) -> None:
-    """Post-onboarding update_profile calls should update ContractorData profile fields.
-
-    Regression test for #186: after onboarding, a contractor saying "I moved to
-    Denver" triggers update_profile(location="Denver, CO") which directly updates
-    the ContractorData record.
-    """
-    # test_contractor has onboarding complete (name + trade set)
-    assert test_contractor.location == "Portland, OR"
-
+    """Post-onboarding update_profile calls should update ContractorData profile fields."""
     session = SessionState(
         session_id="test-session",
         contractor_id=test_contractor.id,
         is_active=True,
         messages=[
-            StoredMessage(direction="inbound", body="I moved to Denver", seq=1),
+            StoredMessage(direction="inbound", body="My name is now Jake", seq=1),
         ],
     )
-    message = StoredMessage(direction="inbound", body="I moved to Denver", seq=1)
+    message = StoredMessage(direction="inbound", body="My name is now Jake", seq=1)
 
     # First LLM call returns an update_profile tool call, second returns text reply
     tool_response = make_tool_call_response(
         tool_calls=[
             {
-                "id": "call_loc",
+                "id": "call_name",
                 "name": "update_profile",
-                "arguments": json.dumps({"location": "Denver, CO"}),
+                "arguments": json.dumps({"name": "Jake"}),
             }
         ]
     )
-    text_response = make_text_response("Got it, updated your location to Denver!")
+    text_response = make_text_response("Got it, updated your name to Jake!")
 
     mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
@@ -383,69 +362,7 @@ async def test_profile_updates_post_onboarding_single_field(
     store = get_contractor_store()
     refreshed = await store.get_by_id(test_contractor.id)
     assert refreshed is not None
-    assert refreshed.location == "Denver, CO"
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_profile_updates_post_onboarding_multiple_fields(
-    mock_amessages: object,
-    test_contractor: ContractorData,
-    mock_messaging: MessagingService,
-) -> None:
-    """Multiple profile fields updated in a single post-onboarding message.
-
-    When a contractor says "I'm in Denver now", location should be updated
-    on the ContractorData record via update_profile.
-    """
-    assert test_contractor.location == "Portland, OR"
-
-    session = SessionState(
-        session_id="test-session",
-        contractor_id=test_contractor.id,
-        is_active=True,
-        messages=[
-            StoredMessage(
-                direction="inbound",
-                body="I moved to Denver",
-                seq=1,
-            ),
-        ],
-    )
-    message = StoredMessage(
-        direction="inbound",
-        body="I moved to Denver",
-        seq=1,
-    )
-
-    # LLM updates location via update_profile, then gives a text reply
-    tool_response = make_tool_call_response(
-        tool_calls=[
-            {
-                "id": "call_profile",
-                "name": "update_profile",
-                "arguments": json.dumps({"location": "Denver, CO"}),
-            },
-        ]
-    )
-    text_response = make_text_response("Updated your location!")
-
-    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
-
-    await handle_inbound_message(
-        contractor=test_contractor,
-        session=session,
-        message=message,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    assert refreshed.location == "Denver, CO"
-    # Onboarding should remain complete
-    assert refreshed.onboarding_complete is not True or is_onboarding_needed(refreshed) is False
+    assert refreshed.name == "Jake"
 
 
 @pytest.mark.asyncio()
@@ -459,14 +376,13 @@ async def test_profile_updates_during_onboarding_still_work(
 ) -> None:
     """Profile updates during onboarding still work with update_profile tool.
 
-    When a new contractor provides name, trade, and location via update_profile,
+    When a new contractor provides name via update_profile,
     onboarding should complete.
     """
     assert is_onboarding_needed(new_contractor) is True
     assert not new_contractor.name  # empty or None
-    assert not new_contractor.trade  # empty or None
 
-    # LLM calls update_profile with all required fields, then gives a text reply
+    # LLM calls update_profile with name, then gives a text reply
     tool_response = make_tool_call_response(
         tool_calls=[
             {
@@ -475,14 +391,12 @@ async def test_profile_updates_during_onboarding_still_work(
                 "arguments": json.dumps(
                     {
                         "name": "Sarah",
-                        "trade": "Plumber",
-                        "location": "Austin, TX",
                     }
                 ),
             },
         ]
     )
-    text_response = make_text_response("Welcome Sarah! Great to have a plumber on board.")
+    text_response = make_text_response("Welcome Sarah!")
 
     mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
@@ -498,8 +412,6 @@ async def test_profile_updates_during_onboarding_still_work(
     refreshed = await store.get_by_id(new_contractor.id)
     assert refreshed is not None
     assert refreshed.name == "Sarah"
-    assert refreshed.trade == "Plumber"
-    assert refreshed.location == "Austin, TX"
     assert refreshed.onboarding_complete is True
 
 
@@ -514,7 +426,7 @@ async def test_prepopulated_contractor_gets_onboarding_complete(
     mock_amessages: object,
     mock_messaging: MessagingService,
 ) -> None:
-    """Contractor with pre-populated name and trade should get onboarding_complete=True.
+    """Contractor with pre-populated name should get onboarding_complete=True.
 
     Regression test for #180: when required profile fields are already filled,
     is_onboarding_needed() returns False but onboarding_complete was never set
@@ -524,8 +436,6 @@ async def test_prepopulated_contractor_gets_onboarding_complete(
         id=30,
         user_id="prepopulated-user",
         name="Sarah",
-        trade="Electrician",
-        location="Austin, TX",
         channel_identifier="888888888",
         preferred_channel="telegram",
         onboarding_complete=False,
@@ -582,19 +492,13 @@ async def test_prepopulated_contractor_included_in_heartbeat(
     _mock_hours: MagicMock,
     mock_messaging: MessagingService,
 ) -> None:
-    """Contractor with pre-populated fields should be eligible for heartbeat after first message.
-
-    Regression test for #180: heartbeat queries onboarding_complete=True, so
-    contractors that never got the flag set were permanently excluded.
-    """
+    """Contractor with pre-populated fields should be eligible for heartbeat after first message."""
     from backend.app.agent.heartbeat import CheapCheckResult, run_heartbeat_for_contractor
 
     contractor = ContractorData(
         id=31,
         user_id="prepopulated-hb-user",
         name="Jake",
-        trade="Plumber",
-        location="Portland, OR",
         phone="+15550009999",
         channel_identifier="777777777",
         preferred_channel="telegram",
@@ -662,7 +566,7 @@ async def test_onboarding_completion_message_appended(
     mock_messaging: MessagingService,
 ) -> None:
     """Completion summary should be appended when onboarding transitions to complete."""
-    # Contractor with no name/trade -- needs onboarding
+    # Contractor with no name -- needs onboarding
     contractor = ContractorData(
         id=32,
         user_id="completing-user",
@@ -688,15 +592,13 @@ async def test_onboarding_completion_message_appended(
         seq=1,
     )
 
-    # Simulate agent calling update_profile with all required fields
+    # Simulate agent calling update_profile with name
     tool_calls = [
         {
             "name": "update_profile",
             "arguments": json.dumps(
                 {
                     "name": "Jake",
-                    "trade": "Plumber",
-                    "location": "Portland, OR",
                 }
             ),
         },
@@ -719,63 +621,8 @@ async def test_onboarding_completion_message_appended(
 
     assert "Setup complete!" in response.reply_text
     assert "- Name: Jake" in response.reply_text
-    assert "- Trade: Plumber" in response.reply_text
-    assert "- Location: Portland, OR" in response.reply_text
     assert "- Your AI: Clawbolt" in response.reply_text
     assert "You can update any of this anytime" in response.reply_text
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_onboarding_completion_message_includes_location(
-    mock_amessages: object,
-    mock_messaging: MessagingService,
-) -> None:
-    """Completion summary should include location when available."""
-    # Contractor with location already set, still needs name+trade
-    contractor = ContractorData(
-        id=33,
-        user_id="optional-fields-user",
-        phone="+15550009999",
-        channel_identifier="999999998",
-        location="Portland, OR",
-    )
-
-    session = SessionState(
-        session_id="test-session",
-        contractor_id=contractor.id,
-        is_active=True,
-        messages=[
-            StoredMessage(direction="inbound", body="I'm Sarah, electrician", seq=1),
-        ],
-    )
-    message = StoredMessage(direction="inbound", body="I'm Sarah, electrician", seq=1)
-
-    tool_calls = [
-        {
-            "name": "update_profile",
-            "arguments": json.dumps({"name": "Sarah", "trade": "Electrician"}),
-        },
-    ]
-
-    mock_amessages.side_effect = [  # type: ignore[union-attr]
-        make_tool_call_response(tool_calls, content=None),
-        make_text_response("Welcome aboard, Sarah!"),
-    ]
-    _ensure_session_on_disk(contractor, session)
-
-    response = await handle_inbound_message(
-        contractor=contractor,
-        session=session,
-        message=message,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    assert "Setup complete!" in response.reply_text
-    assert "- Name: Sarah" in response.reply_text
-    assert "- Trade: Electrician" in response.reply_text
-    assert "- Location: Portland, OR" in response.reply_text
 
 
 @pytest.mark.asyncio()

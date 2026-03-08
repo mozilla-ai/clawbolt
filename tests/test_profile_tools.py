@@ -42,23 +42,20 @@ async def test_view_profile_shows_populated_fields(
     result = await view_fn()
     assert result.is_error is False
     assert "Test Contractor" in result.content
-    assert "General Contractor" in result.content
-    assert "Portland, OR" in result.content
 
 
 @pytest.mark.asyncio()
 async def test_view_profile_shows_not_set_for_empty_fields(
     test_contractor: ContractorData,
 ) -> None:
-    """view_profile should show 'Not set' for empty name/trade/location."""
+    """view_profile should show 'Not set' for empty name."""
     store = get_contractor_store()
-    await store.update(test_contractor.id, name="", trade="")
+    await store.update(test_contractor.id, name="")
 
     view_fn = _get_tool_fn(test_contractor, "view_profile")
     result = await view_fn()
     assert result.is_error is False
     assert "Name: Not set" in result.content
-    assert "Trade: Not set" in result.content
 
 
 @pytest.mark.asyncio()
@@ -80,12 +77,11 @@ async def test_view_profile_reflects_updates(
 ) -> None:
     """view_profile should reflect changes made by update_profile."""
     update_fn = _get_tool_fn(test_contractor, "update_profile")
-    await update_fn(name="Jake the Plumber", trade="Plumber")
+    await update_fn(name="Jake the Plumber")
 
     view_fn = _get_tool_fn(test_contractor, "view_profile")
     result = await view_fn()
     assert "Jake the Plumber" in result.content
-    assert "Plumber" in result.content
 
 
 @pytest.mark.asyncio()
@@ -107,15 +103,11 @@ def test_format_profile_complete(test_contractor: ContractorData) -> None:
         id=test_contractor.id,
         user_id=test_contractor.user_id,
         name="Test Contractor",
-        trade="General Contractor",
-        location="Portland, OR",
         assistant_name="Bolt",
     )
 
     output = _format_profile(contractor)
     assert "Test Contractor" in output
-    assert "General Contractor" in output
-    assert "Portland, OR" in output
     assert "Bolt" in output
 
 
@@ -125,8 +117,6 @@ def test_format_profile_empty_contractor() -> None:
 
     output = _format_profile(contractor)
     assert "Name: Not set" in output
-    assert "Trade: Not set" in output
-    assert "Location: Not set" in output
     assert "AI Name: Clawbolt (default)" in output
 
 
@@ -144,32 +134,6 @@ async def test_update_profile_name(test_contractor: ContractorData) -> None:
     refreshed = await store.get_by_id(test_contractor.id)
     assert refreshed is not None
     assert refreshed.name == "Mike Johnson"
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_trade(test_contractor: ContractorData) -> None:
-    """update_profile should update contractor trade."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(trade="Electrician")
-    assert "trade" in result.content
-    assert result.is_error is False
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    assert refreshed.trade == "Electrician"
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_location(test_contractor: ContractorData) -> None:
-    """update_profile should update contractor location."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(location="Denver, CO")
-    assert "location" in result.content
-    assert result.is_error is False
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    assert refreshed.location == "Denver, CO"
 
 
 @pytest.mark.asyncio()
@@ -191,17 +155,15 @@ async def test_update_profile_multiple_fields(
 ) -> None:
     """update_profile should update multiple fields at once."""
     update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(name="Jake", trade="Plumber", location="Portland, OR")
+    result = await update_fn(name="Jake", assistant_name="Bolt")
     assert result.is_error is False
     assert "name" in result.content
-    assert "trade" in result.content
-    assert "location" in result.content
+    assert "assistant_name" in result.content
     store = get_contractor_store()
     refreshed = await store.get_by_id(test_contractor.id)
     assert refreshed is not None
     assert refreshed.name == "Jake"
-    assert refreshed.trade == "Plumber"
-    assert refreshed.location == "Portland, OR"
+    assert refreshed.assistant_name == "Bolt"
 
 
 @pytest.mark.asyncio()
@@ -221,14 +183,13 @@ def test_extract_from_update_profile_calls() -> None:
     tool_calls = [
         StoredToolInteraction(
             name="update_profile",
-            args={"name": "Mike", "trade": "Electrician"},
-            result="Profile updated: name, trade",
+            args={"name": "Mike"},
+            result="Profile updated: name",
             is_error=False,
         ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates["name"] == "Mike"
-    assert updates["trade"] == "Electrician"
 
 
 def test_extract_ignores_non_update_profile_tools() -> None:
@@ -270,15 +231,14 @@ def test_extract_multiple_update_profile_calls() -> None:
         ),
         StoredToolInteraction(
             name="update_profile",
-            args={"trade": "Plumber", "location": "Portland"},
-            result="Profile updated: trade, location",
+            args={"assistant_name": "Bolt"},
+            result="Profile updated: assistant_name",
             is_error=False,
         ),
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates["name"] == "Jake"
-    assert updates["trade"] == "Plumber"
-    assert updates["location"] == "Portland"
+    assert updates["assistant_name"] == "Bolt"
 
 
 def test_extract_all_fields() -> None:
@@ -288,8 +248,6 @@ def test_extract_all_fields() -> None:
             name="update_profile",
             args={
                 "name": "Sarah",
-                "trade": "Electrician",
-                "location": "Austin, TX",
                 "assistant_name": "Sparky",
             },
             result="Profile updated: all fields",
@@ -298,8 +256,6 @@ def test_extract_all_fields() -> None:
     ]
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates["name"] == "Sarah"
-    assert updates["trade"] == "Electrician"
-    assert updates["location"] == "Austin, TX"
     assert updates["assistant_name"] == "Sparky"
 
 
@@ -333,10 +289,10 @@ def test_update_profile_tool_schema(test_contractor: ContractorData) -> None:
     schema = tool.params_model.model_json_schema()
     props = schema["properties"]
     assert "name" in props
-    assert "trade" in props
-    assert "location" in props
     assert "assistant_name" in props
-    # Business-specific fields moved to USER.md via workspace tools
+    # These fields now live in USER.md
+    assert "trade" not in props
+    assert "location" not in props
     assert "hourly_rate" not in props
     assert "business_hours" not in props
     assert "timezone" not in props

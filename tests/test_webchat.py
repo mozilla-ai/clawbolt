@@ -21,7 +21,6 @@ async def webchat_contractor() -> ContractorData:
     return await store.create(
         user_id="webchat-test-user",
         name="Test Contractor",
-        trade="Electrician",
     )
 
 

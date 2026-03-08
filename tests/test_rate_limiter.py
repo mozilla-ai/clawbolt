@@ -50,8 +50,6 @@ def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
                 user_id="rl-test-user",
                 name="RL Test",
                 phone="+15559999999",
-                trade="Electrician",
-                location="Seattle, WA",
                 channel_identifier="777777",
                 preferred_channel="telegram",
             )

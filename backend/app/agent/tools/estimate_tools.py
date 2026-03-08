@@ -122,7 +122,7 @@ def create_estimate_tools(
         pdf_data = EstimatePDFData(
             contractor_name=contractor.name or "Contractor",
             contractor_phone=contractor.phone or "",
-            contractor_trade=contractor.trade or "",
+            contractor_trade="",
             description=description,
             line_items=processed_items,
             subtotal=subtotal,

@@ -96,16 +96,12 @@ function ProfileTab({
   profile,
   onSaved,
 }: {
-  profile: { name: string; phone: string; trade: string; location: string; hourly_rate: number | null; business_hours: string; timezone: string };
+  profile: { name: string; phone: string; timezone: string };
   onSaved: () => void;
 }) {
   const [form, setForm] = useState({
     name: profile.name,
     phone: profile.phone,
-    trade: profile.trade,
-    location: profile.location,
-    hourly_rate: profile.hourly_rate?.toString() ?? '',
-    business_hours: profile.business_hours,
     timezone: profile.timezone,
   });
   const [saving, setSaving] = useState(false);
@@ -116,10 +112,6 @@ function ProfileTab({
       const body: ContractorProfileUpdate = {
         name: form.name,
         phone: form.phone,
-        trade: form.trade,
-        location: form.location,
-        hourly_rate: form.hourly_rate ? parseFloat(form.hourly_rate) : null,
-        business_hours: form.business_hours,
         timezone: form.timezone,
       };
       await api.updateProfile(body);
@@ -143,18 +135,6 @@ function ProfileTab({
         </Field>
         <Field label="Phone">
           <Input value={form.phone} onChange={set('phone')} type="tel" />
-        </Field>
-        <Field label="Trade">
-          <Input value={form.trade} onChange={set('trade')} placeholder="e.g. Electrician, Plumber" />
-        </Field>
-        <Field label="Location">
-          <Input value={form.location} onChange={set('location')} placeholder="City, State" />
-        </Field>
-        <Field label="Hourly Rate ($)">
-          <Input value={form.hourly_rate} onChange={set('hourly_rate')} type="number" step="0.01" />
-        </Field>
-        <Field label="Business Hours">
-          <Input value={form.business_hours} onChange={set('business_hours')} placeholder="Mon-Fri 8am-5pm" />
         </Field>
         <Field label="Timezone">
           <Select value={form.timezone} onChange={set('timezone')}>

@@ -287,7 +287,6 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, tmp_path: Pa
             user_id="other-user-999",
             name="Other Contractor",
             phone="+15559999999",
-            trade="Electrician",
         )
     )
 

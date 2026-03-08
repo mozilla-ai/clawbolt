@@ -62,12 +62,8 @@ class ContractorData(BaseModel):
     user_id: str = ""
     name: str = ""
     phone: str = ""
-    trade: str = ""
-    location: str = ""
-    hourly_rate: float | None = None
     soul_text: str = ""
     user_text: str = ""
-    business_hours: str = ""
     timezone: str = ""
     preferred_channel: str = "telegram"
     channel_identifier: str = ""

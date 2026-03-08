@@ -90,20 +90,14 @@ class TestSystemPromptBuilder:
 
 class TestSectionBuilders:
     def test_build_identity_section(self) -> None:
-        """Should include contractor name and trade."""
+        """Should include contractor name."""
         contractor = MagicMock()
         contractor.name = "Mike"
-        contractor.trade = "plumbing"
-        contractor.location = "Portland"
-        contractor.hourly_rate = 85
-        contractor.business_hours = "7am-5pm"
         contractor.soul_text = None
         contractor.preferences_json = None
         contractor.assistant_name = "Clawbolt"
         result = build_identity_section(contractor)
         assert "Mike" in result
-        assert "plumbing" in result
-        assert "Portland" in result
 
     @pytest.mark.asyncio
     async def test_build_memory_section_with_content(self) -> None:
@@ -134,7 +128,7 @@ class TestSectionBuilders:
         assert "ONLY communicate via this chat" in result
 
     def test_build_instructions_section_no_trade_guidance(self) -> None:
-        """Instructions section should not contain trade-specific guidance."""
+        """Instructions section should not contain trade-specific guidance (removed from model)."""
         result = build_instructions_section()
         assert "Trade guidance" not in result
 
@@ -173,10 +167,6 @@ class TestBuildAgentSystemPrompt:
         """Full agent prompt should contain all key sections."""
         contractor = MagicMock()
         contractor.name = "Jake"
-        contractor.trade = "electrician"
-        contractor.location = "Seattle"
-        contractor.hourly_rate = 90
-        contractor.business_hours = "8am-6pm"
         contractor.soul_text = None
         contractor.preferences_json = None
         contractor.assistant_name = "Clawbolt"
@@ -198,7 +188,6 @@ class TestBuildAgentSystemPrompt:
 
         assert "Clawbolt" in result
         assert "Jake" in result
-        assert "electrician" in result
         assert "Jane" in result
         assert "Tool Guidelines" in result
         assert "save_fact" in result
@@ -210,10 +199,6 @@ class TestBuildAgentSystemPrompt:
         """Agent prompt preamble should use custom assistant_name."""
         contractor = MagicMock()
         contractor.name = "Jake"
-        contractor.trade = "electrician"
-        contractor.location = "Seattle"
-        contractor.hourly_rate = 90
-        contractor.business_hours = "8am-6pm"
         contractor.soul_text = None
         contractor.preferences_json = None
         contractor.assistant_name = "Bolt"
@@ -234,14 +219,10 @@ class TestBuildAgentSystemPrompt:
         assert "Clawbolt" not in result.split("\n")[0]
 
     @pytest.mark.asyncio
-    async def test_trade_guidance_only_in_identity_section(self) -> None:
-        """Trade guidance should appear in the identity section, not instructions."""
+    async def test_no_trade_guidance_in_prompt(self) -> None:
+        """Agent prompt should not contain trade-specific guidance (removed from model)."""
         contractor = MagicMock()
         contractor.name = "Sparky"
-        contractor.trade = "electrician"
-        contractor.location = None
-        contractor.hourly_rate = None
-        contractor.business_hours = None
         contractor.soul_text = None
         contractor.preferences_json = None
         contractor.assistant_name = "Clawbolt"
@@ -258,47 +239,15 @@ class TestBuildAgentSystemPrompt:
                 message_context="hello",
             )
 
-        # Trade guidance should appear in the About section (from build_soul_prompt)
-        assert "NEC codes" in result
-        # But not as a "Trade guidance" label in the instructions section
+        # Trade guidance removed from model; should not appear
         assert "Trade guidance" not in result
-
-    @pytest.mark.asyncio
-    async def test_no_trade_guidance_for_unknown_trade(self) -> None:
-        """Agent prompt should omit trade guidance for unrecognized trades."""
-        contractor = MagicMock()
-        contractor.name = "Bob"
-        contractor.trade = "chimney sweep"
-        contractor.location = None
-        contractor.hourly_rate = None
-        contractor.business_hours = None
-        contractor.soul_text = None
-        contractor.preferences_json = None
-        contractor.assistant_name = "Clawbolt"
-        contractor.id = 1
-
-        with patch(
-            "backend.app.agent.system_prompt.build_memory_context",
-            new_callable=AsyncMock,
-            return_value="",
-        ):
-            result = await build_agent_system_prompt(
-                contractor=contractor,
-                tools=[],
-                message_context="hello",
-            )
-
-        assert "Trade guidance" not in result
+        assert "NEC codes" not in result
 
     @pytest.mark.asyncio
     async def test_curly_braces_in_contractor_name(self) -> None:
         """Contractor name with curly braces should not break the prompt."""
         contractor = MagicMock()
         contractor.name = "Mike {The Plumber}"
-        contractor.trade = "plumbing"
-        contractor.location = None
-        contractor.hourly_rate = None
-        contractor.business_hours = None
         contractor.soul_text = None
         contractor.preferences_json = None
         contractor.assistant_name = "Clawbolt"
@@ -402,10 +351,6 @@ class TestAgentSystemPromptIncludesDate:
         )
         contractor = MagicMock()
         contractor.name = "Jake"
-        contractor.trade = "electrician"
-        contractor.location = "Seattle"
-        contractor.hourly_rate = 90
-        contractor.business_hours = "8am-6pm"
         contractor.soul_text = None
         contractor.preferences_json = None
         contractor.assistant_name = "Clawbolt"
@@ -516,10 +461,6 @@ class TestCrossSessionContext:
 
         contractor = MagicMock()
         contractor.name = "Jake"
-        contractor.trade = "carpenter"
-        contractor.location = "Portland"
-        contractor.hourly_rate = 75
-        contractor.business_hours = "8am-5pm"
         contractor.soul_text = None
         contractor.preferences_json = None
         contractor.assistant_name = "Clawbolt"

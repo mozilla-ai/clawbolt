@@ -205,16 +205,7 @@ def is_within_business_hours(
     local_now = _to_local_time(now, contractor.timezone)
     current_hour = local_now.hour
 
-    if contractor.business_hours:
-        parsed = _parse_business_hours(contractor.business_hours)
-        if parsed:
-            start, end = parsed
-            if start <= end:
-                return start <= current_hour < end
-            # Overnight range (e.g. 22-6), unlikely but handle it
-            return current_hour >= start or current_hour < end
-
-    # Fallback: outside quiet hours means "business hours"
+    # Use global quiet hours to determine business hours.
     qstart = settings.heartbeat_quiet_hours_start
     qend = settings.heartbeat_quiet_hours_end
     if qstart > qend:

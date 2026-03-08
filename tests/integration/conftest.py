@@ -36,24 +36,19 @@ def integration_contractor() -> ContractorData:
             user_id="integration-test-user",
             name="Integration Test Contractor",
             phone="+15559999999",
-            trade="General Contractor",
-            location="Portland, OR",
         )
     )
 
 
 @pytest.fixture()
 def onboarded_contractor() -> ContractorData:
-    """Onboarded contractor with business hours for heartbeat tests."""
+    """Onboarded contractor for heartbeat tests."""
     store = get_contractor_store()
     return asyncio.get_event_loop().run_until_complete(
         store.create(
             user_id="heartbeat-integration-user",
             name="Mike the Plumber",
             phone="+15559990000",
-            trade="Plumber",
-            location="Portland, OR",
-            business_hours="7am-5pm",
             onboarding_complete=True,
         )
     )

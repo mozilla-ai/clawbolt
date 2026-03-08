@@ -29,8 +29,6 @@ async def test_contractor(tmp_path: object) -> ContractorData:
         user_id="test-user-001",
         name="Test Contractor",
         phone="+15551234567",
-        trade="General Contractor",
-        location="Portland, OR",
         channel_identifier="123456789",
         preferred_channel="telegram",
     )
