@@ -118,10 +118,9 @@ def build_soul_prompt(contractor: ContractorData) -> str:
     """Build the 'soul' section of the system prompt from contractor profile.
 
     Layers (in order):
-    1. Core identity: name, trade, location, rate, hours
+    1. Core identity: name, trade, location
     2. Trade-specific defaults from TRADE_DEFAULTS (when no custom soul_text)
     3. Custom soul_text (freeform behavioral guidance from the contractor)
-    4. Communication style from preferences_json
     """
     lines: list[str] = []
 

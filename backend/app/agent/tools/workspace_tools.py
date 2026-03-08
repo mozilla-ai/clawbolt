@@ -62,7 +62,7 @@ def _resolve_path(contractor_id: int, relative_path: str) -> tuple[Path, str | N
         return base, f"Invalid path: {relative_path}"
 
     # Prevent path traversal
-    if not str(resolved).startswith(str(base.resolve())):
+    if not resolved.is_relative_to(base.resolve()):
         return base, f"Path escapes workspace: {relative_path}"
 
     # Only allow markdown files
