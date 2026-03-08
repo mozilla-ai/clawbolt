@@ -210,6 +210,7 @@ async def run_agent(
     downloaded_media: list[DownloadedMedia],
     system_prompt_override: str | None = None,
     event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] | None = None,
+    session_id: str = "",
 ) -> AgentResponse:
     """Initialize agent with tools and process the message.
 
@@ -230,6 +231,7 @@ async def run_agent(
         chat_id=to_address,
         tool_context=tool_context,
         registry=default_registry,
+        session_id=session_id,
     )
 
     # Start with core tools only; specialist tools are discovered on demand
@@ -387,6 +389,7 @@ async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
         downloaded_media=ctx.downloaded_media,
         system_prompt_override=ctx.system_prompt_override,
         event_subscribers=ctx.event_subscribers,
+        session_id=ctx.session.session_id,
     )
     return ctx
 
