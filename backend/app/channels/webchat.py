@@ -74,7 +74,7 @@ class WebChatChannel(BaseChannel):
         router = APIRouter(tags=["webchat"])
         channel = self
 
-        @router.post("/contractor/chat", response_model=_ChatResponse)
+        @router.post("/user/chat", response_model=_ChatResponse)
         async def send_chat_message(
             message: str = Form(default=""),
             session_id: str | None = Form(default=None),

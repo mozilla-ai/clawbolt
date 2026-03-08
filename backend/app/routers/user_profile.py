@@ -42,7 +42,7 @@ def _profile_response(c: ContractorData) -> ContractorProfileResponse:
     )
 
 
-@router.get("/contractor/profile", response_model=ContractorProfileResponse)
+@router.get("/user/profile", response_model=ContractorProfileResponse)
 async def get_profile(
     current_user: ContractorData = Depends(get_current_user),
 ) -> ContractorProfileResponse:
@@ -50,7 +50,7 @@ async def get_profile(
     return _profile_response(current_user)
 
 
-@router.put("/contractor/profile", response_model=ContractorProfileResponse)
+@router.put("/user/profile", response_model=ContractorProfileResponse)
 async def update_profile(
     body: ContractorProfileUpdate,
     current_user: ContractorData = Depends(get_current_user),
@@ -85,7 +85,7 @@ def _build_channel_config_response() -> ChannelConfigResponse:
     )
 
 
-@router.get("/contractor/channels/config", response_model=ChannelConfigResponse)
+@router.get("/user/channels/config", response_model=ChannelConfigResponse)
 async def get_channel_config(
     _current_user: ContractorData = Depends(get_current_user),
 ) -> ChannelConfigResponse:
@@ -93,7 +93,7 @@ async def get_channel_config(
     return _build_channel_config_response()
 
 
-@router.put("/contractor/channels/config", response_model=ChannelConfigResponse)
+@router.put("/user/channels/config", response_model=ChannelConfigResponse)
 async def update_channel_config(
     body: ChannelConfigUpdate,
     _current_user: ContractorData = Depends(get_current_user),

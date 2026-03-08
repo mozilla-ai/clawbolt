@@ -47,7 +47,7 @@ def test_chat_endpoint_returns_reply(
     webchat_client: TestClient,
     webchat_contractor: ContractorData,
 ) -> None:
-    """POST /api/contractor/chat should return an agent reply."""
+    """POST /api/user/chat should return an agent reply."""
     with patch(
         "backend.app.agent.router.run_agent",
         new_callable=AsyncMock,
@@ -57,7 +57,7 @@ def test_chat_endpoint_returns_reply(
         mock_agent.return_value = AgentResponse(reply_text="Hello from the agent!")
 
         resp = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "Hi there"},
         )
 
@@ -81,7 +81,7 @@ def test_chat_endpoint_persists_messages(
         mock_agent.return_value = AgentResponse(reply_text="Got it!")
 
         resp = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "Remember my rate is 85"},
         )
         assert resp.status_code == 200
@@ -105,7 +105,7 @@ def test_chat_endpoint_persists_messages(
 
 def test_chat_endpoint_missing_body(webchat_client: TestClient) -> None:
     """Empty request (no message, no files) should return 422."""
-    resp = webchat_client.post("/api/contractor/chat", data={"message": ""})
+    resp = webchat_client.post("/api/user/chat", data={"message": ""})
     assert resp.status_code == 422
 
 
@@ -122,13 +122,13 @@ def test_chat_returns_same_session(
 
         mock_agent.return_value = AgentResponse(reply_text="Reply 1")
         resp1 = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "First message"},
         )
 
         mock_agent.return_value = AgentResponse(reply_text="Reply 2")
         resp2 = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "Second message"},
         )
 
@@ -148,14 +148,14 @@ def test_chat_with_explicit_session_id(
 
         mock_agent.return_value = AgentResponse(reply_text="Reply 1")
         resp1 = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "First message"},
         )
         session_id = resp1.json()["session_id"]
 
         mock_agent.return_value = AgentResponse(reply_text="Reply 2")
         resp2 = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "Second message", "session_id": session_id},
         )
 
@@ -166,7 +166,7 @@ def test_chat_with_explicit_session_id(
 def test_chat_with_invalid_session_id(webchat_client: TestClient) -> None:
     """Invalid session_id format should return 422."""
     resp = webchat_client.post(
-        "/api/contractor/chat",
+        "/api/user/chat",
         data={"message": "Hello", "session_id": "../../bad"},
     )
     assert resp.status_code == 422
@@ -185,7 +185,7 @@ def test_chat_with_nonexistent_session_id(
 
         mock_agent.return_value = AgentResponse(reply_text="Hello!")
         resp = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "Hello", "session_id": "9999_9999"},
         )
 
@@ -220,7 +220,7 @@ def test_chat_with_image_upload(
             b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
         )
         resp = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "Check this out"},
             files=[("files", ("photo.png", io.BytesIO(png_bytes), "image/png"))],
         )
@@ -251,7 +251,7 @@ def test_chat_with_files_only(
         mock_agent.return_value = AgentResponse(reply_text="Got your file!")
 
         resp = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             files=[("files", ("doc.pdf", io.BytesIO(b"%PDF-1.4 test"), "application/pdf"))],
         )
 
@@ -261,7 +261,7 @@ def test_chat_with_files_only(
 
 def test_chat_no_message_no_files(webchat_client: TestClient) -> None:
     """Empty request with no text and no files should return 422."""
-    resp = webchat_client.post("/api/contractor/chat", data={"message": "  "})
+    resp = webchat_client.post("/api/user/chat", data={"message": "  "})
     assert resp.status_code == 422
 
 
@@ -272,7 +272,7 @@ def test_chat_file_too_large(
     """Oversized file should return 422."""
     with patch.object(settings, "max_media_size_bytes", 10):
         resp = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "here is a big file"},
             files=[("files", ("big.bin", io.BytesIO(b"x" * 100), "application/octet-stream"))],
         )
@@ -295,7 +295,7 @@ def test_chat_multiple_files(
         mock_agent.return_value = AgentResponse(reply_text="Got them all!")
 
         resp = webchat_client.post(
-            "/api/contractor/chat",
+            "/api/user/chat",
             data={"message": "Multiple attachments"},
             files=[
                 ("files", ("a.png", io.BytesIO(b"img1"), "image/png")),

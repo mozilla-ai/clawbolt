@@ -17,7 +17,7 @@ from backend.app.schemas import (
 router = APIRouter()
 
 
-@router.get("/contractor/sessions", response_model=SessionListResponse)
+@router.get("/user/sessions", response_model=SessionListResponse)
 async def list_sessions(
     offset: int = 0,
     limit: int = 20,
@@ -57,7 +57,7 @@ async def list_sessions(
     )
 
 
-@router.get("/contractor/sessions/{session_id}", response_model=SessionDetailResponse)
+@router.get("/user/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session(
     session_id: str,
     current_user: ContractorData = Depends(get_current_user),
