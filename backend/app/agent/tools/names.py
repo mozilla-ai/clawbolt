@@ -32,6 +32,11 @@ class ToolName:
     VIEW_PROFILE = "view_profile"
     UPDATE_PROFILE = "update_profile"
 
+    # Workspace files
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    EDIT_FILE = "edit_file"
+
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
 

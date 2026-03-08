@@ -15,7 +15,6 @@ from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
     is_onboarding_needed,
 )
-from backend.app.agent.profile import get_missing_optional_fields
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
 from backend.app.services.messaging import MessagingService
@@ -100,147 +99,6 @@ def test_is_onboarding_needed_name_trade_but_no_location() -> None:
     assert is_onboarding_needed(contractor) is True
 
 
-def test_get_missing_optional_fields_all_missing() -> None:
-    """Should return all optional field labels when none are set."""
-    contractor = ContractorData(
-        id=1,
-        user_id="missing-optional",
-        phone="+15550008888",
-        name="Test",
-        trade="Electrician",
-        location="Denver, CO",
-    )
-    missing = get_missing_optional_fields(contractor)
-    assert "rates" in missing
-    assert "business hours" in missing
-
-
-def test_get_missing_optional_fields_none_missing() -> None:
-    """Should return empty list when all optional fields are set."""
-    contractor = ContractorData(
-        id=1,
-        user_id="all-filled",
-        phone="+15550009999",
-        name="Test",
-        trade="Electrician",
-        location="Denver, CO",
-        hourly_rate=85.0,
-        business_hours="Mon-Fri 8-5",
-        timezone="America/Denver",
-    )
-    missing = get_missing_optional_fields(contractor)
-    assert missing == []
-
-
-def test_get_missing_optional_fields_partial() -> None:
-    """Should return only the labels of missing optional fields."""
-    contractor = ContractorData(
-        id=1,
-        user_id="partial-optional",
-        phone="+15550010000",
-        name="Test",
-        trade="Plumber",
-        location="Portland, OR",
-        hourly_rate=75.0,
-    )
-    missing = get_missing_optional_fields(contractor)
-    assert "business hours" in missing
-    assert "timezone" in missing
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_normal_prompt_includes_missing_optional_nudge(
-    mock_amessages: object,
-    mock_messaging: MessagingService,
-) -> None:
-    """Normal system prompt should include a nudge for missing optional fields."""
-    contractor = ContractorData(
-        id=10,
-        user_id="nudge-user",
-        phone="+15550011111",
-        channel_identifier="111111111",
-        name="Sarah",
-        trade="Electrician",
-        location="Austin, TX",
-        onboarding_complete=True,
-    )
-
-    session = SessionState(
-        session_id="test-session",
-        contractor_id=contractor.id,
-        is_active=True,
-        messages=[
-            StoredMessage(direction="inbound", body="Hey there", seq=1),
-        ],
-    )
-    message = StoredMessage(direction="inbound", body="Hey there", seq=1)
-
-    mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
-    _ensure_session_on_disk(contractor, session)
-
-    await handle_inbound_message(
-        contractor=contractor,
-        session=session,
-        message=message,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["system"]
-    assert "rates" in system_msg
-    assert "business hours" in system_msg
-    assert "opportunity comes up naturally" in system_msg
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_normal_prompt_no_nudge_when_optional_fields_filled(
-    mock_amessages: object,
-    mock_messaging: MessagingService,
-) -> None:
-    """Normal system prompt should NOT include nudge when all optional fields filled."""
-    contractor = ContractorData(
-        id=11,
-        user_id="complete-user",
-        phone="+15550012222",
-        channel_identifier="222222222",
-        name="Bob",
-        trade="Plumber",
-        location="Seattle, WA",
-        hourly_rate=90.0,
-        business_hours="Mon-Fri 7-4",
-        timezone="America/Los_Angeles",
-        onboarding_complete=True,
-    )
-
-    session = SessionState(
-        session_id="test-session",
-        contractor_id=contractor.id,
-        is_active=True,
-        messages=[
-            StoredMessage(direction="inbound", body="What's up", seq=1),
-        ],
-    )
-    message = StoredMessage(direction="inbound", body="What's up", seq=1)
-
-    mock_amessages.return_value = make_text_response("Hey!")  # type: ignore[union-attr]
-    _ensure_session_on_disk(contractor, session)
-
-    await handle_inbound_message(
-        contractor=contractor,
-        session=session,
-        message=message,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["system"]
-    assert "opportunity comes up naturally" not in system_msg
-
-
 def test_build_onboarding_system_prompt_new_contractor() -> None:
     """Onboarding prompt for new contractor should not include known info."""
     contractor = ContractorData(id=1, user_id="brand-new", phone="+15550004444")
@@ -285,22 +143,6 @@ def test_build_onboarding_system_prompt_includes_assistant_name() -> None:
     assert "Don't re-ask" in prompt
 
 
-def test_build_onboarding_system_prompt_includes_known_communication_style() -> None:
-    """Onboarding prompt should include known communication style in 'already know' list."""
-    contractor = ContractorData(
-        id=1,
-        user_id="style-known-user",
-        phone="+15550007777",
-        name="Jake",
-        preferences_json=json.dumps({"communication_style": "casual and brief"}),
-    )
-
-    prompt = build_onboarding_system_prompt(contractor)
-    assert "You already know" in prompt
-    assert "casual and brief" in prompt
-    assert "Don't re-ask" in prompt
-
-
 def test_build_onboarding_prompt_mentions_update_profile() -> None:
     """Onboarding prompt should mention update_profile tool."""
     from backend.app.agent.profile import build_onboarding_prompt
@@ -317,6 +159,16 @@ def test_build_onboarding_prompt_lighthearted_tone() -> None:
     assert "woke up" in prompt
     assert "Have fun with it" in prompt
     assert "not a form" in prompt
+
+
+def test_build_onboarding_prompt_mentions_workspace_files() -> None:
+    """Onboarding prompt should mention USER.md and SOUL.md for saving info."""
+    from backend.app.agent.profile import build_onboarding_prompt
+
+    prompt = build_onboarding_prompt()
+    assert "USER.md" in prompt
+    assert "SOUL.md" in prompt
+    assert "write_file" in prompt
 
 
 # --- Fixtures ---
@@ -543,8 +395,8 @@ async def test_profile_updates_post_onboarding_multiple_fields(
 ) -> None:
     """Multiple profile fields updated in a single post-onboarding message.
 
-    When a contractor says "I'm in Denver now and my rate is $100/hr", both
-    location and hourly_rate should be updated on the ContractorData record.
+    When a contractor says "I'm in Denver now", location should be updated
+    on the ContractorData record via update_profile.
     """
     assert test_contractor.location == "Portland, OR"
 
@@ -555,33 +407,28 @@ async def test_profile_updates_post_onboarding_multiple_fields(
         messages=[
             StoredMessage(
                 direction="inbound",
-                body="I moved to Denver and my rate is $100/hr now",
+                body="I moved to Denver",
                 seq=1,
             ),
         ],
     )
     message = StoredMessage(
         direction="inbound",
-        body="I moved to Denver and my rate is $100/hr now",
+        body="I moved to Denver",
         seq=1,
     )
 
-    # LLM updates both fields in one update_profile call, then gives a text reply
+    # LLM updates location via update_profile, then gives a text reply
     tool_response = make_tool_call_response(
         tool_calls=[
             {
                 "id": "call_profile",
                 "name": "update_profile",
-                "arguments": json.dumps(
-                    {
-                        "location": "Denver, CO",
-                        "hourly_rate": "$100/hr",
-                    }
-                ),
+                "arguments": json.dumps({"location": "Denver, CO"}),
             },
         ]
     )
-    text_response = make_text_response("Updated your location and rate!")
+    text_response = make_text_response("Updated your location!")
 
     mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
@@ -597,7 +444,6 @@ async def test_profile_updates_post_onboarding_multiple_fields(
     refreshed = await store.get_by_id(test_contractor.id)
     assert refreshed is not None
     assert refreshed.location == "Denver, CO"
-    assert refreshed.hourly_rate == 100.0
     # Onboarding should remain complete
     assert refreshed.onboarding_complete is not True or is_onboarding_needed(refreshed) is False
 
@@ -881,11 +727,11 @@ async def test_onboarding_completion_message_appended(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-async def test_onboarding_completion_message_includes_optional_fields(
+async def test_onboarding_completion_message_includes_location(
     mock_amessages: object,
     mock_messaging: MessagingService,
 ) -> None:
-    """Completion summary should include location and rate when available."""
+    """Completion summary should include location when available."""
     # Contractor with location already set, still needs name+trade
     contractor = ContractorData(
         id=33,
@@ -893,7 +739,6 @@ async def test_onboarding_completion_message_includes_optional_fields(
         phone="+15550009999",
         channel_identifier="999999998",
         location="Portland, OR",
-        hourly_rate=85.0,
     )
 
     session = SessionState(
@@ -931,7 +776,6 @@ async def test_onboarding_completion_message_includes_optional_fields(
     assert "- Name: Sarah" in response.reply_text
     assert "- Trade: Electrician" in response.reply_text
     assert "- Location: Portland, OR" in response.reply_text
-    assert "- Rate: $85/hour" in response.reply_text
 
 
 @pytest.mark.asyncio()

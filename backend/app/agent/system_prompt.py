@@ -13,10 +13,7 @@ import zoneinfo
 
 from backend.app.agent.file_store import ContractorData, get_session_store
 from backend.app.agent.memory import build_memory_context
-from backend.app.agent.profile import (
-    build_soul_prompt,
-    get_missing_optional_fields,
-)
+from backend.app.agent.profile import build_soul_prompt
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.base import Tool
 
@@ -176,19 +173,6 @@ def build_cross_session_context(
     )
 
 
-def build_missing_fields_section(contractor: ContractorData) -> str:
-    """Build a note about missing optional profile fields, if any."""
-    missing = get_missing_optional_fields(contractor)
-    if not missing:
-        return ""
-    missing_str = " and ".join(missing)
-    return (
-        f"Note: You haven't learned this contractor's {missing_str} yet. "
-        "If the opportunity comes up naturally in conversation, "
-        "try to learn and save these details."
-    )
-
-
 # -----------------------------------------------------------------------
 # Pre-built prompt assemblers
 # -----------------------------------------------------------------------
@@ -233,10 +217,6 @@ async def build_agent_system_prompt(
         cross = build_cross_session_context(contractor.id, current_session_id)
         if cross:
             builder.add_section("Recent Activity (other channel)", cross)
-
-    missing = build_missing_fields_section(contractor)
-    if missing:
-        builder.add_section("Profile Gaps", missing)
 
     return builder.build()
 

@@ -16,7 +16,6 @@ from backend.app.agent.system_prompt import (
     build_instructions_section,
     build_local_datetime_section,
     build_memory_section,
-    build_missing_fields_section,
     build_proactive_section,
     build_recall_section,
     build_tool_guidelines_section,
@@ -166,23 +165,6 @@ class TestSectionBuilders:
         result = build_recall_section()
         assert "Search your memory" in result
         assert "don't make things up" in result
-
-    def test_build_missing_fields_with_gaps(self) -> None:
-        """Should mention missing fields."""
-        contractor = MagicMock()
-        contractor.hourly_rate = None
-        contractor.business_hours = None
-        result = build_missing_fields_section(contractor)
-        assert "rates" in result
-        assert "business hours" in result
-
-    def test_build_missing_fields_none(self) -> None:
-        """Should return empty string when all fields present."""
-        contractor = MagicMock()
-        contractor.hourly_rate = 85
-        contractor.business_hours = "7am-5pm"
-        result = build_missing_fields_section(contractor)
-        assert result == ""
 
 
 class TestBuildAgentSystemPrompt:

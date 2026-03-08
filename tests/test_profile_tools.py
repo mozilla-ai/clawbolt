@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 from collections.abc import Awaitable, Callable
 
 import pytest
@@ -12,53 +11,9 @@ from backend.app.agent.file_store import ContractorData, get_contractor_store
 from backend.app.agent.tools.base import ToolResult
 from backend.app.agent.tools.profile_tools import (
     _format_profile,
-    _parse_rate,
     create_profile_tools,
     extract_profile_updates_from_tool_calls,
 )
-
-# --- _parse_rate unit tests ---
-
-
-@pytest.mark.parametrize(
-    ("input_value", "expected"),
-    [
-        ("$85/hr", 85.0),
-        ("$85/hour", 85.0),
-        ("$85 per hour", 85.0),
-        ("$85 an hour", 85.0),
-        ("85 dollars", 85.0),
-        ("$85.50", 85.5),
-        ("$85.50/hr", 85.5),
-        ("85", 85.0),
-        ("85.00", 85.0),
-        ("$50-75/hr", 50.0),
-        ("$4500 per project", 4500.0),
-        ("$4,500 per project", 4500.0),
-        ("Usually around $80", 80.0),
-        ("$125/hour for electrical", 125.0),
-        ("  $65 /hr  ", 65.0),
-    ],
-)
-def test_parse_rate_valid_formats(input_value: str, expected: float) -> None:
-    """_parse_rate should extract numeric rate from various natural-language formats."""
-    assert _parse_rate(input_value) == expected
-
-
-@pytest.mark.parametrize(
-    "input_value",
-    [
-        "not sure",
-        "varies",
-        "depends on the job",
-        "TBD",
-        "",
-    ],
-)
-def test_parse_rate_invalid_returns_none(input_value: str) -> None:
-    """_parse_rate should return None for non-numeric values."""
-    assert _parse_rate(input_value) is None
-
 
 # --- Helper to get tool functions by name ---
 
@@ -95,61 +50,15 @@ async def test_view_profile_shows_populated_fields(
 async def test_view_profile_shows_not_set_for_empty_fields(
     test_contractor: ContractorData,
 ) -> None:
-    """view_profile should show 'Not set' for empty fields."""
-    # Clear some fields via the store
+    """view_profile should show 'Not set' for empty name/trade/location."""
     store = get_contractor_store()
-    await store.update(test_contractor.id, hourly_rate=None, business_hours="")
+    await store.update(test_contractor.id, name="", trade="")
 
     view_fn = _get_tool_fn(test_contractor, "view_profile")
     result = await view_fn()
     assert result.is_error is False
-    assert "Hourly Rate: Not set" in result.content
-    assert "Business Hours: Not set" in result.content
-    # New contractors get a default SOUL.md template, so soul_text is
-    # populated even when never explicitly set by the user.
-    assert "Soul/Bio:" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_view_profile_shows_rate_formatted(
-    test_contractor: ContractorData,
-) -> None:
-    """view_profile should format hourly rate with dollar sign."""
-    store = get_contractor_store()
-    await store.update(test_contractor.id, hourly_rate=85.0)
-
-    view_fn = _get_tool_fn(test_contractor, "view_profile")
-    result = await view_fn()
-    assert "$85/hr" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_view_profile_shows_communication_style(
-    test_contractor: ContractorData,
-) -> None:
-    """view_profile should extract and display communication style from preferences."""
-    store = get_contractor_store()
-    await store.update(
-        test_contractor.id,
-        preferences_json=json.dumps({"communication_style": "casual and brief"}),
-    )
-
-    view_fn = _get_tool_fn(test_contractor, "view_profile")
-    result = await view_fn()
-    assert "casual and brief" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_view_profile_shows_soul_text(
-    test_contractor: ContractorData,
-) -> None:
-    """view_profile should display soul text."""
-    store = get_contractor_store()
-    await store.update(test_contractor.id, soul_text="I keep it real with my clients.")
-
-    view_fn = _get_tool_fn(test_contractor, "view_profile")
-    result = await view_fn()
-    assert "I keep it real with my clients." in result.content
+    assert "Name: Not set" in result.content
+    assert "Trade: Not set" in result.content
 
 
 @pytest.mark.asyncio()
@@ -179,31 +88,35 @@ async def test_view_profile_reflects_updates(
     assert "Plumber" in result.content
 
 
+@pytest.mark.asyncio()
+async def test_view_profile_mentions_user_md(
+    test_contractor: ContractorData,
+) -> None:
+    """view_profile should mention USER.md for additional details."""
+    view_fn = _get_tool_fn(test_contractor, "view_profile")
+    result = await view_fn()
+    assert "USER.md" in result.content
+
+
 # --- _format_profile unit tests ---
 
 
 def test_format_profile_complete(test_contractor: ContractorData) -> None:
-    """_format_profile should include all fields for a fully populated profile."""
+    """_format_profile should include core fields for a populated profile."""
     contractor = ContractorData(
         id=test_contractor.id,
         user_id=test_contractor.user_id,
         name="Test Contractor",
         trade="General Contractor",
         location="Portland, OR",
-        hourly_rate=100.0,
-        business_hours="Mon-Fri 8am-5pm",
-        soul_text="Deck specialist",
-        preferences_json=json.dumps({"communication_style": "formal"}),
+        assistant_name="Bolt",
     )
 
     output = _format_profile(contractor)
     assert "Test Contractor" in output
     assert "General Contractor" in output
     assert "Portland, OR" in output
-    assert "$100/hr" in output
-    assert "Mon-Fri 8am-5pm" in output
-    assert "Deck specialist" in output
-    assert "formal" in output
+    assert "Bolt" in output
 
 
 def test_format_profile_empty_contractor() -> None:
@@ -214,26 +127,7 @@ def test_format_profile_empty_contractor() -> None:
     assert "Name: Not set" in output
     assert "Trade: Not set" in output
     assert "Location: Not set" in output
-    assert "Hourly Rate: Not set" in output
-    assert "Business Hours: Not set" in output
     assert "AI Name: Clawbolt (default)" in output
-    assert "Communication Style: Not set" in output
-    assert "Soul/Bio: Not set" in output
-
-
-def test_format_profile_invalid_preferences_json(
-    test_contractor: ContractorData,
-) -> None:
-    """_format_profile should handle malformed preferences_json gracefully."""
-    contractor = ContractorData(
-        id=test_contractor.id,
-        user_id=test_contractor.user_id,
-        name=test_contractor.name,
-        preferences_json="not valid json",
-    )
-
-    output = _format_profile(contractor)
-    assert "Communication Style: Not set" in output
 
 
 # --- update_profile tool unit tests ---
@@ -279,103 +173,6 @@ async def test_update_profile_location(test_contractor: ContractorData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_update_profile_hourly_rate(test_contractor: ContractorData) -> None:
-    """update_profile should parse and update hourly rate."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(hourly_rate="$85/hr")
-    assert "hourly_rate" in result.content
-    assert result.is_error is False
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    assert refreshed.hourly_rate == 85.0
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_hourly_rate_numeric(
-    test_contractor: ContractorData,
-) -> None:
-    """update_profile should handle numeric hourly rate values."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(hourly_rate=95.0)
-    assert "hourly_rate" in result.content
-    assert result.is_error is False
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    assert refreshed.hourly_rate == 95.0
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_invalid_rate(
-    test_contractor: ContractorData,
-) -> None:
-    """update_profile should return error for unparseable rates."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(hourly_rate="depends on the job")
-    assert result.is_error is True
-    assert "Could not parse" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_business_hours(
-    test_contractor: ContractorData,
-) -> None:
-    """update_profile should update business hours."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(business_hours="Mon-Fri 7am-5pm")
-    assert "business_hours" in result.content
-    assert result.is_error is False
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    assert refreshed.business_hours == "Mon-Fri 7am-5pm"
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_valid_timezone(
-    test_contractor: ContractorData,
-) -> None:
-    """update_profile should accept valid IANA timezones."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(timezone="America/New_York")
-    assert "timezone" in result.content
-    assert result.is_error is False
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    assert refreshed.timezone == "America/New_York"
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_invalid_timezone(
-    test_contractor: ContractorData,
-) -> None:
-    """update_profile should reject invalid timezone strings."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(timezone="asdf")
-    assert result.is_error is True
-    assert "Invalid timezone" in result.content
-    assert "IANA" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_communication_style(
-    test_contractor: ContractorData,
-) -> None:
-    """update_profile should store communication style in preferences_json."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(communication_style="casual and brief")
-    assert "communication_style" in result.content
-    assert result.is_error is False
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    prefs = json.loads(refreshed.preferences_json)
-    assert prefs == {"communication_style": "casual and brief"}
-
-
-@pytest.mark.asyncio()
 async def test_update_profile_assistant_name(test_contractor: ContractorData) -> None:
     """update_profile should update assistant name."""
     update_fn = _get_tool_fn(test_contractor, "update_profile")
@@ -386,19 +183,6 @@ async def test_update_profile_assistant_name(test_contractor: ContractorData) ->
     refreshed = await store.get_by_id(test_contractor.id)
     assert refreshed is not None
     assert refreshed.assistant_name == "Bolt"
-
-
-@pytest.mark.asyncio()
-async def test_update_profile_soul_text(test_contractor: ContractorData) -> None:
-    """update_profile should update soul text."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-    result = await update_fn(soul_text="I specialize in deck building.")
-    assert "soul_text" in result.content
-    assert result.is_error is False
-    store = get_contractor_store()
-    refreshed = await store.get_by_id(test_contractor.id)
-    assert refreshed is not None
-    assert refreshed.soul_text == "I specialize in deck building."
 
 
 @pytest.mark.asyncio()
@@ -429,26 +213,6 @@ async def test_update_profile_no_fields(test_contractor: ContractorData) -> None
     assert "No fields provided" in result.content
 
 
-@pytest.mark.asyncio()
-async def test_update_profile_various_rate_formats(
-    test_contractor: ContractorData,
-) -> None:
-    """update_profile should handle various rate formats."""
-    update_fn = _get_tool_fn(test_contractor, "update_profile")
-
-    for rate_str, expected in [
-        ("$85/hour", 85.0),
-        ("$4,500 per project", 4500.0),
-        ("Usually around $80", 80.0),
-    ]:
-        result = await update_fn(hourly_rate=rate_str)
-        assert result.is_error is False
-        store = get_contractor_store()
-        refreshed = await store.get_by_id(test_contractor.id)
-        assert refreshed is not None
-        assert refreshed.hourly_rate == expected
-
-
 # --- extract_profile_updates_from_tool_calls tests ---
 
 
@@ -465,36 +229,6 @@ def test_extract_from_update_profile_calls() -> None:
     updates = extract_profile_updates_from_tool_calls(tool_calls)
     assert updates["name"] == "Mike"
     assert updates["trade"] == "Electrician"
-
-
-def test_extract_from_update_profile_with_rate() -> None:
-    """Should extract and parse hourly rate from update_profile calls."""
-    tool_calls = [
-        StoredToolInteraction(
-            name="update_profile",
-            args={"hourly_rate": "$85/hr"},
-            result="Profile updated: hourly_rate",
-            is_error=False,
-        ),
-    ]
-    updates = extract_profile_updates_from_tool_calls(tool_calls)
-    assert updates["hourly_rate"] == 85.0
-
-
-def test_extract_from_update_profile_with_communication_style() -> None:
-    """Should extract communication style as preferences_json."""
-    tool_calls = [
-        StoredToolInteraction(
-            name="update_profile",
-            args={"communication_style": "casual and brief"},
-            result="Profile updated: communication_style",
-            is_error=False,
-        ),
-    ]
-    updates = extract_profile_updates_from_tool_calls(tool_calls)
-    assert "preferences_json" in updates
-    prefs = json.loads(str(updates["preferences_json"]))
-    assert prefs == {"communication_style": "casual and brief"}
 
 
 def test_extract_ignores_non_update_profile_tools() -> None:
@@ -516,8 +250,8 @@ def test_extract_ignores_error_tool_calls() -> None:
     tool_calls = [
         StoredToolInteraction(
             name="update_profile",
-            args={"hourly_rate": "varies"},
-            result="Could not parse hourly rate",
+            args={"name": ""},
+            result="No fields provided to update.",
             is_error=True,
         ),
     ]
@@ -556,11 +290,7 @@ def test_extract_all_fields() -> None:
                 "name": "Sarah",
                 "trade": "Electrician",
                 "location": "Austin, TX",
-                "hourly_rate": "$100",
-                "business_hours": "Mon-Fri 8-5",
-                "communication_style": "formal",
                 "assistant_name": "Sparky",
-                "soul_text": "I specialize in rewiring.",
             },
             result="Profile updated: all fields",
             is_error=False,
@@ -570,12 +300,7 @@ def test_extract_all_fields() -> None:
     assert updates["name"] == "Sarah"
     assert updates["trade"] == "Electrician"
     assert updates["location"] == "Austin, TX"
-    assert updates["hourly_rate"] == 100.0
-    assert updates["business_hours"] == "Mon-Fri 8-5"
     assert updates["assistant_name"] == "Sparky"
-    assert updates["soul_text"] == "I specialize in rewiring."
-    prefs = json.loads(str(updates["preferences_json"]))
-    assert prefs == {"communication_style": "formal"}
 
 
 # --- Tool schema tests ---
@@ -610,10 +335,12 @@ def test_update_profile_tool_schema(test_contractor: ContractorData) -> None:
     assert "name" in props
     assert "trade" in props
     assert "location" in props
-    assert "hourly_rate" in props
-    assert "business_hours" in props
-    assert "communication_style" in props
     assert "assistant_name" in props
-    assert "soul_text" in props
+    # Business-specific fields moved to USER.md via workspace tools
+    assert "hourly_rate" not in props
+    assert "business_hours" not in props
+    assert "timezone" not in props
+    assert "communication_style" not in props
+    assert "soul_text" not in props
     # No required fields since all are optional
     assert "required" not in schema
