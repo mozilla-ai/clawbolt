@@ -212,3 +212,28 @@ class ChannelConfigResponse(BaseModel):
 class ChannelConfigUpdate(BaseModel):
     telegram_bot_token: str | None = None
     telegram_allowed_usernames: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Tool config (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class ToolConfigEntryResponse(BaseModel):
+    name: str
+    description: str
+    category: str
+    enabled: bool
+
+
+class ToolConfigResponse(BaseModel):
+    tools: list[ToolConfigEntryResponse]
+
+
+class ToolConfigUpdateEntry(BaseModel):
+    name: str
+    enabled: bool
+
+
+class ToolConfigUpdate(BaseModel):
+    tools: list[ToolConfigUpdateEntry]

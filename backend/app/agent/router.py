@@ -22,6 +22,7 @@ from backend.app.agent.file_store import (
     ContractorData,
     SessionState,
     StoredMessage,
+    ToolConfigStore,
     get_session_store,
 )
 from backend.app.agent.messages import AgentMessage
@@ -234,10 +235,18 @@ async def run_agent(
         session_id=session_id,
     )
 
+    # Load user's disabled tool groups to filter out unwanted tools.
+    tool_config_store = ToolConfigStore(contractor.id)
+    disabled_groups = await tool_config_store.get_disabled_tool_names()
+
     # Start with core tools only; specialist tools are discovered on demand
-    # via the list_capabilities meta-tool.
-    tools = default_registry.create_core_tools(tool_context)
-    specialist_summaries = default_registry.get_available_specialist_summaries(tool_context)
+    # via the list_capabilities meta-tool. Exclude user-disabled groups.
+    tools = default_registry.create_core_tools(
+        tool_context, excluded_factories=disabled_groups or None
+    )
+    specialist_summaries = default_registry.get_available_specialist_summaries(
+        tool_context, excluded_factories=disabled_groups or None
+    )
     if specialist_summaries:
         tools.append(create_list_capabilities_tool(specialist_summaries))
     agent.register_tools(tools)

@@ -181,22 +181,41 @@ class ToolRegistry:
             tools.extend(created)
         return tools
 
-    def create_core_tools(self, context: ToolContext) -> list[Tool]:
-        """Create only core (always-available) tools."""
-        return self.create_tools(context, selected_factories=self.core_factory_names)
+    def create_core_tools(
+        self,
+        context: ToolContext,
+        *,
+        excluded_factories: set[str] | None = None,
+    ) -> list[Tool]:
+        """Create only core (always-available) tools.
+
+        When *excluded_factories* is provided, factories in that set are
+        skipped even if they are core factories.
+        """
+        selected = self.core_factory_names
+        if excluded_factories:
+            selected = selected - excluded_factories
+        return self.create_tools(context, selected_factories=selected)
 
     def get_available_specialist_summaries(
         self,
         context: ToolContext,
+        *,
+        excluded_factories: set[str] | None = None,
     ) -> dict[str, str]:
         """Return summaries of specialist factories whose dependencies are met.
 
         Used by the setup code to build the ``list_capabilities`` meta-tool
         with only the categories that are actually usable.
+
+        When *excluded_factories* is provided, factories in that set are
+        skipped.
         """
         summaries: dict[str, str] = {}
         for name, factory in self._factories.items():
             if factory.core:
+                continue
+            if excluded_factories and name in excluded_factories:
                 continue
             if factory.requires_storage and context.storage is None:
                 continue
