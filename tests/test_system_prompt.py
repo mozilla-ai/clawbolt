@@ -457,25 +457,20 @@ class TestCrossSessionContext:
         )
         assert result == ""
 
-    def test_includes_messages_from_other_session(
+    @pytest.mark.asyncio()
+    async def test_includes_messages_from_other_session(
         self,
         test_contractor: "ContractorData",
     ) -> None:
         """Should include messages from sessions other than the current one."""
-        import asyncio
-
         from backend.app.agent.file_store import get_session_store
 
         store = get_session_store(test_contractor.id)
 
         # Create session A with messages
-        session_a, _ = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
-        asyncio.get_event_loop().run_until_complete(
-            store.add_message(session_a, "inbound", "Hello from Telegram")
-        )
-        asyncio.get_event_loop().run_until_complete(
-            store.add_message(session_a, "outbound", "Hi! How can I help?")
-        )
+        session_a, _ = await store.get_or_create_session()
+        await store.add_message(session_a, "inbound", "Hello from Telegram")
+        await store.add_message(session_a, "outbound", "Hi! How can I help?")
 
         result = build_cross_session_context(
             test_contractor.id, current_session_id="different_session_999"
@@ -485,21 +480,18 @@ class TestCrossSessionContext:
         assert "[User]" in result
         assert "[You]" in result
 
-    def test_excludes_current_session(
+    @pytest.mark.asyncio()
+    async def test_excludes_current_session(
         self,
         test_contractor: "ContractorData",
     ) -> None:
         """Should not include messages from the current session."""
-        import asyncio
-
         from backend.app.agent.file_store import get_session_store
 
         store = get_session_store(test_contractor.id)
 
-        session_a, _ = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
-        asyncio.get_event_loop().run_until_complete(
-            store.add_message(session_a, "inbound", "Message in session A")
-        )
+        session_a, _ = await store.get_or_create_session()
+        await store.add_message(session_a, "inbound", "Message in session A")
 
         # When querying with session A's own ID, nothing should appear
         result = build_cross_session_context(
@@ -507,21 +499,18 @@ class TestCrossSessionContext:
         )
         assert result == ""
 
-    def test_truncates_long_messages(
+    @pytest.mark.asyncio()
+    async def test_truncates_long_messages(
         self,
         test_contractor: "ContractorData",
     ) -> None:
         """Long message bodies should be truncated."""
-        import asyncio
-
         from backend.app.agent.file_store import get_session_store
 
         store = get_session_store(test_contractor.id)
-        session_a, _ = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
+        session_a, _ = await store.get_or_create_session()
         long_body = "x" * 300
-        asyncio.get_event_loop().run_until_complete(
-            store.add_message(session_a, "inbound", long_body)
-        )
+        await store.add_message(session_a, "inbound", long_body)
 
         result = build_cross_session_context(test_contractor.id, current_session_id="other_999")
         assert "..." in result
