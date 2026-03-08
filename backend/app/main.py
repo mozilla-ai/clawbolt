@@ -14,7 +14,7 @@ from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.channels.webchat import WebChatChannel
-from backend.app.config import settings
+from backend.app.config import load_persistent_config, settings
 from backend.app.routers import (
     auth,
     estimates,
@@ -108,6 +108,13 @@ async def _verify_llm_settings() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
+    # Load runtime-configurable settings (Telegram token, allowlists, etc.)
+    # from the volume-mounted data/config.json so they survive container
+    # restarts. This runs *before* load_dotenv() so that os.environ only
+    # contains real env vars at this point; .env values have not yet been
+    # injected. Real env vars still take precedence over config.json.
+    load_persistent_config()
+
     # Pydantic Settings reads .env for its own declared fields only and
     # does not mutate os.environ. Provider API keys like GROQ_API_KEY are
     # consumed by the any-llm SDK, which reads them directly from
