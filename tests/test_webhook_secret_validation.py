@@ -34,7 +34,7 @@ def _make_client(
     data_dir: str = "/tmp/test_webhook_secret",
 ) -> Generator[TestClient]:
     """Build a TestClient with specific webhook secret / bot token settings."""
-    with patch.object(settings, "contractor_data_dir", data_dir):
+    with patch.object(settings, "data_dir", data_dir):
         reset_stores()
 
         store = get_contractor_store()

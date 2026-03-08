@@ -10,7 +10,7 @@ from backend.app.config import settings
 
 def _seed_memory(contractor: ContractorData) -> None:
     """Create a MEMORY.md with test data."""
-    mem_dir = Path(settings.contractor_data_dir) / str(contractor.id) / "memory"
+    mem_dir = Path(settings.data_dir) / str(contractor.id) / "memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
     (mem_dir / "MEMORY.md").write_text(
         "# Long-term Memory\n\n"

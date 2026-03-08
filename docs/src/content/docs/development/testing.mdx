@@ -29,7 +29,7 @@ uv run ty check --python .venv backend/ tests/
 
 ### File store isolation
 
-Tests use `tmp_path` fixtures to point file stores at a temporary directory. The `_isolate_file_stores` autouse fixture patches `settings.contractor_data_dir` and calls `reset_stores()` to clear cached store singletons between tests.
+Tests use `tmp_path` fixtures to point file stores at a temporary directory. The `_isolate_file_stores` autouse fixture patches `settings.data_dir` and calls `reset_stores()` to clear cached store singletons between tests.
 
 ### Mock factories
 

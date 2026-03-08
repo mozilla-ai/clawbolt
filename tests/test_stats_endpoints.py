@@ -22,7 +22,7 @@ def test_stats_empty(client: TestClient) -> None:
 
 def test_stats_with_data(client: TestClient, test_contractor: ContractorData) -> None:
     # Create a session with messages
-    base = Path(settings.contractor_data_dir) / str(test_contractor.id) / "sessions"
+    base = Path(settings.data_dir) / str(test_contractor.id) / "sessions"
     base.mkdir(parents=True, exist_ok=True)
     path = base / "1_100.jsonl"
     meta = {
@@ -41,7 +41,7 @@ def test_stats_with_data(client: TestClient, test_contractor: ContractorData) ->
     client.post("/api/user/checklist", json={"description": "Check site"})
 
     # Create memory
-    mem_dir = Path(settings.contractor_data_dir) / str(test_contractor.id) / "memory"
+    mem_dir = Path(settings.data_dir) / str(test_contractor.id) / "memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
     (mem_dir / "MEMORY.md").write_text(
         "# Long-term Memory\n\n## General\n- rate: 85 (confidence: 1.0)\n",

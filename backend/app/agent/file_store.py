@@ -3,16 +3,16 @@
 All file I/O goes through this module. Stores use JSON, JSONL, and Markdown
 formats following patterns from nanobot (JSONL sessions, MEMORY.md facts,
 per-user directories, asyncio.Lock) and openclaw (SOUL.md for personality,
-category-organized markdown memory, contractor_index for routing).
+category-organized markdown memory, user_index for routing).
 
 Storage layout::
 
     data/
-      contractor_index.json
+      user_index.json
       seen_messages.json
-      contractors/
-        {contractor_id}/
-          contractor.json
+      users/
+        {user_id}/
+          user.json
           SOUL.md
           USER.md
           memory/
@@ -254,17 +254,17 @@ def _read_jsonl(path: Path) -> list[dict[str, Any]]:
 
 def _data_dir() -> Path:
     """Return the root data directory."""
-    return Path(settings.contractor_data_dir)
+    return Path(settings.data_dir)
 
 
-def _contractor_dir(contractor_id: int) -> Path:
-    """Return the directory for a specific contractor."""
+def _user_dir(contractor_id: int) -> Path:
+    """Return the directory for a specific user."""
     return _data_dir() / str(contractor_id)
 
 
 def _index_path() -> Path:
-    """Return the path to contractor_index.json."""
-    return _data_dir().parent / "contractor_index.json"
+    """Return the path to user_index.json."""
+    return _data_dir().parent / "user_index.json"
 
 
 def _next_id(items: list[dict[str, Any]]) -> int:
@@ -345,20 +345,20 @@ class ContractorStore:
 
     def _load(self, contractor_id: int) -> ContractorData | None:
         """Load a contractor from disk."""
-        path = _contractor_dir(contractor_id) / "contractor.json"
+        path = _user_dir(contractor_id) / "user.json"
         data = _read_json(path)
         if data is None:
             return None
         contractor = ContractorData.model_validate(data)
         # Load soul_text from SOUL.md
-        soul_path = _contractor_dir(contractor_id) / "SOUL.md"
+        soul_path = _user_dir(contractor_id) / "SOUL.md"
         if soul_path.exists():
             raw = soul_path.read_text(encoding="utf-8").strip()
             if raw.startswith("# Soul"):
                 raw = raw[len("# Soul") :].strip()
             contractor.soul_text = raw
         # Load user_text from USER.md
-        user_path = _contractor_dir(contractor_id) / "USER.md"
+        user_path = _user_dir(contractor_id) / "USER.md"
         if user_path.exists():
             raw = user_path.read_text(encoding="utf-8").strip()
             if raw.startswith("# User"):
@@ -368,14 +368,14 @@ class ContractorStore:
 
     def _save(self, contractor: ContractorData) -> None:
         """Save a contractor to disk."""
-        cdir = _contractor_dir(contractor.id)
+        cdir = _user_dir(contractor.id)
         cdir.mkdir(parents=True, exist_ok=True)
 
-        # Save contractor.json (exclude soul_text/user_text, they go to .md files)
+        # Save user.json (exclude soul_text/user_text, they go to .md files)
         data = contractor.model_dump()
         soul_text = data.pop("soul_text", "")
         user_text = data.pop("user_text", "")
-        _write_json(cdir / "contractor.json", data)
+        _write_json(cdir / "user.json", data)
 
         # Save SOUL.md
         soul_path = cdir / "SOUL.md"
@@ -410,7 +410,7 @@ class ContractorStore:
             mem_path.write_text("# Long-term Memory\n", encoding="utf-8")
 
     def _update_index(self, contractor: ContractorData) -> None:
-        """Update contractor_index.json with channel mapping."""
+        """Update user_index.json with channel mapping."""
         idx_path = _index_path()
         index: dict[str, int] = _read_json(idx_path, {})
         if contractor.channel_identifier:
@@ -533,15 +533,15 @@ class FileMemoryStore:
 
     @property
     def _memory_path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "memory" / "MEMORY.md"
+        return _user_dir(self.contractor_id) / "memory" / "MEMORY.md"
 
     @property
     def _history_path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "memory" / "HISTORY.md"
+        return _user_dir(self.contractor_id) / "memory" / "HISTORY.md"
 
     @property
     def _soul_path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "SOUL.md"
+        return _user_dir(self.contractor_id) / "SOUL.md"
 
     def _parse_memory_md(self) -> list[MemoryFact]:
         """Parse MEMORY.md into a list of MemoryFact objects."""
@@ -698,7 +698,7 @@ class FileMemoryStore:
 
     @property
     def _user_path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "USER.md"
+        return _user_dir(self.contractor_id) / "USER.md"
 
     def read_user(self) -> str:
         """Read USER.md content."""
@@ -729,7 +729,7 @@ class FileSessionStore:
 
     @property
     def _sessions_dir(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "sessions"
+        return _user_dir(self.contractor_id) / "sessions"
 
     def _session_path(self, session_id: str) -> Path:
         return self._sessions_dir / f"{session_id}.jsonl"
@@ -992,7 +992,7 @@ class ClientStore:
 
     @property
     def _path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "clients.json"
+        return _user_dir(self.contractor_id) / "clients.json"
 
     def _load_all(self) -> list[dict[str, Any]]:
         return _read_json(self._path, [])
@@ -1087,7 +1087,7 @@ class EstimateStore:
 
     @property
     def _estimates_dir(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "estimates"
+        return _user_dir(self.contractor_id) / "estimates"
 
     def _estimate_path(self, estimate_id: str, client_id: str | None = None) -> Path:
         folder = client_id if client_id else "unsorted"
@@ -1212,7 +1212,7 @@ class MediaStore:
 
     @property
     def _path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "media.json"
+        return _user_dir(self.contractor_id) / "media.json"
 
     def _load_all(self) -> list[dict[str, Any]]:
         return _read_json(self._path, [])
@@ -1303,11 +1303,11 @@ class HeartbeatStore:
 
     @property
     def _checklist_path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "heartbeat" / "checklist.json"
+        return _user_dir(self.contractor_id) / "heartbeat" / "checklist.json"
 
     @property
     def _log_path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "heartbeat" / "log.jsonl"
+        return _user_dir(self.contractor_id) / "heartbeat" / "log.jsonl"
 
     def _load_checklist(self) -> list[dict[str, Any]]:
         return _read_json(self._checklist_path, [])
@@ -1446,7 +1446,7 @@ class LLMUsageStore:
 
     @property
     def _path(self) -> Path:
-        return _contractor_dir(self.contractor_id) / "llm_usage.jsonl"
+        return _user_dir(self.contractor_id) / "llm_usage.jsonl"
 
     def log(
         self,

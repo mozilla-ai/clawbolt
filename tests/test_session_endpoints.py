@@ -13,7 +13,7 @@ def _create_session(
     contractor: ContractorData, session_id: str, messages: list[dict[str, object]]
 ) -> None:
     """Create a test session JSONL file."""
-    base = Path(settings.contractor_data_dir) / str(contractor.id) / "sessions"
+    base = Path(settings.data_dir) / str(contractor.id) / "sessions"
     base.mkdir(parents=True, exist_ok=True)
     path = base / f"{session_id}.jsonl"
     lines = [

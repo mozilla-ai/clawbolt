@@ -24,7 +24,7 @@ def get_effective_webhook_secret(s: "Settings") -> str:
 
 class Settings(BaseSettings):
     log_level: str = "INFO"
-    contractor_data_dir: str = "data/contractors"
+    data_dir: str = "data/users"
     cors_origins: str = "http://localhost:3000,http://localhost:8000"
     jwt_secret: str = "change-me-in-production"
     jwt_expiry_minutes: int = 15
