@@ -1,5 +1,6 @@
 """Tests for channel config GET/PUT endpoints."""
 
+import json
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
@@ -67,16 +68,15 @@ def test_update_channel_config_token(client: TestClient, _clear_bot_token: None)
     settings.telegram_bot_token = ""
 
 
-def test_update_channel_config_persists_to_dotenv(
+def test_update_channel_config_persists_to_config_json(
     client: TestClient, tmp_path: Path, _clear_bot_token: None
 ) -> None:
-    """PUT with a token writes to .env file when it exists."""
-    env_file = tmp_path / ".env"
-    env_file.write_text("# existing config\n")
+    """PUT with a token writes to config.json in the data directory."""
+    config_path = tmp_path / "config.json"
 
     with patch(
-        "backend.app.routers.user_profile.Path",
-        return_value=env_file,
+        "backend.app.routers.user_profile.save_persistent_config",
+        wraps=lambda updates, path=None: _write_config(config_path, updates),
     ):
         resp = client.put(
             "/api/user/channels/config",
@@ -84,12 +84,20 @@ def test_update_channel_config_persists_to_dotenv(
         )
 
     assert resp.status_code == 200
-    env_content = env_file.read_text()
-    assert "TELEGRAM_BOT_TOKEN" in env_content
-    assert "persisted-token" in env_content
+    config_data = json.loads(config_path.read_text())
+    assert config_data["telegram_bot_token"] == "persisted-token"
 
     # Clean up
     settings.telegram_bot_token = ""
+
+
+def _write_config(path: Path, updates: dict[str, str]) -> None:
+    """Helper to write config.json for testing."""
+    existing: dict[str, str] = {}
+    if path.is_file():
+        existing = json.loads(path.read_text())
+    existing.update(updates)
+    path.write_text(json.dumps(existing, indent=2) + "\n")
 
 
 def test_update_channel_config_null_token_is_ignored(
