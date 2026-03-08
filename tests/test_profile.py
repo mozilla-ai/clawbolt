@@ -1,5 +1,3 @@
-import json
-
 import pytest
 
 from backend.app.agent.file_store import ContractorData
@@ -41,8 +39,6 @@ def test_build_soul_prompt_full_profile() -> None:
         name="Mike Chen",
         trade="general contracting",
         location="Portland, OR",
-        hourly_rate=85.0,
-        business_hours="Mon-Fri 7am-5pm",
         soul_text="I specialize in deck building and exterior renovations.",
     )
     prompt = build_soul_prompt(contractor)
@@ -50,8 +46,6 @@ def test_build_soul_prompt_full_profile() -> None:
     assert "Mike Chen" in prompt
     assert "general contracting" in prompt
     assert "Portland, OR" in prompt
-    assert "$85/hour" in prompt
-    assert "Mon-Fri 7am-5pm" in prompt
     assert "deck building" in prompt
 
 
@@ -76,41 +70,16 @@ def test_build_soul_prompt_minimal_profile() -> None:
     assert "contracting" in prompt
 
 
-def test_build_soul_prompt_includes_preferences_json() -> None:
-    """Soul prompt should render communication style from preferences_json."""
+def test_build_soul_prompt_with_soul_text() -> None:
+    """Soul prompt should include custom soul_text."""
     contractor = ContractorData(
         user_id="test",
         name="Jake",
         trade="plumbing",
-        preferences_json=json.dumps({"communication_style": "casual and brief"}),
+        soul_text="Direct and practical. Keep estimates tight.",
     )
     prompt = build_soul_prompt(contractor)
-    assert "Communication style: casual and brief." in prompt
-
-
-def test_build_soul_prompt_ignores_empty_preferences() -> None:
-    """Soul prompt should not include communication style when preferences_json is empty."""
-    contractor = ContractorData(
-        user_id="test",
-        name="Jake",
-        trade="plumbing",
-        preferences_json="{}",
-    )
-    prompt = build_soul_prompt(contractor)
-    assert "Communication style" not in prompt
-
-
-def test_build_soul_prompt_handles_malformed_preferences() -> None:
-    """Soul prompt should gracefully handle malformed preferences_json."""
-    contractor = ContractorData(
-        user_id="test",
-        name="Jake",
-        trade="plumbing",
-        preferences_json="not valid json",
-    )
-    prompt = build_soul_prompt(contractor)
-    # Should not raise, and should not include communication style
-    assert "Communication style" not in prompt
+    assert "Direct and practical" in prompt
     assert "Jake" in prompt
 
 
@@ -119,14 +88,14 @@ def test_build_onboarding_prompt() -> None:
     prompt = build_onboarding_prompt()
     assert "name" in prompt.lower()
     assert "trade" in prompt.lower()
-    assert "rate" in prompt.lower()
+    assert "location" in prompt.lower()
 
 
 def test_build_onboarding_prompt_includes_personality_discovery() -> None:
     """Onboarding prompt should include personality/naming discovery."""
     prompt = build_onboarding_prompt()
     assert "assistant_name" in prompt
-    assert "soul_text" in prompt
+    assert "SOUL.md" in prompt
     assert "personality" in prompt.lower()
 
 
@@ -259,28 +228,25 @@ class TestSoulPromptWithTradeDefaults:
         assert "plumbing terminology" in prompt_a.lower()
         assert "plumbing terminology" in prompt_b.lower()
 
-    def test_soul_text_and_preferences_coexist(self) -> None:
-        """Soul text and communication style should both appear."""
+    def test_soul_text_overrides_trade_defaults_completely(self) -> None:
+        """Soul text should replace trade defaults entirely."""
         contractor = ContractorData(
             user_id="test",
             name="Jake",
             trade="plumbing",
             soul_text="I prefer detailed breakdowns for every estimate.",
-            preferences_json=json.dumps({"communication_style": "casual"}),
         )
         prompt = build_soul_prompt(contractor)
         assert "detailed breakdowns" in prompt
-        assert "Communication style: casual." in prompt
+        assert "plumbing terminology" not in prompt.lower()
 
-    def test_trade_defaults_and_preferences_coexist(self) -> None:
-        """Trade defaults and communication style should both appear when no soul_text."""
+    def test_trade_defaults_appear_without_soul_text(self) -> None:
+        """Trade defaults should appear when no soul_text is set."""
         contractor = ContractorData(
             user_id="test",
             name="Jake",
             trade="plumbing",
             soul_text="",
-            preferences_json=json.dumps({"communication_style": "brief"}),
         )
         prompt = build_soul_prompt(contractor)
         assert "plumbing terminology" in prompt.lower()
-        assert "Communication style: brief." in prompt
