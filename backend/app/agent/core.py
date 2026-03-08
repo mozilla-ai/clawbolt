@@ -240,6 +240,7 @@ class ClawboltAgent:
         chat_id: str | None = None,
         tool_context: ToolContext | None = None,
         registry: ToolRegistry | None = None,
+        session_id: str = "",
     ) -> None:
         self.contractor = contractor
         self._messaging_service = messaging_service
@@ -251,6 +252,7 @@ class ClawboltAgent:
         self._registry = registry
         self._activated_specialists: set[str] = set()
         self._last_input_tokens: int = 0
+        self._session_id = session_id
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -351,7 +353,12 @@ class ClawboltAgent:
 
     async def _build_system_prompt(self, message_context: str) -> str:
         """Build the full system prompt via the composable builder."""
-        return await build_agent_system_prompt(self.contractor, self.tools, message_context)
+        return await build_agent_system_prompt(
+            self.contractor,
+            self.tools,
+            message_context,
+            current_session_id=self._session_id,
+        )
 
     async def _call_llm_with_retry(
         self,

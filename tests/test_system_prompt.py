@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.app.agent.file_store import ContractorData
 from backend.app.agent.system_prompt import (
     SystemPromptBuilder,
     _to_contractor_time,
     build_agent_system_prompt,
+    build_cross_session_context,
     build_date_section,
     build_identity_section,
     build_instructions_section,
@@ -442,3 +444,130 @@ class TestAgentSystemPromptIncludesDate:
         assert "## Current date" in result
         assert "Monday" in result
         assert "2025-06-16" in result
+
+
+class TestCrossSessionContext:
+    def test_returns_empty_when_no_other_sessions(
+        self,
+        test_contractor: "ContractorData",
+    ) -> None:
+        """Should return empty string when no other sessions exist."""
+        result = build_cross_session_context(
+            test_contractor.id, current_session_id="nonexistent_999"
+        )
+        assert result == ""
+
+    def test_includes_messages_from_other_session(
+        self,
+        test_contractor: "ContractorData",
+    ) -> None:
+        """Should include messages from sessions other than the current one."""
+        import asyncio
+
+        from backend.app.agent.file_store import get_session_store
+
+        store = get_session_store(test_contractor.id)
+
+        # Create session A with messages
+        session_a, _ = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
+        asyncio.get_event_loop().run_until_complete(
+            store.add_message(session_a, "inbound", "Hello from Telegram")
+        )
+        asyncio.get_event_loop().run_until_complete(
+            store.add_message(session_a, "outbound", "Hi! How can I help?")
+        )
+
+        result = build_cross_session_context(
+            test_contractor.id, current_session_id="different_session_999"
+        )
+        assert "Hello from Telegram" in result
+        assert "Hi! How can I help?" in result
+        assert "[User]" in result
+        assert "[You]" in result
+
+    def test_excludes_current_session(
+        self,
+        test_contractor: "ContractorData",
+    ) -> None:
+        """Should not include messages from the current session."""
+        import asyncio
+
+        from backend.app.agent.file_store import get_session_store
+
+        store = get_session_store(test_contractor.id)
+
+        session_a, _ = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
+        asyncio.get_event_loop().run_until_complete(
+            store.add_message(session_a, "inbound", "Message in session A")
+        )
+
+        # When querying with session A's own ID, nothing should appear
+        result = build_cross_session_context(
+            test_contractor.id, current_session_id=session_a.session_id
+        )
+        assert result == ""
+
+    def test_truncates_long_messages(
+        self,
+        test_contractor: "ContractorData",
+    ) -> None:
+        """Long message bodies should be truncated."""
+        import asyncio
+
+        from backend.app.agent.file_store import get_session_store
+
+        store = get_session_store(test_contractor.id)
+        session_a, _ = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
+        long_body = "x" * 300
+        asyncio.get_event_loop().run_until_complete(
+            store.add_message(session_a, "inbound", long_body)
+        )
+
+        result = build_cross_session_context(test_contractor.id, current_session_id="other_999")
+        assert "..." in result
+        # Should be truncated to ~200 chars + "..."
+        assert "x" * 201 not in result
+
+    @pytest.mark.asyncio()
+    async def test_agent_prompt_includes_cross_session_context(
+        self,
+        test_contractor: "ContractorData",
+    ) -> None:
+        """Agent system prompt should include cross-session context when available."""
+        from backend.app.agent.file_store import get_session_store
+
+        store = get_session_store(test_contractor.id)
+
+        # Create a session with messages (simulates a Telegram conversation)
+        session_a, _ = await store.get_or_create_session()
+        await store.add_message(session_a, "inbound", "Draft estimate for deck")
+        await store.add_message(session_a, "outbound", "Sure, what size deck?")
+
+        contractor = MagicMock()
+        contractor.name = "Jake"
+        contractor.trade = "carpenter"
+        contractor.location = "Portland"
+        contractor.hourly_rate = 75
+        contractor.business_hours = "8am-5pm"
+        contractor.soul_text = None
+        contractor.preferences_json = None
+        contractor.assistant_name = "Clawbolt"
+        contractor.id = test_contractor.id
+        contractor.user_text = ""
+        contractor.timezone = ""
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                contractor=contractor,
+                tools=[],
+                message_context="hello",
+                current_session_id="webchat_session_999",
+            )
+
+        assert "## Recent Activity (other channel)" in result
+        assert "Draft estimate for deck" in result
+        assert "Sure, what size deck?" in result

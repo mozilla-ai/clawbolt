@@ -949,6 +949,26 @@ class FileSessionStore:
         all_msgs.sort(key=lambda m: m.timestamp, reverse=True)
         return list(reversed(all_msgs[:count]))
 
+    def get_other_session_messages(
+        self,
+        exclude_session_id: str,
+        count: int = 5,
+    ) -> list[StoredMessage]:
+        """Get recent messages from sessions other than *exclude_session_id*."""
+        all_msgs: list[StoredMessage] = []
+        for path in reversed(self._list_session_files()):
+            if path.stem == exclude_session_id:
+                continue
+            lines = _read_jsonl(path)
+            for line in lines:
+                if line.get("_type") == "metadata":
+                    continue
+                all_msgs.append(StoredMessage.model_validate(line))
+            if len(all_msgs) >= count:
+                break
+        all_msgs.sort(key=lambda m: m.timestamp, reverse=True)
+        return list(reversed(all_msgs[:count]))
+
 
 # ---------------------------------------------------------------------------
 # ClientStore

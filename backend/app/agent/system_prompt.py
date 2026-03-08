@@ -11,7 +11,7 @@ import datetime
 import logging
 import zoneinfo
 
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import ContractorData, get_session_store
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import (
     build_soul_prompt,
@@ -147,6 +147,35 @@ def build_local_datetime_section(contractor: ContractorData) -> str:
     return local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
 
 
+def build_cross_session_context(
+    contractor_id: int,
+    current_session_id: str,
+    count: int = 5,
+) -> str:
+    """Build a summary of recent messages from other sessions.
+
+    Gives the agent awareness of recent conversations that happened on
+    a different channel (e.g. Telegram vs webchat) so it can maintain
+    continuity when the contractor switches channels.
+    """
+    store = get_session_store(contractor_id)
+    messages = store.get_other_session_messages(current_session_id, count=count)
+    if not messages:
+        return ""
+    lines: list[str] = []
+    for msg in messages:
+        label = "You" if msg.direction == "outbound" else "User"
+        body = msg.body[:200].rstrip()
+        if len(msg.body) > 200:
+            body += "..."
+        lines.append(f"- [{label}] {body}")
+    return (
+        "These are your most recent messages from a different conversation session.\n"
+        "Use this context for continuity but do not explicitly mention "
+        '"another session" unless the user asks.\n\n' + "\n".join(lines)
+    )
+
+
 def build_missing_fields_section(contractor: ContractorData) -> str:
     """Build a note about missing optional profile fields, if any."""
     missing = get_missing_optional_fields(contractor)
@@ -169,6 +198,7 @@ async def build_agent_system_prompt(
     contractor: ContractorData,
     tools: list[Tool],
     message_context: str,
+    current_session_id: str = "",
 ) -> str:
     """Assemble the full system prompt for the main agent loop."""
     builder = SystemPromptBuilder()
@@ -198,6 +228,11 @@ async def build_agent_system_prompt(
 
     builder.add_section("Proactive Messaging", build_proactive_section())
     builder.add_section("Recall Behavior", build_recall_section())
+
+    if current_session_id:
+        cross = build_cross_session_context(contractor.id, current_session_id)
+        if cross:
+            builder.add_section("Recent Activity (other channel)", cross)
 
     missing = build_missing_fields_section(contractor)
     if missing:
