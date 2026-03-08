@@ -101,6 +101,27 @@ PipelineStep = Callable[[PipelineContext], Awaitable[PipelineContext]]
 # ---------------------------------------------------------------------------
 
 
+def init_storage(contractor: ContractorData) -> StorageBackend | None:
+    """Initialize storage backend for a contractor.
+
+    Returns the storage backend if configured, or ``None`` otherwise.
+    """
+    try:
+        has_storage = (
+            settings.storage_provider == "local"
+            or (settings.storage_provider == "dropbox" and settings.dropbox_access_token)
+            or (
+                settings.storage_provider == "google_drive"
+                and settings.google_drive_credentials_json
+            )
+        )
+        if has_storage:
+            return get_storage_service(contractor=contractor)
+    except Exception:
+        logger.debug("Storage not configured, skipping file features")
+    return None
+
+
 async def prepare_media(
     contractor: ContractorData,
     message: StoredMessage,
@@ -127,21 +148,7 @@ async def prepare_media(
         except Exception:
             logger.exception("Failed to download media: %s", file_id)
 
-    # Initialize storage backend (used for auto-save and tools)
-    storage: StorageBackend | None = None
-    try:
-        has_storage = (
-            settings.storage_provider == "local"
-            or (settings.storage_provider == "dropbox" and settings.dropbox_access_token)
-            or (
-                settings.storage_provider == "google_drive"
-                and settings.google_drive_credentials_json
-            )
-        )
-        if has_storage:
-            storage = get_storage_service(contractor=contractor)
-    except Exception:
-        logger.debug("Storage not configured, skipping file features")
+    storage = init_storage(contractor)
 
     # Auto-save inbound media to storage
     if storage and downloaded_media:
