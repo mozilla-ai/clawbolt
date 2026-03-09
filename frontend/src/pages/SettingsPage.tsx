@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Navigate, useOutletContext, useParams, useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
@@ -26,6 +26,11 @@ export default function SettingsPage() {
   const { tab } = useParams<{ tab: string }>();
   const navigate = useNavigate();
   const { profile, reloadProfile, isPremium, isAdmin } = useOutletContext<AppShellContext>();
+
+  // Fetch the latest profile whenever the settings page is opened.
+  useEffect(() => {
+    reloadProfile();
+  }, [reloadProfile]);
 
   // Redirect retired tab slugs
   const redirect = tab ? RETIRED_TABS[tab] : undefined;
@@ -108,6 +113,10 @@ function UserTab({
   const [userText, setUserText] = useState(profile.user_text);
   const [saving, setSaving] = useState(false);
 
+  useEffect(() => {
+    setUserText(profile.user_text);
+  }, [profile.user_text]);
+
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
@@ -156,6 +165,10 @@ function SoulTab({
 }) {
   const [soulText, setSoulText] = useState(profile.soul_text);
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    setSoulText(profile.soul_text);
+  }, [profile.soul_text]);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
@@ -222,6 +235,15 @@ function HeartbeatTab({
     custom_frequency: isPreset ? '' : profile.heartbeat_frequency,
   });
   const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    const preset = HEARTBEAT_PRESETS.some((p) => p.value === profile.heartbeat_frequency);
+    setForm({
+      heartbeat_opt_in: profile.heartbeat_opt_in,
+      heartbeat_frequency: preset ? profile.heartbeat_frequency : 'custom',
+      custom_frequency: preset ? '' : profile.heartbeat_frequency,
+    });
+  }, [profile.heartbeat_opt_in, profile.heartbeat_frequency]);
 
   const effectiveFrequency = form.heartbeat_frequency === 'custom'
     ? form.custom_frequency
