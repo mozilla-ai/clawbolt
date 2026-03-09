@@ -3,6 +3,7 @@ from fastapi import HTTPException
 from fastapi.testclient import TestClient
 
 from backend.app.agent.file_store import get_contractor_store
+from backend.app.agent.onboarding import is_onboarding_needed
 from backend.app.auth.dependencies import LOCAL_USER_ID, get_current_user
 from backend.app.auth.scoping import get_user_contractor
 
@@ -12,8 +13,16 @@ async def test_get_current_user_creates_local_contractor() -> None:
     """OSS mode should auto-create a local contractor when store is empty."""
     contractor = await get_current_user()
     assert contractor.user_id == LOCAL_USER_ID
-    assert contractor.name == "Local Contractor"
+    assert contractor.name == ""
     assert contractor.id is not None
+
+
+@pytest.mark.asyncio()
+async def test_local_contractor_needs_onboarding() -> None:
+    """New local contractor should trigger onboarding (regression for #521)."""
+    contractor = await get_current_user()
+    assert not contractor.onboarding_complete
+    assert is_onboarding_needed(contractor)
 
 
 @pytest.mark.asyncio()
