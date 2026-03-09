@@ -8,10 +8,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from backend.app.agent.file_store import (
-    ContractorData,
     StoredMessage,
-    get_contractor_store,
+    UserData,
     get_session_store,
+    get_user_store,
 )
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.bus import message_bus
@@ -19,22 +19,22 @@ from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
 
 
-async def _get_all_messages(contractor_id: int) -> list[StoredMessage]:
-    """Helper to retrieve all stored messages for a contractor."""
-    store = get_session_store(contractor_id)
+async def _get_all_messages(user_id: int) -> list[StoredMessage]:
+    """Helper to retrieve all stored messages for a user."""
+    store = get_session_store(user_id)
     session, _is_new = await store.get_or_create_session()
     return list(session.messages)
 
 
 @pytest.mark.asyncio
 async def test_full_message_round_trip(
-    test_contractor: ContractorData,
+    test_user: UserData,
     mock_messaging_service: MessagingService,
 ) -> None:
     """End-to-end: inbound message -> agent processes -> outbound reply stored."""
     inbound = InboundMessage(
         channel="telegram",
-        sender_id=test_contractor.channel_identifier,
+        sender_id=test_user.channel_identifier,
         text="I need a quote for a 12x12 composite deck",
     )
 
@@ -49,7 +49,7 @@ async def test_full_message_round_trip(
         await process_inbound_from_bus(inbound, mock_messaging_service)
 
     # Verify inbound message stored
-    messages = await _get_all_messages(test_contractor.id)
+    messages = await _get_all_messages(test_user.id)
     inbound_msgs = [m for m in messages if m.direction == "inbound"]
     assert len(inbound_msgs) == 1
     assert inbound_msgs[0].body == "I need a quote for a 12x12 composite deck"
@@ -70,10 +70,10 @@ async def test_full_message_round_trip(
 
 
 @pytest.mark.asyncio
-async def test_full_message_round_trip_new_contractor(
+async def test_full_message_round_trip_new_user(
     mock_messaging_service: MessagingService,
 ) -> None:
-    """New contractor sends message -> auto-created -> agent replies."""
+    """New user sends message -> auto-created -> agent replies."""
     inbound = InboundMessage(
         channel="telegram",
         sender_id="777888999",
@@ -90,13 +90,13 @@ async def test_full_message_round_trip_new_contractor(
     ):
         await process_inbound_from_bus(inbound, mock_messaging_service)
 
-    # Contractor was auto-created
-    store = get_contractor_store()
-    contractor = await store.get_by_channel("777888999")
-    assert contractor is not None
+    # User was auto-created
+    store = get_user_store()
+    user = await store.get_by_channel("777888999")
+    assert user is not None
 
     # Messages stored
-    messages = await _get_all_messages(contractor.id)
+    messages = await _get_all_messages(user.id)
     assert len(messages) == 2  # inbound + outbound
     directions = {m.direction for m in messages}
     assert directions == {"inbound", "outbound"}
@@ -104,13 +104,13 @@ async def test_full_message_round_trip_new_contractor(
 
 @pytest.mark.asyncio
 async def test_full_message_agent_failure_still_stores_inbound(
-    test_contractor: ContractorData,
+    test_user: UserData,
     mock_messaging_service: MessagingService,
 ) -> None:
     """If the agent pipeline fails, inbound is stored but fallback is not."""
     inbound = InboundMessage(
         channel="telegram",
-        sender_id=test_contractor.channel_identifier,
+        sender_id=test_user.channel_identifier,
         text="Hello",
     )
 
@@ -125,7 +125,7 @@ async def test_full_message_agent_failure_still_stores_inbound(
         await process_inbound_from_bus(inbound, mock_messaging_service)
 
     # Inbound message still stored
-    messages = await _get_all_messages(test_contractor.id)
+    messages = await _get_all_messages(test_user.id)
     inbound_msgs = [m for m in messages if m.direction == "inbound"]
     assert len(inbound_msgs) == 1
 

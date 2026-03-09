@@ -12,7 +12,7 @@ from unittest.mock import patch
 import pytest
 
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.agent.messages import AssistantMessage, UserMessage
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
@@ -21,7 +21,7 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_agent_returns_nonempty_reply(
-    integration_contractor: ContractorData,
+    integration_user: UserData,
 ) -> None:
     """ClawboltAgent.process_message() should return a non-empty reply from a real LLM."""
     with patch("backend.app.agent.core.settings") as mock_settings:
@@ -30,7 +30,7 @@ async def test_agent_returns_nonempty_reply(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = ClawboltAgent(contractor=integration_contractor)
+        agent = ClawboltAgent(user=integration_user)
         response = await agent.process_message(
             "Hello, can you help me with a deck estimate?",
             system_prompt_override="You are a helpful assistant. Reply briefly.",
@@ -43,7 +43,7 @@ async def test_agent_returns_nonempty_reply(
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_agent_message_format_accepted(
-    integration_contractor: ContractorData,
+    integration_user: UserData,
 ) -> None:
     """The full system prompt + conversation history format should be accepted by a real LLM."""
     with patch("backend.app.agent.core.settings") as mock_settings:
@@ -52,7 +52,7 @@ async def test_agent_message_format_accepted(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = ClawboltAgent(contractor=integration_contractor)
+        agent = ClawboltAgent(user=integration_user)
         history = [
             UserMessage(content="Hi there"),
             AssistantMessage(content="Hello! How can I help?"),

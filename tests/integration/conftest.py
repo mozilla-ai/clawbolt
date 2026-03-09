@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.app.agent.file_store import ContractorData, get_contractor_store, reset_stores
+from backend.app.agent.file_store import UserData, get_user_store, reset_stores
 from backend.app.config import settings
 
 _ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
@@ -28,22 +28,22 @@ def _isolate_file_stores(tmp_path: object) -> Generator[None]:
 
 
 @pytest.fixture()
-def integration_contractor() -> ContractorData:
-    """Test contractor for integration tests."""
-    store = get_contractor_store()
+def integration_user() -> UserData:
+    """Test user for integration tests."""
+    store = get_user_store()
     return asyncio.get_event_loop().run_until_complete(
         store.create(
             user_id="integration-test-user",
-            name="Integration Test Contractor",
+            name="Integration Test User",
             phone="+15559999999",
         )
     )
 
 
 @pytest.fixture()
-def onboarded_contractor() -> ContractorData:
-    """Onboarded contractor for heartbeat tests."""
-    store = get_contractor_store()
+def onboarded_user() -> UserData:
+    """Onboarded user for heartbeat tests."""
+    store = get_user_store()
     return asyncio.get_event_loop().run_until_complete(
         store.create(
             user_id="heartbeat-integration-user",

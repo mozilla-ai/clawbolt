@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
@@ -35,7 +35,7 @@ logger = logging.getLogger(__name__)
 class ToolContext:
     """Shared context passed to tool factories during creation."""
 
-    contractor: ContractorData
+    user: UserData
     storage: StorageBackend | None = None
     messaging_service: MessagingService | None = None
     to_address: str = ""

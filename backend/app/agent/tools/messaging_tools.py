@@ -29,7 +29,7 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
     """Create messaging tools for the agent."""
 
     async def send_reply(message: str) -> ToolResult:
-        """Send a text reply to the contractor."""
+        """Send a text reply to the user."""
         if not message or not message.strip():
             return ToolResult(
                 content="Error: message cannot be empty.",
@@ -55,11 +55,11 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
     return [
         Tool(
             name=ToolName.SEND_REPLY,
-            description="Send a text reply to the contractor.",
+            description="Send a text reply to the user.",
             function=send_reply,
             params_model=SendReplyParams,
             tags={ToolTags.SENDS_REPLY},
-            usage_hint="Use this to send a text message to the contractor.",
+            usage_hint="Use this to send a text message to the user.",
         ),
         Tool(
             name=ToolName.SEND_MEDIA_REPLY,
@@ -67,9 +67,7 @@ def create_messaging_tools(messaging_service: MessagingService, to_address: str)
             function=send_media_reply,
             params_model=SendMediaReplyParams,
             tags={ToolTags.SENDS_REPLY},
-            usage_hint=(
-                "When sending estimates or files, use this to send media to the contractor."
-            ),
+            usage_hint=("When sending estimates or files, use this to send media to the user."),
         ),
     ]
 

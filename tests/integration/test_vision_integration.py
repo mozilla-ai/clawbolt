@@ -87,7 +87,7 @@ async def test_analyze_image_with_context() -> None:
         result = await analyze_image(
             png_bytes,
             "image/png",
-            context="The contractor sent this photo of damage to a deck railing.",
+            context="The user sent this photo of damage to a deck railing.",
         )
 
     assert isinstance(result, str)

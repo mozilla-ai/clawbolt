@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from backend.app.agent.context import StoredToolInteraction
-from backend.app.agent.file_store import ContractorData, get_contractor_store
+from backend.app.agent.file_store import UserData, get_user_store
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 
@@ -32,46 +32,46 @@ class ViewProfileParams(BaseModel):
 class UpdateProfileParams(BaseModel):
     """Parameters for the update_profile tool."""
 
-    name: str | None = Field(default=None, description="Contractor's full name")
+    name: str | None = Field(default=None, description="User's full name")
     assistant_name: str | None = Field(
         default=None,
-        description="What the contractor calls their AI assistant",
+        description="What the user calls their AI assistant",
     )
 
 
-def _format_profile(contractor: ContractorData) -> str:
-    """Format the contractor's profile as a human-readable summary.
+def _format_profile(user: UserData) -> str:
+    """Format the user's profile as a human-readable summary.
 
     Returns a structured text block with core profile fields.
     Business details are in USER.md (use read_file to view).
     """
     lines: list[str] = []
-    lines.append("Contractor Profile:")
-    lines.append(f"  Name: {contractor.name or 'Not set'}")
+    lines.append("User Profile:")
+    lines.append(f"  Name: {user.name or 'Not set'}")
 
-    assistant = contractor.assistant_name if contractor.assistant_name != "Clawbolt" else None
+    assistant = user.assistant_name if user.assistant_name != "Clawbolt" else None
     lines.append(f"  AI Name: {assistant or 'Clawbolt (default)'}")
-    lines.append(f"  Onboarding Complete: {'Yes' if contractor.onboarding_complete else 'No'}")
+    lines.append(f"  Onboarding Complete: {'Yes' if user.onboarding_complete else 'No'}")
     lines.append("")
     lines.append("For more details (trade, location, rates, hours, preferences), read USER.md.")
 
     return "\n".join(lines)
 
 
-def create_profile_tools(contractor: ContractorData) -> list[Tool]:
+def create_profile_tools(user: UserData) -> list[Tool]:
     """Create profile introspection and update tools for the agent."""
 
     async def view_profile() -> ToolResult:
-        """View the contractor's current profile information."""
-        store = get_contractor_store()
-        refreshed = await store.get_by_id(contractor.id)
-        return ToolResult(content=_format_profile(refreshed or contractor))
+        """View the user's current profile information."""
+        store = get_user_store()
+        refreshed = await store.get_by_id(user.id)
+        return ToolResult(content=_format_profile(refreshed or user))
 
     async def update_profile(
         name: str | None = None,
         assistant_name: str | None = None,
     ) -> ToolResult:
-        """Update the contractor's core profile fields."""
+        """Update the user's core profile fields."""
         updates: dict[str, str] = {}
         fields_updated: list[str] = []
 
@@ -94,8 +94,8 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
         _allowed_fields = {"name", "assistant_name"}
         safe_updates = {k: v for k, v in updates.items() if k in _allowed_fields}
 
-        store = get_contractor_store()
-        await store.update(contractor.id, **safe_updates)
+        store = get_user_store()
+        await store.update(user.id, **safe_updates)
 
         summary = ", ".join(fields_updated)
         return ToolResult(content=f"Profile updated: {summary}")
@@ -104,15 +104,15 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
         Tool(
             name=ToolName.VIEW_PROFILE,
             description=(
-                "View the contractor's current profile information. "
-                "Use when the contractor asks what you know about them, "
+                "View the user's current profile information. "
+                "Use when the user asks what you know about them, "
                 "or when you need to check their current profile details."
             ),
             function=view_profile,
             params_model=ViewProfileParams,
             usage_hint=(
                 "When asked 'what do you know about me?' or needing to check "
-                "the contractor's profile, use this tool first. "
+                "the user's profile, use this tool first. "
                 "For full details, also read USER.md."
             ),
         ),
@@ -136,7 +136,7 @@ def create_profile_tools(contractor: ContractorData) -> list[Tool]:
 
 def _profile_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for profile tools, used by the registry."""
-    return create_profile_tools(ctx.contractor)
+    return create_profile_tools(ctx.user)
 
 
 def _register() -> None:

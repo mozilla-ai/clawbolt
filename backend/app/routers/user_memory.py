@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.agent.file_store import ContractorData, get_memory_store
+from backend.app.agent.file_store import UserData, get_memory_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.schemas import MemoryFactResponse, MemoryFactUpdate
 
@@ -12,7 +12,7 @@ router = APIRouter()
 @router.get("/user/memory", response_model=list[MemoryFactResponse])
 async def list_memory(
     category: str | None = None,
-    current_user: ContractorData = Depends(get_current_user),
+    current_user: UserData = Depends(get_current_user),
 ) -> list[MemoryFactResponse]:
     """List all memory facts, optionally filtered by category."""
     store = get_memory_store(current_user.id)
@@ -32,7 +32,7 @@ async def list_memory(
 async def update_memory(
     key: str,
     body: MemoryFactUpdate,
-    current_user: ContractorData = Depends(get_current_user),
+    current_user: UserData = Depends(get_current_user),
 ) -> MemoryFactResponse:
     """Update a memory fact's value, category, or confidence."""
     store = get_memory_store(current_user.id)
@@ -62,7 +62,7 @@ async def update_memory(
 @router.delete("/user/memory/{key}", status_code=204)
 async def delete_memory(
     key: str,
-    current_user: ContractorData = Depends(get_current_user),
+    current_user: UserData = Depends(get_current_user),
 ) -> None:
     """Delete a memory fact."""
     store = get_memory_store(current_user.id)

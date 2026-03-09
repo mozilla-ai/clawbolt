@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.services.messaging import MessagingService
@@ -28,7 +28,7 @@ class _InputParams(BaseModel):
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_sends_typing_indicator_before_llm_call(
-    mock_amessages: object, test_contractor: ContractorData
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """Agent should send a typing indicator before each acompletion call."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
@@ -37,7 +37,7 @@ async def test_agent_sends_typing_indicator_before_llm_call(
     mock_messaging.send_typing_indicator = AsyncMock()
 
     agent = ClawboltAgent(
-        contractor=test_contractor,
+        user=test_user,
         messaging_service=mock_messaging,
         chat_id="123456789",
     )
@@ -50,7 +50,7 @@ async def test_agent_sends_typing_indicator_before_llm_call(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_sends_typing_indicator_before_each_tool_round(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Agent should send typing indicator before each LLM call in multi-round tool loops."""
 
@@ -77,7 +77,7 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
     mock_messaging.send_typing_indicator = AsyncMock()
 
     agent = ClawboltAgent(
-        contractor=test_contractor,
+        user=test_user,
         messaging_service=mock_messaging,
         chat_id="123456789",
     )
@@ -93,12 +93,12 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_works_without_messaging_service(
-    mock_amessages: object, test_contractor: ContractorData
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """Agent should work correctly when no messaging_service is provided."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
-    agent = ClawboltAgent(contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     response = await agent.process_message("Hi there")
 
     assert response.reply_text == "Hello!"
@@ -108,7 +108,7 @@ async def test_agent_works_without_messaging_service(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_typing_indicator_failure_does_not_break_agent(
-    mock_amessages: object, test_contractor: ContractorData
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """Agent should continue processing even if typing indicator fails."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
@@ -117,7 +117,7 @@ async def test_agent_typing_indicator_failure_does_not_break_agent(
     mock_messaging.send_typing_indicator = AsyncMock(side_effect=RuntimeError("API down"))
 
     agent = ClawboltAgent(
-        contractor=test_contractor,
+        user=test_user,
         messaging_service=mock_messaging,
         chat_id="123456789",
     )
@@ -130,7 +130,7 @@ async def test_agent_typing_indicator_failure_does_not_break_agent(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_no_typing_indicator_without_chat_id(
-    mock_amessages: object, test_contractor: ContractorData
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """Agent should not send typing indicator when chat_id is not provided."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
@@ -139,7 +139,7 @@ async def test_agent_no_typing_indicator_without_chat_id(
     mock_messaging.send_typing_indicator = AsyncMock()
 
     agent = ClawboltAgent(
-        contractor=test_contractor,
+        user=test_user,
         messaging_service=mock_messaging,
         chat_id=None,
     )
@@ -159,7 +159,7 @@ async def test_agent_no_typing_indicator_without_chat_id(
 async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_llm: AsyncMock,
     mock_settings: MagicMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Heartbeat should send typing indicator before calling the LLM."""
     mock_settings.llm_model = "test-model"
@@ -189,14 +189,12 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_messaging.send_typing_indicator = AsyncMock()
 
     await evaluate_heartbeat_need(
-        test_contractor,
+        test_user,
         ["Stale draft estimate"],
         messaging_service=mock_messaging,
     )
 
-    mock_messaging.send_typing_indicator.assert_called_once_with(
-        to=test_contractor.channel_identifier
-    )
+    mock_messaging.send_typing_indicator.assert_called_once_with(to=test_user.channel_identifier)
 
 
 @pytest.mark.asyncio()
@@ -205,7 +203,7 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
 async def test_heartbeat_works_without_messaging_service(
     mock_llm: AsyncMock,
     mock_settings: MagicMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Heartbeat should work when no messaging_service is provided."""
     mock_settings.llm_model = "test-model"
@@ -233,7 +231,7 @@ async def test_heartbeat_works_without_messaging_service(
 
     # Should not raise when no messaging_service is provided
     action = await evaluate_heartbeat_need(
-        test_contractor,
+        test_user,
         ["Stale draft estimate"],
     )
     assert action.action_type == "no_action"

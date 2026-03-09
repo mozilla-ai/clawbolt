@@ -2,7 +2,7 @@
 
 With the message bus, the webhook handler validates, parses, checks the
 allowlist, and publishes an InboundMessage to the bus. The bus consumer
-handles contractor lookup, session creation, message persistence, and
+handles user lookup, session creation, message persistence, and
 the agent pipeline. Tests below verify the webhook's responsibilities:
 parsing, allowlist gating, idempotency, and correct bus publishing.
 """

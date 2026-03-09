@@ -1,11 +1,11 @@
-"""Tests for contractor stats endpoint."""
+"""Tests for user stats endpoint."""
 
 import json
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.config import settings
 
 
@@ -20,15 +20,15 @@ def test_stats_empty(client: TestClient) -> None:
     assert data["last_conversation_at"] is None
 
 
-def test_stats_with_data(client: TestClient, test_contractor: ContractorData) -> None:
+def test_stats_with_data(client: TestClient, test_user: UserData) -> None:
     # Create a session with messages
-    base = Path(settings.data_dir) / str(test_contractor.id) / "sessions"
+    base = Path(settings.data_dir) / str(test_user.id) / "sessions"
     base.mkdir(parents=True, exist_ok=True)
     path = base / "1_100.jsonl"
     meta = {
         "_type": "metadata",
         "session_id": "1_100",
-        "contractor_id": test_contractor.id,
+        "user_id": test_user.id,
         "created_at": "2025-01-15T10:00:00+00:00",
         "last_message_at": "2025-01-15T10:05:00+00:00",
         "is_active": True,
@@ -41,7 +41,7 @@ def test_stats_with_data(client: TestClient, test_contractor: ContractorData) ->
     client.post("/api/user/checklist", json={"description": "Check site"})
 
     # Create memory
-    mem_dir = Path(settings.data_dir) / str(test_contractor.id) / "memory"
+    mem_dir = Path(settings.data_dir) / str(test_user.id) / "memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
     (mem_dir / "MEMORY.md").write_text(
         "# Long-term Memory\n\n## General\n- rate: 85 (confidence: 1.0)\n",

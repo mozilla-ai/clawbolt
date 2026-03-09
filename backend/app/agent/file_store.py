@@ -55,8 +55,8 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-class ContractorData(BaseModel):
-    """Replaces the Contractor ORM model."""
+class UserData(BaseModel):
+    """Replaces the User ORM model."""
 
     id: int = 0
     user_id: str = ""
@@ -104,7 +104,7 @@ class SessionMetadata(BaseModel):
     """
 
     session_id: str = ""
-    contractor_id: int = 0
+    user_id: int = 0
     last_message_at: str = ""
     is_active: bool = True
     last_compacted_seq: int = 0
@@ -114,7 +114,7 @@ class SessionState(BaseModel):
     """In-memory representation of a conversation session."""
 
     session_id: str = ""
-    contractor_id: int = 0
+    user_id: int = 0
     messages: list[StoredMessage] = Field(default_factory=list)
     is_active: bool = True
     created_at: str = ""
@@ -148,7 +148,7 @@ class EstimateData(BaseModel):
     """Replaces the Estimate + EstimateLineItem ORM models."""
 
     id: str = ""
-    contractor_id: int = 0
+    user_id: int = 0
     client_id: str | None = None
     description: str = ""
     total_amount: float = 0.0
@@ -164,7 +164,7 @@ class MediaData(BaseModel):
 
     id: str = ""
     message_id: int | None = None
-    contractor_id: int = 0
+    user_id: int = 0
     original_url: str = ""
     mime_type: str = ""
     processed_text: str = ""
@@ -177,7 +177,7 @@ class ChecklistItem(BaseModel):
     """Replaces the HeartbeatChecklistItem ORM model."""
 
     id: int = 0
-    contractor_id: int = 0
+    user_id: int = 0
     description: str = ""
     schedule: str = ChecklistSchedule.DAILY
     active_hours: str = ""
@@ -189,7 +189,7 @@ class ChecklistItem(BaseModel):
 class HeartbeatLogEntry(BaseModel):
     """Replaces the HeartbeatLog ORM model."""
 
-    contractor_id: int = 0
+    user_id: int = 0
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
 
 
@@ -262,9 +262,9 @@ def _data_dir() -> Path:
     return Path(settings.data_dir)
 
 
-def _user_dir(contractor_id: int) -> Path:
+def _user_dir(user_id: int) -> Path:
     """Return the directory for a specific user."""
-    return _data_dir() / str(contractor_id)
+    return _data_dir() / str(user_id)
 
 
 def _index_path() -> Path:
@@ -331,53 +331,53 @@ def make_client_slug(
 
 
 # ---------------------------------------------------------------------------
-# ContractorStore
+# UserStore
 # ---------------------------------------------------------------------------
 
 
-class ContractorStore:
-    """File-based contractor storage. Replaces Contractor model + queries."""
+class UserStore:
+    """File-based user storage. Replaces User model + queries."""
 
     def __init__(self) -> None:
         self._lock = asyncio.Lock()
 
     def _all_dirs(self) -> list[Path]:
-        """List all contractor directories."""
+        """List all user directories."""
         base = _data_dir()
         if not base.exists():
             return []
         return [d for d in sorted(base.iterdir()) if d.is_dir() and d.name.isdigit()]
 
-    def _load(self, contractor_id: int) -> ContractorData | None:
-        """Load a contractor from disk."""
-        path = _user_dir(contractor_id) / "user.json"
+    def _load(self, user_id: int) -> UserData | None:
+        """Load a user from disk."""
+        path = _user_dir(user_id) / "user.json"
         data = _read_json(path)
         if data is None:
             return None
-        contractor = ContractorData.model_validate(data)
+        user = UserData.model_validate(data)
         # Load soul_text from SOUL.md
-        soul_path = _user_dir(contractor_id) / "SOUL.md"
+        soul_path = _user_dir(user_id) / "SOUL.md"
         if soul_path.exists():
             raw = soul_path.read_text(encoding="utf-8").strip()
             if raw.startswith("# Soul"):
                 raw = raw[len("# Soul") :].strip()
-            contractor.soul_text = raw
+            user.soul_text = raw
         # Load user_text from USER.md
-        user_path = _user_dir(contractor_id) / "USER.md"
+        user_path = _user_dir(user_id) / "USER.md"
         if user_path.exists():
             raw = user_path.read_text(encoding="utf-8").strip()
             if raw.startswith("# User"):
                 raw = raw[len("# User") :].strip()
-            contractor.user_text = raw
-        return contractor
+            user.user_text = raw
+        return user
 
-    def _save(self, contractor: ContractorData) -> None:
-        """Save a contractor to disk."""
-        cdir = _user_dir(contractor.id)
+    def _save(self, user: UserData) -> None:
+        """Save a user to disk."""
+        cdir = _user_dir(user.id)
         cdir.mkdir(parents=True, exist_ok=True)
 
         # Save user.json (exclude soul_text/user_text, they go to .md files)
-        data = contractor.model_dump()
+        data = user.model_dump()
         soul_text = data.pop("soul_text", "")
         user_text = data.pop("user_text", "")
         _write_json(cdir / "user.json", data)
@@ -387,7 +387,7 @@ class ContractorStore:
         if soul_text:
             soul_path.write_text(f"# Soul\n\n{soul_text}\n", encoding="utf-8")
         elif not soul_path.exists():
-            # Seed a meaningful default for brand-new contractors
+            # Seed a meaningful default for brand-new users
             soul_path.write_text(
                 f"# Soul\n\n{load_prompt('default_soul')}\n",
                 encoding="utf-8",
@@ -414,36 +414,36 @@ class ContractorStore:
         if not mem_path.exists():
             mem_path.write_text("# Long-term Memory\n", encoding="utf-8")
 
-    def _update_index(self, contractor: ContractorData) -> None:
+    def _update_index(self, user: UserData) -> None:
         """Update user_index.json with channel mapping."""
         idx_path = _index_path()
         index: dict[str, int] = _read_json(idx_path, {})
-        if contractor.channel_identifier:
-            key = f"{contractor.preferred_channel}:{contractor.channel_identifier}"
-            index[key] = contractor.id
+        if user.channel_identifier:
+            key = f"{user.preferred_channel}:{user.channel_identifier}"
+            index[key] = user.id
         _write_json(idx_path, index)
 
-    def link_channel(self, channel: str, channel_identifier: str, contractor_id: int) -> None:
-        """Add a channel mapping to the index for an existing contractor."""
+    def link_channel(self, channel: str, channel_identifier: str, user_id: int) -> None:
+        """Add a channel mapping to the index for an existing user."""
         idx_path = _index_path()
         index: dict[str, int] = _read_json(idx_path, {})
         key = f"{channel}:{channel_identifier}"
-        index[key] = contractor_id
+        index[key] = user_id
         _write_json(idx_path, index)
 
-    def _next_contractor_id(self) -> int:
-        """Get the next contractor ID by scanning existing directories."""
+    def _next_user_id(self) -> int:
+        """Get the next user ID by scanning existing directories."""
         dirs = self._all_dirs()
         if not dirs:
             return 1
         return max(int(d.name) for d in dirs) + 1
 
-    async def get_by_id(self, contractor_id: int) -> ContractorData | None:
-        """Get a contractor by ID."""
-        return self._load(contractor_id)
+    async def get_by_id(self, user_id: int) -> UserData | None:
+        """Get a user by ID."""
+        return self._load(user_id)
 
-    async def get_by_user_id(self, user_id: str) -> ContractorData | None:
-        """Get a contractor by user_id (scans all contractors)."""
+    async def get_by_user_id(self, user_id: str) -> UserData | None:
+        """Get a user by user_id (scans all users)."""
         for cdir in self._all_dirs():
             cid = int(cdir.name)
             c = self._load(cid)
@@ -451,8 +451,8 @@ class ContractorStore:
                 return c
         return None
 
-    async def get_by_channel(self, channel_identifier: str) -> ContractorData | None:
-        """Get a contractor by channel_identifier using the index."""
+    async def get_by_channel(self, channel_identifier: str) -> UserData | None:
+        """Get a user by channel_identifier using the index."""
         idx_path = _index_path()
         index: dict[str, int] = _read_json(idx_path, {})
         # Try all channel prefixes
@@ -474,12 +474,12 @@ class ContractorStore:
         channel_identifier: str = "",
         preferred_channel: str = "telegram",
         **kwargs: Any,
-    ) -> ContractorData:
-        """Create a new contractor."""
+    ) -> UserData:
+        """Create a new user."""
         async with self._lock:
-            cid = self._next_contractor_id()
+            cid = self._next_user_id()
             now = datetime.datetime.now(datetime.UTC)
-            contractor = ContractorData(
+            user = UserData(
                 id=cid,
                 user_id=user_id,
                 channel_identifier=channel_identifier,
@@ -488,28 +488,28 @@ class ContractorStore:
                 updated_at=now,
                 **kwargs,
             )
-            self._save(contractor)
-            self._update_index(contractor)
-            return contractor
+            self._save(user)
+            self._update_index(user)
+            return user
 
-    async def update(self, contractor_id: int, **fields: Any) -> ContractorData | None:
-        """Update contractor fields."""
+    async def update(self, user_id: int, **fields: Any) -> UserData | None:
+        """Update user fields."""
         async with self._lock:
-            contractor = self._load(contractor_id)
-            if contractor is None:
+            user = self._load(user_id)
+            if user is None:
                 return None
             for key, value in fields.items():
-                if hasattr(contractor, key) and value is not None:
-                    setattr(contractor, key, value)
-            contractor.updated_at = datetime.datetime.now(datetime.UTC)
-            self._save(contractor)
+                if hasattr(user, key) and value is not None:
+                    setattr(user, key, value)
+            user.updated_at = datetime.datetime.now(datetime.UTC)
+            self._save(user)
             if "channel_identifier" in fields or "preferred_channel" in fields:
-                self._update_index(contractor)
-            return contractor
+                self._update_index(user)
+            return user
 
-    async def list_all(self) -> list[ContractorData]:
-        """List all contractors."""
-        result: list[ContractorData] = []
+    async def list_all(self) -> list[UserData]:
+        """List all users."""
+        result: list[UserData] = []
         for cdir in self._all_dirs():
             cid = int(cdir.name)
             c = self._load(cid)
@@ -532,21 +532,21 @@ _CATEGORY_RE = re.compile(r"^##\s+(.+)$")
 class FileMemoryStore:
     """File-based memory storage using MEMORY.md. Replaces Memory model."""
 
-    def __init__(self, contractor_id: int) -> None:
-        self.contractor_id = contractor_id
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
         self._lock = asyncio.Lock()
 
     @property
     def _memory_path(self) -> Path:
-        return _user_dir(self.contractor_id) / "memory" / "MEMORY.md"
+        return _user_dir(self.user_id) / "memory" / "MEMORY.md"
 
     @property
     def _history_path(self) -> Path:
-        return _user_dir(self.contractor_id) / "memory" / "HISTORY.md"
+        return _user_dir(self.user_id) / "memory" / "HISTORY.md"
 
     @property
     def _soul_path(self) -> Path:
-        return _user_dir(self.contractor_id) / "SOUL.md"
+        return _user_dir(self.user_id) / "SOUL.md"
 
     def _parse_memory_md(self) -> list[MemoryFact]:
         """Parse MEMORY.md into a list of MemoryFact objects."""
@@ -658,7 +658,7 @@ class FileMemoryStore:
         else:
             memories = await self.get_all_memories()
 
-        client_store = ClientStore(self.contractor_id)
+        client_store = ClientStore(self.user_id)
         clients = await client_store.list_all()
 
         lines: list[str] = []
@@ -703,7 +703,7 @@ class FileMemoryStore:
 
     @property
     def _user_path(self) -> Path:
-        return _user_dir(self.contractor_id) / "USER.md"
+        return _user_dir(self.user_id) / "USER.md"
 
     def read_user(self) -> str:
         """Read USER.md content."""
@@ -728,13 +728,13 @@ class FileMemoryStore:
 class FileSessionStore:
     """File-based session storage using JSONL files. Replaces Conversation + Message models."""
 
-    def __init__(self, contractor_id: int) -> None:
-        self.contractor_id = contractor_id
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
         self._lock = asyncio.Lock()
 
     @property
     def _sessions_dir(self) -> Path:
-        return _user_dir(self.contractor_id) / "sessions"
+        return _user_dir(self.user_id) / "sessions"
 
     def _session_path(self, session_id: str) -> Path:
         return self._sessions_dir / f"{session_id}.jsonl"
@@ -764,7 +764,7 @@ class FileSessionStore:
 
         return SessionState(
             session_id=session_id,
-            contractor_id=self.contractor_id,
+            user_id=self.user_id,
             messages=messages,
             is_active=metadata.get("is_active", True),
             created_at=metadata.get("created_at", ""),
@@ -818,14 +818,14 @@ class FileSessionStore:
         # Create new session
         now = datetime.datetime.now(datetime.UTC)
         ts = int(now.timestamp())
-        session_id = f"{self.contractor_id}_{ts}"
+        session_id = f"{self.user_id}_{ts}"
         path = self._session_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
 
         meta = {
             "_type": "metadata",
             "session_id": session_id,
-            "contractor_id": self.contractor_id,
+            "user_id": self.user_id,
             "created_at": now.isoformat(),
             "last_message_at": now.isoformat(),
             "is_active": True,
@@ -835,7 +835,7 @@ class FileSessionStore:
 
         session = SessionState(
             session_id=session_id,
-            contractor_id=self.contractor_id,
+            user_id=self.user_id,
             is_active=True,
             created_at=now.isoformat(),
             last_message_at=now.isoformat(),
@@ -991,13 +991,13 @@ class FileSessionStore:
 class ClientStore:
     """File-based client storage. Replaces Client model."""
 
-    def __init__(self, contractor_id: int) -> None:
-        self.contractor_id = contractor_id
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
         self._lock = asyncio.Lock()
 
     @property
     def _path(self) -> Path:
-        return _user_dir(self.contractor_id) / "clients.json"
+        return _user_dir(self.user_id) / "clients.json"
 
     def _load_all(self) -> list[dict[str, Any]]:
         return _read_json(self._path, [])
@@ -1086,13 +1086,13 @@ class EstimateStore:
             EST-0003.json
     """
 
-    def __init__(self, contractor_id: int) -> None:
-        self.contractor_id = contractor_id
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
         self._lock = asyncio.Lock()
 
     @property
     def _estimates_dir(self) -> Path:
-        return _user_dir(self.contractor_id) / "estimates"
+        return _user_dir(self.user_id) / "estimates"
 
     def _estimate_path(self, estimate_id: str, client_id: str | None = None) -> Path:
         folder = client_id if client_id else "unsorted"
@@ -1176,7 +1176,7 @@ class EstimateStore:
 
             estimate = EstimateData(
                 id=eid,
-                contractor_id=self.contractor_id,
+                user_id=self.user_id,
                 client_id=client_id,
                 description=description,
                 total_amount=total_amount,
@@ -1211,13 +1211,13 @@ class EstimateStore:
 class MediaStore:
     """File-based media file manifest. Replaces MediaFile model."""
 
-    def __init__(self, contractor_id: int) -> None:
-        self.contractor_id = contractor_id
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
         self._lock = asyncio.Lock()
 
     @property
     def _path(self) -> Path:
-        return _user_dir(self.contractor_id) / "media.json"
+        return _user_dir(self.user_id) / "media.json"
 
     def _load_all(self) -> list[dict[str, Any]]:
         return _read_json(self._path, [])
@@ -1254,7 +1254,7 @@ class MediaStore:
             mid = self._next_media_id(items)
             media = MediaData(
                 id=mid,
-                contractor_id=self.contractor_id,
+                user_id=self.user_id,
                 message_id=message_id,
                 original_url=original_url,
                 mime_type=mime_type,
@@ -1302,17 +1302,17 @@ class MediaStore:
 class HeartbeatStore:
     """File-based heartbeat storage. Replaces HeartbeatChecklistItem + HeartbeatLog."""
 
-    def __init__(self, contractor_id: int) -> None:
-        self.contractor_id = contractor_id
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
         self._lock = asyncio.Lock()
 
     @property
     def _checklist_path(self) -> Path:
-        return _user_dir(self.contractor_id) / "heartbeat" / "checklist.json"
+        return _user_dir(self.user_id) / "heartbeat" / "checklist.json"
 
     @property
     def _log_path(self) -> Path:
-        return _user_dir(self.contractor_id) / "heartbeat" / "log.jsonl"
+        return _user_dir(self.user_id) / "heartbeat" / "log.jsonl"
 
     def _load_checklist(self) -> list[dict[str, Any]]:
         return _read_json(self._checklist_path, [])
@@ -1332,7 +1332,7 @@ class HeartbeatStore:
             iid = _next_id(items)
             item = ChecklistItem(
                 id=iid,
-                contractor_id=self.contractor_id,
+                user_id=self.user_id,
                 description=description,
                 schedule=schedule,
             )
@@ -1371,7 +1371,7 @@ class HeartbeatStore:
 
     async def log_heartbeat(self) -> None:
         """Append to heartbeat log."""
-        entry = HeartbeatLogEntry(contractor_id=self.contractor_id)
+        entry = HeartbeatLogEntry(user_id=self.user_id)
         _append_jsonl(self._log_path, entry.model_dump())
 
     async def get_daily_count(self) -> int:
@@ -1446,12 +1446,12 @@ class IdempotencyStore:
 class LLMUsageStore:
     """Append-only LLM usage log. Replaces LLMUsageLog model."""
 
-    def __init__(self, contractor_id: int) -> None:
-        self.contractor_id = contractor_id
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
 
     @property
     def _path(self) -> Path:
-        return _user_dir(self.contractor_id) / "llm_usage.jsonl"
+        return _user_dir(self.user_id) / "llm_usage.jsonl"
 
     def log(
         self,
@@ -1462,7 +1462,7 @@ class LLMUsageStore:
     ) -> None:
         """Append a usage log entry."""
         entry = {
-            "contractor_id": self.contractor_id,
+            "user_id": self.user_id,
             "model": model,
             "prompt_tokens": prompt_tokens,
             "completion_tokens": completion_tokens,
@@ -1485,13 +1485,13 @@ class ToolConfigStore:
     ``data/users/{id}/tool_config.json``.
     """
 
-    def __init__(self, contractor_id: int) -> None:
-        self.contractor_id = contractor_id
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
         self._lock = asyncio.Lock()
 
     @property
     def _path(self) -> Path:
-        return _user_dir(self.contractor_id) / "tool_config.json"
+        return _user_dir(self.user_id) / "tool_config.json"
 
     async def load(self) -> list[ToolConfigEntry]:
         """Load tool config entries. Returns empty list if no config exists."""
@@ -1514,32 +1514,32 @@ class ToolConfigStore:
 # Module-level singletons / factories
 # ---------------------------------------------------------------------------
 
-_contractor_store: ContractorStore | None = None
+_user_store: UserStore | None = None
 _memory_stores: dict[int, FileMemoryStore] = {}
 _session_stores: dict[int, FileSessionStore] = {}
 _idempotency_store: IdempotencyStore | None = None
 
 
-def get_contractor_store() -> ContractorStore:
-    """Get or create the global ContractorStore."""
-    global _contractor_store
-    if _contractor_store is None:
-        _contractor_store = ContractorStore()
-    return _contractor_store
+def get_user_store() -> UserStore:
+    """Get or create the global UserStore."""
+    global _user_store
+    if _user_store is None:
+        _user_store = UserStore()
+    return _user_store
 
 
-def get_memory_store(contractor_id: int) -> FileMemoryStore:
-    """Get or create a FileMemoryStore for a contractor."""
-    if contractor_id not in _memory_stores:
-        _memory_stores[contractor_id] = FileMemoryStore(contractor_id)
-    return _memory_stores[contractor_id]
+def get_memory_store(user_id: int) -> FileMemoryStore:
+    """Get or create a FileMemoryStore for a user."""
+    if user_id not in _memory_stores:
+        _memory_stores[user_id] = FileMemoryStore(user_id)
+    return _memory_stores[user_id]
 
 
-def get_session_store(contractor_id: int) -> FileSessionStore:
-    """Get or create a FileSessionStore for a contractor."""
-    if contractor_id not in _session_stores:
-        _session_stores[contractor_id] = FileSessionStore(contractor_id)
-    return _session_stores[contractor_id]
+def get_session_store(user_id: int) -> FileSessionStore:
+    """Get or create a FileSessionStore for a user."""
+    if user_id not in _session_stores:
+        _session_stores[user_id] = FileSessionStore(user_id)
+    return _session_stores[user_id]
 
 
 def get_idempotency_store() -> IdempotencyStore:
@@ -1552,8 +1552,8 @@ def get_idempotency_store() -> IdempotencyStore:
 
 def reset_stores() -> None:
     """Reset all cached store instances. Used by tests."""
-    global _contractor_store, _idempotency_store
-    _contractor_store = None
+    global _user_store, _idempotency_store
+    _user_store = None
     _memory_stores.clear()
     _session_stores.clear()
     _idempotency_store = None

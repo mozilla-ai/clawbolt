@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.file_store import ContractorData, MediaStore
+from backend.app.agent.file_store import MediaStore, UserData
 from backend.app.agent.file_store import slugify as _store_slugify
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
@@ -157,7 +157,7 @@ def _extension_from_mime(mime_type: str) -> str:
 
 
 async def auto_save_media(
-    contractor: ContractorData,
+    user: UserData,
     storage: StorageBackend,
     downloaded_media: list[DownloadedMedia],
 ) -> list[str]:
@@ -176,7 +176,7 @@ async def auto_save_media(
     folder_path = f"/Unsorted/{today}"
     await storage.create_folder(folder_path)
 
-    media_store = MediaStore(contractor.id)
+    media_store = MediaStore(user.id)
     saved_urls: list[str] = []
     for media in downloaded_media:
         extension = _extension_from_mime(media.mime_type)
@@ -198,14 +198,14 @@ async def auto_save_media(
 
 
 def create_file_tools(
-    contractor: ContractorData,
+    user: UserData,
     storage: StorageBackend,
     pending_media: dict[str, bytes] | None = None,
 ) -> list[Tool]:
     """Create file cataloging tools for the agent.
 
     Args:
-        contractor: The contractor
+        user: The user
         storage: Storage backend (Dropbox, Google Drive, or mock)
         pending_media: Dict of original_url -> file bytes for media in the current message
     """
@@ -219,7 +219,7 @@ def create_file_tools(
         original_url: str | None = None,
         mime_type: str = "image/jpeg",
     ) -> ToolResult:
-        """Upload a file to the contractor's cloud storage."""
+        """Upload a file to the user's cloud storage."""
         # Determine file content
         file_bytes = b""
         if original_url and original_url in media_map:
@@ -255,7 +255,7 @@ def create_file_tools(
         extension = _extension_from_mime(mime_type)
 
         # Count existing files to get index
-        media_store = MediaStore(contractor.id)
+        media_store = MediaStore(user.id)
         existing = await media_store.count_by_path_prefix(folder_path)
 
         filename = _build_filename(
@@ -287,7 +287,7 @@ def create_file_tools(
     ) -> ToolResult:
         """Move an auto-saved file from Unsorted into the correct client folder."""
         # Look up the media record
-        media_store = MediaStore(contractor.id)
+        media_store = MediaStore(user.id)
         media_file = await media_store.get_by_url(original_url)
         if media_file is None:
             return ToolResult(
@@ -356,8 +356,8 @@ def create_file_tools(
         Tool(
             name=ToolName.UPLOAD_TO_STORAGE,
             description=(
-                "Upload a file attached to the CURRENT message to the contractor's "
-                "cloud storage. Only works when the contractor sent media in this "
+                "Upload a file attached to the CURRENT message to the user's "
+                "cloud storage. Only works when the user sent media in this "
                 "message. Files are organized by client: provide client_name or "
                 "client_address to file under their folder, otherwise files go to "
                 "Unsorted. For files received in previous messages, use "
@@ -387,7 +387,7 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for file tools, used by the registry."""
     assert ctx.storage is not None
     pending_media = {m.original_url: m.content for m in ctx.downloaded_media if m.content}
-    return create_file_tools(ctx.contractor, ctx.storage, pending_media)
+    return create_file_tools(ctx.user, ctx.storage, pending_media)
 
 
 def _register() -> None:

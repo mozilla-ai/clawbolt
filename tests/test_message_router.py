@@ -4,7 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from any_llm import AuthenticationError, ContentFilterError
 
-from backend.app.agent.file_store import ContractorData, SessionState, StoredMessage
+from backend.app.agent.file_store import SessionState, StoredMessage, UserData
 from backend.app.agent.router import (
     AUTH_ERROR_FALLBACK,
     CONTENT_FILTER_FALLBACK,
@@ -17,10 +17,10 @@ from tests.mocks.storage import MockStorageBackend
 
 
 @pytest.fixture()
-def conversation(test_contractor: ContractorData) -> SessionState:
+def conversation(test_user: UserData) -> SessionState:
     return SessionState(
         session_id="test-conv",
-        contractor_id=test_contractor.id,
+        user_id=test_user.id,
         is_active=True,
         messages=[
             StoredMessage(
@@ -56,7 +56,7 @@ def mock_messaging() -> MessagingService:
 @patch("backend.app.agent.core.amessages")
 async def test_text_only_message(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -65,7 +65,7 @@ async def test_text_only_message(
     mock_amessages.return_value = make_text_response("I can help with that deck estimate!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -82,7 +82,7 @@ async def test_text_only_message(
 async def test_message_with_photo(
     mock_vision: AsyncMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -100,7 +100,7 @@ async def test_message_with_photo(
     mock_amessages.return_value = make_text_response("Looks like a great deck project!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
@@ -116,7 +116,7 @@ async def test_message_with_photo(
 @patch("backend.app.agent.core.amessages")
 async def test_stores_outbound_message(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -125,7 +125,7 @@ async def test_stores_outbound_message(
     mock_amessages.return_value = make_text_response("Reply stored!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -141,7 +141,7 @@ async def test_stores_outbound_message(
 @patch("backend.app.agent.core.amessages")
 async def test_stores_tool_interactions_with_outbound(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -162,7 +162,7 @@ async def test_stores_tool_interactions_with_outbound(
     mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -184,7 +184,7 @@ async def test_stores_tool_interactions_with_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_no_tool_interactions_for_text_only_response(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -193,7 +193,7 @@ async def test_no_tool_interactions_for_text_only_response(
     mock_amessages.return_value = make_text_response("Just text!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -209,7 +209,7 @@ async def test_no_tool_interactions_for_text_only_response(
 @patch("backend.app.agent.core.amessages")
 async def test_media_download_failure_still_processes_text(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -219,7 +219,7 @@ async def test_media_download_failure_still_processes_text(
     mock_amessages.return_value = make_text_response("Got your text!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
@@ -233,7 +233,7 @@ async def test_media_download_failure_still_processes_text(
 @patch("backend.app.agent.core.amessages")
 async def test_processed_context_saved_to_message(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -242,7 +242,7 @@ async def test_processed_context_saved_to_message(
     mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -261,7 +261,7 @@ async def test_file_tools_wired_when_storage_configured(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -276,7 +276,7 @@ async def test_file_tools_wired_when_storage_configured(
     mock_amessages.return_value = make_text_response("File saved!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -293,7 +293,7 @@ async def test_file_tools_wired_when_storage_configured(
 async def test_file_tools_skipped_when_no_storage(
     mock_settings: MagicMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -307,7 +307,7 @@ async def test_file_tools_skipped_when_no_storage(
     mock_amessages.return_value = make_text_response("No file tools!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -327,7 +327,7 @@ async def test_file_tools_skipped_when_no_storage(
 async def test_pipeline_failure_note_mentions_vision(
     mock_vision: AsyncMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -361,7 +361,7 @@ async def test_pipeline_failure_note_mentions_vision(
         mock_amessages.return_value = make_text_response("I see you sent something!")  # type: ignore[union-attr]
 
         await handle_inbound_message(
-            contractor=test_contractor,
+            user=test_user,
             session=conversation,
             message=inbound_message,
             media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
@@ -381,7 +381,7 @@ async def test_pipeline_failure_note_mentions_vision(
 @patch("backend.app.agent.core.amessages")
 async def test_media_download_failure_adds_system_note_to_context(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -391,7 +391,7 @@ async def test_media_download_failure_adds_system_note_to_context(
     mock_amessages.return_value = make_text_response("Got your text!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[("file_id_1", "image/jpeg")],
@@ -405,7 +405,7 @@ async def test_media_download_failure_adds_system_note_to_context(
 @patch("backend.app.agent.core.amessages")
 async def test_multiple_media_partial_download_failure_no_download_note(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -427,7 +427,7 @@ async def test_multiple_media_partial_download_failure_no_download_note(
     with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
         mock_vision.return_value = "A photo of a deck."
         response = await handle_inbound_message(
-            contractor=test_contractor,
+            user=test_user,
             session=conversation,
             message=inbound_message,
             media_urls=[("file_ok", "image/jpeg"), ("file_bad", "image/png")],
@@ -443,7 +443,7 @@ async def test_multiple_media_partial_download_failure_no_download_note(
 @patch("backend.app.agent.core.amessages")
 async def test_media_pipeline_failure_retries_with_empty_media(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -475,7 +475,7 @@ async def test_media_pipeline_failure_retries_with_empty_media(
         ]
 
         response = await handle_inbound_message(
-            contractor=test_contractor,
+            user=test_user,
             session=conversation,
             message=inbound_message,
             media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
@@ -497,7 +497,7 @@ async def test_storage_exception_skips_file_tools(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -512,7 +512,7 @@ async def test_storage_exception_skips_file_tools(
     mock_amessages.return_value = make_text_response("No file tools due to error!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -528,7 +528,7 @@ async def test_storage_exception_skips_file_tools(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_returns_fallback_reply(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -537,7 +537,7 @@ async def test_agent_processing_failure_returns_fallback_reply(
     mock_amessages.side_effect = RuntimeError("LLM service down")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -552,7 +552,7 @@ async def test_agent_processing_failure_returns_fallback_reply(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_does_not_store_fallback(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -561,7 +561,7 @@ async def test_agent_processing_failure_does_not_store_fallback(
     mock_amessages.side_effect = RuntimeError("LLM down")  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -576,7 +576,7 @@ async def test_agent_processing_failure_does_not_store_fallback(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_still_sends_reply(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -585,7 +585,7 @@ async def test_agent_processing_failure_still_sends_reply(
     mock_amessages.side_effect = RuntimeError("LLM unavailable")  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -601,7 +601,7 @@ async def test_agent_processing_failure_still_sends_reply(
 @patch("backend.app.agent.core.amessages")
 async def test_send_reply_failure_still_stores_outbound(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -611,7 +611,7 @@ async def test_send_reply_failure_still_stores_outbound(
     mock_messaging.send_text.side_effect = RuntimeError("Telegram API down")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -630,7 +630,7 @@ async def test_send_reply_failure_still_stores_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -656,7 +656,7 @@ async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
         ]
 
         await handle_inbound_message(
-            contractor=test_contractor,
+            user=test_user,
             session=conversation,
             message=inbound_message,
             media_urls=[("file_id_1", "image/jpeg")],
@@ -677,9 +677,9 @@ async def test_empty_to_address_returns_early(
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
 ) -> None:
-    """Contractor with no channel_identifier or phone should return early."""
-    # Create contractor with empty delivery fields
-    no_addr = ContractorData(
+    """User with no channel_identifier or phone should return early."""
+    # Create user with empty delivery fields
+    no_addr = UserData(
         id=99,
         user_id="no-addr",
         channel_identifier="",
@@ -687,7 +687,7 @@ async def test_empty_to_address_returns_early(
     )
 
     response = await handle_inbound_message(
-        contractor=no_addr,
+        user=no_addr,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -704,7 +704,7 @@ async def test_empty_to_address_returns_early(
 @patch("backend.app.agent.core.amessages")
 async def test_send_media_reply_suppresses_duplicate_text(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -728,7 +728,7 @@ async def test_send_media_reply_suppresses_duplicate_text(
     mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -749,7 +749,7 @@ async def test_send_media_reply_suppresses_duplicate_text(
 @patch("backend.app.agent.core.amessages")
 async def test_typing_indicator_called_before_agent_processing(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -758,7 +758,7 @@ async def test_typing_indicator_called_before_agent_processing(
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -766,7 +766,7 @@ async def test_typing_indicator_called_before_agent_processing(
     )
 
     mock_messaging.send_typing_indicator.assert_called_once_with(  # type: ignore[union-attr]
-        to=test_contractor.channel_identifier,
+        to=test_user.channel_identifier,
     )
 
 
@@ -774,7 +774,7 @@ async def test_typing_indicator_called_before_agent_processing(
 @patch("backend.app.agent.core.amessages")
 async def test_typing_indicator_failure_does_not_block_processing(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -786,7 +786,7 @@ async def test_typing_indicator_failure_does_not_block_processing(
     mock_amessages.return_value = make_text_response("Still works!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -815,7 +815,7 @@ async def test_auto_save_persists_media_to_storage(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -841,7 +841,7 @@ async def test_auto_save_persists_media_to_storage(
     with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
         mock_vision.return_value = "A photo."
         await handle_inbound_message(
-            contractor=test_contractor,
+            user=test_user,
             session=conversation,
             message=inbound_message,
             media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
@@ -860,7 +860,7 @@ async def test_auto_save_failure_does_not_block_processing(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -889,7 +889,7 @@ async def test_auto_save_failure_does_not_block_processing(
     with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
         mock_vision.return_value = "A photo."
         response = await handle_inbound_message(
-            contractor=test_contractor,
+            user=test_user,
             session=conversation,
             message=inbound_message,
             media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
@@ -908,7 +908,7 @@ async def test_auto_save_failure_does_not_block_processing(
 @patch("backend.app.agent.core.amessages")
 async def test_content_filter_error_returns_rephrasing_message(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -917,7 +917,7 @@ async def test_content_filter_error_returns_rephrasing_message(
     mock_amessages.side_effect = ContentFilterError("Blocked by safety filter")
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -933,7 +933,7 @@ async def test_content_filter_error_returns_rephrasing_message(
 @patch("backend.app.agent.core.amessages")
 async def test_authentication_error_returns_config_message(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -942,7 +942,7 @@ async def test_authentication_error_returns_config_message(
     mock_amessages.side_effect = AuthenticationError("Invalid API key")
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -958,7 +958,7 @@ async def test_authentication_error_returns_config_message(
 @patch("backend.app.agent.core.amessages")
 async def test_content_filter_error_does_not_store_outbound(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -967,7 +967,7 @@ async def test_content_filter_error_does_not_store_outbound(
     mock_amessages.side_effect = ContentFilterError("Blocked")
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -982,7 +982,7 @@ async def test_content_filter_error_does_not_store_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_authentication_error_does_not_store_outbound(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -991,7 +991,7 @@ async def test_authentication_error_does_not_store_outbound(
     mock_amessages.side_effect = AuthenticationError("Bad key")
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -1011,7 +1011,7 @@ async def test_authentication_error_does_not_store_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_normal_response_still_stored_as_outbound(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -1020,7 +1020,7 @@ async def test_normal_response_still_stored_as_outbound(
     mock_amessages.return_value = make_text_response("Here's your estimate!")  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -1036,7 +1036,7 @@ async def test_normal_response_still_stored_as_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_error_fallback_sent_but_not_stored(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -1045,7 +1045,7 @@ async def test_error_fallback_sent_but_not_stored(
     mock_amessages.side_effect = RuntimeError("LLM down")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],

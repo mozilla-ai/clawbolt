@@ -1,4 +1,4 @@
-"""Onboarding conversation logic for new contractors."""
+"""Onboarding conversation logic for new users."""
 
 from __future__ import annotations
 
@@ -6,7 +6,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from backend.app.agent.events import AgentEndEvent, AgentEvent
-from backend.app.agent.file_store import ContractorData, get_contractor_store
+from backend.app.agent.file_store import UserData, get_user_store
 from backend.app.agent.profile import build_onboarding_prompt
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
@@ -16,33 +16,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Fields that indicate a contractor has completed onboarding
+# Fields that indicate a user has completed onboarding
 REQUIRED_PROFILE_FIELDS = {"name"}
 
 
-def is_onboarding_needed(contractor: ContractorData) -> bool:
-    """Check if contractor needs onboarding.
+def is_onboarding_needed(user: UserData) -> bool:
+    """Check if user needs onboarding.
 
     Returns False once onboarding_complete is set, or if the name
     field is already populated.
     """
-    if contractor.onboarding_complete:
+    if user.onboarding_complete:
         return False
-    return not contractor.name or not contractor.name.strip()
+    return not user.name or not user.name.strip()
 
 
 def _get_tool_capability_descriptions() -> list[str]:
     """Return human-readable descriptions of available tool capabilities.
 
     Uses the registry's specialist summaries so the onboarding prompt
-    can tell the contractor what their assistant can do.
+    can tell the user what their assistant can do.
     """
     ensure_tool_modules_imported()
     summaries = default_registry.specialist_summaries
     return [f"- {name}: {summary}" for name, summary in sorted(summaries.items())]
 
 
-def build_onboarding_system_prompt(contractor: ContractorData) -> str:
+def build_onboarding_system_prompt(user: UserData) -> str:
     """Build system prompt for onboarding mode.
 
     Wraps the base onboarding prompt with any partial profile info
@@ -52,10 +52,10 @@ def build_onboarding_system_prompt(contractor: ContractorData) -> str:
     base = build_onboarding_prompt()
 
     known: list[str] = []
-    if contractor.name and contractor.name.strip():
-        known.append(f"- Name: {contractor.name}")
-    if contractor.assistant_name and contractor.assistant_name != "Clawbolt":
-        known.append(f"- Your name (the AI): {contractor.assistant_name}")
+    if user.name and user.name.strip():
+        known.append(f"- Name: {user.name}")
+    if user.assistant_name and user.assistant_name != "Clawbolt":
+        known.append(f"- Your name (the AI): {user.assistant_name}")
 
     parts = [base]
     if known:
@@ -67,12 +67,12 @@ def build_onboarding_system_prompt(contractor: ContractorData) -> str:
         parts.append(
             "\n\nYour available specialist capabilities:\n"
             + "\n".join(capability_lines)
-            + "\n\nMention the ones that seem relevant to the contractor's trade. "
+            + "\n\nMention the ones that seem relevant to the user's trade. "
             "Don't list them all at once."
         )
 
     parts.append(
-        "\n\nIMPORTANT: If the contractor asks about something specific (a quote, a question, "
+        "\n\nIMPORTANT: If the user asks about something specific (a quote, a question, "
         "a photo), help them with that request FIRST, then naturally weave in any remaining "
         "onboarding questions. Never ignore their request just to collect profile info."
     )
@@ -84,19 +84,19 @@ class OnboardingSubscriber:
     """Event subscriber that detects onboarding completion after agent processing.
 
     Subscribes to ``AgentEndEvent`` to detect successful ``update_profile`` calls.
-    When the contractor's required profile fields become complete, it sets
+    When the user's required profile fields become complete, it sets
     ``onboarding_complete = True`` and prepares a completion summary.
 
     Usage::
 
-        sub = OnboardingSubscriber(contractor, was_onboarding=True)
+        sub = OnboardingSubscriber(user, was_onboarding=True)
         agent.subscribe(sub)
         response = await agent.process_message(...)
         sub.finalize(response)  # appends completion note to reply if applicable
     """
 
-    def __init__(self, contractor: ContractorData, was_onboarding: bool) -> None:
-        self._contractor = contractor
+    def __init__(self, user: UserData, was_onboarding: bool) -> None:
+        self._user = user
         self._was_onboarding = was_onboarding
         self._completion_note: str | None = None
 
@@ -107,28 +107,28 @@ class OnboardingSubscriber:
 
     async def _on_agent_end(self, event: AgentEndEvent) -> None:
         """Process onboarding state after the agent finishes."""
-        store = get_contractor_store()
+        store = get_user_store()
 
-        # Reload contractor if a profile update was made
+        # Reload user if a profile update was made
         if any(a == f"Called {ToolName.UPDATE_PROFILE}" for a in event.actions_taken):
-            refreshed = await store.get_by_id(self._contractor.id)
+            refreshed = await store.get_by_id(self._user.id)
             if refreshed:
-                self._contractor = refreshed
+                self._user = refreshed
 
         # Transition: was onboarding and required fields are now complete
-        if self._was_onboarding and not is_onboarding_needed(self._contractor):
-            await store.update(self._contractor.id, onboarding_complete=True)
-            self._contractor.onboarding_complete = True
+        if self._was_onboarding and not is_onboarding_needed(self._user):
+            await store.update(self._user.id, onboarding_complete=True)
+            self._user.onboarding_complete = True
             self._completion_note = self._build_completion_note()
 
-        # Pre-populated contractor: fields were already filled but flag was never set
-        if not self._contractor.onboarding_complete and not is_onboarding_needed(self._contractor):
-            await store.update(self._contractor.id, onboarding_complete=True)
-            self._contractor.onboarding_complete = True
+        # Pre-populated user: fields were already filled but flag was never set
+        if not self._user.onboarding_complete and not is_onboarding_needed(self._user):
+            await store.update(self._user.id, onboarding_complete=True)
+            self._user.onboarding_complete = True
 
     def _build_completion_note(self) -> str:
-        assistant = self._contractor.assistant_name or "Clawbolt"
-        parts = [f"Name: {self._contractor.name}"]
+        assistant = self._user.assistant_name or "Clawbolt"
+        parts = [f"Name: {self._user.name}"]
         parts.append(f"Your AI: {assistant}")
         summary = "\n".join(f"- {p}" for p in parts)
         return (

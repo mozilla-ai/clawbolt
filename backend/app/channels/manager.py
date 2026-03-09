@@ -21,9 +21,9 @@ class ChannelManager:
 
     In addition to managing channel lifecycles, runs two long-lived tasks:
 
-    * **inbound consumer**: reads from the message bus, performs contractor
+    * **inbound consumer**: reads from the message bus, performs user
       lookup / session creation / persistence, and dispatches to the agent
-      pipeline (with per-contractor locking).
+      pipeline (with per-user locking).
     * **outbound dispatcher**: reads agent replies from the bus and routes
       them to the correct channel's send method or resolves web chat
       response futures.

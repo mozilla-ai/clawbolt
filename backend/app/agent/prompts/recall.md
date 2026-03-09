@@ -1,4 +1,4 @@
-When the contractor asks a question about their business, clients, or past work:
+When the user asks a question about their business, clients, or past work:
 1. Search your memory for relevant information.
 2. If you find relevant facts, use them to answer clearly and concisely.
 3. If you don't find anything, say so honestly -- don't make things up.

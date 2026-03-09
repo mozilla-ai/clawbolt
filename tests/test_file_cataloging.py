@@ -1,6 +1,6 @@
 import pytest
 
-from backend.app.agent.file_store import ContractorData, MediaStore
+from backend.app.agent.file_store import MediaStore, UserData
 from backend.app.agent.tools.file_tools import (
     _build_client_folder,
     _build_filename,
@@ -115,12 +115,12 @@ def test_build_filename_voice_note() -> None:
 
 @pytest.mark.asyncio()
 async def test_upload_creates_media_file_record(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """upload_to_storage should create a MediaData record."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        test_contractor,
+        test_user,
         storage,
         pending_media={"https://example.com/media/photo.jpg": b"fake-image-bytes"},
     )
@@ -141,12 +141,12 @@ async def test_upload_creates_media_file_record(
 
 @pytest.mark.asyncio()
 async def test_upload_to_client_folder(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Files with client info should go to the client folder."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        test_contractor,
+        test_user,
         storage,
         pending_media={"https://example.com/doc.pdf": b"pdf-bytes"},
     )
@@ -167,12 +167,12 @@ async def test_upload_to_client_folder(
 
 @pytest.mark.asyncio()
 async def test_upload_without_client_goes_to_unsorted(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Files without client info should go to Unsorted/{date}/."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        test_contractor,
+        test_user,
         storage,
         pending_media={"https://example.com/doc.pdf": b"pdf-bytes"},
     )
@@ -192,11 +192,11 @@ async def test_upload_without_client_goes_to_unsorted(
 
 @pytest.mark.asyncio()
 async def test_upload_no_media_returns_error(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Upload with no pending media should return error guiding to organize_file."""
     storage = MockStorageBackend()
-    tools = create_file_tools(test_contractor, storage, pending_media={})
+    tools = create_file_tools(test_user, storage, pending_media={})
     upload = tools[0].function
 
     result = await upload(file_category="job_photo")
@@ -207,12 +207,12 @@ async def test_upload_no_media_returns_error(
 
 @pytest.mark.asyncio()
 async def test_upload_uses_first_media_if_no_url(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """If no original_url specified, use first available media."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        test_contractor,
+        test_user,
         storage,
         pending_media={"https://example.com/media/auto.jpg": b"auto-bytes"},
     )
@@ -226,12 +226,12 @@ async def test_upload_uses_first_media_if_no_url(
 
 @pytest.mark.asyncio()
 async def test_upload_sequential_indexing(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Multiple uploads to same folder should get sequential indices."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        test_contractor,
+        test_user,
         storage,
         pending_media={
             "https://example.com/1.jpg": b"img1",
@@ -257,12 +257,12 @@ async def test_upload_sequential_indexing(
 
 @pytest.mark.asyncio()
 async def test_upload_creates_folder(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Storage folder should be created before upload."""
     storage = MockStorageBackend()
     tools = create_file_tools(
-        test_contractor,
+        test_user,
         storage,
         pending_media={"https://example.com/f.jpg": b"bytes"},
     )
@@ -281,7 +281,7 @@ async def test_upload_creates_folder(
 
 @pytest.mark.asyncio()
 async def test_auto_save_creates_media_file_records(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """auto_save_media should return storage paths for each downloaded file."""
     storage = MockStorageBackend()
@@ -300,7 +300,7 @@ async def test_auto_save_creates_media_file_records(
         ),
     ]
 
-    saved = await auto_save_media(test_contractor, storage, media)
+    saved = await auto_save_media(test_user, storage, media)
 
     assert len(saved) == 2
     assert len(storage.files) == 2
@@ -313,7 +313,7 @@ async def test_auto_save_creates_media_file_records(
 
 @pytest.mark.asyncio()
 async def test_auto_save_sequential_filenames(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """auto_save_media should produce sequential filenames."""
     storage = MockStorageBackend()
@@ -326,7 +326,7 @@ async def test_auto_save_sequential_filenames(
         ),
     ]
 
-    saved = await auto_save_media(test_contractor, storage, media)
+    saved = await auto_save_media(test_user, storage, media)
 
     assert "file_001.jpg" in saved[0]
     assert "file_002.jpg" in saved[1]
@@ -334,18 +334,18 @@ async def test_auto_save_sequential_filenames(
 
 @pytest.mark.asyncio()
 async def test_auto_save_empty_media_returns_empty(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """auto_save_media with no media should return empty list."""
     storage = MockStorageBackend()
-    saved = await auto_save_media(test_contractor, storage, [])
+    saved = await auto_save_media(test_user, storage, [])
     assert saved == []
     assert len(storage.files) == 0
 
 
 @pytest.mark.asyncio()
 async def test_auto_save_creates_unsorted_folder(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """auto_save_media should create the Unsorted/{date} folder."""
     storage = MockStorageBackend()
@@ -355,7 +355,7 @@ async def test_auto_save_creates_unsorted_folder(
         ),
     ]
 
-    await auto_save_media(test_contractor, storage, media)
+    await auto_save_media(test_user, storage, media)
 
     assert len(storage.folders) == 1
     assert storage.folders[0].startswith("/Unsorted/")
@@ -368,13 +368,13 @@ async def test_auto_save_creates_unsorted_folder(
 
 @pytest.mark.asyncio()
 async def test_organize_file_moves_to_client_folder(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """organize_file should move an auto-saved file into the client folder."""
     storage = MockStorageBackend()
     # Simulate auto-saved file in Unsorted
     await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
-    media_store = MediaStore(test_contractor.id)
+    media_store = MediaStore(test_user.id)
     await media_store.create(
         original_url="tg_file_id_123",
         mime_type="image/jpeg",
@@ -382,7 +382,7 @@ async def test_organize_file_moves_to_client_folder(
         storage_path="/Unsorted/2026-03-02/file_001.jpg",
     )
 
-    tools = create_file_tools(test_contractor, storage)
+    tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(
@@ -405,11 +405,11 @@ async def test_organize_file_moves_to_client_folder(
 
 @pytest.mark.asyncio()
 async def test_organize_file_not_found(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """organize_file should return an error if the file is not in the store."""
     storage = MockStorageBackend()
-    tools = create_file_tools(test_contractor, storage)
+    tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(
@@ -423,11 +423,11 @@ async def test_organize_file_not_found(
 
 @pytest.mark.asyncio()
 async def test_organize_file_already_in_client_folder(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """organize_file should return early if the file is already in a client folder."""
     storage = MockStorageBackend()
-    media_store = MediaStore(test_contractor.id)
+    media_store = MediaStore(test_user.id)
     await media_store.create(
         original_url="tg_file_id_456",
         mime_type="image/jpeg",
@@ -435,7 +435,7 @@ async def test_organize_file_already_in_client_folder(
         storage_path="/Jane/photos/deck_001.jpg",
     )
 
-    tools = create_file_tools(test_contractor, storage)
+    tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(
@@ -448,11 +448,11 @@ async def test_organize_file_already_in_client_folder(
 
 @pytest.mark.asyncio()
 async def test_organize_file_without_client_returns_error(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """organize_file without client_name or client_address should return an error."""
     storage = MockStorageBackend()
-    media_store = MediaStore(test_contractor.id)
+    media_store = MediaStore(test_user.id)
     await media_store.create(
         original_url="tg_file_id_789",
         mime_type="image/jpeg",
@@ -460,7 +460,7 @@ async def test_organize_file_without_client_returns_error(
         storage_path="/Unsorted/2026-03-02/file_001.jpg",
     )
 
-    tools = create_file_tools(test_contractor, storage)
+    tools = create_file_tools(test_user, storage)
     organize = tools[1].function
 
     result = await organize(

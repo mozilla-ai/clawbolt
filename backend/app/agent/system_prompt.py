@@ -11,7 +11,7 @@ import datetime
 import logging
 import zoneinfo
 
-from backend.app.agent.file_store import ContractorData, get_session_store
+from backend.app.agent.file_store import UserData, get_session_store
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt
 from backend.app.agent.prompts import load_prompt
@@ -64,23 +64,23 @@ class SystemPromptBuilder:
 # -----------------------------------------------------------------------
 
 
-def build_identity_section(contractor: ContractorData) -> str:
+def build_identity_section(user: UserData) -> str:
     """Build the 'About <name>' section content."""
-    return build_soul_prompt(contractor)
+    return build_soul_prompt(user)
 
 
-def build_user_section(contractor: ContractorData) -> str:
+def build_user_section(user: UserData) -> str:
     """Build the user profile section from USER.md content."""
-    return contractor.user_text or ""
+    return user.user_text or ""
 
 
 async def build_memory_section(
-    contractor_id: int,
+    user_id: int,
     query: str | None = None,
 ) -> str:
     """Build the memory context section content."""
     ctx = await build_memory_context(
-        contractor_id,
+        user_id,
         query=query[:CONTEXT_QUERY_MAX_LENGTH] if query else None,
     )
     return ctx or "(No memories saved yet)"
@@ -113,11 +113,11 @@ def build_recall_section() -> str:
     return load_prompt("recall")
 
 
-def _to_contractor_time(
+def _to_user_time(
     now: datetime.datetime,
     tz_name: str,
 ) -> datetime.datetime:
-    """Convert *now* to the contractor's IANA timezone, falling back to UTC."""
+    """Convert *now* to the user's IANA timezone, falling back to UTC."""
     if not tz_name:
         return now
     try:
@@ -127,25 +127,25 @@ def _to_contractor_time(
         return now
 
 
-def build_date_section(contractor: ContractorData) -> str:
-    """Build a cache-friendly date string in the contractor's local timezone.
+def build_date_section(user: UserData) -> str:
+    """Build a cache-friendly date string in the user's local timezone.
 
     Uses date-only granularity (no minutes) to avoid prompt-cache busting.
     """
     now = datetime.datetime.now(datetime.UTC)
-    local = _to_contractor_time(now, contractor.timezone)
+    local = _to_user_time(now, user.timezone)
     return local.strftime("%A, %Y-%m-%d")
 
 
-def build_local_datetime_section(contractor: ContractorData) -> str:
+def build_local_datetime_section(user: UserData) -> str:
     """Build a human-readable local datetime for the heartbeat evaluator."""
     now = datetime.datetime.now(datetime.UTC)
-    local = _to_contractor_time(now, contractor.timezone)
+    local = _to_user_time(now, user.timezone)
     return local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
 
 
 def build_cross_session_context(
-    contractor_id: int,
+    user_id: int,
     current_session_id: str,
     count: int = 5,
 ) -> str:
@@ -153,9 +153,9 @@ def build_cross_session_context(
 
     Gives the agent awareness of recent conversations that happened on
     a different channel (e.g. Telegram vs webchat) so it can maintain
-    continuity when the contractor switches channels.
+    continuity when the user switches channels.
     """
-    store = get_session_store(contractor_id)
+    store = get_session_store(user_id)
     messages = store.get_other_session_messages(current_session_id, count=count)
     if not messages:
         return ""
@@ -179,24 +179,24 @@ def build_cross_session_context(
 
 
 async def build_agent_system_prompt(
-    contractor: ContractorData,
+    user: UserData,
     tools: list[Tool],
     message_context: str,
     current_session_id: str = "",
 ) -> str:
     """Assemble the full system prompt for the main agent loop."""
     builder = SystemPromptBuilder()
-    assistant = contractor.assistant_name or "Clawbolt"
-    builder.set_preamble(f"You are {assistant}, an AI assistant for solo contractors.")
+    assistant = user.assistant_name or "Clawbolt"
+    builder.set_preamble(f"You are {assistant}, an AI assistant for solo tradespeople.")
 
     builder.add_section(
-        f"About {contractor.name or 'Contractor'}",
-        build_identity_section(contractor),
+        f"About {user.name or 'User'}",
+        build_identity_section(user),
     )
 
-    builder.add_section("About Your User", build_user_section(contractor))
+    builder.add_section("About Your User", build_user_section(user))
 
-    memory = await build_memory_section(contractor.id, query=message_context)
+    memory = await build_memory_section(user.id, query=message_context)
     builder.add_section("Your Memory", memory)
 
     tool_guidelines = build_tool_guidelines_section(tools)
@@ -208,13 +208,13 @@ async def build_agent_system_prompt(
         instructions = build_instructions_section()
     builder.add_section("Instructions", instructions)
 
-    builder.add_section("Current date", build_date_section(contractor))
+    builder.add_section("Current date", build_date_section(user))
 
     builder.add_section("Proactive Messaging", build_proactive_section())
     builder.add_section("Recall Behavior", build_recall_section())
 
     if current_session_id:
-        cross = build_cross_session_context(contractor.id, current_session_id)
+        cross = build_cross_session_context(user.id, current_session_id)
         if cross:
             builder.add_section("Recent Activity (other channel)", cross)
 
@@ -222,7 +222,7 @@ async def build_agent_system_prompt(
 
 
 async def build_heartbeat_system_prompt(
-    contractor: ContractorData,
+    user: UserData,
     flags: list[str],
     recent_messages: str,
 ) -> str:
@@ -230,11 +230,11 @@ async def build_heartbeat_system_prompt(
     builder = SystemPromptBuilder()
     builder.set_preamble(load_prompt("heartbeat_preamble"))
 
-    builder.add_section("About the contractor", build_identity_section(contractor))
-    builder.add_section("About the user", build_user_section(contractor))
+    builder.add_section("About the user", build_identity_section(user))
+    builder.add_section("About the user", build_user_section(user))
 
-    memory = await build_memory_section(contractor.id)
-    builder.add_section("Contractor's memory", memory)
+    memory = await build_memory_section(user.id)
+    builder.add_section("User's memory", memory)
 
     builder.add_section(
         "Recent conversation (last 5 messages)",
@@ -248,7 +248,7 @@ async def build_heartbeat_system_prompt(
 
     builder.add_section(
         "Current time",
-        build_local_datetime_section(contractor),
+        build_local_datetime_section(user),
     )
 
     builder.add_section("Rules", load_prompt("heartbeat_rules"))

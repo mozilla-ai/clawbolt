@@ -4,9 +4,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.agent.file_store import (
-    ContractorData,
     ToolConfigEntry,
     ToolConfigStore,
+    UserData,
 )
 from backend.app.agent.tools.registry import (
     ToolContext,
@@ -24,20 +24,20 @@ ensure_tool_modules_imported()
 
 @pytest.mark.asyncio()
 async def test_tool_config_store_empty_on_first_load(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """First load returns an empty list when no config file exists."""
-    store = ToolConfigStore(test_contractor.id)
+    store = ToolConfigStore(test_user.id)
     entries = await store.load()
     assert entries == []
 
 
 @pytest.mark.asyncio()
 async def test_tool_config_store_save_and_load(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Saved entries can be loaded back."""
-    store = ToolConfigStore(test_contractor.id)
+    store = ToolConfigStore(test_user.id)
     entries = [
         ToolConfigEntry(name="estimate", description="Estimates", category="domain", enabled=False),
         ToolConfigEntry(name="workspace", description="Files", category="core", enabled=True),
@@ -55,10 +55,10 @@ async def test_tool_config_store_save_and_load(
 
 @pytest.mark.asyncio()
 async def test_tool_config_store_get_disabled_tool_names(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """get_disabled_tool_names returns only disabled entries."""
-    store = ToolConfigStore(test_contractor.id)
+    store = ToolConfigStore(test_user.id)
     entries = [
         ToolConfigEntry(name="estimate", category="domain", enabled=False),
         ToolConfigEntry(name="file", category="domain", enabled=True),
@@ -77,8 +77,8 @@ async def test_tool_config_store_get_disabled_tool_names(
 
 def test_create_core_tools_excludes_disabled_factories() -> None:
     """create_core_tools should skip excluded factories."""
-    contractor = ContractorData(id=999, user_id="test")
-    ctx = ToolContext(contractor=contractor)
+    user = UserData(id=999, user_id="test")
+    ctx = ToolContext(user=user)
 
     all_core = default_registry.create_core_tools(ctx)
     excluded = default_registry.create_core_tools(ctx, excluded_factories={"memory"})
@@ -91,8 +91,8 @@ def test_create_core_tools_excludes_disabled_factories() -> None:
 
 def test_specialist_summaries_excludes_disabled_factories() -> None:
     """get_available_specialist_summaries should skip excluded factories."""
-    contractor = ContractorData(id=999, user_id="test")
-    ctx = ToolContext(contractor=contractor)
+    user = UserData(id=999, user_id="test")
+    ctx = ToolContext(user=user)
 
     all_summaries = default_registry.get_available_specialist_summaries(ctx)
     excluded_summaries = default_registry.get_available_specialist_summaries(

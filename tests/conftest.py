@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import ContractorData, get_contractor_store, reset_stores
+from backend.app.agent.file_store import UserData, get_user_store, reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
 from backend.app.config import settings
@@ -24,12 +24,12 @@ def _isolate_file_stores(tmp_path: object) -> Generator[None]:
 
 
 @pytest.fixture()
-async def test_contractor(tmp_path: object) -> ContractorData:
-    """Create a test contractor via the file store."""
-    store = get_contractor_store()
+async def test_user(tmp_path: object) -> UserData:
+    """Create a test user via the file store."""
+    store = get_user_store()
     return await store.create(
         user_id="test-user-001",
-        name="Test Contractor",
+        name="Test User",
         phone="+15551234567",
         channel_identifier="123456789",
         preferred_channel="telegram",
@@ -61,13 +61,11 @@ def _reset_bus_queues() -> Generator[None]:
 
 
 @pytest.fixture()
-def client(
-    test_contractor: ContractorData, mock_messaging_service: MessagingService
-) -> Generator[TestClient]:
+def client(test_user: UserData, mock_messaging_service: MessagingService) -> Generator[TestClient]:
     """FastAPI test client with overridden auth and messaging."""
 
-    def _override_get_current_user() -> ContractorData:
-        return test_contractor
+    def _override_get_current_user() -> UserData:
+        return test_user
 
     def _override_get_messaging_service() -> Generator[MessagingService]:
         yield mock_messaging_service
