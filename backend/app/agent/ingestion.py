@@ -1,9 +1,9 @@
 """Channel-agnostic inbound message ingestion.
 
-Defines the ``InboundMessage`` dataclass and ``process_inbound_message()``
+Defines the ``InboundMessage`` dataclass and ``process_inbound_from_bus()``
 which handles the channel-independent steps of receiving a message:
 contractor lookup/creation, conversation management, message persistence,
-and background task dispatch.
+and pipeline dispatch.
 
 Includes ``MessageBatcher`` which groups rapid-fire messages from the same
 contractor (e.g. after a tunnel reconnect) into a single agent pipeline run,
@@ -14,8 +14,6 @@ import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
-
-from starlette.background import BackgroundTask
 
 from backend.app.agent.concurrency import contractor_locks
 from backend.app.agent.context import get_or_create_conversation
@@ -29,6 +27,7 @@ from backend.app.agent.file_store import (
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
+from backend.app.media.download import DownloadedMedia
 from backend.app.services.messaging import MessagingService
 
 logger = logging.getLogger(__name__)
@@ -38,8 +37,8 @@ logger = logging.getLogger(__name__)
 class InboundMessage:
     """Channel-agnostic representation of an incoming message.
 
-    Produced by channel-specific adapters (Telegram webhook, future SMS/web)
-    and consumed by ``process_inbound_message()``.
+    Produced by channel-specific adapters (Telegram webhook, web chat)
+    and consumed by the bus consumer in ``ChannelManager``.
     """
 
     channel: str
@@ -48,6 +47,9 @@ class InboundMessage:
     media_refs: list[tuple[str, str]] = field(default_factory=list)
     external_message_id: str = ""
     sender_username: str | None = None
+    downloaded_media: list[DownloadedMedia] = field(default_factory=list)
+    request_id: str = ""
+    session_id: str | None = None
 
 
 async def _get_or_create_contractor(channel: str, sender_id: str) -> ContractorData:
@@ -105,6 +107,8 @@ class _BatchState:
     timer: asyncio.Task[None] | None = None
     messaging_service: MessagingService | None = None
     contractor: ContractorData | None = None
+    channel: str = ""
+    request_id: str = ""
 
 
 class MessageBatcher:
@@ -133,6 +137,8 @@ class MessageBatcher:
         message: StoredMessage,
         media_urls: list[tuple[str, str]],
         messaging_service: MessagingService,
+        channel: str = "",
+        request_id: str = "",
     ) -> None:
         """Add a message to the batch for the contractor.
 
@@ -146,6 +152,8 @@ class MessageBatcher:
             )
             state.messaging_service = messaging_service
             state.contractor = contractor
+            state.channel = channel
+            state.request_id = request_id
             if state.timer is not None:
                 state.timer.cancel()
             state.timer = asyncio.create_task(self._flush_after(contractor.id))
@@ -198,6 +206,8 @@ class MessageBatcher:
                     message=last_entry.message,
                     media_urls=all_media,
                     messaging_service=messaging_service,
+                    channel=state.channel,
+                    request_id=state.request_id,
                 )
             except Exception:
                 logger.exception(
@@ -212,75 +222,24 @@ message_batcher = MessageBatcher(window_ms=settings.message_batch_window_ms)
 
 
 # ---------------------------------------------------------------------------
-# Background task entry points
+# Bus consumer entry point
 # ---------------------------------------------------------------------------
 
 
-async def _process_message_background(
-    contractor: ContractorData,
-    session: SessionState,
-    message: StoredMessage,
-    media_urls: list[tuple[str, str]],
+async def process_inbound_from_bus(
+    inbound: "InboundMessage",
     messaging_service: MessagingService,
 ) -> None:
-    """Run the agent pipeline directly (no batching).
+    """Process an inbound message consumed from the bus.
 
-    Used when ``message_batch_window_ms`` is 0.
-    """
-    async with contractor_locks.acquire(contractor.id):
-        try:
-            # Reload contractor
-            store = get_contractor_store()
-            fresh = await store.get_by_id(contractor.id)
-            if fresh is not None:
-                contractor = fresh
-            await handle_inbound_message(
-                contractor=contractor,
-                session=session,
-                message=message,
-                media_urls=media_urls,
-                messaging_service=messaging_service,
-            )
-        except Exception:
-            logger.exception(
-                "Agent pipeline failed for message seq %d (contractor %d)",
-                message.seq,
-                contractor.id,
-            )
-
-
-async def _enqueue_message_background(
-    contractor: ContractorData,
-    session: SessionState,
-    message: StoredMessage,
-    media_urls: list[tuple[str, str]],
-    messaging_service: MessagingService,
-) -> None:
-    """Enqueue a message into the batcher (runs as a Starlette BackgroundTask)."""
-    await message_batcher.enqueue(contractor, session, message, media_urls, messaging_service)
-
-
-async def process_inbound_message(
-    inbound: InboundMessage,
-    messaging_service: MessagingService,
-) -> tuple[BackgroundTask, ContractorData, StoredMessage]:
-    """Channel-agnostic inbound message processing.
-
-    1. Look up or create the contractor from ``inbound.sender_id``
-    2. Get or create an active conversation
-    3. Persist the inbound message record
-    4. Return a background task that runs the agent pipeline
-
-    When ``message_batch_window_ms > 0``, rapid-fire messages from the same
-    contractor are batched: only the last message triggers the pipeline while
-    earlier messages appear in conversation history.  When the window is 0,
-    messages are processed directly without batching.
-
-    Returns (background_task, contractor, message) so the caller can
-    include the task in its HTTP response.
+    Handles contractor lookup/creation, session management, message
+    persistence, and dispatches to the agent pipeline (with optional
+    batching).
     """
     contractor = await _get_or_create_contractor(inbound.channel, inbound.sender_id)
-    session, _is_new = await get_or_create_conversation(contractor.id)
+    session, _is_new = await get_or_create_conversation(
+        contractor.id, external_session_id=inbound.session_id
+    )
 
     session_store = get_session_store(contractor.id)
     message = await session_store.add_message(
@@ -291,17 +250,36 @@ async def process_inbound_message(
         media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
     )
 
-    handler = (
-        _enqueue_message_background
-        if settings.message_batch_window_ms > 0
-        else _process_message_background
-    )
-    task = BackgroundTask(
-        handler,
-        contractor=contractor,
-        session=session,
-        message=message,
-        media_urls=inbound.media_refs,
-        messaging_service=messaging_service,
-    )
-    return task, contractor, message
+    if settings.message_batch_window_ms > 0:
+        await message_batcher.enqueue(
+            contractor=contractor,
+            session=session,
+            message=message,
+            media_urls=inbound.media_refs,
+            messaging_service=messaging_service,
+            channel=inbound.channel,
+            request_id=inbound.request_id,
+        )
+    else:
+        async with contractor_locks.acquire(contractor.id):
+            try:
+                store = get_contractor_store()
+                fresh = await store.get_by_id(contractor.id)
+                if fresh is not None:
+                    contractor = fresh
+                await handle_inbound_message(
+                    contractor=contractor,
+                    session=session,
+                    message=message,
+                    media_urls=inbound.media_refs,
+                    messaging_service=messaging_service,
+                    downloaded_media=inbound.downloaded_media,
+                    channel=inbound.channel,
+                    request_id=inbound.request_id,
+                )
+            except Exception:
+                logger.exception(
+                    "Agent pipeline failed for message seq %d (contractor %d)",
+                    message.seq,
+                    contractor.id,
+                )

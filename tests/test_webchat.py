@@ -1,15 +1,14 @@
-"""Tests for the web chat channel endpoint."""
+"""Tests for the web chat channel endpoint (async bus + SSE flow)."""
 
 import io
-import json
 from collections.abc import Generator
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.agent.file_store import ContractorData, get_contractor_store
+from backend.app.bus import OutboundMessage, message_bus
 from backend.app.config import settings
 from backend.app.main import app
 
@@ -42,61 +41,21 @@ def webchat_client(webchat_contractor: ContractorData) -> Generator[TestClient]:
     app.dependency_overrides.clear()
 
 
-def test_chat_endpoint_returns_reply(
+def test_chat_endpoint_returns_request_id(
     webchat_client: TestClient,
     webchat_contractor: ContractorData,
 ) -> None:
-    """POST /api/user/chat should return an agent reply."""
-    with patch(
-        "backend.app.agent.router.run_agent",
-        new_callable=AsyncMock,
-    ) as mock_agent:
-        from backend.app.agent.core import AgentResponse
-
-        mock_agent.return_value = AgentResponse(reply_text="Hello from the agent!")
-
-        resp = webchat_client.post(
-            "/api/user/chat",
-            data={"message": "Hi there"},
-        )
+    """POST /api/user/chat should return request_id and session_id."""
+    resp = webchat_client.post(
+        "/api/user/chat",
+        data={"message": "Hi there"},
+    )
 
     assert resp.status_code == 200
     data = resp.json()
-    assert data["reply"] == "Hello from the agent!"
+    assert "request_id" in data
     assert "session_id" in data
-
-
-def test_chat_endpoint_persists_messages(
-    webchat_client: TestClient,
-    webchat_contractor: ContractorData,
-) -> None:
-    """Chat messages should be persisted in the session store."""
-    with patch(
-        "backend.app.agent.router.run_agent",
-        new_callable=AsyncMock,
-    ) as mock_agent:
-        from backend.app.agent.core import AgentResponse
-
-        mock_agent.return_value = AgentResponse(reply_text="Got it!")
-
-        resp = webchat_client.post(
-            "/api/user/chat",
-            data={"message": "Remember my rate is 85"},
-        )
-        assert resp.status_code == 200
-        session_id = resp.json()["session_id"]
-
-    # Read the session JSONL file directly to verify persistence
-    session_path = (
-        Path(settings.data_dir) / str(webchat_contractor.id) / "sessions" / f"{session_id}.jsonl"
-    )
-    assert session_path.exists()
-    lines = [json.loads(line) for line in session_path.read_text().strip().split("\n")]
-    # First line is metadata, subsequent lines are messages
-    message_lines = [line for line in lines if line.get("_type") != "metadata"]
-    bodies = [m["body"] for m in message_lines]
-    assert "Remember my rate is 85" in bodies
-    assert "Got it!" in bodies
+    assert len(data["request_id"]) > 0
 
 
 def test_chat_endpoint_missing_body(webchat_client: TestClient) -> None:
@@ -110,23 +69,14 @@ def test_chat_returns_same_session(
     webchat_contractor: ContractorData,
 ) -> None:
     """Multiple messages within the session timeout should use the same session."""
-    with patch(
-        "backend.app.agent.router.run_agent",
-        new_callable=AsyncMock,
-    ) as mock_agent:
-        from backend.app.agent.core import AgentResponse
-
-        mock_agent.return_value = AgentResponse(reply_text="Reply 1")
-        resp1 = webchat_client.post(
-            "/api/user/chat",
-            data={"message": "First message"},
-        )
-
-        mock_agent.return_value = AgentResponse(reply_text="Reply 2")
-        resp2 = webchat_client.post(
-            "/api/user/chat",
-            data={"message": "Second message"},
-        )
+    resp1 = webchat_client.post(
+        "/api/user/chat",
+        data={"message": "First message"},
+    )
+    resp2 = webchat_client.post(
+        "/api/user/chat",
+        data={"message": "Second message"},
+    )
 
     assert resp1.json()["session_id"] == resp2.json()["session_id"]
 
@@ -136,24 +86,16 @@ def test_chat_with_explicit_session_id(
     webchat_contractor: ContractorData,
 ) -> None:
     """Sending session_id should resume that session."""
-    with patch(
-        "backend.app.agent.router.run_agent",
-        new_callable=AsyncMock,
-    ) as mock_agent:
-        from backend.app.agent.core import AgentResponse
+    resp1 = webchat_client.post(
+        "/api/user/chat",
+        data={"message": "First message"},
+    )
+    session_id = resp1.json()["session_id"]
 
-        mock_agent.return_value = AgentResponse(reply_text="Reply 1")
-        resp1 = webchat_client.post(
-            "/api/user/chat",
-            data={"message": "First message"},
-        )
-        session_id = resp1.json()["session_id"]
-
-        mock_agent.return_value = AgentResponse(reply_text="Reply 2")
-        resp2 = webchat_client.post(
-            "/api/user/chat",
-            data={"message": "Second message", "session_id": session_id},
-        )
+    resp2 = webchat_client.post(
+        "/api/user/chat",
+        data={"message": "Second message", "session_id": session_id},
+    )
 
     assert resp2.status_code == 200
     assert resp2.json()["session_id"] == session_id
@@ -173,17 +115,10 @@ def test_chat_with_nonexistent_session_id(
     webchat_contractor: ContractorData,
 ) -> None:
     """Valid-format but nonexistent session_id should create a new session."""
-    with patch(
-        "backend.app.agent.router.run_agent",
-        new_callable=AsyncMock,
-    ) as mock_agent:
-        from backend.app.agent.core import AgentResponse
-
-        mock_agent.return_value = AgentResponse(reply_text="Hello!")
-        resp = webchat_client.post(
-            "/api/user/chat",
-            data={"message": "Hello", "session_id": "9999_9999"},
-        )
+    resp = webchat_client.post(
+        "/api/user/chat",
+        data={"message": "Hello", "session_id": "9999_9999"},
+    )
 
     assert resp.status_code == 200
     # A new session should have been created (not the requested one)
@@ -199,38 +134,24 @@ def test_chat_with_image_upload(
     webchat_client: TestClient,
     webchat_contractor: ContractorData,
 ) -> None:
-    """Upload an image with text; verify downloaded_media reaches the agent."""
-    with patch(
-        "backend.app.agent.router.run_agent",
-        new_callable=AsyncMock,
-    ) as mock_agent:
-        from backend.app.agent.core import AgentResponse
-
-        mock_agent.return_value = AgentResponse(reply_text="Nice photo!")
-
-        # 1x1 red PNG
-        png_bytes = (
-            b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
-            b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
-            b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
-            b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
-        )
-        resp = webchat_client.post(
-            "/api/user/chat",
-            data={"message": "Check this out"},
-            files=[("files", ("photo.png", io.BytesIO(png_bytes), "image/png"))],
-        )
+    """Upload an image with text; verify the request is accepted."""
+    # 1x1 red PNG
+    png_bytes = (
+        b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR\x00\x00\x00\x01"
+        b"\x00\x00\x00\x01\x08\x02\x00\x00\x00\x90wS\xde\x00"
+        b"\x00\x00\x0cIDATx\x9cc\xf8\x0f\x00\x00\x01\x01\x00"
+        b"\x05\x18\xd8N\x00\x00\x00\x00IEND\xaeB`\x82"
+    )
+    resp = webchat_client.post(
+        "/api/user/chat",
+        data={"message": "Check this out"},
+        files=[("files", ("photo.png", io.BytesIO(png_bytes), "image/png"))],
+    )
 
     assert resp.status_code == 200
-    assert resp.json()["reply"] == "Nice photo!"
-
-    # Verify downloaded_media was passed to run_agent
-    call_kwargs = mock_agent.call_args.kwargs
-    dm = call_kwargs["downloaded_media"]
-    assert len(dm) == 1
-    assert dm[0].mime_type == "image/png"
-    assert dm[0].filename == "photo.png"
-    assert dm[0].content == png_bytes
+    data = resp.json()
+    assert "request_id" in data
+    assert "session_id" in data
 
 
 def test_chat_with_files_only(
@@ -238,21 +159,13 @@ def test_chat_with_files_only(
     webchat_contractor: ContractorData,
 ) -> None:
     """Upload a file without text; should still succeed."""
-    with patch(
-        "backend.app.agent.router.run_agent",
-        new_callable=AsyncMock,
-    ) as mock_agent:
-        from backend.app.agent.core import AgentResponse
-
-        mock_agent.return_value = AgentResponse(reply_text="Got your file!")
-
-        resp = webchat_client.post(
-            "/api/user/chat",
-            files=[("files", ("doc.pdf", io.BytesIO(b"%PDF-1.4 test"), "application/pdf"))],
-        )
+    resp = webchat_client.post(
+        "/api/user/chat",
+        files=[("files", ("doc.pdf", io.BytesIO(b"%PDF-1.4 test"), "application/pdf"))],
+    )
 
     assert resp.status_code == 200
-    assert resp.json()["reply"] == "Got your file!"
+    assert "request_id" in resp.json()
 
 
 def test_chat_no_message_no_files(webchat_client: TestClient) -> None:
@@ -281,28 +194,92 @@ def test_chat_multiple_files(
     webchat_client: TestClient,
     webchat_contractor: ContractorData,
 ) -> None:
-    """Multiple files in one request should all reach the agent."""
+    """Multiple files in one request should all be accepted."""
+    resp = webchat_client.post(
+        "/api/user/chat",
+        data={"message": "Multiple attachments"},
+        files=[
+            ("files", ("a.png", io.BytesIO(b"img1"), "image/png")),
+            ("files", ("b.pdf", io.BytesIO(b"pdf1"), "application/pdf")),
+            ("files", ("c.mp3", io.BytesIO(b"audio1"), "audio/mpeg")),
+        ],
+    )
+
+    assert resp.status_code == 200
+    assert "request_id" in resp.json()
+
+
+# ---------------------------------------------------------------------------
+# Bus integration: verify inbound messages reach the bus
+# ---------------------------------------------------------------------------
+
+
+def test_chat_publishes_to_bus(
+    webchat_client: TestClient,
+    webchat_contractor: ContractorData,
+) -> None:
+    """POST /api/user/chat should publish an InboundMessage to the bus."""
     with patch(
-        "backend.app.agent.router.run_agent",
+        "backend.app.channels.webchat.message_bus.publish_inbound",
         new_callable=AsyncMock,
-    ) as mock_agent:
-        from backend.app.agent.core import AgentResponse
-
-        mock_agent.return_value = AgentResponse(reply_text="Got them all!")
-
+    ) as mock_pub:
         resp = webchat_client.post(
             "/api/user/chat",
-            data={"message": "Multiple attachments"},
-            files=[
-                ("files", ("a.png", io.BytesIO(b"img1"), "image/png")),
-                ("files", ("b.pdf", io.BytesIO(b"pdf1"), "application/pdf")),
-                ("files", ("c.mp3", io.BytesIO(b"audio1"), "audio/mpeg")),
-            ],
+            data={"message": "Bus test"},
         )
 
     assert resp.status_code == 200
-    call_kwargs = mock_agent.call_args.kwargs
-    dm = call_kwargs["downloaded_media"]
-    assert len(dm) == 3
-    filenames = {m.filename for m in dm}
-    assert filenames == {"a.png", "b.pdf", "c.mp3"}
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert inbound.channel == "webchat"
+    assert inbound.text == "Bus test"
+
+
+# ---------------------------------------------------------------------------
+# SSE endpoint tests
+# ---------------------------------------------------------------------------
+
+
+def test_sse_endpoint_returns_reply(
+    webchat_client: TestClient,
+    webchat_contractor: ContractorData,
+) -> None:
+    """GET /api/user/chat/events/{request_id} should stream the reply as SSE."""
+    import threading
+
+    # Mock bus publish so the consumer doesn't process the message
+    with patch(
+        "backend.app.channels.webchat.message_bus.publish_inbound",
+        new_callable=AsyncMock,
+    ):
+        resp = webchat_client.post(
+            "/api/user/chat",
+            data={"message": "SSE test"},
+        )
+    assert resp.status_code == 200
+    request_id = resp.json()["request_id"]
+
+    # The POST registered a response future. Resolve it from another thread
+    # shortly after the SSE stream opens.
+    outbound = OutboundMessage(
+        channel="webchat", chat_id="1", content="Hello from agent!", request_id=request_id
+    )
+
+    def _resolve() -> None:
+        import time
+
+        time.sleep(0.2)
+        message_bus.resolve_response(request_id, outbound)
+
+    t = threading.Thread(target=_resolve)
+    t.start()
+
+    with webchat_client.stream("GET", f"/api/user/chat/events/{request_id}") as sse_resp:
+        assert sse_resp.status_code == 200
+        body = b""
+        for chunk in sse_resp.iter_bytes():
+            body += chunk
+        text = body.decode()
+        assert "Hello from agent!" in text
+
+    t.join(timeout=5)

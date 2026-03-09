@@ -118,6 +118,11 @@ export interface ChatResponse {
   session_id: string;
 }
 
+export interface ChatAccepted {
+  request_id: string;
+  session_id: string;
+}
+
 export interface ChannelConfig {
   telegram_bot_token_set: boolean;
   telegram_allowed_usernames: string;

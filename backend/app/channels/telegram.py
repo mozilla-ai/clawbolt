@@ -14,7 +14,8 @@ from telegram import Bot
 from telegram.constants import ChatAction
 
 from backend.app.agent.file_store import get_idempotency_store
-from backend.app.agent.ingestion import InboundMessage, process_inbound_message
+from backend.app.agent.ingestion import InboundMessage
+from backend.app.bus import message_bus
 from backend.app.channels.base import BaseChannel
 from backend.app.config import Settings, get_effective_webhook_secret, settings
 from backend.app.media.download import DownloadedMedia, download_telegram_media
@@ -268,8 +269,6 @@ class TelegramChannel(BaseChannel):
 
     def get_router(self) -> APIRouter:
         """Build a router with the Telegram webhook endpoint."""
-        from backend.app.services.messaging import MessagingService, get_messaging_service
-
         router = APIRouter()
         channel = self
 
@@ -277,7 +276,6 @@ class TelegramChannel(BaseChannel):
         async def telegram_inbound(
             request: Request,
             _rate_limit: None = Depends(check_webhook_rate_limit),
-            messaging_service: MessagingService = Depends(get_messaging_service),
         ) -> JSONResponse:
             """Receive inbound messages from Telegram."""
             try:
@@ -318,8 +316,8 @@ class TelegramChannel(BaseChannel):
                     return JSONResponse(content={"ok": True})
                 await idempotency.mark_seen(inbound.external_message_id)
 
-            task, _contractor, _message = await process_inbound_message(inbound, messaging_service)
-            return JSONResponse(content={"ok": True}, background=task)
+            await message_bus.publish_inbound(inbound)
+            return JSONResponse(content={"ok": True})
 
         return router
 
