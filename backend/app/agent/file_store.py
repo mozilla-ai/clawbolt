@@ -208,6 +208,8 @@ class ToolConfigEntry(BaseModel):
     name: str = ""
     description: str = ""
     category: str = "domain"
+    domain_group: str = ""
+    domain_group_order: int = 0
     enabled: bool = True
 
 

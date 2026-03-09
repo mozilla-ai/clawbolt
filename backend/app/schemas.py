@@ -223,6 +223,8 @@ class ToolConfigEntryResponse(BaseModel):
     name: str
     description: str
     category: str
+    domain_group: str = ""
+    domain_group_order: int = 0
     enabled: bool
 
 
