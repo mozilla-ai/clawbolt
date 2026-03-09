@@ -8,7 +8,7 @@ import Select from '@/components/ui/select';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
 import { toast } from 'sonner';
 import api from '@/api';
-import type { ContractorProfileUpdate, ToolConfigEntry } from '@/types';
+import type { ToolConfigEntry } from '@/types';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
   getExtraSettingsTabs,
@@ -16,18 +16,25 @@ import {
   showOssSettingsTabs,
 } from '@/extensions';
 
+const RETIRED_TABS: Record<string, string> = {
+  channels: '/app/channels',
+  profile: '/app/settings/user',
+  assistant: '/app/settings/soul',
+};
+
 export default function SettingsPage() {
   const { tab } = useParams<{ tab: string }>();
   const navigate = useNavigate();
   const { profile, reloadProfile, isPremium, isAdmin } = useOutletContext<AppShellContext>();
 
-  // Redirect old /app/settings/channels to /app/channels
-  if (tab === 'channels') {
-    return <Navigate to="/app/channels" replace />;
+  // Redirect retired tab slugs
+  const redirect = tab ? RETIRED_TABS[tab] : undefined;
+  if (redirect) {
+    return <Navigate to={redirect} replace />;
   }
 
   const extraTabs = getExtraSettingsTabs(isPremium, isAdmin);
-  const activeTab = tab || 'profile';
+  const activeTab = tab || 'user';
 
   const handleTabChange = (value: string) => {
     navigate(`/app/settings/${value}`, { replace: true });
@@ -43,8 +50,8 @@ export default function SettingsPage() {
           <TabsList>
             {showOssSettingsTabs(isPremium) && (
               <>
-                <TabsTrigger value="profile">Profile</TabsTrigger>
-                <TabsTrigger value="assistant">Assistant</TabsTrigger>
+                <TabsTrigger value="user">User</TabsTrigger>
+                <TabsTrigger value="soul">Soul</TabsTrigger>
                 <TabsTrigger value="heartbeat">Heartbeat</TabsTrigger>
                 <TabsTrigger value="tools">Tools</TabsTrigger>
               </>
@@ -66,8 +73,8 @@ export default function SettingsPage() {
       <h2 className="text-xl font-semibold mb-6">Settings</h2>
       <Tabs value={activeTab} onValueChange={handleTabChange}>
         <TabsList>
-          <TabsTrigger value="profile">Profile</TabsTrigger>
-          <TabsTrigger value="assistant">Assistant</TabsTrigger>
+          <TabsTrigger value="user">User</TabsTrigger>
+          <TabsTrigger value="soul">Soul</TabsTrigger>
           <TabsTrigger value="heartbeat">Heartbeat</TabsTrigger>
           <TabsTrigger value="tools">Tools</TabsTrigger>
           {extraTabs.map((t) => (
@@ -75,12 +82,12 @@ export default function SettingsPage() {
           ))}
         </TabsList>
 
-        <TabsContent value="profile">
-          {profile && <ProfileTab profile={profile} onSaved={reloadProfile} />}
+        <TabsContent value="user">
+          {profile && <UserTab profile={profile} onSaved={reloadProfile} />}
         </TabsContent>
 
-        <TabsContent value="assistant">
-          {profile && <AssistantTab profile={profile} onSaved={reloadProfile} />}
+        <TabsContent value="soul">
+          {profile && <SoulTab profile={profile} onSaved={reloadProfile} />}
         </TabsContent>
 
         <TabsContent value="heartbeat">
@@ -95,113 +102,48 @@ export default function SettingsPage() {
   );
 }
 
-// --- Profile Tab ---
+// --- User Tab (USER.md) ---
 
-function ProfileTab({
+function UserTab({
   profile,
   onSaved,
 }: {
-  profile: { name: string; phone: string; timezone: string };
+  profile: { user_text: string };
   onSaved: () => void;
 }) {
-  const [form, setForm] = useState({
-    name: profile.name,
-    phone: profile.phone,
-    timezone: profile.timezone,
-  });
+  const [userText, setUserText] = useState(profile.user_text);
   const [saving, setSaving] = useState(false);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      const body: ContractorProfileUpdate = {
-        name: form.name,
-        phone: form.phone,
-        timezone: form.timezone,
-      };
-      await api.updateProfile(body);
+      await api.updateProfile({ user_text: userText });
       onSaved();
-      toast.success('Profile updated');
+      toast.success('User info updated');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
       setSaving(false);
     }
-  }, [form, onSaved]);
-
-  const set = (field: string) => (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement>) =>
-    setForm((prev) => ({ ...prev, [field]: e.target.value }));
+  }, [userText, onSaved]);
 
   return (
     <Card>
       <div className="grid gap-4">
-        <Field label="Name">
-          <Input value={form.name} onChange={set('name')} />
-        </Field>
-        <Field label="Phone">
-          <Input value={form.phone} onChange={set('phone')} type="tel" />
-        </Field>
-        <Field label="Timezone">
-          <Select value={form.timezone} onChange={set('timezone')}>
-            <optgroup label="Americas">
-              <option value="America/New_York">Eastern (ET)</option>
-              <option value="America/Chicago">Central (CT)</option>
-              <option value="America/Denver">Mountain (MT)</option>
-              <option value="America/Los_Angeles">Pacific (PT)</option>
-              <option value="America/Anchorage">Alaska (AKT)</option>
-              <option value="Pacific/Honolulu">Hawaii (HT)</option>
-              <option value="America/Phoenix">Arizona (no DST)</option>
-              <option value="America/Toronto">Toronto (ET)</option>
-              <option value="America/Vancouver">Vancouver (PT)</option>
-              <option value="America/Mexico_City">Mexico City (CST)</option>
-              <option value="America/Sao_Paulo">Sao Paulo (BRT)</option>
-              <option value="America/Argentina/Buenos_Aires">Buenos Aires (ART)</option>
-              <option value="America/Bogota">Bogota (COT)</option>
-            </optgroup>
-            <optgroup label="Europe">
-              <option value="Europe/London">London (GMT/BST)</option>
-              <option value="Europe/Paris">Paris (CET)</option>
-              <option value="Europe/Berlin">Berlin (CET)</option>
-              <option value="Europe/Madrid">Madrid (CET)</option>
-              <option value="Europe/Rome">Rome (CET)</option>
-              <option value="Europe/Amsterdam">Amsterdam (CET)</option>
-              <option value="Europe/Zurich">Zurich (CET)</option>
-              <option value="Europe/Stockholm">Stockholm (CET)</option>
-              <option value="Europe/Athens">Athens (EET)</option>
-              <option value="Europe/Istanbul">Istanbul (TRT)</option>
-              <option value="Europe/Moscow">Moscow (MSK)</option>
-            </optgroup>
-            <optgroup label="Asia / Pacific">
-              <option value="Asia/Dubai">Dubai (GST)</option>
-              <option value="Asia/Kolkata">India (IST)</option>
-              <option value="Asia/Singapore">Singapore (SGT)</option>
-              <option value="Asia/Hong_Kong">Hong Kong (HKT)</option>
-              <option value="Asia/Shanghai">Shanghai (CST)</option>
-              <option value="Asia/Tokyo">Tokyo (JST)</option>
-              <option value="Asia/Seoul">Seoul (KST)</option>
-              <option value="Asia/Jakarta">Jakarta (WIB)</option>
-              <option value="Asia/Manila">Manila (PHT)</option>
-            </optgroup>
-            <optgroup label="Oceania">
-              <option value="Australia/Sydney">Sydney (AEST)</option>
-              <option value="Australia/Melbourne">Melbourne (AEST)</option>
-              <option value="Australia/Perth">Perth (AWST)</option>
-              <option value="Australia/Brisbane">Brisbane (AEST, no DST)</option>
-              <option value="Pacific/Auckland">Auckland (NZST)</option>
-            </optgroup>
-            <optgroup label="Africa / Middle East">
-              <option value="Africa/Cairo">Cairo (EET)</option>
-              <option value="Africa/Lagos">Lagos (WAT)</option>
-              <option value="Africa/Johannesburg">Johannesburg (SAST)</option>
-              <option value="Africa/Nairobi">Nairobi (EAT)</option>
-              <option value="Asia/Riyadh">Riyadh (AST)</option>
-              <option value="Asia/Tehran">Tehran (IRST)</option>
-            </optgroup>
-          </Select>
+        <Field label="About You (USER.md)">
+          <Textarea
+            value={userText}
+            onChange={(e) => setUserText(e.target.value)}
+            rows={12}
+            placeholder="Tell your assistant about yourself: your name, phone, timezone, preferences, what projects you're working on..."
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Everything your assistant knows about you lives here. Updated over time as it learns about you.
+          </p>
         </Field>
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Profile'}
+            {saving ? 'Saving...' : 'Save'}
           </Button>
         </div>
       </div>
@@ -209,19 +151,18 @@ function ProfileTab({
   );
 }
 
-// --- Assistant Tab ---
+// --- Soul Tab (SOUL.md) ---
 
-function AssistantTab({
+function SoulTab({
   profile,
   onSaved,
 }: {
-  profile: { assistant_name: string; soul_text: string; user_text: string };
+  profile: { assistant_name: string; soul_text: string };
   onSaved: () => void;
 }) {
   const [form, setForm] = useState({
     assistant_name: profile.assistant_name,
     soul_text: profile.soul_text,
-    user_text: profile.user_text,
   });
   const [saving, setSaving] = useState(false);
 
@@ -231,10 +172,9 @@ function AssistantTab({
       await api.updateProfile({
         assistant_name: form.assistant_name,
         soul_text: form.soul_text,
-        user_text: form.user_text,
       });
       onSaved();
-      toast.success('Assistant settings updated');
+      toast.success('Soul settings updated');
     } catch (e) {
       toast.error((e as Error).message);
     } finally {
@@ -252,31 +192,20 @@ function AssistantTab({
             placeholder="e.g. Claw"
           />
         </Field>
-        <Field label="Personality / SOUL">
+        <Field label="Personality (SOUL.md)">
           <Textarea
             value={form.soul_text}
             onChange={(e) => setForm((prev) => ({ ...prev, soul_text: e.target.value }))}
-            rows={8}
+            rows={12}
             placeholder="Describe how your assistant should behave, speak, and interact with clients..."
           />
           <p className="text-xs text-muted-foreground mt-1">
             This guides your assistant's personality and communication style.
           </p>
         </Field>
-        <Field label="About You / USER">
-          <Textarea
-            value={form.user_text}
-            onChange={(e) => setForm((prev) => ({ ...prev, user_text: e.target.value }))}
-            rows={6}
-            placeholder="Tell your assistant about yourself: your name, preferences, what projects you're working on..."
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            Helps your assistant personalize responses. Updated over time as it learns about you.
-          </p>
-        </Field>
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Assistant Settings'}
+            {saving ? 'Saving...' : 'Save'}
           </Button>
         </div>
       </div>

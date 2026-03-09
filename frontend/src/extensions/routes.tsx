@@ -11,7 +11,7 @@ export function getLoginPageElement(): ReactNode {
 }
 
 export function getDefaultSettingsTab(_isPremium: boolean): string {
-  return 'profile';
+  return 'user';
 }
 
 export function shouldRedirectRootToApp(_isPremium: boolean): boolean {
