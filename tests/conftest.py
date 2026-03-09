@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from backend.app.agent.approval import reset_approval_gate
 from backend.app.agent.file_store import UserData, get_user_store, reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
@@ -19,8 +20,10 @@ def _isolate_file_stores(tmp_path: object) -> Generator[None]:
     """Point file stores at a temp directory and reset caches for each test."""
     with patch.object(settings, "data_dir", str(tmp_path)):
         reset_stores()
+        reset_approval_gate()
         yield
     reset_stores()
+    reset_approval_gate()
 
 
 @pytest.fixture()

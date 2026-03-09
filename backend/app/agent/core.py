@@ -15,6 +15,12 @@ from any_llm import (
 from any_llm.types.messages import MessageResponse
 from pydantic import ValidationError
 
+from backend.app.agent.approval import (
+    ApprovalDecision,
+    PermissionLevel,
+    get_approval_gate,
+    get_approval_store,
+)
 from backend.app.agent.context import StoredToolInteraction
 from backend.app.agent.events import (
     AgentEndEvent,
@@ -277,6 +283,71 @@ class ClawboltAgent:
                 await self._messaging_service.send_typing_indicator(to=self._chat_id)
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", self._chat_id)
+
+    async def _check_approval(
+        self,
+        tool_obj: Tool,
+        validated_args: dict[str, Any],
+    ) -> PermissionLevel:
+        """Check approval for a tool call.
+
+        Returns ``PermissionLevel.AUTO`` when execution should proceed,
+        or ``PermissionLevel.DENY`` when it should be blocked.
+        """
+        policy = tool_obj.approval_policy
+        if policy is None:
+            return PermissionLevel.AUTO
+
+        resource: str | None = None
+        if policy.resource_extractor is not None:
+            resource = policy.resource_extractor(validated_args)
+
+        store = get_approval_store()
+        level = store.check_permission(
+            self.user.id, tool_obj.name, resource=resource, default=policy.default_level
+        )
+
+        if level == PermissionLevel.AUTO:
+            return PermissionLevel.AUTO
+        if level == PermissionLevel.DENY:
+            return PermissionLevel.DENY
+
+        # ASK: prompt the user.  When no messaging channel is available
+        # (e.g. headless/API usage, dashboard without WebSocket reply path)
+        # we fall through to AUTO so the agent is not permanently blocked.
+        if self._messaging_service is None or self._chat_id is None:
+            return PermissionLevel.AUTO
+
+        gate = get_approval_gate()
+
+        # Only one approval prompt per user at a time.  If a prior tool in
+        # the same round is already waiting, deny this one to avoid
+        # overwriting the pending request.
+        if gate.has_pending(self.user.id):
+            return PermissionLevel.DENY
+
+        description = tool_obj.name
+        if policy.description_builder is not None:
+            description = policy.description_builder(validated_args)
+
+        decision = await gate.request_approval(
+            user_id=self.user.id,
+            tool_name=tool_obj.name,
+            description=description,
+            messaging_service=self._messaging_service,
+            chat_id=self._chat_id,
+        )
+
+        if decision == ApprovalDecision.ALWAYS_ALLOW:
+            store.set_permission(self.user.id, tool_obj.name, PermissionLevel.AUTO, resource)
+            return PermissionLevel.AUTO
+        if decision == ApprovalDecision.APPROVED:
+            return PermissionLevel.AUTO
+        if decision == ApprovalDecision.ALWAYS_DENY:
+            store.set_permission(self.user.id, tool_obj.name, PermissionLevel.DENY, resource)
+            return PermissionLevel.DENY
+        # DENIED or timeout
+        return PermissionLevel.DENY
 
     def register_tools(self, tools: list[Tool]) -> None:
         """Register available tools for this agent session."""
@@ -738,6 +809,30 @@ class ClawboltAgent:
                 tc_req = parsed_calls[i]
                 tool_name = tc_req.name
                 tool_tags = self._get_tool_tags(tool_name)
+
+                # -- Approval check --
+                approval_result = await self._check_approval(tool_obj, validated_args)
+                if approval_result == PermissionLevel.DENY:
+                    hint = _ERROR_KIND_HINTS[ToolErrorKind.PERMISSION]
+                    deny_msg = f"Error: permission denied for tool '{tool_name}'\n\n{hint}"
+                    actions_taken.append(f"Denied: {tool_name}")
+                    tool_call_records.append(
+                        StoredToolInteraction(
+                            tool_call_id=tc_req.id,
+                            name=tool_name,
+                            args=validated_args,
+                            result=deny_msg,
+                            is_error=True,
+                            tags=set(tool_tags),
+                        )
+                    )
+                    tool_results.append(
+                        ToolResultMessage(
+                            tool_call_id=tc_req.id,
+                            content=deny_msg,
+                        )
+                    )
+                    continue
 
                 await self._emit(
                     ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args)

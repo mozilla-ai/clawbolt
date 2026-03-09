@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from backend.app.agent.approval import ApprovalPolicy
 
 
 class ToolTags(StrEnum):
@@ -44,6 +49,7 @@ class Tool:
     params_model: type[BaseModel]
     tags: set[ToolTags] = field(default_factory=set)
     usage_hint: str = ""
+    approval_policy: ApprovalPolicy | None = None
 
 
 def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
