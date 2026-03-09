@@ -98,11 +98,6 @@ export default function AppShell() {
             <img src="/clawbolt.png" alt="" className="w-7 h-7" />
             <h1 className="text-lg font-bold text-foreground">Clawbolt</h1>
           </div>
-          {profile && (
-            <p className="text-xs text-muted-foreground mt-0.5 truncate">
-              {profile.name || 'Dashboard'}
-            </p>
-          )}
         </div>
 
         <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
