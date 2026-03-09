@@ -71,6 +71,7 @@ class Settings(BaseSettings):
     whisper_compute_type: str = "int8"
 
     # Agent loop
+    approval_timeout_seconds: int = 120
     message_batch_window_ms: int = 1500  # Batch rapid-fire messages per user
     max_tool_rounds: int = 10
     max_input_tokens: int = 120_000

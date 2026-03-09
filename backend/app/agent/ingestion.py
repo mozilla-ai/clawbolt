@@ -15,6 +15,10 @@ import json
 import logging
 from dataclasses import dataclass, field
 
+from backend.app.agent.approval import (
+    _parse_approval_response,
+    get_approval_gate,
+)
 from backend.app.agent.concurrency import user_locks
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.file_store import (
@@ -247,6 +251,27 @@ async def process_inbound_from_bus(
     batching).
     """
     user = await _get_or_create_user(inbound.channel, inbound.sender_id)
+
+    # -- Intercept approval responses before normal processing --
+    gate = get_approval_gate()
+    if gate.has_pending(user.id) and inbound.text:
+        decision = _parse_approval_response(inbound.text)
+        if decision is not None:
+            gate.resolve(user.id, decision)
+            # Persist the reply to the session so it appears in conversation history
+            session, _is_new = await get_or_create_conversation(
+                user.id, external_session_id=inbound.session_id
+            )
+            session_store = get_session_store(user.id)
+            await session_store.add_message(
+                session=session,
+                direction=MessageDirection.INBOUND,
+                body=inbound.text,
+                external_message_id=inbound.external_message_id or "",
+                media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
+            )
+            return
+
     session, _is_new = await get_or_create_conversation(
         user.id, external_session_id=inbound.session_id
     )
