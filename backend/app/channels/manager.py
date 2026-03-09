@@ -1,8 +1,15 @@
 """ChannelManager: lifecycle, routing, and bus consumer/dispatcher."""
 
+from __future__ import annotations
+
 import asyncio
 import contextlib
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.app.agent.ingestion import InboundMessage
+    from backend.app.services.messaging import MessagingService
 
 from backend.app.channels.base import BaseChannel
 
@@ -80,26 +87,24 @@ class ChannelManager:
 
     async def _handle_inbound(
         self,
-        inbound: "object",
-        messaging_service: "object",
+        inbound: InboundMessage,
+        messaging_service: MessagingService,
     ) -> None:
         """Process a single inbound message (runs as an asyncio task)."""
-        from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
-        from backend.app.services.messaging import MessagingService
+        from backend.app.agent.ingestion import process_inbound_from_bus
 
         # Channel-specific messaging service: use the channel that sent the
         # message if available, otherwise fall back to the default.
-        inbound_msg: InboundMessage = inbound  # type: ignore[assignment]
-        channel = self._channels.get(inbound_msg.channel)
-        svc: MessagingService = channel if channel is not None else messaging_service  # type: ignore[assignment]
+        channel = self._channels.get(inbound.channel)
+        svc: MessagingService = channel if channel is not None else messaging_service
 
         try:
-            await process_inbound_from_bus(inbound_msg, svc)
+            await process_inbound_from_bus(inbound, svc)
         except Exception:
             logger.exception(
                 "Failed to process inbound message from %s/%s",
-                inbound_msg.channel,
-                inbound_msg.sender_id,
+                inbound.channel,
+                inbound.sender_id,
             )
 
     async def _run_outbound_dispatcher(self) -> None:

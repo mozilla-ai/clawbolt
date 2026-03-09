@@ -12,6 +12,7 @@ download step) and processed through the same vision/audio pipeline.
 """
 
 import collections.abc
+import json
 import logging
 import re
 import uuid
@@ -129,13 +130,9 @@ class WebChatChannel(BaseChannel):
             async def event_stream() -> collections.abc.AsyncIterator[str]:
                 try:
                     outbound = await message_bus.wait_for_response(request_id, timeout=120)
-                    import json
-
                     data = json.dumps({"reply": outbound.content})
                     yield f"data: {data}\n\n"
                 except TimeoutError:
-                    import json
-
                     data = json.dumps({"error": "Response timed out"})
                     yield f"data: {data}\n\n"
 

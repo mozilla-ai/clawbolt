@@ -214,9 +214,11 @@ const api = {
                         error?: string;
                       };
                       if (payload.error) {
+                        reader.cancel();
                         reject(new Error(payload.error));
                         return;
                       }
+                      reader.cancel();
                       resolve({
                         reply: payload.reply || '',
                         session_id: accepted.session_id,

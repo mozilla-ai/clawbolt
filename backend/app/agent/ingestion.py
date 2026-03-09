@@ -97,6 +97,7 @@ class _BatchEntry:
     session: SessionState
     message: StoredMessage
     media_urls: list[tuple[str, str]]
+    downloaded_media: list[DownloadedMedia] = field(default_factory=list)
 
 
 @dataclass
@@ -139,6 +140,7 @@ class MessageBatcher:
         messaging_service: MessagingService,
         channel: str = "",
         request_id: str = "",
+        downloaded_media: list[DownloadedMedia] | None = None,
     ) -> None:
         """Add a message to the batch for the contractor.
 
@@ -148,7 +150,12 @@ class MessageBatcher:
         async with self._lock:
             state = self._states.setdefault(contractor.id, _BatchState())
             state.entries.append(
-                _BatchEntry(session=session, message=message, media_urls=media_urls)
+                _BatchEntry(
+                    session=session,
+                    message=message,
+                    media_urls=media_urls,
+                    downloaded_media=downloaded_media or [],
+                )
             )
             state.messaging_service = messaging_service
             state.contractor = contractor
@@ -182,8 +189,10 @@ class MessageBatcher:
 
         # Merge media from all batched messages so attachments are not lost.
         all_media: list[tuple[str, str]] = []
+        all_downloaded: list[DownloadedMedia] = []
         for entry in state.entries:
             all_media.extend(entry.media_urls)
+            all_downloaded.extend(entry.downloaded_media)
 
         if len(state.entries) > 1:
             logger.info(
@@ -206,6 +215,7 @@ class MessageBatcher:
                     message=last_entry.message,
                     media_urls=all_media,
                     messaging_service=messaging_service,
+                    downloaded_media=all_downloaded or None,
                     channel=state.channel,
                     request_id=state.request_id,
                 )
@@ -259,6 +269,7 @@ async def process_inbound_from_bus(
             messaging_service=messaging_service,
             channel=inbound.channel,
             request_id=inbound.request_id,
+            downloaded_media=inbound.downloaded_media or None,
         )
     else:
         async with contractor_locks.acquire(contractor.id):

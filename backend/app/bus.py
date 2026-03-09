@@ -45,6 +45,7 @@ class MessageBus:
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
         self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
         self._response_futures: dict[str, asyncio.Future[OutboundMessage]] = {}
+        self._cleanup_tasks: set[asyncio.Task[None]] = set()
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
@@ -62,11 +63,29 @@ class MessageBus:
         """Consume the next outbound message (blocks until available)."""
         return await self.outbound.get()
 
-    def register_response_future(self, request_id: str) -> asyncio.Future[OutboundMessage]:
-        """Create and return a future that will hold the reply for *request_id*."""
+    def register_response_future(
+        self, request_id: str, ttl: float = 300
+    ) -> asyncio.Future[OutboundMessage]:
+        """Create and return a future that will hold the reply for *request_id*.
+
+        A cleanup task removes the future after *ttl* seconds if it has not
+        been resolved, preventing memory leaks when the SSE endpoint is never
+        opened.
+        """
         loop = asyncio.get_running_loop()
         fut: asyncio.Future[OutboundMessage] = loop.create_future()
         self._response_futures[request_id] = fut
+
+        async def _cleanup() -> None:
+            await asyncio.sleep(ttl)
+            stale = self._response_futures.pop(request_id, None)
+            if stale is not None and not stale.done():
+                stale.cancel()
+                logger.debug("Cleaned up stale response future for request %s", request_id)
+
+        task = loop.create_task(_cleanup())
+        self._cleanup_tasks.add(task)
+        task.add_done_callback(self._cleanup_tasks.discard)
         return fut
 
     def resolve_response(self, request_id: str, msg: OutboundMessage) -> bool:
