@@ -9,7 +9,6 @@ import type {
   ChecklistItemUpdate,
   ContractorProfile,
   ContractorProfileUpdate,
-  ContractorStats,
   MemoryFact,
   MemoryFactUpdate,
   SessionDetail,
@@ -143,9 +142,6 @@ const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tools }),
     }),
-
-  // Stats
-  getStats: () => _fetch<ContractorStats>('/api/user/stats'),
 
   // Chat (async: POST submits, SSE delivers reply)
   sendChatMessage: async (
