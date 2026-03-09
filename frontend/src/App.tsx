@@ -8,6 +8,7 @@ import SettingsPage from '@/pages/SettingsPage';
 import ChatPage from '@/pages/ChatPage';
 import ChecklistPage from '@/pages/ChecklistPage';
 import ChannelsPage from '@/pages/ChannelsPage';
+import ToolsPage from '@/pages/ToolsPage';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getLoginPageElement,
@@ -45,6 +46,7 @@ export default function App() {
         <Route path="memory" element={<MemoryPage />} />
         <Route path="checklist" element={<ChecklistPage />} />
         <Route path="channels" element={<ChannelsPage />} />
+        <Route path="tools" element={<ToolsPage />} />
         <Route path="settings/:tab" element={<SettingsPage />} />
         <Route path="settings" element={<Navigate to={`/app/settings/${getDefaultSettingsTab(isPremium)}`} replace />} />
       </Route>

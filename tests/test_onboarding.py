@@ -158,6 +158,24 @@ def test_build_onboarding_prompt_mentions_workspace_files() -> None:
     assert "write_file" in prompt
 
 
+def test_build_onboarding_prompt_mentions_capabilities() -> None:
+    """Onboarding prompt should mention capabilities overview."""
+    from backend.app.agent.profile import build_onboarding_prompt
+
+    prompt = build_onboarding_prompt()
+    assert "capabilities" in prompt.lower()
+
+
+def test_build_onboarding_system_prompt_includes_tool_capabilities() -> None:
+    """Onboarding system prompt should inject available specialist tool descriptions."""
+    contractor = ContractorData(id=1, user_id="new-user", phone="+15550001111")
+
+    prompt = build_onboarding_system_prompt(contractor)
+    # Should include specialist tool summaries from the registry
+    assert "specialist capabilities" in prompt.lower()
+    assert "estimate" in prompt.lower()
+
+
 # --- Fixtures ---
 
 
