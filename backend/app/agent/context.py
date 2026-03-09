@@ -47,7 +47,7 @@ class StoredToolInteraction(BaseModel):
 async def _run_compaction_in_background(
     session_store: FileSessionStore,
     session: SessionState,
-    contractor_id: int,
+    user_id: int,
     trimmed_agent_messages: list[AgentMessage],
     max_message_seq: int,
 ) -> None:
@@ -58,23 +58,22 @@ async def _run_compaction_in_background(
     """
     try:
         saved, compacted_seq = await compact_session(
-            contractor_id, trimmed_agent_messages, max_message_seq=max_message_seq
+            user_id, trimmed_agent_messages, max_message_seq=max_message_seq
         )
         if compacted_seq is not None:
             await session_store.update_compaction_seq(session, compacted_seq)
         if saved:
             logger.info(
-                "Session compaction extracted %d fact(s) from %d trimmed message(s) "
-                "for contractor %d",
+                "Session compaction extracted %d fact(s) from %d trimmed message(s) for user %d",
                 len(saved),
                 len(trimmed_agent_messages),
-                contractor_id,
+                user_id,
             )
     except Exception:
         logger.exception(
-            "Session compaction failed for session %s, contractor %d",
+            "Session compaction failed for session %s, user %d",
             session.session_id,
-            contractor_id,
+            user_id,
         )
 
 
@@ -153,7 +152,7 @@ def _expand_outbound_with_tools(
 async def load_conversation_history(
     session: SessionState,
     limit: int = DEFAULT_HISTORY_LIMIT,
-    contractor_id: int | None = None,
+    user_id: int | None = None,
 ) -> list[AgentMessage]:
     """Load recent messages as typed message objects for LLM context.
 
@@ -165,7 +164,7 @@ async def load_conversation_history(
     prior tool usage.  Old messages without tool interaction data are
     loaded as flat ``AssistantMessage`` (backward compatible).
 
-    When the session has more messages than *limit* and a *contractor_id*
+    When the session has more messages than *limit* and a *user_id*
     is provided, the messages that are about to age out are passed through
     session compaction to extract durable facts before they leave the context
     window. Compaction runs as a background task to avoid blocking message
@@ -181,8 +180,8 @@ async def load_conversation_history(
     else:
         messages = []
 
-    # If messages were trimmed and we have a contractor_id, run compaction
-    if contractor_id is not None and total_count > limit:
+    # If messages were trimmed and we have a user_id, run compaction
+    if user_id is not None and total_count > limit:
         trimmed_count = total_count - limit
 
         # Get the oldest messages that have been trimmed from the context window
@@ -202,12 +201,12 @@ async def load_conversation_history(
 
         if trimmed_agent_messages and trimmed_msgs:
             max_seq = max(m.seq for m in trimmed_msgs)
-            session_store = get_session_store(contractor_id)
+            session_store = get_session_store(user_id)
             task = asyncio.create_task(
                 _run_compaction_in_background(
                     session_store,
                     session,
-                    contractor_id,
+                    user_id,
                     trimmed_agent_messages,
                     max_seq,
                 )
@@ -240,7 +239,7 @@ async def load_conversation_history(
 
 
 async def get_or_create_conversation(
-    contractor_id: int,
+    user_id: int,
     external_session_id: str | None = None,
     timeout_hours: int = CONVERSATION_TIMEOUT_HOURS,
 ) -> tuple[SessionState, bool]:
@@ -249,11 +248,11 @@ async def get_or_create_conversation(
     A conversation is "active" if the last message was within the timeout window.
     Returns (session, is_new).
     """
-    session_store = get_session_store(contractor_id)
+    session_store = get_session_store(user_id)
 
     if external_session_id is not None:
         session = session_store._load_session(external_session_id)
-        if session is not None and session.contractor_id == contractor_id:
+        if session is not None and session.user_id == user_id:
             return session, False
 
     return await session_store.get_or_create_session(timeout_hours=timeout_hours)

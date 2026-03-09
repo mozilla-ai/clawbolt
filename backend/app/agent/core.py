@@ -25,7 +25,7 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.messages import (
     AgentMessage,
@@ -231,18 +231,18 @@ class AgentResponse:
 
 
 class ClawboltAgent:
-    """Main agent that processes contractor messages and produces actions."""
+    """Main agent that processes user messages and produces actions."""
 
     def __init__(
         self,
-        contractor: ContractorData,
+        user: UserData,
         messaging_service: MessagingService | None = None,
         chat_id: str | None = None,
         tool_context: ToolContext | None = None,
         registry: ToolRegistry | None = None,
         session_id: str = "",
     ) -> None:
-        self.contractor = contractor
+        self.user = user
         self._messaging_service = messaging_service
         self._chat_id = chat_id
         self.tools: list[Tool] = []
@@ -287,9 +287,9 @@ class ClawboltAgent:
                 logger.warning("Duplicate tool name registered: %s", tool.name)
             self._tools_by_name[tool.name] = tool
         logger.debug(
-            "Registered %d tools for contractor %s: %s",
+            "Registered %d tools for user %s: %s",
             len(tools),
-            self.contractor.id if self.contractor else "N/A",
+            self.user.id if self.user else "N/A",
             ", ".join(sorted(self._tools_by_name.keys())),
         )
 
@@ -354,7 +354,7 @@ class ClawboltAgent:
     async def _build_system_prompt(self, message_context: str) -> str:
         """Build the full system prompt via the composable builder."""
         return await build_agent_system_prompt(
-            self.contractor,
+            self.user,
             self.tools,
             message_context,
             current_session_id=self._session_id,
@@ -557,15 +557,15 @@ class ClawboltAgent:
         """Process a message through the agent loop."""
         agent_start_time = time.monotonic()
         logger.debug(
-            "Agent starting for contractor %d, message length=%d, history=%d messages",
-            self.contractor.id,
+            "Agent starting for user %d, message length=%d, history=%d messages",
+            self.user.id,
             len(message_context),
             len(conversation_history) if conversation_history else 0,
         )
         system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
         await self._emit(
             AgentStartEvent(
-                contractor_id=self.contractor.id,
+                user_id=self.user.id,
                 message_context=message_context,
             )
         )
@@ -616,7 +616,7 @@ class ClawboltAgent:
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
             purpose = "agent_main" if _round == 0 else "agent_followup"
-            log_llm_usage(self.contractor.id, settings.llm_model, response, purpose)
+            log_llm_usage(self.user.id, settings.llm_model, response, purpose)
             if response.usage and response.usage.input_tokens:
                 self._last_input_tokens = response.usage.input_tokens
                 logger.debug(
@@ -810,8 +810,8 @@ class ClawboltAgent:
 
         total_duration = (time.monotonic() - agent_start_time) * 1000
         logger.debug(
-            "Agent finished for contractor %d in %.1fms, actions=%s, reply_length=%d",
-            self.contractor.id,
+            "Agent finished for user %d in %.1fms, actions=%s, reply_length=%d",
+            self.user.id,
             total_duration,
             actions_taken or "(none)",
             len(reply_text),

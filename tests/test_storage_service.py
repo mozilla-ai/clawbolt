@@ -512,14 +512,14 @@ async def test_gdrive_move_file_not_found(
 
 
 # ---------------------------------------------------------------------------
-# Per-contractor isolation tests
+# Per-user isolation tests
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_local_storage_contractor_subdirectory(tmp_path: Path) -> None:
-    """LocalFileStorage with contractor_id should store files in a subdirectory."""
-    storage = LocalFileStorage(base_dir=str(tmp_path), contractor_id=42)
+async def test_local_storage_user_subdirectory(tmp_path: Path) -> None:
+    """LocalFileStorage with user_id should store files in a subdirectory."""
+    storage = LocalFileStorage(base_dir=str(tmp_path), user_id=42)
     await storage.upload_file(b"photo", "/Job Photos", "site.jpg")
     written = tmp_path / "42" / "Job Photos" / "site.jpg"
     assert written.exists()
@@ -527,10 +527,10 @@ async def test_local_storage_contractor_subdirectory(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_local_storage_contractors_are_isolated(tmp_path: Path) -> None:
-    """Files from different contractors should not be visible to each other."""
-    s1 = LocalFileStorage(base_dir=str(tmp_path), contractor_id=1)
-    s2 = LocalFileStorage(base_dir=str(tmp_path), contractor_id=2)
+async def test_local_storage_users_are_isolated(tmp_path: Path) -> None:
+    """Files from different users should not be visible to each other."""
+    s1 = LocalFileStorage(base_dir=str(tmp_path), user_id=1)
+    s2 = LocalFileStorage(base_dir=str(tmp_path), user_id=2)
 
     await s1.upload_file(b"a", "/docs", "a.txt")
     await s2.upload_file(b"b", "/docs", "b.txt")
@@ -542,30 +542,30 @@ async def test_local_storage_contractors_are_isolated(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_local_storage_no_contractor_uses_base_dir(tmp_path: Path) -> None:
-    """LocalFileStorage without contractor_id should use the base dir directly."""
+async def test_local_storage_no_user_uses_base_dir(tmp_path: Path) -> None:
+    """LocalFileStorage without user_id should use the base dir directly."""
     storage = LocalFileStorage(base_dir=str(tmp_path))
     await storage.upload_file(b"data", "/docs", "file.txt")
     written = tmp_path / "docs" / "file.txt"
     assert written.exists()
 
 
-def test_factory_passes_contractor_id_to_local(tmp_path: Path) -> None:
-    """get_storage_service should pass contractor.id to LocalFileStorage."""
+def test_factory_passes_user_id_to_local(tmp_path: Path) -> None:
+    """get_storage_service should pass user.id to LocalFileStorage."""
     mock_settings = MagicMock()
     mock_settings.storage_provider = "local"
     mock_settings.file_storage_base_dir = str(tmp_path)
 
-    contractor = MagicMock()
-    contractor.id = 99
+    user = MagicMock()
+    user.id = 99
 
-    result = get_storage_service(mock_settings, contractor=contractor)
+    result = get_storage_service(mock_settings, user=user)
     assert isinstance(result, LocalFileStorage)
     assert result.base_dir == (tmp_path / "99").resolve()
 
 
-def test_factory_no_contractor_local(tmp_path: Path) -> None:
-    """get_storage_service without contractor should not add subdirectory."""
+def test_factory_no_user_local(tmp_path: Path) -> None:
+    """get_storage_service without user should not add subdirectory."""
     mock_settings = MagicMock()
     mock_settings.storage_provider = "local"
     mock_settings.file_storage_base_dir = str(tmp_path)
@@ -575,18 +575,18 @@ def test_factory_no_contractor_local(tmp_path: Path) -> None:
     assert result.base_dir == tmp_path.resolve()
 
 
-def test_dropbox_contractor_prefixes_paths(mock_dbx_client: MagicMock) -> None:
-    """DropboxStorage with contractor_id should prefix paths."""
+def test_dropbox_user_prefixes_paths(mock_dbx_client: MagicMock) -> None:
+    """DropboxStorage with user_id should prefix paths."""
     with patch(
         "backend.app.services.storage_service.dropbox.Dropbox", return_value=mock_dbx_client
     ):
-        s = DropboxStorage(access_token="fake-token", contractor_id=42)
+        s = DropboxStorage(access_token="fake-token", user_id=42)
     assert s._path_prefix == "/42"
     assert s._prefixed("/docs") == "/42/docs"
 
 
-def test_dropbox_no_contractor_no_prefix(mock_dbx_client: MagicMock) -> None:
-    """DropboxStorage without contractor_id should not prefix paths."""
+def test_dropbox_no_user_no_prefix(mock_dbx_client: MagicMock) -> None:
+    """DropboxStorage without user_id should not prefix paths."""
     with patch(
         "backend.app.services.storage_service.dropbox.Dropbox", return_value=mock_dbx_client
     ):
@@ -595,13 +595,13 @@ def test_dropbox_no_contractor_no_prefix(mock_dbx_client: MagicMock) -> None:
     assert s._prefixed("/docs") == "/docs"
 
 
-def test_gdrive_contractor_path_prefix() -> None:
-    """GoogleDriveStorage with contractor_id should store a path prefix."""
-    s = GoogleDriveStorage(credentials_json='{"token": "fake"}', contractor_id=42)
+def test_gdrive_user_path_prefix() -> None:
+    """GoogleDriveStorage with user_id should store a path prefix."""
+    s = GoogleDriveStorage(credentials_json='{"token": "fake"}', user_id=42)
     assert s._path_prefix == "42/"
 
 
-def test_gdrive_no_contractor_no_prefix() -> None:
-    """GoogleDriveStorage without contractor_id should have empty prefix."""
+def test_gdrive_no_user_no_prefix() -> None:
+    """GoogleDriveStorage without user_id should have empty prefix."""
     s = GoogleDriveStorage(credentials_json='{"token": "fake"}')
     assert s._path_prefix == ""

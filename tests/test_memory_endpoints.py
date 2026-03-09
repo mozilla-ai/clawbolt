@@ -4,13 +4,13 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.config import settings
 
 
-def _seed_memory(contractor: ContractorData) -> None:
+def _seed_memory(user: UserData) -> None:
     """Create a MEMORY.md with test data."""
-    mem_dir = Path(settings.data_dir) / str(contractor.id) / "memory"
+    mem_dir = Path(settings.data_dir) / str(user.id) / "memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
     (mem_dir / "MEMORY.md").write_text(
         "# Long-term Memory\n\n"
@@ -29,8 +29,8 @@ def test_list_memory_empty(client: TestClient) -> None:
     assert resp.json() == []
 
 
-def test_list_memory(client: TestClient, test_contractor: ContractorData) -> None:
-    _seed_memory(test_contractor)
+def test_list_memory(client: TestClient, test_user: UserData) -> None:
+    _seed_memory(test_user)
     resp = client.get("/api/user/memory")
     assert resp.status_code == 200
     facts = resp.json()
@@ -40,8 +40,8 @@ def test_list_memory(client: TestClient, test_contractor: ContractorData) -> Non
     assert "name" in keys
 
 
-def test_list_memory_filter_category(client: TestClient, test_contractor: ContractorData) -> None:
-    _seed_memory(test_contractor)
+def test_list_memory_filter_category(client: TestClient, test_user: UserData) -> None:
+    _seed_memory(test_user)
     resp = client.get("/api/user/memory?category=business")
     assert resp.status_code == 200
     facts = resp.json()
@@ -49,8 +49,8 @@ def test_list_memory_filter_category(client: TestClient, test_contractor: Contra
     assert all(f["category"] == "business" for f in facts)
 
 
-def test_update_memory(client: TestClient, test_contractor: ContractorData) -> None:
-    _seed_memory(test_contractor)
+def test_update_memory(client: TestClient, test_user: UserData) -> None:
+    _seed_memory(test_user)
     resp = client.put(
         "/api/user/memory/hourly_rate",
         json={"value": "85"},
@@ -61,8 +61,8 @@ def test_update_memory(client: TestClient, test_contractor: ContractorData) -> N
     assert data["key"] == "hourly_rate"
 
 
-def test_update_memory_not_found(client: TestClient, test_contractor: ContractorData) -> None:
-    _seed_memory(test_contractor)
+def test_update_memory_not_found(client: TestClient, test_user: UserData) -> None:
+    _seed_memory(test_user)
     resp = client.put(
         "/api/user/memory/nonexistent",
         json={"value": "test"},
@@ -70,8 +70,8 @@ def test_update_memory_not_found(client: TestClient, test_contractor: Contractor
     assert resp.status_code == 404
 
 
-def test_delete_memory(client: TestClient, test_contractor: ContractorData) -> None:
-    _seed_memory(test_contractor)
+def test_delete_memory(client: TestClient, test_user: UserData) -> None:
+    _seed_memory(test_user)
     resp = client.delete("/api/user/memory/hourly_rate")
     assert resp.status_code == 204
     # Verify it's gone

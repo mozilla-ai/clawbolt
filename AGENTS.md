@@ -59,15 +59,15 @@ data/
 ```
 
 Key store classes in `backend/app/agent/file_store.py`:
-- `ContractorStore` (singleton via `get_contractor_store()`)
-- `FileMemoryStore` (per-contractor via `get_memory_store(id)`)
-- `FileSessionStore` (per-contractor via `get_session_store(id)`)
+- `UserStore` (singleton via `get_user_store()`)
+- `FileMemoryStore` (per-user via `get_memory_store(id)`)
+- `FileSessionStore` (per-user via `get_session_store(id)`)
 - `ClientStore`, `EstimateStore`, `MediaStore`, `HeartbeatStore` (instantiated per use)
 - `IdempotencyStore` (singleton via `get_idempotency_store()`)
 - `LLMUsageStore` (instantiated per use)
 
 Data classes (Pydantic BaseModel, replace ORM models):
-- `ContractorData`, `StoredMessage`, `SessionState`, `ClientData`
+- `UserData`, `StoredMessage`, `SessionState`, `ClientData`
 - `EstimateData`, `MediaData`, `ChecklistItem`, `HeartbeatLogEntry`, `MemoryFact`
 
 ## Coding Standards
@@ -99,7 +99,7 @@ Data classes (Pydantic BaseModel, replace ORM models):
 - **`user_id` scoping** on every data class and endpoint from day one
 - **MessagingService protocol**: channel-agnostic interface in `services/messaging.py` with Telegram implementation in `channels/telegram.py`
 - **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `acompletion`) -> tool execution -> reply
-- **Memory**: MEMORY.md key-value facts + clients.json client records per contractor
+- **Memory**: MEMORY.md key-value facts + clients.json client records per user
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
 
 ## Definition of Done

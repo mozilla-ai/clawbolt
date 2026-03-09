@@ -29,7 +29,7 @@ def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
     lines: list[str] = []
     for msg in messages:
         if isinstance(msg, UserMessage):
-            lines.append(f"Contractor: {msg.content}")
+            lines.append(f"User: {msg.content}")
         elif isinstance(msg, AssistantMessage) and msg.content:
             lines.append(f"Assistant: {msg.content}")
     return "\n".join(lines)
@@ -78,7 +78,7 @@ def _parse_compaction_response(raw: str) -> list[dict[str, str]]:
 
 
 async def compact_session(
-    contractor_id: int,
+    user_id: int,
     trimmed_messages: list[AgentMessage],
     max_message_seq: int | None = None,
 ) -> tuple[list[dict[str, str]], int | None]:
@@ -88,7 +88,7 @@ async def compact_session(
     them via the existing memory subsystem.
 
     Args:
-        contractor_id: The contractor whose session is being compacted.
+        user_id: The user whose session is being compacted.
         trimmed_messages: Messages that are about to be dropped from context.
         max_message_seq: The highest message seq among the trimmed messages,
             used to track compaction progress. Passed through to the return value.
@@ -128,7 +128,7 @@ async def compact_session(
             ),
         )
     except Exception:
-        logger.exception("Compaction LLM call failed for contractor %d", contractor_id)
+        logger.exception("Compaction LLM call failed for user %d", user_id)
         return [], None
 
     raw_content = get_response_text(response)
@@ -138,7 +138,7 @@ async def compact_session(
     for fact in facts:
         try:
             await save_memory(
-                contractor_id=contractor_id,
+                user_id=user_id,
                 key=fact["key"],
                 value=fact["value"],
                 category=fact["category"],
@@ -146,16 +146,16 @@ async def compact_session(
             )
             saved_facts.append(fact)
             logger.info(
-                "Compaction saved fact for contractor %d: %s = %s",
-                contractor_id,
+                "Compaction saved fact for user %d: %s = %s",
+                user_id,
                 fact["key"],
                 fact["value"][:80],
             )
         except Exception:
             logger.exception(
-                "Failed to save compacted fact %s for contractor %d",
+                "Failed to save compacted fact %s for user %d",
                 fact["key"],
-                contractor_id,
+                user_id,
             )
 
     return saved_facts, max_message_seq

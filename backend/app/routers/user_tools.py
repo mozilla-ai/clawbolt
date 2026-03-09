@@ -7,9 +7,9 @@ Users can view and toggle domain-specific agent tools. Core tools
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.agent.file_store import (
-    ContractorData,
     ToolConfigEntry,
     ToolConfigStore,
+    UserData,
 )
 from backend.app.agent.tools.registry import (
     default_registry,
@@ -33,9 +33,9 @@ _CORE_FACTORIES: frozenset[str] = frozenset({"workspace", "profile", "memory", "
 # Human-readable descriptions for each factory group.
 _FACTORY_DESCRIPTIONS: dict[str, str] = {
     "workspace": "Read, write, and edit markdown files in the workspace",
-    "profile": "View and update contractor profile information",
+    "profile": "View and update user profile information",
     "memory": "Save, recall, and forget long-term facts",
-    "messaging": "Send text and media replies to the contractor",
+    "messaging": "Send text and media replies to the user",
     "estimate": "Generate professional estimates and quotes with PDF output",
     "file": "Upload and organize files in cloud storage",
     "checklist": "Manage recurring reminders and task checklists",
@@ -67,7 +67,7 @@ def _build_tool_list(
 
 @router.get("/user/tools", response_model=ToolConfigResponse)
 async def get_tool_config(
-    current_user: ContractorData = Depends(get_current_user),
+    current_user: UserData = Depends(get_current_user),
 ) -> ToolConfigResponse:
     """Return the current tool configuration for the user."""
     store = ToolConfigStore(current_user.id)
@@ -90,7 +90,7 @@ async def get_tool_config(
 @router.put("/user/tools", response_model=ToolConfigResponse)
 async def update_tool_config(
     body: ToolConfigUpdate,
-    current_user: ContractorData = Depends(get_current_user),
+    current_user: UserData = Depends(get_current_user),
 ) -> ToolConfigResponse:
     """Update tool configuration for the user.
 

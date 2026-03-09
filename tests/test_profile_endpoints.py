@@ -1,4 +1,4 @@
-"""Tests for contractor profile endpoints."""
+"""Tests for user profile endpoints."""
 
 from fastapi.testclient import TestClient
 
@@ -7,7 +7,7 @@ def test_get_profile(client: TestClient) -> None:
     resp = client.get("/api/user/profile")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["name"] == "Test Contractor"
+    assert data["name"] == "Test User"
     assert data["assistant_name"] == "Clawbolt"
     assert data["onboarding_complete"] is False
     assert data["is_active"] is True

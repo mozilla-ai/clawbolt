@@ -10,16 +10,16 @@ class HealthResponse(BaseModel):
     status: str
 
 
-class ContractorBase(BaseModel):
+class UserBase(BaseModel):
     name: str = ""
     phone: str = ""
 
 
-class ContractorCreate(ContractorBase):
+class UserCreate(UserBase):
     user_id: str
 
 
-class ContractorResponse(ContractorBase):
+class UserResponse(UserBase):
     id: int
     user_id: str
     created_at: datetime.datetime
@@ -38,7 +38,7 @@ class MemoryCreate(MemoryBase):
 
 class MemoryResponse(MemoryBase):
     confidence: float
-    contractor_id: int
+    user_id: int
 
 
 class MessageBase(BaseModel):
@@ -66,7 +66,7 @@ class EstimateBase(BaseModel):
 
 class EstimateResponse(EstimateBase):
     id: str
-    contractor_id: int
+    user_id: int
     client_id: str | None = None
     pdf_url: str = ""
     storage_path: str = ""
@@ -74,11 +74,11 @@ class EstimateResponse(EstimateBase):
 
 
 # ---------------------------------------------------------------------------
-# Contractor profile (dashboard)
+# User profile (dashboard)
 # ---------------------------------------------------------------------------
 
 
-class ContractorProfileResponse(BaseModel):
+class UserProfileResponse(BaseModel):
     id: int
     user_id: str
     name: str
@@ -97,7 +97,7 @@ class ContractorProfileResponse(BaseModel):
     updated_at: str
 
 
-class ContractorProfileUpdate(BaseModel):
+class UserProfileUpdate(BaseModel):
     name: str | None = None
     phone: str | None = None
     timezone: str | None = None
@@ -137,7 +137,7 @@ class SessionMessage(BaseModel):
 
 class SessionDetailResponse(BaseModel):
     session_id: str
-    contractor_id: int
+    user_id: int
     created_at: str
     last_message_at: str
     is_active: bool
@@ -191,7 +191,7 @@ class ChecklistItemResponse(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class ContractorStatsResponse(BaseModel):
+class UserStatsResponse(BaseModel):
     total_sessions: int
     messages_this_month: int
     active_checklist_items: int

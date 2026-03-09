@@ -11,7 +11,7 @@ from backend.app.config import settings
 logger = logging.getLogger(__name__)
 
 VISION_SYSTEM_PROMPT = (
-    "You are analyzing an image sent by a contractor. "
+    "You are analyzing an image sent by a user. "
     "Describe what you see in detail, focusing on: "
     "materials, dimensions, condition, damage, work needed, safety concerns. "
     "Be specific and technical."

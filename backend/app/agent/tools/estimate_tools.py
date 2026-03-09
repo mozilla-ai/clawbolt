@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.file_store import ContractorData, EstimateStore, make_client_slug
+from backend.app.agent.file_store import EstimateStore, UserData, make_client_slug
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.agent.tools.names import ToolName
@@ -47,7 +47,7 @@ class GenerateEstimateParams(BaseModel):
 
 
 def create_estimate_tools(
-    contractor: ContractorData,
+    user: UserData,
     storage: StorageBackend | None = None,
 ) -> list[Tool]:
     """Create estimate-related tools for the agent."""
@@ -101,13 +101,13 @@ def create_estimate_tools(
             make_client_slug(
                 name=client_name or "",
                 address=client_address or "",
-                folder_scheme=contractor.folder_scheme,
+                folder_scheme=user.folder_scheme,
             )
             or None
         )
 
         # Create estimate via file store
-        estimate_store = EstimateStore(contractor.id)
+        estimate_store = EstimateStore(user.id)
         estimate = await estimate_store.create(
             description=description,
             total_amount=total_amount,
@@ -120,9 +120,9 @@ def create_estimate_tools(
 
         # Generate PDF
         pdf_data = EstimatePDFData(
-            contractor_name=contractor.name or "Contractor",
-            contractor_phone=contractor.phone or "",
-            contractor_trade="",
+            owner_name=user.name or "User",
+            owner_phone=user.phone or "",
+            owner_trade="",
             description=description,
             line_items=processed_items,
             subtotal=subtotal,
@@ -137,7 +137,7 @@ def create_estimate_tools(
         pdf_bytes = await generate_estimate_pdf(pdf_data)
 
         # Save PDF to local storage, organized by client
-        pdf_dir = PDF_BASE_DIR / str(contractor.id) / (client_slug or "unsorted")
+        pdf_dir = PDF_BASE_DIR / str(user.id) / (client_slug or "unsorted")
         pdf_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = pdf_dir / f"{estimate.id}.pdf"
         pdf_path.write_bytes(pdf_bytes)
@@ -167,7 +167,7 @@ def create_estimate_tools(
                 f"Estimate {estimate_number} generated for ${total_amount:,.2f}. "
                 f"{len(processed_items)} line item(s). "
                 f"PDF saved at {pdf_path}. "
-                f"Use send_media_reply to send it to the contractor."
+                f"Use send_media_reply to send it to the user."
             )
         )
 
@@ -175,15 +175,15 @@ def create_estimate_tools(
         Tool(
             name=ToolName.GENERATE_ESTIMATE,
             description=(
-                "Generate a professional estimate PDF. Use when the contractor asks for "
+                "Generate a professional estimate PDF. Use when the user asks for "
                 "an estimate, quote, or bid. Requires line_items: each item needs a "
                 "description, quantity, and unit_price. Do NOT call this tool until you "
-                "have at least one concrete line item from the contractor."
+                "have at least one concrete line item from the user."
             ),
             function=generate_estimate,
             params_model=GenerateEstimateParams,
             usage_hint=(
-                "Before calling this tool, ask the contractor for specific line items "
+                "Before calling this tool, ask the user for specific line items "
                 "(what work, how much, at what price). Do not guess line items."
             ),
         ),
@@ -192,7 +192,7 @@ def create_estimate_tools(
 
 def _estimate_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for estimate tools, used by the registry."""
-    return create_estimate_tools(ctx.contractor, ctx.storage)
+    return create_estimate_tools(ctx.user, ctx.storage)
 
 
 def _register() -> None:

@@ -2,17 +2,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.agent.file_store import ContractorData, SessionState, StoredMessage
+from backend.app.agent.file_store import SessionState, StoredMessage, UserData
 from backend.app.agent.router import handle_inbound_message
 from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
 
 
 @pytest.fixture()
-def conversation(test_contractor: ContractorData) -> SessionState:
+def conversation(test_user: UserData) -> SessionState:
     return SessionState(
         session_id="test-conv",
-        contractor_id=test_contractor.id,
+        user_id=test_user.id,
         is_active=True,
         messages=[
             StoredMessage(direction="inbound", body="Hello, I need help", seq=1),
@@ -44,7 +44,7 @@ def mock_messaging() -> MessagingService:
 @patch("backend.app.agent.core.amessages")
 async def test_agent_llm_failure_returns_friendly_message(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -53,7 +53,7 @@ async def test_agent_llm_failure_returns_friendly_message(
     mock_amessages.side_effect = Exception("LLM API timeout")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -68,7 +68,7 @@ async def test_agent_llm_failure_returns_friendly_message(
 @patch("backend.app.agent.core.amessages")
 async def test_all_media_download_failure_adds_note(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -78,7 +78,7 @@ async def test_all_media_download_failure_adds_note(
     mock_amessages.return_value = make_text_response("Got your message!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
@@ -99,7 +99,7 @@ async def test_all_media_download_failure_adds_note(
 async def test_partial_media_success(
     mock_vision: AsyncMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -121,7 +121,7 @@ async def test_partial_media_success(
     mock_amessages.return_value = make_text_response("I can see the deck!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[
@@ -140,7 +140,7 @@ async def test_partial_media_success(
 @patch("backend.app.agent.core.amessages")
 async def test_messaging_send_failure_still_stores_message(
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -150,7 +150,7 @@ async def test_messaging_send_failure_still_stores_message(
     mock_messaging.send_text.side_effect = Exception("Messaging service outage")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[],
@@ -172,7 +172,7 @@ async def test_messaging_send_failure_still_stores_message(
 async def test_media_pipeline_failure_falls_back_to_text(
     mock_pipeline: AsyncMock,
     mock_amessages: object,
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_messaging: MessagingService,
@@ -199,7 +199,7 @@ async def test_media_pipeline_failure_falls_back_to_text(
     mock_amessages.return_value = make_text_response("I can help!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        contractor=test_contractor,
+        user=test_user,
         session=conversation,
         message=inbound_message,
         media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],

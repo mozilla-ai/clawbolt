@@ -5,7 +5,7 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.agent.file_store import ContractorData, get_session_store
+from backend.app.agent.file_store import UserData, get_session_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.schemas import (
     SessionDetailResponse,
@@ -21,9 +21,9 @@ router = APIRouter()
 async def list_sessions(
     offset: int = 0,
     limit: int = 20,
-    current_user: ContractorData = Depends(get_current_user),
+    current_user: UserData = Depends(get_current_user),
 ) -> SessionListResponse:
-    """List conversation sessions for the current contractor."""
+    """List conversation sessions for the current user."""
     store = get_session_store(current_user.id)
     files = store._list_session_files()
     # Most recent first
@@ -60,7 +60,7 @@ async def list_sessions(
 @router.get("/user/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session(
     session_id: str,
-    current_user: ContractorData = Depends(get_current_user),
+    current_user: UserData = Depends(get_current_user),
 ) -> SessionDetailResponse:
     """Get a full conversation transcript with tool interactions."""
     store = get_session_store(current_user.id)
@@ -86,7 +86,7 @@ async def get_session(
 
     return SessionDetailResponse(
         session_id=session.session_id,
-        contractor_id=session.contractor_id,
+        user_id=session.user_id,
         created_at=session.created_at,
         last_message_at=session.last_message_at,
         is_active=session.is_active,

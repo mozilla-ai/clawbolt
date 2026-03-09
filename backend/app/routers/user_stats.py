@@ -1,26 +1,26 @@
-"""Endpoint for contractor overview stats."""
+"""Endpoint for user overview stats."""
 
 import datetime
 
 from fastapi import APIRouter, Depends
 
 from backend.app.agent.file_store import (
-    ContractorData,
     HeartbeatStore,
+    UserData,
     get_memory_store,
     get_session_store,
 )
 from backend.app.auth.dependencies import get_current_user
 from backend.app.enums import ChecklistStatus
-from backend.app.schemas import ContractorStatsResponse
+from backend.app.schemas import UserStatsResponse
 
 router = APIRouter()
 
 
-@router.get("/user/stats", response_model=ContractorStatsResponse)
+@router.get("/user/stats", response_model=UserStatsResponse)
 async def get_stats(
-    current_user: ContractorData = Depends(get_current_user),
-) -> ContractorStatsResponse:
+    current_user: UserData = Depends(get_current_user),
+) -> UserStatsResponse:
     """Return aggregate stats for the dashboard overview."""
     session_store = get_session_store(current_user.id)
     memory_store = get_memory_store(current_user.id)
@@ -56,7 +56,7 @@ async def get_stats(
     facts = await memory_store.get_all_memories()
     total_memory_facts = len(facts)
 
-    return ContractorStatsResponse(
+    return UserStatsResponse(
         total_sessions=total_sessions,
         messages_this_month=messages_this_month,
         active_checklist_items=active_checklist_items,

@@ -22,7 +22,7 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.app.agent.context import get_or_create_conversation
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
@@ -60,7 +60,7 @@ class WebChatChannel(BaseChannel):
             message: str = Form(default=""),
             session_id: str | None = Form(default=None),
             files: list[UploadFile] = File(default=[]),
-            contractor: ContractorData = Depends(get_current_user),
+            user: UserData = Depends(get_current_user),
         ) -> _ChatAccepted:
             """Accept a message, publish to bus, return request_id for SSE."""
             text = message.strip()
@@ -98,9 +98,7 @@ class WebChatChannel(BaseChannel):
                 )
 
             # Get/create session so we can return session_id immediately
-            session, _ = await get_or_create_conversation(
-                contractor.id, external_session_id=session_id
-            )
+            session, _ = await get_or_create_conversation(user.id, external_session_id=session_id)
 
             request_id = str(uuid.uuid4())
 
@@ -110,7 +108,7 @@ class WebChatChannel(BaseChannel):
 
             inbound = InboundMessage(
                 channel="webchat",
-                sender_id=str(contractor.id),
+                sender_id=str(user.id),
                 text=text,
                 downloaded_media=downloaded_media,
                 request_id=request_id,
@@ -123,7 +121,7 @@ class WebChatChannel(BaseChannel):
         @router.get("/user/chat/events/{request_id}")
         async def chat_events(
             request_id: str,
-            _contractor: ContractorData = Depends(get_current_user),
+            _user: UserData = Depends(get_current_user),
         ) -> StreamingResponse:
             """SSE endpoint: streams the agent reply for a given request_id."""
 

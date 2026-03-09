@@ -1,12 +1,12 @@
-"""Integration test: Telegram-created contractor data visible via dashboard API.
+"""Integration test: Telegram-created user data visible via dashboard API.
 
 Regression test for https://github.com/mozilla-ai/clawbolt/issues/475.
 Previously, `get_current_user` always created a new `local@clawbolt.local`
-contractor, so the dashboard never showed data from Telegram sessions.
+user, so the dashboard never showed data from Telegram sessions.
 
 Regression test for https://github.com/mozilla-ai/clawbolt/issues/499.
-When a web-created contractor exists and Telegram messages arrive, the
-Telegram channel must be linked to the same contractor so sessions appear
+When a web-created user exists and Telegram messages arrive, the
+Telegram channel must be linked to the same user so sessions appear
 in the dashboard.
 
 These tests use a TestClient that does NOT override `get_current_user`,
@@ -22,18 +22,18 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import ContractorData, get_contractor_store
-from backend.app.agent.ingestion import _get_or_create_contractor
+from backend.app.agent.file_store import UserData, get_user_store
+from backend.app.agent.ingestion import _get_or_create_user
 from backend.app.config import settings
 from backend.app.main import app
 
 
 @pytest.fixture()
-def telegram_contractor() -> ContractorData:
-    """Simulate a contractor created by Telegram ingestion."""
+def telegram_user() -> UserData:
+    """Simulate a user created by Telegram ingestion."""
     import asyncio
 
-    store = get_contractor_store()
+    store = get_user_store()
     return asyncio.get_event_loop().run_until_complete(
         store.create(
             user_id="telegram_123456789",
@@ -46,12 +46,12 @@ def telegram_contractor() -> ContractorData:
 
 
 @pytest.fixture()
-def real_auth_client(telegram_contractor: ContractorData) -> Generator[TestClient]:
+def real_auth_client(telegram_user: UserData) -> Generator[TestClient]:
     """TestClient that uses the real get_current_user (no auth override).
 
     This is the critical difference from the standard ``client`` fixture in
     conftest.py, which overrides ``get_current_user`` and therefore never
-    exercises the logic that picks an existing contractor from the store.
+    exercises the logic that picks an existing user from the store.
     """
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
@@ -65,19 +65,19 @@ def real_auth_client(telegram_contractor: ContractorData) -> Generator[TestClien
 
 
 def _create_session(
-    contractor: ContractorData,
+    user: UserData,
     session_id: str,
     messages: list[dict],
 ) -> None:
-    """Write a JSONL session file for the given contractor."""
-    base = Path(settings.data_dir) / str(contractor.id) / "sessions"
+    """Write a JSONL session file for the given user."""
+    base = Path(settings.data_dir) / str(user.id) / "sessions"
     base.mkdir(parents=True, exist_ok=True)
     lines = [
         json.dumps(
             {
                 "_type": "metadata",
                 "session_id": session_id,
-                "contractor_id": contractor.id,
+                "user_id": user.id,
                 "created_at": "2025-01-15T10:00:00+00:00",
                 "last_message_at": "2025-01-15T10:05:00+00:00",
                 "is_active": True,
@@ -90,9 +90,9 @@ def _create_session(
     (base / f"{session_id}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _seed_memory(contractor: ContractorData) -> None:
-    """Write a MEMORY.md for the given contractor."""
-    mem_dir = Path(settings.data_dir) / str(contractor.id) / "memory"
+def _seed_memory(user: UserData) -> None:
+    """Write a MEMORY.md for the given user."""
+    mem_dir = Path(settings.data_dir) / str(user.id) / "memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
     (mem_dir / "MEMORY.md").write_text(
         "# Long-term Memory\n\n"
@@ -104,12 +104,12 @@ def _seed_memory(contractor: ContractorData) -> None:
 
 
 class TestDashboardSeesTelegramData:
-    """Dashboard endpoints return the Telegram contractor's data."""
+    """Dashboard endpoints return the Telegram user's data."""
 
-    def test_profile_returns_telegram_contractor(
+    def test_profile_returns_telegram_user(
         self,
         real_auth_client: TestClient,
-        telegram_contractor: ContractorData,
+        telegram_user: UserData,
     ) -> None:
         resp = real_auth_client.get("/api/user/profile")
         assert resp.status_code == 200
@@ -119,10 +119,10 @@ class TestDashboardSeesTelegramData:
     def test_sessions_returns_telegram_sessions(
         self,
         real_auth_client: TestClient,
-        telegram_contractor: ContractorData,
+        telegram_user: UserData,
     ) -> None:
         _create_session(
-            telegram_contractor,
+            telegram_user,
             "1_100",
             [
                 {
@@ -149,9 +149,9 @@ class TestDashboardSeesTelegramData:
     def test_memory_returns_telegram_facts(
         self,
         real_auth_client: TestClient,
-        telegram_contractor: ContractorData,
+        telegram_user: UserData,
     ) -> None:
-        _seed_memory(telegram_contractor)
+        _seed_memory(telegram_user)
         resp = real_auth_client.get("/api/user/memory")
         assert resp.status_code == 200
         facts = resp.json()
@@ -163,10 +163,10 @@ class TestDashboardSeesTelegramData:
     def test_stats_returns_telegram_stats(
         self,
         real_auth_client: TestClient,
-        telegram_contractor: ContractorData,
+        telegram_user: UserData,
     ) -> None:
         _create_session(
-            telegram_contractor,
+            telegram_user,
             "1_200",
             [
                 {
@@ -177,7 +177,7 @@ class TestDashboardSeesTelegramData:
                 },
             ],
         )
-        _seed_memory(telegram_contractor)
+        _seed_memory(telegram_user)
         resp = real_auth_client.get("/api/user/stats")
         assert resp.status_code == 200
         data = resp.json()
@@ -186,55 +186,55 @@ class TestDashboardSeesTelegramData:
 
 
 class TestMultiChannelSingleTenant:
-    """Telegram messages reuse an existing web-created contractor.
+    """Telegram messages reuse an existing web-created user.
 
     Regression test for https://github.com/mozilla-ai/clawbolt/issues/499.
     """
 
-    def test_telegram_links_to_existing_web_contractor(self) -> None:
-        """When a web-created contractor exists, Telegram reuses it."""
-        store = get_contractor_store()
-        web_contractor = asyncio.get_event_loop().run_until_complete(
+    def test_telegram_links_to_existing_web_user(self) -> None:
+        """When a web-created user exists, Telegram reuses it."""
+        store = get_user_store()
+        web_user = asyncio.get_event_loop().run_until_complete(
             store.create(user_id="local@clawbolt.local", name="Web User")
         )
 
-        tg_contractor = asyncio.get_event_loop().run_until_complete(
-            _get_or_create_contractor("telegram", "99887766")
+        tg_user = asyncio.get_event_loop().run_until_complete(
+            _get_or_create_user("telegram", "99887766")
         )
 
-        assert tg_contractor.id == web_contractor.id
+        assert tg_user.id == web_user.id
 
     def test_telegram_link_sets_channel_identifier(self) -> None:
-        """Linking a Telegram chat to an existing contractor persists channel_identifier."""
-        store = get_contractor_store()
+        """Linking a Telegram chat to an existing user persists channel_identifier."""
+        store = get_user_store()
         asyncio.get_event_loop().run_until_complete(
             store.create(user_id="local@clawbolt.local", name="Web User")
         )
 
-        tg_contractor = asyncio.get_event_loop().run_until_complete(
-            _get_or_create_contractor("telegram", "11223344")
+        tg_user = asyncio.get_event_loop().run_until_complete(
+            _get_or_create_user("telegram", "11223344")
         )
 
-        assert tg_contractor.channel_identifier == "11223344"
-        assert tg_contractor.preferred_channel == "telegram"
+        assert tg_user.channel_identifier == "11223344"
+        assert tg_user.preferred_channel == "telegram"
 
     def test_telegram_sessions_visible_in_dashboard_after_web_signup(self) -> None:
         """Sessions created via Telegram appear in dashboard when web created first."""
-        store = get_contractor_store()
-        web_contractor = asyncio.get_event_loop().run_until_complete(
+        store = get_user_store()
+        web_user = asyncio.get_event_loop().run_until_complete(
             store.create(user_id="local@clawbolt.local", name="Web User")
         )
 
-        # Simulate Telegram ingestion linking to the same contractor
-        tg_contractor = asyncio.get_event_loop().run_until_complete(
-            _get_or_create_contractor("telegram", "55544433")
+        # Simulate Telegram ingestion linking to the same user
+        tg_user = asyncio.get_event_loop().run_until_complete(
+            _get_or_create_user("telegram", "55544433")
         )
-        assert tg_contractor.id == web_contractor.id
+        assert tg_user.id == web_user.id
 
-        # Create a session under the (shared) contractor
+        # Create a session under the (shared) user
         _create_session(
-            tg_contractor,
-            f"{tg_contractor.id}_500",
+            tg_user,
+            f"{tg_user.id}_500",
             [
                 {
                     "direction": "inbound",
@@ -258,25 +258,25 @@ class TestMultiChannelSingleTenant:
             assert resp.status_code == 200
             data = resp.json()
             assert data["total"] == 1
-            assert data["sessions"][0]["id"] == f"{tg_contractor.id}_500"
+            assert data["sessions"][0]["id"] == f"{tg_user.id}_500"
 
     def test_subsequent_telegram_lookup_uses_index(self) -> None:
-        """After linking, future messages find the contractor via the index."""
-        store = get_contractor_store()
+        """After linking, future messages find the user via the index."""
+        store = get_user_store()
         asyncio.get_event_loop().run_until_complete(
             store.create(user_id="local@clawbolt.local", name="Web User")
         )
 
         # First call links the channel
         first = asyncio.get_event_loop().run_until_complete(
-            _get_or_create_contractor("telegram", "11122233")
+            _get_or_create_user("telegram", "11122233")
         )
         # Second call should find via index
         second = asyncio.get_event_loop().run_until_complete(
-            _get_or_create_contractor("telegram", "11122233")
+            _get_or_create_user("telegram", "11122233")
         )
         assert first.id == second.id
 
-        # Verify only one contractor exists
-        all_contractors = asyncio.get_event_loop().run_until_complete(store.list_all())
-        assert len(all_contractors) == 1
+        # Verify only one user exists
+        all_users = asyncio.get_event_loop().run_until_complete(store.list_all())
+        assert len(all_users) == 1

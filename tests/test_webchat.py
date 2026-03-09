@@ -7,24 +7,24 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import ContractorData, get_contractor_store
+from backend.app.agent.file_store import UserData, get_user_store
 from backend.app.bus import OutboundMessage, message_bus
 from backend.app.config import settings
 from backend.app.main import app
 
 
 @pytest.fixture()
-async def webchat_contractor() -> ContractorData:
-    """Create a contractor for web chat tests."""
-    store = get_contractor_store()
+async def webchat_user() -> UserData:
+    """Create a user for web chat tests."""
+    store = get_user_store()
     return await store.create(
         user_id="webchat-test-user",
-        name="Test Contractor",
+        name="Test User",
     )
 
 
 @pytest.fixture()
-def webchat_client(webchat_contractor: ContractorData) -> Generator[TestClient]:
+def webchat_client(webchat_user: UserData) -> Generator[TestClient]:
     """TestClient that uses real get_current_user (no auth override).
 
     Mocks the LLM to avoid external API calls during tests.
@@ -43,7 +43,7 @@ def webchat_client(webchat_contractor: ContractorData) -> Generator[TestClient]:
 
 def test_chat_endpoint_returns_request_id(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """POST /api/user/chat should return request_id and session_id."""
     resp = webchat_client.post(
@@ -66,7 +66,7 @@ def test_chat_endpoint_missing_body(webchat_client: TestClient) -> None:
 
 def test_chat_returns_same_session(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """Multiple messages within the session timeout should use the same session."""
     resp1 = webchat_client.post(
@@ -83,7 +83,7 @@ def test_chat_returns_same_session(
 
 def test_chat_with_explicit_session_id(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """Sending session_id should resume that session."""
     resp1 = webchat_client.post(
@@ -112,7 +112,7 @@ def test_chat_with_invalid_session_id(webchat_client: TestClient) -> None:
 
 def test_chat_with_nonexistent_session_id(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """Valid-format but nonexistent session_id should create a new session."""
     resp = webchat_client.post(
@@ -132,7 +132,7 @@ def test_chat_with_nonexistent_session_id(
 
 def test_chat_with_image_upload(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """Upload an image with text; verify the request is accepted."""
     # 1x1 red PNG
@@ -156,7 +156,7 @@ def test_chat_with_image_upload(
 
 def test_chat_with_files_only(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """Upload a file without text; should still succeed."""
     resp = webchat_client.post(
@@ -176,7 +176,7 @@ def test_chat_no_message_no_files(webchat_client: TestClient) -> None:
 
 def test_chat_file_too_large(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """Oversized file should return 422."""
     with patch.object(settings, "max_media_size_bytes", 10):
@@ -192,7 +192,7 @@ def test_chat_file_too_large(
 
 def test_chat_multiple_files(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """Multiple files in one request should all be accepted."""
     resp = webchat_client.post(
@@ -216,7 +216,7 @@ def test_chat_multiple_files(
 
 def test_chat_publishes_to_bus(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """POST /api/user/chat should publish an InboundMessage to the bus."""
     with patch(
@@ -242,7 +242,7 @@ def test_chat_publishes_to_bus(
 
 def test_sse_endpoint_returns_reply(
     webchat_client: TestClient,
-    webchat_contractor: ContractorData,
+    webchat_user: UserData,
 ) -> None:
     """GET /api/user/chat/events/{request_id} should stream the reply as SSE."""
     import threading

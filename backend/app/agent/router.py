@@ -19,10 +19,10 @@ from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, ClawboltAgent
 from backend.app.agent.events import AgentEvent
 from backend.app.agent.file_store import (
-    ContractorData,
     SessionState,
     StoredMessage,
     ToolConfigStore,
+    UserData,
     get_session_store,
 )
 from backend.app.agent.messages import AgentMessage
@@ -60,7 +60,7 @@ MEDIA_DOWNLOAD_ERROR = (
 )
 VISION_UNAVAILABLE_NOTE = (
     "Vision analysis was unavailable for the attached media. "
-    "The contractor may have sent a photo or document that could "
+    "The user may have sent a photo or document that could "
     "not be analyzed. You can still help with their text message "
     "and ask them to describe what the attachment shows."
 )
@@ -78,7 +78,7 @@ ensure_tool_modules_imported()
 class PipelineContext:
     """Shared state passed through pipeline steps."""
 
-    contractor: ContractorData
+    user: UserData
     session: SessionState
     message: StoredMessage
     media_urls: list[tuple[str, str]]
@@ -104,8 +104,8 @@ PipelineStep = Callable[[PipelineContext], Awaitable[PipelineContext]]
 # ---------------------------------------------------------------------------
 
 
-def init_storage(contractor: ContractorData) -> StorageBackend | None:
-    """Initialize storage backend for a contractor.
+def init_storage(user: UserData) -> StorageBackend | None:
+    """Initialize storage backend for a user.
 
     Returns the storage backend if configured, or ``None`` otherwise.
     """
@@ -119,14 +119,14 @@ def init_storage(contractor: ContractorData) -> StorageBackend | None:
             )
         )
         if has_storage:
-            return get_storage_service(contractor=contractor)
+            return get_storage_service(user=user)
     except Exception:
         logger.debug("Storage not configured, skipping file features")
     return None
 
 
 async def prepare_media(
-    contractor: ContractorData,
+    user: UserData,
     message: StoredMessage,
     media_urls: list[tuple[str, str]],
     messaging_service: MessagingService,
@@ -138,8 +138,8 @@ async def prepare_media(
     """
     downloaded_media: list[DownloadedMedia] = []
     logger.debug(
-        "Preparing media for contractor %d, message seq=%d: %d attachment(s)",
-        contractor.id,
+        "Preparing media for user %d, message seq=%d: %d attachment(s)",
+        user.id,
         message.seq,
         len(media_urls),
     )
@@ -151,12 +151,12 @@ async def prepare_media(
         except Exception:
             logger.exception("Failed to download media: %s", file_id)
 
-    storage = init_storage(contractor)
+    storage = init_storage(user)
 
     # Auto-save inbound media to storage
     if storage and downloaded_media:
         try:
-            await auto_save_media(contractor, storage, downloaded_media)
+            await auto_save_media(user, storage, downloaded_media)
         except Exception:
             logger.debug("Auto-save to storage failed, continuing")
 
@@ -166,7 +166,7 @@ async def prepare_media(
 async def build_message_context(
     session: SessionState,
     message: StoredMessage,
-    contractor: ContractorData,
+    user: UserData,
     media_urls: list[tuple[str, str]],
     downloaded_media: list[DownloadedMedia],
 ) -> str:
@@ -182,9 +182,9 @@ async def build_message_context(
         pipeline_result = await process_message_media(message.body, downloaded_media)
     except Exception:
         logger.exception(
-            "Media pipeline failed for message seq %d, contractor %d",
+            "Media pipeline failed for message seq %d, user %d",
             message.seq,
-            contractor.id,
+            user.id,
         )
         pipeline_result = await process_message_media(message.body, [])
         if downloaded_media:
@@ -195,7 +195,7 @@ async def build_message_context(
         combined_context += "\n\n[System note: " + " ".join(media_notes) + "]"
 
     # Persist processed context for conversation history
-    session_store = get_session_store(contractor.id)
+    session_store = get_session_store(user.id)
     await session_store.update_message(session, message.seq, processed_context=combined_context)
     message.processed_context = combined_context
 
@@ -203,7 +203,7 @@ async def build_message_context(
 
 
 async def run_agent(
-    contractor: ContractorData,
+    user: UserData,
     message: StoredMessage,
     combined_context: str,
     conversation_history: list[AgentMessage],
@@ -221,7 +221,7 @@ async def run_agent(
     an error fallback AgentResponse.
     """
     tool_context = ToolContext(
-        contractor=contractor,
+        user=user,
         storage=storage,
         messaging_service=messaging_service,
         to_address=to_address,
@@ -229,7 +229,7 @@ async def run_agent(
     )
 
     agent = ClawboltAgent(
-        contractor=contractor,
+        user=user,
         messaging_service=messaging_service,
         chat_id=to_address,
         tool_context=tool_context,
@@ -238,7 +238,7 @@ async def run_agent(
     )
 
     # Load user's disabled tool groups to filter out unwanted tools.
-    tool_config_store = ToolConfigStore(contractor.id)
+    tool_config_store = ToolConfigStore(user.id)
     disabled_groups = await tool_config_store.get_disabled_tool_names()
 
     # Start with core tools only; specialist tools are discovered on demand
@@ -253,9 +253,9 @@ async def run_agent(
         tools.append(create_list_capabilities_tool(specialist_summaries))
     agent.register_tools(tools)
     logger.debug(
-        "Agent initialized for contractor %d, message seq=%d with %d core tools, "
+        "Agent initialized for user %d, message seq=%d with %d core tools, "
         "%d specialist categories available",
-        contractor.id,
+        user.id,
         message.seq,
         len(tools),
         len(specialist_summaries),
@@ -273,23 +273,23 @@ async def run_agent(
         )
     except ContentFilterError:
         logger.warning(
-            "Content filter blocked message seq %d for contractor %d",
+            "Content filter blocked message seq %d for user %d",
             message.seq,
-            contractor.id,
+            user.id,
         )
         return AgentResponse(reply_text=CONTENT_FILTER_FALLBACK, is_error_fallback=True)
     except AuthenticationError:
         logger.critical(
-            "LLM authentication failed processing message seq %d for contractor %d",
+            "LLM authentication failed processing message seq %d for user %d",
             message.seq,
-            contractor.id,
+            user.id,
         )
         return AgentResponse(reply_text=AUTH_ERROR_FALLBACK, is_error_fallback=True)
     except Exception:
         logger.exception(
-            "Agent processing failed for message seq %d, contractor %d",
+            "Agent processing failed for message seq %d, user %d",
             message.seq,
-            contractor.id,
+            user.id,
         )
         return AgentResponse(reply_text=AGENT_ERROR_FALLBACK, is_error_fallback=True)
 
@@ -300,7 +300,7 @@ async def dispatch_reply(
     to_address: str,
     message_seq: int,
 ) -> None:
-    """Send reply to the contractor unless the agent already sent one via a tool."""
+    """Send reply to the user unless the agent already sent one via a tool."""
     sent_reply = any(
         ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in response.tool_calls
     )
@@ -327,7 +327,7 @@ async def dispatch_reply(
 
 async def persist_outbound(
     session: SessionState,
-    contractor_id: int,
+    user_id: int,
     response: AgentResponse,
 ) -> None:
     """Store the outbound message record.
@@ -343,7 +343,7 @@ async def persist_outbound(
     if response.tool_calls:
         tool_interactions = json.dumps([tc.model_dump() for tc in response.tool_calls])
 
-    session_store = get_session_store(contractor_id)
+    session_store = get_session_store(user_id)
     await session_store.add_message(
         session=session,
         direction=MessageDirection.OUTBOUND,
@@ -360,7 +360,7 @@ async def persist_outbound(
 async def prepare_media_step(ctx: PipelineContext) -> PipelineContext:
     """Download media and initialize storage backend."""
     ctx.downloaded_media, ctx.storage = await prepare_media(
-        ctx.contractor, ctx.message, ctx.media_urls, ctx.messaging_service
+        ctx.user, ctx.message, ctx.media_urls, ctx.messaging_service
     )
     return ctx
 
@@ -368,20 +368,18 @@ async def prepare_media_step(ctx: PipelineContext) -> PipelineContext:
 async def build_context_step(ctx: PipelineContext) -> PipelineContext:
     """Run media pipeline and build combined context."""
     ctx.combined_context = await build_message_context(
-        ctx.session, ctx.message, ctx.contractor, ctx.media_urls, ctx.downloaded_media
+        ctx.session, ctx.message, ctx.user, ctx.media_urls, ctx.downloaded_media
     )
     return ctx
 
 
 async def load_history_step(ctx: PipelineContext) -> PipelineContext:
     """Load conversation history and set up onboarding."""
-    ctx.conversation_history = await load_conversation_history(
-        ctx.session, contractor_id=ctx.contractor.id
-    )
-    was_onboarding = is_onboarding_needed(ctx.contractor)
+    ctx.conversation_history = await load_conversation_history(ctx.session, user_id=ctx.user.id)
+    was_onboarding = is_onboarding_needed(ctx.user)
     if was_onboarding:
-        ctx.system_prompt_override = build_onboarding_system_prompt(ctx.contractor)
-    onboarding_sub = OnboardingSubscriber(ctx.contractor, was_onboarding)
+        ctx.system_prompt_override = build_onboarding_system_prompt(ctx.user)
+    onboarding_sub = OnboardingSubscriber(ctx.user, was_onboarding)
     ctx.event_subscribers.append(onboarding_sub)
     ctx._onboarding_sub = onboarding_sub
     return ctx
@@ -390,7 +388,7 @@ async def load_history_step(ctx: PipelineContext) -> PipelineContext:
 async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
     """Initialize agent with tools and process the message."""
     ctx.response = await run_agent(
-        contractor=ctx.contractor,
+        user=ctx.user,
         message=ctx.message,
         combined_context=ctx.combined_context,
         conversation_history=ctx.conversation_history,
@@ -448,7 +446,7 @@ async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
 async def persist_outbound_step(ctx: PipelineContext) -> PipelineContext:
     """Store outbound message record."""
     if ctx.response:
-        await persist_outbound(ctx.session, ctx.contractor.id, ctx.response)
+        await persist_outbound(ctx.session, ctx.user.id, ctx.response)
     return ctx
 
 
@@ -484,7 +482,7 @@ DEFAULT_PIPELINE: list[PipelineStep] = [
 
 
 async def handle_inbound_message(
-    contractor: ContractorData,
+    user: UserData,
     session: SessionState,
     message: StoredMessage,
     media_urls: list[tuple[str, str]],
@@ -501,21 +499,21 @@ async def handle_inbound_message(
     remove, or reorder steps; defaults to ``DEFAULT_PIPELINE``.
     """
     logger.debug(
-        "Handling inbound message seq=%d for contractor %d, %d media attachment(s)",
+        "Handling inbound message seq=%d for user %d, %d media attachment(s)",
         message.seq,
-        contractor.id,
+        user.id,
         len(media_urls),
     )
-    to_address = contractor.channel_identifier or contractor.phone
+    to_address = user.channel_identifier or user.phone
     if not to_address:
         logger.error(
-            "Contractor %d has no channel_identifier or phone -- cannot send replies",
-            contractor.id,
+            "User %d has no channel_identifier or phone -- cannot send replies",
+            user.id,
         )
         return AgentResponse(reply_text="")
 
     ctx = PipelineContext(
-        contractor=contractor,
+        user=user,
         session=session,
         message=message,
         media_urls=media_urls,

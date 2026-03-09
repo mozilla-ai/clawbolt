@@ -3,7 +3,7 @@
 import pytest
 from pydantic import BaseModel
 
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import (
@@ -83,14 +83,14 @@ class TestCreateCoreTools:
 
     def test_only_core_tools_returned(self) -> None:
         registry = _build_test_registry()
-        ctx = ToolContext(contractor=ContractorData(id=1))
+        ctx = ToolContext(user=UserData(id=1))
         tools = registry.create_core_tools(ctx)
         names = {t.name for t in tools}
         assert names == {"save_fact", "recall_facts", "send_reply", "view_profile"}
 
     def test_specialist_tools_excluded(self) -> None:
         registry = _build_test_registry()
-        ctx = ToolContext(contractor=ContractorData(id=1))
+        ctx = ToolContext(user=UserData(id=1))
         tools = registry.create_core_tools(ctx)
         names = {t.name for t in tools}
         assert "generate_estimate" not in names
@@ -106,7 +106,7 @@ class TestAvailableSpecialistSummaries:
 
         registry = _build_test_registry()
         ctx = ToolContext(
-            contractor=ContractorData(id=1),
+            user=UserData(id=1),
             storage=MagicMock(),
         )
         summaries = registry.get_available_specialist_summaries(ctx)
@@ -116,7 +116,7 @@ class TestAvailableSpecialistSummaries:
 
     def test_excludes_file_when_no_storage(self) -> None:
         registry = _build_test_registry()
-        ctx = ToolContext(contractor=ContractorData(id=1), storage=None)
+        ctx = ToolContext(user=UserData(id=1), storage=None)
         summaries = registry.get_available_specialist_summaries(ctx)
         assert "estimate" in summaries
         assert "checklist" in summaries
@@ -124,7 +124,7 @@ class TestAvailableSpecialistSummaries:
 
     def test_excludes_core_factories(self) -> None:
         registry = _build_test_registry()
-        ctx = ToolContext(contractor=ContractorData(id=1))
+        ctx = ToolContext(user=UserData(id=1))
         summaries = registry.get_available_specialist_summaries(ctx)
         assert "memory" not in summaries
         assert "messaging" not in summaries
@@ -219,9 +219,9 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         registry = _build_test_registry()
-        ctx = ToolContext(contractor=ContractorData(id=1))
+        ctx = ToolContext(user=UserData(id=1))
         agent = ClawboltAgent(
-            contractor=ContractorData(id=1),
+            user=UserData(id=1),
             tool_context=ctx,
             registry=registry,
         )
@@ -248,9 +248,9 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         registry = _build_test_registry()
-        ctx = ToolContext(contractor=ContractorData(id=1))
+        ctx = ToolContext(user=UserData(id=1))
         agent = ClawboltAgent(
-            contractor=ContractorData(id=1),
+            user=UserData(id=1),
             tool_context=ctx,
             registry=registry,
         )
@@ -276,9 +276,9 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         registry = _build_test_registry()
-        ctx = ToolContext(contractor=ContractorData(id=1))
+        ctx = ToolContext(user=UserData(id=1))
         agent = ClawboltAgent(
-            contractor=ContractorData(id=1),
+            user=UserData(id=1),
             tool_context=ctx,
             registry=registry,
         )
@@ -295,9 +295,9 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         registry = _build_test_registry()
-        ctx = ToolContext(contractor=ContractorData(id=1))
+        ctx = ToolContext(user=UserData(id=1))
         agent = ClawboltAgent(
-            contractor=ContractorData(id=1),
+            user=UserData(id=1),
             tool_context=ctx,
             registry=registry,
         )
@@ -320,7 +320,7 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         agent = ClawboltAgent(
-            contractor=ContractorData(id=1),
+            user=UserData(id=1),
         )
         calls = [
             ToolCallRequest(

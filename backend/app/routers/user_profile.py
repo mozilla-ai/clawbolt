@@ -1,22 +1,22 @@
-"""Endpoints for contractor profile management."""
+"""Endpoints for user profile management."""
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.agent.file_store import ContractorData, get_contractor_store
+from backend.app.agent.file_store import UserData, get_user_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import save_persistent_config, settings
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
-    ContractorProfileResponse,
-    ContractorProfileUpdate,
+    UserProfileResponse,
+    UserProfileUpdate,
 )
 
 router = APIRouter()
 
 
-def _profile_response(c: ContractorData) -> ContractorProfileResponse:
-    return ContractorProfileResponse(
+def _profile_response(c: UserData) -> UserProfileResponse:
+    return UserProfileResponse(
         id=c.id,
         user_id=c.user_id,
         name=c.name,
@@ -36,28 +36,28 @@ def _profile_response(c: ContractorData) -> ContractorProfileResponse:
     )
 
 
-@router.get("/user/profile", response_model=ContractorProfileResponse)
+@router.get("/user/profile", response_model=UserProfileResponse)
 async def get_profile(
-    current_user: ContractorData = Depends(get_current_user),
-) -> ContractorProfileResponse:
-    """Return the current contractor's profile."""
+    current_user: UserData = Depends(get_current_user),
+) -> UserProfileResponse:
+    """Return the current user's profile."""
     return _profile_response(current_user)
 
 
-@router.put("/user/profile", response_model=ContractorProfileResponse)
+@router.put("/user/profile", response_model=UserProfileResponse)
 async def update_profile(
-    body: ContractorProfileUpdate,
-    current_user: ContractorData = Depends(get_current_user),
-) -> ContractorProfileResponse:
-    """Partial update of the current contractor's profile."""
+    body: UserProfileUpdate,
+    current_user: UserData = Depends(get_current_user),
+) -> UserProfileResponse:
+    """Partial update of the current user's profile."""
     updates = body.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    store = get_contractor_store()
+    store = get_user_store()
     updated = await store.update(current_user.id, **updates)
     if updated is None:
-        raise HTTPException(status_code=404, detail="Contractor not found")
+        raise HTTPException(status_code=404, detail="User not found")
 
     return _profile_response(updated)
 
@@ -76,7 +76,7 @@ def _build_channel_config_response() -> ChannelConfigResponse:
 
 @router.get("/user/channels/config", response_model=ChannelConfigResponse)
 async def get_channel_config(
-    _current_user: ContractorData = Depends(get_current_user),
+    _current_user: UserData = Depends(get_current_user),
 ) -> ChannelConfigResponse:
     """Return server-level channel configuration."""
     return _build_channel_config_response()
@@ -85,7 +85,7 @@ async def get_channel_config(
 @router.put("/user/channels/config", response_model=ChannelConfigResponse)
 async def update_channel_config(
     body: ChannelConfigUpdate,
-    _current_user: ContractorData = Depends(get_current_user),
+    _current_user: UserData = Depends(get_current_user),
 ) -> ChannelConfigResponse:
     """Update server-level channel configuration."""
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}

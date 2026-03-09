@@ -24,9 +24,9 @@ PDF_TOTALS_CELL_PADDING = 4
 
 @dataclass
 class EstimatePDFData:
-    contractor_name: str
-    contractor_phone: str
-    contractor_trade: str
+    owner_name: str
+    owner_phone: str
+    owner_trade: str
     description: str
     line_items: list[dict[str, object]]
     subtotal: float
@@ -63,13 +63,13 @@ def _build_pdf(data: EstimatePDFData) -> bytes:
     elements.append(Paragraph("ESTIMATE", title_style))
     elements.append(Spacer(1, PDF_SPACER_SMALL))
 
-    # Contractor info
+    # User info
     info_style = styles["Normal"]
-    elements.append(Paragraph(f"<b>{data.contractor_name}</b>", info_style))
-    if data.contractor_trade:
-        elements.append(Paragraph(data.contractor_trade, info_style))
-    if data.contractor_phone:
-        elements.append(Paragraph(data.contractor_phone, info_style))
+    elements.append(Paragraph(f"<b>{data.owner_name}</b>", info_style))
+    if data.owner_trade:
+        elements.append(Paragraph(data.owner_trade, info_style))
+    if data.owner_phone:
+        elements.append(Paragraph(data.owner_phone, info_style))
     elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Date and estimate number

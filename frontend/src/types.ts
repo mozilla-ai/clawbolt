@@ -1,6 +1,6 @@
 // API response types matching backend schemas
 
-export interface ContractorProfile {
+export interface UserProfile {
   id: number;
   user_id: string;
   name: string;
@@ -19,7 +19,7 @@ export interface ContractorProfile {
   updated_at: string;
 }
 
-export interface ContractorProfileUpdate {
+export interface UserProfileUpdate {
   name?: string;
   phone?: string;
   timezone?: string;
@@ -58,7 +58,7 @@ export interface SessionMessage {
 
 export interface SessionDetail {
   session_id: string;
-  contractor_id: number;
+  user_id: number;
   created_at: string;
   last_message_at: string;
   is_active: boolean;

@@ -2,11 +2,11 @@
 
 Defines the ``InboundMessage`` dataclass and ``process_inbound_from_bus()``
 which handles the channel-independent steps of receiving a message:
-contractor lookup/creation, conversation management, message persistence,
+user lookup/creation, conversation management, message persistence,
 and pipeline dispatch.
 
 Includes ``MessageBatcher`` which groups rapid-fire messages from the same
-contractor (e.g. after a tunnel reconnect) into a single agent pipeline run,
+user (e.g. after a tunnel reconnect) into a single agent pipeline run,
 inspired by nanobot's Mochat delay-based batching pattern.
 """
 
@@ -15,14 +15,14 @@ import json
 import logging
 from dataclasses import dataclass, field
 
-from backend.app.agent.concurrency import contractor_locks
+from backend.app.agent.concurrency import user_locks
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.file_store import (
-    ContractorData,
     SessionState,
     StoredMessage,
-    get_contractor_store,
+    UserData,
     get_session_store,
+    get_user_store,
 )
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
@@ -52,37 +52,37 @@ class InboundMessage:
     session_id: str | None = None
 
 
-async def _get_or_create_contractor(channel: str, sender_id: str) -> ContractorData:
-    """Look up or create a contractor by channel-specific sender ID.
+async def _get_or_create_user(channel: str, sender_id: str) -> UserData:
+    """Look up or create a user by channel-specific sender ID.
 
-    In single-tenant (OSS) mode there should be exactly one contractor shared
-    across all channels.  When a new channel arrives and a contractor already
-    exists, link the channel to that contractor instead of creating a duplicate.
+    In single-tenant (OSS) mode there should be exactly one user shared
+    across all channels.  When a new channel arrives and a user already
+    exists, link the channel to that user instead of creating a duplicate.
     """
-    store = get_contractor_store()
-    contractor = await store.get_by_channel(sender_id)
-    if contractor is not None:
-        return contractor
+    store = get_user_store()
+    user = await store.get_by_channel(sender_id)
+    if user is not None:
+        return user
 
-    # Reuse the sole existing contractor (single-tenant OSS) so sessions from
+    # Reuse the sole existing user (single-tenant OSS) so sessions from
     # every channel are visible in the dashboard.
-    all_contractors = await store.list_all()
-    if len(all_contractors) == 1:
-        contractor = all_contractors[0]
-        store.link_channel(channel, sender_id, contractor.id)
-        contractor = await store.update(
-            contractor.id,
+    all_users = await store.list_all()
+    if len(all_users) == 1:
+        user = all_users[0]
+        store.link_channel(channel, sender_id, user.id)
+        user = await store.update(
+            user.id,
             channel_identifier=sender_id,
             preferred_channel=channel,
         )
-        return contractor  # type: ignore[return-value]
+        return user  # type: ignore[return-value]
 
-    contractor = await store.create(
+    user = await store.create(
         user_id=f"{channel}_{sender_id}",
         channel_identifier=sender_id,
         preferred_channel=channel,
     )
-    return contractor
+    return user
 
 
 # ---------------------------------------------------------------------------
@@ -102,18 +102,18 @@ class _BatchEntry:
 
 @dataclass
 class _BatchState:
-    """Per-contractor batch state: accumulated entries and a flush timer."""
+    """Per-user batch state: accumulated entries and a flush timer."""
 
     entries: list[_BatchEntry] = field(default_factory=list)
     timer: asyncio.Task[None] | None = None
     messaging_service: MessagingService | None = None
-    contractor: ContractorData | None = None
+    user: UserData | None = None
     channel: str = ""
     request_id: str = ""
 
 
 class MessageBatcher:
-    """Groups rapid-fire messages from the same contractor before processing.
+    """Groups rapid-fire messages from the same user before processing.
 
     When multiple messages arrive within ``window_ms`` of each other
     (e.g. after a tunnel reconnect or when a user sends several messages
@@ -133,7 +133,7 @@ class MessageBatcher:
 
     async def enqueue(
         self,
-        contractor: ContractorData,
+        user: UserData,
         session: SessionState,
         message: StoredMessage,
         media_urls: list[tuple[str, str]],
@@ -142,13 +142,13 @@ class MessageBatcher:
         request_id: str = "",
         downloaded_media: list[DownloadedMedia] | None = None,
     ) -> None:
-        """Add a message to the batch for the contractor.
+        """Add a message to the batch for the user.
 
         Resets the flush timer so that messages arriving within the window
         are grouped together.
         """
         async with self._lock:
-            state = self._states.setdefault(contractor.id, _BatchState())
+            state = self._states.setdefault(user.id, _BatchState())
             state.entries.append(
                 _BatchEntry(
                     session=session,
@@ -158,34 +158,34 @@ class MessageBatcher:
                 )
             )
             state.messaging_service = messaging_service
-            state.contractor = contractor
+            state.user = user
             state.channel = channel
             state.request_id = request_id
             if state.timer is not None:
                 state.timer.cancel()
-            state.timer = asyncio.create_task(self._flush_after(contractor.id))
+            state.timer = asyncio.create_task(self._flush_after(user.id))
 
-    async def _flush_after(self, contractor_id: int) -> None:
+    async def _flush_after(self, user_id: int) -> None:
         """Wait for the batch window then flush."""
         await asyncio.sleep(self._window_ms / 1000.0)
-        await self._flush(contractor_id)
+        await self._flush(user_id)
 
-    async def _flush(self, contractor_id: int) -> None:
-        """Process the batched messages for the contractor.
+    async def _flush(self, user_id: int) -> None:
+        """Process the batched messages for the user.
 
-        Acquires the per-contractor lock, then runs the agent pipeline for
+        Acquires the per-user lock, then runs the agent pipeline for
         the most recent message.  Media from all batched messages is merged.
         """
         async with self._lock:
-            state = self._states.pop(contractor_id, None)
+            state = self._states.pop(user_id, None)
         if state is None or not state.entries or state.messaging_service is None:
             return
-        if state.contractor is None:
+        if state.user is None:
             return
 
         last_entry = state.entries[-1]
         messaging_service = state.messaging_service
-        contractor = state.contractor
+        user = state.user
 
         # Merge media from all batched messages so attachments are not lost.
         all_media: list[tuple[str, str]] = []
@@ -196,21 +196,21 @@ class MessageBatcher:
 
         if len(state.entries) > 1:
             logger.info(
-                "Batched %d messages for contractor %d, processing message seq %d",
+                "Batched %d messages for user %d, processing message seq %d",
                 len(state.entries),
-                contractor_id,
+                user_id,
                 last_entry.message.seq,
             )
 
-        async with contractor_locks.acquire(contractor_id):
+        async with user_locks.acquire(user_id):
             try:
-                # Reload contractor in case it was updated
-                store = get_contractor_store()
-                fresh = await store.get_by_id(contractor_id)
+                # Reload user in case it was updated
+                store = get_user_store()
+                fresh = await store.get_by_id(user_id)
                 if fresh is not None:
-                    contractor = fresh
+                    user = fresh
                 await handle_inbound_message(
-                    contractor=contractor,
+                    user=user,
                     session=last_entry.session,
                     message=last_entry.message,
                     media_urls=all_media,
@@ -221,9 +221,9 @@ class MessageBatcher:
                 )
             except Exception:
                 logger.exception(
-                    "Agent pipeline failed for message seq %d (contractor %d)",
+                    "Agent pipeline failed for message seq %d (user %d)",
                     last_entry.message.seq,
-                    contractor_id,
+                    user_id,
                 )
 
 
@@ -242,16 +242,16 @@ async def process_inbound_from_bus(
 ) -> None:
     """Process an inbound message consumed from the bus.
 
-    Handles contractor lookup/creation, session management, message
+    Handles user lookup/creation, session management, message
     persistence, and dispatches to the agent pipeline (with optional
     batching).
     """
-    contractor = await _get_or_create_contractor(inbound.channel, inbound.sender_id)
+    user = await _get_or_create_user(inbound.channel, inbound.sender_id)
     session, _is_new = await get_or_create_conversation(
-        contractor.id, external_session_id=inbound.session_id
+        user.id, external_session_id=inbound.session_id
     )
 
-    session_store = get_session_store(contractor.id)
+    session_store = get_session_store(user.id)
     message = await session_store.add_message(
         session=session,
         direction=MessageDirection.INBOUND,
@@ -262,7 +262,7 @@ async def process_inbound_from_bus(
 
     if settings.message_batch_window_ms > 0:
         await message_batcher.enqueue(
-            contractor=contractor,
+            user=user,
             session=session,
             message=message,
             media_urls=inbound.media_refs,
@@ -272,14 +272,14 @@ async def process_inbound_from_bus(
             downloaded_media=inbound.downloaded_media or None,
         )
     else:
-        async with contractor_locks.acquire(contractor.id):
+        async with user_locks.acquire(user.id):
             try:
-                store = get_contractor_store()
-                fresh = await store.get_by_id(contractor.id)
+                store = get_user_store()
+                fresh = await store.get_by_id(user.id)
                 if fresh is not None:
-                    contractor = fresh
+                    user = fresh
                 await handle_inbound_message(
-                    contractor=contractor,
+                    user=user,
                     session=session,
                     message=message,
                     media_urls=inbound.media_refs,
@@ -290,7 +290,7 @@ async def process_inbound_from_bus(
                 )
             except Exception:
                 logger.exception(
-                    "Agent pipeline failed for message seq %d (contractor %d)",
+                    "Agent pipeline failed for message seq %d (user %d)",
                     message.seq,
-                    contractor.id,
+                    user.id,
                 )

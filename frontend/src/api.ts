@@ -7,8 +7,8 @@ import type {
   ChatResponse,
   ChecklistItem,
   ChecklistItemUpdate,
-  ContractorProfile,
-  ContractorProfileUpdate,
+  UserProfile,
+  UserProfileUpdate,
   MemoryFact,
   MemoryFactUpdate,
   SessionDetail,
@@ -80,9 +80,9 @@ const api = {
   tryRestoreSession: _tryRestoreSession as () => Promise<AuthUser | null>,
 
   // Profile
-  getProfile: () => _fetch<ContractorProfile>('/api/user/profile'),
-  updateProfile: (body: ContractorProfileUpdate) =>
-    _fetch<ContractorProfile>('/api/user/profile', {
+  getProfile: () => _fetch<UserProfile>('/api/user/profile'),
+  updateProfile: (body: UserProfileUpdate) =>
+    _fetch<UserProfile>('/api/user/profile', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),

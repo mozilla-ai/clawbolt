@@ -7,7 +7,7 @@ import pytest
 from pydantic import BaseModel, Field
 
 from backend.app.agent.core import ClawboltAgent, _summarize_tool_params
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
 from backend.app.agent.tools.checklist_tools import (
     AddChecklistItemParams,
@@ -181,7 +181,7 @@ def test_add_checklist_item_rejects_invalid_schedule() -> None:
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_failure_returns_error_result(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """When params_model validation fails, agent should return a structured error."""
     # LLM sends wrong type for 'key' (int instead of string) to save_fact
@@ -209,7 +209,7 @@ async def test_agent_validation_failure_returns_error_result(
         params_model=TypedParams,
     )
 
-    agent = ClawboltAgent(contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -227,7 +227,7 @@ async def test_agent_validation_failure_returns_error_result(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_success_calls_tool(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """When params_model validation passes, agent should call the tool normally."""
     tool_response = make_tool_call_response(
@@ -254,7 +254,7 @@ async def test_agent_validation_success_calls_tool(
         params_model=TypedParams,
     )
 
-    agent = ClawboltAgent(contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -267,7 +267,7 @@ async def test_agent_validation_success_calls_tool(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_coerces_types(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Pydantic validation should coerce compatible types (e.g., str '42' to int)."""
     tool_response = make_tool_call_response(
@@ -294,7 +294,7 @@ async def test_agent_validation_coerces_types(
         params_model=TypedParams,
     )
 
-    agent = ClawboltAgent(contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     await agent.process_message("test", system_prompt_override="system")
 
@@ -306,7 +306,7 @@ async def test_agent_validation_coerces_types(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_wrong_type_returns_field_error(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Validation error message should include the specific field that failed."""
     tool_response = make_tool_call_response(
@@ -333,7 +333,7 @@ async def test_agent_validation_wrong_type_returns_field_error(
         params_model=TypedParams,
     )
 
-    agent = ClawboltAgent(contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -369,7 +369,7 @@ def test_update_profile_params_accepts_all_fields() -> None:
 @patch("backend.app.agent.core.amessages")
 async def test_batch_validation_reports_all_errors_at_once(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """When multiple tool calls have invalid args, ALL errors should be returned in one round.
 
@@ -408,7 +408,7 @@ async def test_batch_validation_reports_all_errors_at_once(
     followup_response = make_text_response("I see both errors. Let me fix them.")
     mock_amessages.side_effect = [tool_response, followup_response]
 
-    agent = ClawboltAgent(contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -430,7 +430,7 @@ async def test_batch_validation_reports_all_errors_at_once(
 @patch("backend.app.agent.core.amessages")
 async def test_batch_validation_executes_valid_calls_alongside_invalid(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Valid tool calls should still execute even when other calls in the same batch fail."""
 
@@ -469,7 +469,7 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
     followup_response = make_text_response("Done!")
     mock_amessages.side_effect = [tool_response, followup_response]
 
-    agent = ClawboltAgent(contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -530,7 +530,7 @@ def test_summarize_tool_params_resolves_anyof_types() -> None:
 @patch("backend.app.agent.core.amessages")
 async def test_validation_error_for_missing_line_items_shows_item_structure(
     mock_amessages: AsyncMock,
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """When line_items is missing, the error sent to the LLM should describe the item schema.
 
@@ -557,7 +557,7 @@ async def test_validation_error_for_missing_line_items_shows_item_structure(
         params_model=GenerateEstimateParams,
     )
 
-    agent = ClawboltAgent(contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 

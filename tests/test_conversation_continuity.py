@@ -8,7 +8,7 @@ from backend.app.agent.context import (
     get_or_create_conversation,
     load_conversation_history,
 )
-from backend.app.agent.file_store import ContractorData, SessionState, StoredMessage
+from backend.app.agent.file_store import SessionState, StoredMessage, UserData
 from backend.app.agent.messages import (
     AssistantMessage,
     ToolResultMessage,
@@ -17,19 +17,19 @@ from backend.app.agent.messages import (
 
 
 @pytest.fixture()
-def conversation(test_contractor: ContractorData) -> SessionState:
+def conversation(test_user: UserData) -> SessionState:
     import asyncio
 
     from backend.app.agent.file_store import get_session_store
 
-    store = get_session_store(test_contractor.id)
+    store = get_session_store(test_user.id)
     session, _is_new = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
     return session
 
 
 @pytest.mark.asyncio()
 async def test_load_history_chronological_order(
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
 ) -> None:
     """History should be in chronological order."""
@@ -123,35 +123,35 @@ async def test_load_history_single_message(
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_new(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Should create a new conversation when none exists."""
-    conv, is_new = await get_or_create_conversation(test_contractor.id)
+    conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is True
-    assert conv.contractor_id == test_contractor.id
+    assert conv.user_id == test_user.id
     assert conv.is_active is True
 
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_existing_active(
-    test_contractor: ContractorData,
+    test_user: UserData,
     conversation: SessionState,
 ) -> None:
     """Should return existing active conversation within timeout."""
     # The conversation fixture already created a recent session on disk
-    conv, is_new = await get_or_create_conversation(test_contractor.id)
+    conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is False
     assert conv.session_id == conversation.session_id
 
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_expired(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Should create new conversation when existing one has timed out."""
     from backend.app.agent.file_store import get_session_store
 
-    store = get_session_store(test_contractor.id)
+    store = get_session_store(test_user.id)
 
     # Create an old conversation by writing the session file directly
     old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
@@ -163,7 +163,7 @@ async def test_get_or_create_conversation_expired(
     meta = {
         "_type": "metadata",
         "session_id": old_session_id,
-        "contractor_id": test_contractor.id,
+        "user_id": test_user.id,
         "created_at": old_time.isoformat(),
         "last_message_at": old_time.isoformat(),
         "is_active": True,
@@ -171,18 +171,18 @@ async def test_get_or_create_conversation_expired(
     }
     path.write_text(json.dumps(meta, default=str) + "\n", encoding="utf-8")
 
-    conv, is_new = await get_or_create_conversation(test_contractor.id)
+    conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is True
     assert conv.session_id != old_session_id
 
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_with_external_session_id(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """New conversation should store external session ID."""
     conv, is_new = await get_or_create_conversation(
-        test_contractor.id, external_session_id="session_abc123"
+        test_user.id, external_session_id="session_abc123"
     )
     assert is_new is True
     # SessionState stores external_session_id if available
@@ -191,12 +191,12 @@ async def test_get_or_create_conversation_with_external_session_id(
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_custom_timeout(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Custom timeout should be respected."""
     from backend.app.agent.file_store import get_session_store
 
-    store = get_session_store(test_contractor.id)
+    store = get_session_store(test_user.id)
 
     def _write_session(session_id: str, last_message_at: str) -> None:
         """Write a session JSONL file with metadata."""
@@ -205,7 +205,7 @@ async def test_get_or_create_conversation_custom_timeout(
         meta = {
             "_type": "metadata",
             "session_id": session_id,
-            "contractor_id": test_contractor.id,
+            "user_id": test_user.id,
             "created_at": last_message_at,
             "last_message_at": last_message_at,
             "is_active": True,
@@ -218,12 +218,12 @@ async def test_get_or_create_conversation_custom_timeout(
     _write_session("conv-timeout-test", old_time.isoformat())
 
     # With 1-hour timeout, should create new
-    _conv, is_new = await get_or_create_conversation(test_contractor.id, timeout_hours=1)
+    _conv, is_new = await get_or_create_conversation(test_user.id, timeout_hours=1)
     assert is_new is True
 
     # With 3-hour timeout, should reuse (re-write old session since a new one was created)
     _write_session("conv-timeout-test", old_time.isoformat())
-    _conv, is_new = await get_or_create_conversation(test_contractor.id, timeout_hours=3)
+    _conv, is_new = await get_or_create_conversation(test_user.id, timeout_hours=3)
     assert is_new is False
 
 
