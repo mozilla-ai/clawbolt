@@ -129,6 +129,7 @@ export interface ToolConfigEntry {
   name: string;
   description: string;
   category: string;
+  domain_group: string;
   enabled: boolean;
 }
 

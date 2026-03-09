@@ -121,6 +121,7 @@ def test_get_tool_config(client: TestClient) -> None:
         assert "name" in tool
         assert "description" in tool
         assert "category" in tool
+        assert "domain_group" in tool
         assert "enabled" in tool
         assert tool["category"] in ("core", "domain")
 
@@ -135,6 +136,23 @@ def test_get_tool_config(client: TestClient) -> None:
     assert "workspace" in names
     assert "profile" in names
     assert "memory" in names
+
+
+def test_get_tool_config_domain_group(client: TestClient) -> None:
+    """GET /api/user/tools returns domain_group for domain tools."""
+    response = client.get("/api/user/tools")
+    data = response.json()
+    tools = data["tools"]
+
+    # Domain tools should have a non-empty domain_group
+    domain_tools = [t for t in tools if t["category"] == "domain"]
+    for t in domain_tools:
+        assert t["domain_group"] != "", f"{t['name']} missing domain_group"
+
+    # Core tools should have an empty domain_group
+    core_tools = [t for t in tools if t["category"] == "core"]
+    for t in core_tools:
+        assert t["domain_group"] == "", f"{t['name']} should not have domain_group"
 
 
 def test_put_tool_config_disable_domain_tool(client: TestClient) -> None:

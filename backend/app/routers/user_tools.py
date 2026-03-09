@@ -41,6 +41,13 @@ _FACTORY_DESCRIPTIONS: dict[str, str] = {
     "checklist": "Manage recurring reminders and task checklists",
 }
 
+# Display group for domain-specific factories. Core factories have no group.
+_FACTORY_GROUPS: dict[str, str] = {
+    "estimate": "Local Management",
+    "file": "Local Management",
+    "checklist": "Local Management",
+}
+
 
 def _build_tool_list(
     disabled_names: set[str],
@@ -59,6 +66,7 @@ def _build_tool_list(
                 name=name,
                 description=_FACTORY_DESCRIPTIONS.get(name, ""),
                 category="core" if is_core else "domain",
+                domain_group=_FACTORY_GROUPS.get(name, ""),
                 enabled=True if is_core else name not in disabled_names,
             )
         )
@@ -80,6 +88,7 @@ async def get_tool_config(
                 name=e.name,
                 description=e.description,
                 category=e.category,
+                domain_group=e.domain_group,
                 enabled=e.enabled,
             )
             for e in entries
@@ -131,6 +140,7 @@ async def update_tool_config(
                 name=e.name,
                 description=e.description,
                 category=e.category,
+                domain_group=e.domain_group,
                 enabled=e.enabled,
             )
             for e in entries

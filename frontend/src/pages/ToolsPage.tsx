@@ -8,6 +8,7 @@ export default function ToolsPage() {
   const [tools, setTools] = useState<ToolConfigEntry[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [coreExpanded, setCoreExpanded] = useState(false);
 
   useEffect(() => {
     api.getToolConfig().then((res) => {
@@ -45,6 +46,17 @@ export default function ToolsPage() {
   const coreTools = tools.filter((t) => t.category === 'core');
   const domainTools = tools.filter((t) => t.category === 'domain');
 
+  // Group domain tools by domain_group
+  const domainGroups: Record<string, ToolConfigEntry[]> = {};
+  for (const tool of domainTools) {
+    const group = tool.domain_group || 'Other';
+    if (!domainGroups[group]) {
+      domainGroups[group] = [];
+    }
+    domainGroups[group].push(tool);
+  }
+  const groupNames = Object.keys(domainGroups).sort();
+
   return (
     <div>
       <h2 className="text-xl font-semibold mb-6">Tools</h2>
@@ -53,39 +65,14 @@ export default function ToolsPage() {
           <div>
             <p className="text-sm text-muted-foreground mb-4">
               Configure which tool groups are available to your AI assistant.
-              Core tools are always enabled. Domain-specific tools can be toggled on or off.
             </p>
           </div>
 
-          {coreTools.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium mb-3">Core Tools (always enabled)</h3>
+          {groupNames.map((group) => (
+            <div key={group}>
+              <h3 className="text-sm font-medium mb-3">{group}</h3>
               <div className="grid gap-2">
-                {coreTools.map((tool) => (
-                  <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded bg-muted/50">
-                    <div>
-                      <span className="text-sm font-medium">{tool.name}</span>
-                      {tool.description && (
-                        <p className="text-xs text-muted-foreground">{tool.description}</p>
-                      )}
-                    </div>
-                    <input
-                      type="checkbox"
-                      checked={true}
-                      disabled={true}
-                      className="w-4 h-4 rounded border-border text-primary opacity-50 cursor-not-allowed"
-                    />
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          {domainTools.length > 0 && (
-            <div>
-              <h3 className="text-sm font-medium mb-3">Domain Tools</h3>
-              <div className="grid gap-2">
-                {domainTools.map((tool) => (
+                {domainGroups[group].map((tool) => (
                   <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded border border-border">
                     <div>
                       <span className="text-sm font-medium">{tool.name}</span>
@@ -103,6 +90,47 @@ export default function ToolsPage() {
                   </div>
                 ))}
               </div>
+            </div>
+          ))}
+
+          {coreTools.length > 0 && (
+            <div className="border-t border-border pt-4">
+              <button
+                type="button"
+                onClick={() => setCoreExpanded(!coreExpanded)}
+                className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
+              >
+                <svg
+                  className={`w-4 h-4 transition-transform ${coreExpanded ? 'rotate-90' : ''}`}
+                  fill="none"
+                  viewBox="0 0 24 24"
+                  stroke="currentColor"
+                  strokeWidth={2}
+                >
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                </svg>
+                Core Tools (always enabled)
+              </button>
+              {coreExpanded && (
+                <div className="grid gap-2 mt-3">
+                  {coreTools.map((tool) => (
+                    <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded bg-muted/50">
+                      <div>
+                        <span className="text-sm font-medium">{tool.name}</span>
+                        {tool.description && (
+                          <p className="text-xs text-muted-foreground">{tool.description}</p>
+                        )}
+                      </div>
+                      <input
+                        type="checkbox"
+                        checked={true}
+                        disabled={true}
+                        className="w-4 h-4 rounded border-border text-primary opacity-50 cursor-not-allowed"
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           )}
         </div>
