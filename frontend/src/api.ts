@@ -3,6 +3,7 @@ import type {
   AuthUser,
   ChannelConfig,
   ChannelConfigUpdate,
+  ChatAccepted,
   ChatResponse,
   ChecklistItem,
   ChecklistItemUpdate,
@@ -146,8 +147,12 @@ const api = {
   // Stats
   getStats: () => _fetch<ContractorStats>('/api/user/stats'),
 
-  // Chat
-  sendChatMessage: (message: string, sessionId?: string, files?: File[]) => {
+  // Chat (async: POST submits, SSE delivers reply)
+  sendChatMessage: async (
+    message: string,
+    sessionId?: string,
+    files?: File[],
+  ): Promise<ChatResponse> => {
     const formData = new FormData();
     formData.append('message', message);
     if (sessionId) {
@@ -158,9 +163,79 @@ const api = {
         formData.append('files', file);
       }
     }
-    return _fetch<ChatResponse>('/api/user/chat', {
+
+    // Step 1: Submit message to bus
+    const accepted = await _fetch<ChatAccepted>('/api/user/chat', {
       method: 'POST',
       body: formData,
+    });
+
+    // Step 2: Open SSE connection to receive the reply
+    return new Promise<ChatResponse>((resolve, reject) => {
+      const token = getAccessToken();
+      const url = `/api/user/chat/events/${encodeURIComponent(accepted.request_id)}`;
+
+      // EventSource does not support custom headers, so we use fetch + ReadableStream
+      fetch(url, {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      })
+        .then((res) => {
+          if (!res.ok) {
+            reject(new Error(`SSE request failed: ${res.status}`));
+            return;
+          }
+          const reader = res.body?.getReader();
+          if (!reader) {
+            reject(new Error('No response body'));
+            return;
+          }
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          const read = (): void => {
+            reader
+              .read()
+              .then(({ done, value }) => {
+                if (done) {
+                  // Stream ended without data
+                  reject(new Error('SSE stream ended without reply'));
+                  return;
+                }
+                buffer += decoder.decode(value, { stream: true });
+
+                // Parse SSE lines
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                  if (line.startsWith('data: ')) {
+                    try {
+                      const payload = JSON.parse(line.slice(6)) as {
+                        reply?: string;
+                        error?: string;
+                      };
+                      if (payload.error) {
+                        reader.cancel();
+                        reject(new Error(payload.error));
+                        return;
+                      }
+                      reader.cancel();
+                      resolve({
+                        reply: payload.reply || '',
+                        session_id: accepted.session_id,
+                      });
+                      return;
+                    } catch {
+                      // Continue reading if JSON parse fails
+                    }
+                  }
+                }
+                read();
+              })
+              .catch(reject);
+          };
+          read();
+        })
+        .catch(reject);
     });
   },
 };

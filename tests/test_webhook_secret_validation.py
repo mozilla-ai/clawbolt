@@ -7,7 +7,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.core import AgentResponse
 from backend.app.agent.file_store import ContractorData, get_contractor_store, reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import (
@@ -21,8 +20,7 @@ from backend.app.services.messaging import MessagingService, get_messaging_servi
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from tests.mocks.telegram import make_telegram_update_payload
 
-_MOCK_AGENT_RESPONSE = AgentResponse(reply_text="Mock reply")
-_PATCH_HANDLE = "backend.app.agent.ingestion.handle_inbound_message"
+_PATCH_BUS_PUBLISH = "backend.app.channels.telegram.message_bus.publish_inbound"
 _SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
 
 
@@ -103,8 +101,8 @@ class TestExplicitSecretValidation:
     def test_correct_secret_processes_message(self, tmp_path: object) -> None:
         """Request with the correct explicit secret should be processed."""
         with _make_client(webhook_secret="my-secret", data_dir=str(tmp_path)) as c:
-            mock_handle = AsyncMock(return_value=_MOCK_AGENT_RESPONSE)
-            with patch(_PATCH_HANDLE, mock_handle):
+            mock_handle = AsyncMock()
+            with patch(_PATCH_BUS_PUBLISH, mock_handle):
                 payload = make_telegram_update_payload(chat_id=999999, message_id=1)
                 resp = c.post(
                     "/api/webhooks/telegram",
@@ -117,8 +115,8 @@ class TestExplicitSecretValidation:
     def test_wrong_secret_rejects_silently(self) -> None:
         """Request with the wrong secret should return 200 but not process."""
         with _make_client(webhook_secret="my-secret") as c:
-            mock_handle = AsyncMock(return_value=_MOCK_AGENT_RESPONSE)
-            with patch(_PATCH_HANDLE, mock_handle):
+            mock_handle = AsyncMock()
+            with patch(_PATCH_BUS_PUBLISH, mock_handle):
                 payload = make_telegram_update_payload(chat_id=999999, message_id=2)
                 resp = c.post(
                     "/api/webhooks/telegram",
@@ -131,8 +129,8 @@ class TestExplicitSecretValidation:
     def test_missing_secret_header_rejects_silently(self) -> None:
         """Request without secret header should return 200 but not process."""
         with _make_client(webhook_secret="my-secret") as c:
-            mock_handle = AsyncMock(return_value=_MOCK_AGENT_RESPONSE)
-            with patch(_PATCH_HANDLE, mock_handle):
+            mock_handle = AsyncMock()
+            with patch(_PATCH_BUS_PUBLISH, mock_handle):
                 payload = make_telegram_update_payload(chat_id=999999, message_id=3)
                 resp = c.post("/api/webhooks/telegram", json=payload)
             assert resp.status_code == 200
@@ -152,8 +150,8 @@ class TestAutoDerivedSecretValidation:
         bot_token = "123456:ABC-DEF"
         derived = _derive_webhook_secret(bot_token)
         with _make_client(bot_token=bot_token, data_dir=str(tmp_path)) as c:
-            mock_handle = AsyncMock(return_value=_MOCK_AGENT_RESPONSE)
-            with patch(_PATCH_HANDLE, mock_handle):
+            mock_handle = AsyncMock()
+            with patch(_PATCH_BUS_PUBLISH, mock_handle):
                 payload = make_telegram_update_payload(chat_id=999999, message_id=10)
                 resp = c.post(
                     "/api/webhooks/telegram",
@@ -167,8 +165,8 @@ class TestAutoDerivedSecretValidation:
         """Auto-derived secret should reject a wrong header value."""
         bot_token = "123456:ABC-DEF"
         with _make_client(bot_token=bot_token) as c:
-            mock_handle = AsyncMock(return_value=_MOCK_AGENT_RESPONSE)
-            with patch(_PATCH_HANDLE, mock_handle):
+            mock_handle = AsyncMock()
+            with patch(_PATCH_BUS_PUBLISH, mock_handle):
                 payload = make_telegram_update_payload(chat_id=999999, message_id=11)
                 resp = c.post(
                     "/api/webhooks/telegram",

@@ -9,7 +9,6 @@ import pytest
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
-from backend.app.agent.core import AgentResponse
 from backend.app.agent.file_store import ContractorData, get_contractor_store, reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
@@ -18,8 +17,7 @@ from backend.app.services.messaging import MessagingService, get_messaging_servi
 from backend.app.services.rate_limiter import InMemoryRateLimiter, check_webhook_rate_limit
 from tests.mocks.telegram import make_telegram_update_payload
 
-_MOCK_AGENT_RESPONSE = AgentResponse(reply_text="Mock reply")
-_PATCH_HANDLE = "backend.app.agent.ingestion.handle_inbound_message"
+_PATCH_BUS_PUBLISH = "backend.app.channels.telegram.message_bus.publish_inbound"
 
 
 def _make_scope(
@@ -210,7 +208,7 @@ class TestWebhookRateLimiting:
 
     def test_requests_under_limit_succeed(self, _rate_limited_client: TestClient) -> None:
         """Requests under the rate limit should return 200."""
-        with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+        with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
             for i in range(5):
                 payload = make_telegram_update_payload(
                     chat_id=777777,
@@ -229,7 +227,7 @@ class TestWebhookRateLimiting:
         webhook_rate_limiter.max_requests = 3
 
         try:
-            with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+            with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
                 # First 3 should succeed
                 for i in range(3):
                     payload = make_telegram_update_payload(

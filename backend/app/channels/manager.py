@@ -1,7 +1,15 @@
-"""ChannelManager: lifecycle and routing for all enabled channels."""
+"""ChannelManager: lifecycle, routing, and bus consumer/dispatcher."""
+
+from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from backend.app.agent.ingestion import InboundMessage
+    from backend.app.services.messaging import MessagingService
 
 from backend.app.channels.base import BaseChannel
 
@@ -11,13 +19,19 @@ logger = logging.getLogger(__name__)
 class ChannelManager:
     """Start, stop, and route messages across all registered channels.
 
-    Replaces the pattern of manually wiring each channel in ``main.py``.
-    Each channel is registered via :meth:`register` and its lifecycle
-    (start/stop) is coordinated through :meth:`start_all` / :meth:`stop_all`.
+    In addition to managing channel lifecycles, runs two long-lived tasks:
+
+    * **inbound consumer**: reads from the message bus, performs contractor
+      lookup / session creation / persistence, and dispatches to the agent
+      pipeline (with per-contractor locking).
+    * **outbound dispatcher**: reads agent replies from the bus and routes
+      them to the correct channel's send method or resolves web chat
+      response futures.
     """
 
     def __init__(self) -> None:
         self._channels: dict[str, BaseChannel] = {}
+        self._bus_tasks: list[asyncio.Task[None]] = []
 
     # -- Registration ----------------------------------------------------------
 
@@ -47,23 +61,130 @@ class ChannelManager:
             raise RuntimeError(msg)
         return next(iter(self._channels.values()))
 
+    # -- Bus consumer / dispatcher ---------------------------------------------
+
+    async def _run_inbound_consumer(self) -> None:
+        """Loop: consume inbound messages from the bus and dispatch processing."""
+        from backend.app.bus import message_bus
+        from backend.app.services.messaging import _build_messaging_service
+
+        messaging_service = _build_messaging_service()
+        bg_tasks: set[asyncio.Task[None]] = set()
+
+        while True:
+            try:
+                inbound = await message_bus.consume_inbound()
+            except asyncio.CancelledError:
+                break
+
+            # Dispatch each message as its own task so the consumer is not
+            # blocked while the agent pipeline runs.
+            task = asyncio.create_task(
+                self._handle_inbound(inbound, messaging_service),
+            )
+            bg_tasks.add(task)
+            task.add_done_callback(bg_tasks.discard)
+
+    async def _handle_inbound(
+        self,
+        inbound: InboundMessage,
+        messaging_service: MessagingService,
+    ) -> None:
+        """Process a single inbound message (runs as an asyncio task)."""
+        from backend.app.agent.ingestion import process_inbound_from_bus
+
+        # Channel-specific messaging service: use the channel that sent the
+        # message if available, otherwise fall back to the default.
+        channel = self._channels.get(inbound.channel)
+        svc: MessagingService = channel if channel is not None else messaging_service
+
+        try:
+            await process_inbound_from_bus(inbound, svc)
+        except Exception:
+            logger.exception(
+                "Failed to process inbound message from %s/%s",
+                inbound.channel,
+                inbound.sender_id,
+            )
+
+    async def _run_outbound_dispatcher(self) -> None:
+        """Loop: consume outbound messages and route to channels."""
+        from backend.app.bus import message_bus
+
+        while True:
+            try:
+                outbound = await message_bus.consume_outbound()
+            except asyncio.CancelledError:
+                break
+
+            # Try to resolve a web chat response future first
+            if outbound.request_id:
+                resolved = message_bus.resolve_response(outbound.request_id, outbound)
+                if resolved:
+                    continue
+
+            # Otherwise send via the channel's outbound methods
+            channel = self._channels.get(outbound.channel)
+            if channel is None:
+                logger.warning(
+                    "No channel %r registered for outbound message to %s",
+                    outbound.channel,
+                    outbound.chat_id,
+                )
+                continue
+
+            try:
+                if outbound.media:
+                    await channel.send_message(
+                        to=outbound.chat_id,
+                        body=outbound.content,
+                        media_urls=outbound.media,
+                    )
+                else:
+                    await channel.send_text(to=outbound.chat_id, body=outbound.content)
+            except Exception:
+                logger.exception(
+                    "Failed to send outbound message via %s to %s",
+                    outbound.channel,
+                    outbound.chat_id,
+                )
+
     # -- Lifecycle -------------------------------------------------------------
 
     async def start_all(self) -> list[asyncio.Task[None]]:
-        """Start all registered channels concurrently.
+        """Start all registered channels and bus consumer/dispatcher.
 
-        Returns a list of fire-and-forget tasks so callers can cancel them
-        during shutdown if needed.
+        Returns a list of channel-start tasks (short-lived) so callers can
+        cancel them during shutdown if needed.  Bus tasks are long-running
+        loops managed internally via ``self._bus_tasks`` and cancelled by
+        ``stop_all()``.
         """
         tasks: list[asyncio.Task[None]] = []
         for channel in self._channels.values():
             task = asyncio.create_task(channel.start())
             tasks.append(task)
             logger.info("Starting channel: %s", channel.name)
+
+        # Start bus consumer and outbound dispatcher (managed internally)
+        inbound_task = asyncio.create_task(self._run_inbound_consumer())
+        outbound_task = asyncio.create_task(self._run_outbound_dispatcher())
+        self._bus_tasks = [inbound_task, outbound_task]
+        logger.info("Started message bus consumer and outbound dispatcher")
+
         return tasks
 
     async def stop_all(self) -> None:
-        """Gracefully stop all registered channels."""
+        """Gracefully stop all registered channels and bus tasks."""
+        # Cancel bus tasks first
+        for task in self._bus_tasks:
+            if not task.done():
+                task.cancel()
+        for task in self._bus_tasks:
+            with contextlib.suppress(asyncio.CancelledError):
+                await task
+        self._bus_tasks.clear()
+        logger.info("Stopped message bus consumer and outbound dispatcher")
+
         for channel in self._channels.values():
             try:
                 await channel.stop()

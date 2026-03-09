@@ -92,6 +92,8 @@ class PipelineContext:
     event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = field(default_factory=list)
     response: AgentResponse | None = None
     _onboarding_sub: OnboardingSubscriber | None = None
+    channel: str = ""
+    request_id: str = ""
 
 
 PipelineStep = Callable[[PipelineContext], Awaitable[PipelineContext]]
@@ -411,9 +413,35 @@ async def finalize_onboarding_step(ctx: PipelineContext) -> PipelineContext:
 
 
 async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
-    """Send reply to the contractor."""
+    """Send reply: via bus when routed through a channel, or directly otherwise.
+
+    Messages that arrive through the message bus have ``ctx.channel`` set and
+    are dispatched via the bus so the outbound dispatcher can route them to the
+    correct channel or resolve a web chat SSE future.
+
+    Direct pipeline calls (heartbeat, tests) have no ``ctx.channel`` and use
+    the legacy ``dispatch_reply`` path for backward compatibility.
+    """
     if ctx.response:
-        await dispatch_reply(ctx.response, ctx.messaging_service, ctx.to_address, ctx.message.seq)
+        if ctx.channel:
+            from backend.app.bus import OutboundMessage, message_bus
+
+            sent_reply = any(
+                ToolTags.SENDS_REPLY in tc.tags and not tc.is_error
+                for tc in ctx.response.tool_calls
+            )
+            if not sent_reply and ctx.response.reply_text:
+                outbound = OutboundMessage(
+                    channel=ctx.channel,
+                    chat_id=ctx.to_address,
+                    content=ctx.response.reply_text,
+                    request_id=ctx.request_id,
+                )
+                await message_bus.publish_outbound(outbound)
+        else:
+            await dispatch_reply(
+                ctx.response, ctx.messaging_service, ctx.to_address, ctx.message.seq
+            )
     return ctx
 
 
@@ -462,6 +490,9 @@ async def handle_inbound_message(
     media_urls: list[tuple[str, str]],
     messaging_service: MessagingService,
     pipeline: list[PipelineStep] | None = None,
+    downloaded_media: list[DownloadedMedia] | None = None,
+    channel: str = "",
+    request_id: str = "",
 ) -> AgentResponse:
     """Full message processing pipeline.
 
@@ -490,6 +521,9 @@ async def handle_inbound_message(
         media_urls=media_urls,
         messaging_service=messaging_service,
         to_address=to_address,
+        downloaded_media=downloaded_media or [],
+        channel=channel,
+        request_id=request_id,
     )
     ctx = await run_pipeline(ctx, pipeline or DEFAULT_PIPELINE)
     return ctx.response or AgentResponse(reply_text="")
