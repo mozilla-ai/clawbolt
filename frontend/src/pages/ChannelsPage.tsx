@@ -3,7 +3,8 @@ import { useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
-import { toast } from 'sonner';
+import Field from '@/components/ui/field';
+import { toast } from '@/lib/toast';
 import api from '@/api';
 import type { ChannelConfig } from '@/types';
 import type { AppShellContext } from '@/layouts/AppShell';
@@ -15,7 +16,7 @@ export default function ChannelsPage() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-6">Channels</h2>
+      <h2 className="heading-page mb-6">Channels</h2>
       <ChannelsContent profile={profile} />
     </div>
   );
@@ -76,12 +77,12 @@ function ChannelsContent({
               <div className="mb-2">
                 {config.telegram_bot_token_set ? (
                   <span className="inline-flex items-center gap-1.5 text-sm">
-                    <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                    <span className="status-dot bg-success" />
                     Configured
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-sm">
-                    <span className="w-2 h-2 rounded-full bg-red-500 inline-block" />
+                    <span className="status-dot bg-danger" />
                     Not configured
                   </span>
                 )}
@@ -101,7 +102,7 @@ function ChannelsContent({
             onChange={(e) => setAllowedUsernames(e.target.value)}
             placeholder='Comma-separated @usernames, or * for all'
           />
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="helper-text">
             Controls which Telegram users can message your bot.
           </p>
         </Field>
@@ -115,7 +116,7 @@ function ChannelsContent({
           {connected ? (
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 text-sm">
-                <span className="w-2 h-2 rounded-full bg-green-500 inline-block" />
+                <span className="status-dot bg-success" />
                 Connected
               </span>
               <span className="text-xs text-muted-foreground">
@@ -136,11 +137,3 @@ function ChannelsContent({
   );
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-xs font-medium text-muted-foreground block mb-1">{label}</label>
-      {children}
-    </div>
-  );
-}

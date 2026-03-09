@@ -4,7 +4,7 @@ import Badge from '@/components/ui/badge';
 import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
 import Spinner from '@/components/ui/spinner';
-import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
+import { Modal, ModalContent, ModalHeader, ModalBody } from '@heroui/modal';
 import api from '@/api';
 import type { MemoryFact } from '@/types';
 
@@ -55,8 +55,8 @@ export default function MemoryPage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold">Memory / Facts</h2>
-        <p className="text-sm text-muted-foreground mt-1">
+        <h2 className="heading-page">Memory / Facts</h2>
+        <p className="page-subtitle">
           Review and correct what your AI assistant knows about you and your business.
         </p>
       </div>
@@ -79,26 +79,26 @@ export default function MemoryPage() {
           {/* Category filter */}
           {categories.length > 1 && (
             <div className="flex flex-wrap gap-2 mb-4">
-              <button
-                className={`px-3 py-1 text-xs rounded-[--radius-full] border transition-colors ${
-                  !filter ? 'bg-primary text-white border-primary' : 'border-border text-muted-foreground hover:text-foreground'
-                }`}
+              <Button
+                variant={!filter ? 'primary' : 'secondary'}
+                size="sm"
                 onClick={() => setFilter('')}
+                className="rounded-full text-xs px-3 py-1"
               >
                 All ({facts.length})
-              </button>
+              </Button>
               {categories.map((cat) => {
                 const count = facts.filter((f) => f.category === cat).length;
                 return (
-                  <button
+                  <Button
                     key={cat}
-                    className={`px-3 py-1 text-xs rounded-[--radius-full] border transition-colors ${
-                      filter === cat ? 'bg-primary text-white border-primary' : 'border-border text-muted-foreground hover:text-foreground'
-                    }`}
+                    variant={filter === cat ? 'primary' : 'secondary'}
+                    size="sm"
                     onClick={() => setFilter(cat)}
+                    className="rounded-full text-xs px-3 py-1"
                   >
                     {cat} ({count})
-                  </button>
+                  </Button>
                 );
               })}
             </div>
@@ -162,19 +162,21 @@ export default function MemoryPage() {
         </>
       )}
 
-      {/* Edit dialog */}
-      <Dialog open={!!editingFact} onOpenChange={() => setEditingFact(null)}>
-        <DialogContent>
-          <DialogTitle>Edit Fact: {editingFact?.key}</DialogTitle>
-          {editingFact && (
-            <EditFactForm
-              fact={editingFact}
-              onSave={handleSaveEdit}
-              onCancel={() => setEditingFact(null)}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+      {/* Edit modal */}
+      <Modal isOpen={!!editingFact} onOpenChange={(open) => { if (!open) setEditingFact(null); }}>
+        <ModalContent>
+          <ModalHeader>Edit Fact: {editingFact?.key}</ModalHeader>
+          <ModalBody>
+            {editingFact && (
+              <EditFactForm
+                fact={editingFact}
+                onSave={handleSaveEdit}
+                onCancel={() => setEditingFact(null)}
+              />
+            )}
+          </ModalBody>
+        </ModalContent>
+      </Modal>
     </div>
   );
 }
@@ -204,7 +206,7 @@ function EditFactForm({
   return (
     <form onSubmit={handleSubmit} className="mt-4 space-y-4">
       <div>
-        <label className="text-xs text-muted-foreground block mb-1">Value</label>
+        <label className="section-label">Value</label>
         <Input value={value} onChange={(e) => setValue(e.target.value)} />
       </div>
       <div className="flex justify-end gap-2">

@@ -1,6 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Outlet, NavLink, Navigate } from 'react-router-dom';
-import { Toaster } from 'sonner';
+import { ToastProvider } from '@heroui/toast';
 import api from '@/api';
 import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
@@ -108,7 +108,7 @@ export default function AppShell() {
               end={end}
               onClick={() => setSidebarOpen(false)}
               className={({ isActive }) =>
-                `flex items-center gap-3 px-3 py-2 rounded-[--radius-md] text-sm transition-colors ${
+                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
                     ? 'bg-selected-bg text-primary font-medium'
                     : 'text-muted-foreground hover:bg-secondary-hover hover:text-foreground'
@@ -127,7 +127,7 @@ export default function AppShell() {
               href={getReportIssueUrl()}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-foreground transition-colors"
+              className="hover:text-foreground transition-all duration-150"
             >
               Report issue
             </a>
@@ -135,18 +135,20 @@ export default function AppShell() {
               href={getFeatureRequestUrl()}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-foreground transition-colors"
+              className="hover:text-foreground transition-all duration-150"
             >
               Feature request
             </a>
           </div>
           {isPremium && (
-            <button
+            <Button
+              variant="ghost"
+              size="sm"
               onClick={handleLogout}
-              className="w-full text-left px-3 py-1 hover:text-foreground transition-colors"
+              className="w-full justify-start text-xs text-muted-foreground font-normal px-3"
             >
               Log out
-            </button>
+            </Button>
           )}
         </div>
       </aside>
@@ -155,15 +157,16 @@ export default function AppShell() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile header */}
         <header className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card">
-          <button
+          <Button
+            variant="ghost"
+            size="icon"
             onClick={() => setSidebarOpen(true)}
-            className="text-foreground"
             aria-label="Open menu"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
             </svg>
-          </button>
+          </Button>
           <img src="/clawbolt.png" alt="" className="w-6 h-6" />
           <h1 className="text-lg font-bold text-foreground">Clawbolt</h1>
         </header>
@@ -173,7 +176,7 @@ export default function AppShell() {
         </main>
       </div>
 
-      <Toaster position="bottom-right" richColors />
+      <ToastProvider placement="bottom-right" />
     </div>
   );
 }

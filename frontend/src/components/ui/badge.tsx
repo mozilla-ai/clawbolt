@@ -1,17 +1,39 @@
-import { type HTMLAttributes, forwardRef } from 'react';
-import { cn } from '@/lib/utils';
+import { forwardRef, type HTMLAttributes } from 'react';
+import { Chip } from '@heroui/chip';
 
-const Badge = forwardRef<HTMLSpanElement, HTMLAttributes<HTMLSpanElement>>(
-  ({ className, ...props }, ref) => (
-    <span
-      ref={ref}
-      className={cn(
-        'inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-[--radius-full] bg-primary-light text-primary',
-        className,
-      )}
-      {...props}
-    />
-  ),
+type BadgeVariant = 'default' | 'success' | 'warning' | 'danger' | 'outline';
+
+function mapVariant(v: BadgeVariant) {
+  switch (v) {
+    case 'default': return { color: 'primary' as const, variant: 'flat' as const };
+    case 'success': return { color: 'success' as const, variant: 'flat' as const };
+    case 'warning': return { color: 'warning' as const, variant: 'flat' as const };
+    case 'danger': return { color: 'danger' as const, variant: 'flat' as const };
+    case 'outline': return { color: 'default' as const, variant: 'bordered' as const };
+  }
+}
+
+type BadgeProps = HTMLAttributes<HTMLSpanElement> & {
+  variant?: BadgeVariant;
+};
+
+const Badge = forwardRef<HTMLDivElement, BadgeProps>(
+  ({ className, variant = 'default', children, color: _color, ...props }, ref) => {
+    const mapped = mapVariant(variant);
+
+    return (
+      <Chip
+        ref={ref}
+        color={mapped.color}
+        variant={mapped.variant}
+        size="sm"
+        className={className}
+        {...props}
+      >
+        {children}
+      </Chip>
+    );
+  },
 );
 Badge.displayName = 'Badge';
 export default Badge;

@@ -1,16 +1,25 @@
-import { type HTMLAttributes, forwardRef } from 'react';
-import { cn } from '@/lib/utils';
+import { forwardRef, type ReactNode } from 'react';
+import { Card as HeroCard, CardBody } from '@heroui/card';
 
-const Card = forwardRef<HTMLDivElement, HTMLAttributes<HTMLDivElement>>(
-  ({ className, ...props }, ref) => (
-    <div
+interface CardProps {
+  className?: string;
+  children?: ReactNode;
+  onClick?: () => void;
+}
+
+const Card = forwardRef<HTMLDivElement, CardProps>(
+  ({ className, children, onClick, ...props }, ref) => (
+    <HeroCard
       ref={ref}
-      className={cn(
-        'bg-card border border-border rounded-[--radius-md] shadow-sm p-4',
-        className,
-      )}
+      shadow="sm"
+      radius="lg"
+      isPressable={!!onClick}
+      onPress={onClick}
+      className={className}
       {...props}
-    />
+    >
+      <CardBody className="p-5">{children}</CardBody>
+    </HeroCard>
   ),
 );
 Card.displayName = 'Card';
