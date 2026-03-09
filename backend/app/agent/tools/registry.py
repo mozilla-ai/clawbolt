@@ -239,6 +239,20 @@ class ToolRegistry:
         """Return sorted list of registered factory names."""
         return sorted(self._factories)
 
+    @property
+    def specialist_summaries(self) -> dict[str, str]:
+        """Return summaries of all specialist factories.
+
+        Unlike ``get_available_specialist_summaries`` this does not require
+        a ``ToolContext`` and does not filter by dependency availability.
+        Useful for prompt building where the full capability list is wanted.
+        """
+        return {
+            name: f.summary
+            for name, f in self._factories.items()
+            if not f.core and f.summary
+        }
+
 
 # Module-level singleton used by tool modules for self-registration.
 default_registry = ToolRegistry()

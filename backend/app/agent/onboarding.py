@@ -9,6 +9,7 @@ from backend.app.agent.events import AgentEndEvent, AgentEvent
 from backend.app.agent.file_store import ContractorData, get_contractor_store
 from backend.app.agent.profile import build_onboarding_prompt
 from backend.app.agent.tools.names import ToolName
+from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
 
 if TYPE_CHECKING:
     from backend.app.agent.core import AgentResponse
@@ -30,11 +31,23 @@ def is_onboarding_needed(contractor: ContractorData) -> bool:
     return not contractor.name or not contractor.name.strip()
 
 
+def _get_tool_capability_descriptions() -> list[str]:
+    """Return human-readable descriptions of available tool capabilities.
+
+    Uses the registry's specialist summaries so the onboarding prompt
+    can tell the contractor what their assistant can do.
+    """
+    ensure_tool_modules_imported()
+    summaries = default_registry.specialist_summaries
+    return [f"- {name}: {summary}" for name, summary in sorted(summaries.items())]
+
+
 def build_onboarding_system_prompt(contractor: ContractorData) -> str:
     """Build system prompt for onboarding mode.
 
     Wraps the base onboarding prompt with any partial profile info
     already collected so the agent doesn't re-ask known fields.
+    Injects available tool capabilities so the agent can describe them.
     """
     base = build_onboarding_prompt()
 
@@ -47,6 +60,16 @@ def build_onboarding_system_prompt(contractor: ContractorData) -> str:
     parts = [base]
     if known:
         parts.append("\n\nYou already know:\n" + "\n".join(known) + "\n\nDon't re-ask these.")
+
+    # Inject available tool capabilities
+    capability_lines = _get_tool_capability_descriptions()
+    if capability_lines:
+        parts.append(
+            "\n\nYour available specialist capabilities:\n"
+            + "\n".join(capability_lines)
+            + "\n\nMention the ones that seem relevant to the contractor's trade. "
+            "Don't list them all at once."
+        )
 
     parts.append(
         "\n\nIMPORTANT: If the contractor asks about something specific (a quote, a question, "
