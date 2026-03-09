@@ -1,39 +1,33 @@
 """Web chat channel: browser-based chat via the dashboard.
 
-Provides a POST endpoint for sending messages and receiving agent responses
-synchronously. The dashboard chat UI calls this endpoint and displays the
-response. Responses are also persisted in the session store so they appear
-in the Conversations page.
+Messages are submitted via POST and responses arrive asynchronously through
+a Server-Sent Events (SSE) endpoint. The POST handler normalizes the message
+into an ``InboundMessage``, publishes it to the message bus, and returns a
+``request_id`` + ``session_id`` immediately. The frontend then opens an SSE
+connection to ``/api/user/chat/events/{request_id}`` to receive the reply.
 
 Supports file and image uploads via multipart/form-data. Uploaded files are
 converted directly into ``DownloadedMedia`` objects (skipping the Telegram
 download step) and processed through the same vision/audio pipeline.
 """
 
+import collections.abc
+import json
 import logging
 import re
+import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.app.agent.concurrency import contractor_locks
 from backend.app.agent.context import get_or_create_conversation
-from backend.app.agent.file_store import ContractorData, get_contractor_store, get_session_store
-from backend.app.agent.router import (
-    PipelineContext,
-    build_context_step,
-    finalize_onboarding_step,
-    init_storage,
-    load_history_step,
-    persist_outbound_step,
-    run_agent_step,
-    run_pipeline,
-)
-from backend.app.agent.tools.file_tools import auto_save_media
+from backend.app.agent.file_store import ContractorData
+from backend.app.agent.ingestion import InboundMessage
 from backend.app.auth.dependencies import get_current_user
+from backend.app.bus import message_bus
 from backend.app.channels.base import BaseChannel
 from backend.app.config import settings
-from backend.app.enums import MessageDirection
 from backend.app.media.download import DEFAULT_MIME_TYPE, DownloadedMedia, generate_filename
 
 logger = logging.getLogger(__name__)
@@ -41,29 +35,17 @@ logger = logging.getLogger(__name__)
 _SESSION_ID_RE = re.compile(r"^\d+_\d+$")
 
 
-class _ChatResponse(BaseModel):
-    reply: str
+class _ChatAccepted(BaseModel):
+    request_id: str
     session_id: str
-
-
-# Pipeline for web chat: same as default but without dispatch_reply_step
-# (the reply is returned directly in the HTTP response) and without
-# prepare_media_step (files arrive as uploads, not Telegram file_ids).
-_WEBCHAT_PIPELINE = [
-    build_context_step,
-    load_history_step,
-    run_agent_step,
-    finalize_onboarding_step,
-    persist_outbound_step,
-]
 
 
 class WebChatChannel(BaseChannel):
     """Browser-based chat channel for the dashboard.
 
-    Messages are sent via POST and responses are returned synchronously.
+    Messages are sent via POST and responses arrive via SSE.
     The channel's outbound methods (send_text, etc.) are no-ops because
-    responses are returned directly in the HTTP response body.
+    responses are delivered through the message bus / SSE.
     """
 
     @property
@@ -72,23 +54,20 @@ class WebChatChannel(BaseChannel):
 
     def get_router(self) -> APIRouter:
         router = APIRouter(tags=["webchat"])
-        channel = self
 
-        @router.post("/user/chat", response_model=_ChatResponse)
+        @router.post("/user/chat", response_model=_ChatAccepted)
         async def send_chat_message(
             message: str = Form(default=""),
             session_id: str | None = Form(default=None),
             files: list[UploadFile] = File(default=[]),
             contractor: ContractorData = Depends(get_current_user),
-        ) -> _ChatResponse:
-            """Send a message and receive the agent's response."""
+        ) -> _ChatAccepted:
+            """Accept a message, publish to bus, return request_id for SSE."""
             text = message.strip()
 
-            # Validate: at least one of text or files required
             if not text and not files:
                 raise HTTPException(status_code=422, detail="Either message text or files required")
 
-            # Validate session_id format
             if session_id is not None and not _SESSION_ID_RE.match(session_id):
                 raise HTTPException(
                     status_code=422,
@@ -118,46 +97,54 @@ class WebChatChannel(BaseChannel):
                     )
                 )
 
+            # Get/create session so we can return session_id immediately
             session, _ = await get_or_create_conversation(
                 contractor.id, external_session_id=session_id
             )
 
-            session_store = get_session_store(contractor.id)
-            stored_message = await session_store.add_message(
-                session=session,
-                direction=MessageDirection.INBOUND,
-                body=text,
-            )
+            request_id = str(uuid.uuid4())
 
-            # Initialize storage and auto-save uploaded media
-            storage = init_storage(contractor)
-            if storage and downloaded_media:
-                try:
-                    await auto_save_media(contractor, storage, downloaded_media)
-                except Exception:
-                    logger.debug("Auto-save to storage failed, continuing")
+            # Register response future before publishing so the dispatcher
+            # can resolve it even if processing is very fast.
+            message_bus.register_response_future(request_id)
 
-            ctx = PipelineContext(
-                contractor=contractor,
-                session=session,
-                message=stored_message,
-                media_urls=[],
-                messaging_service=channel,
-                to_address=str(contractor.id),
+            inbound = InboundMessage(
+                channel="webchat",
+                sender_id=str(contractor.id),
+                text=text,
                 downloaded_media=downloaded_media,
-                storage=storage,
+                request_id=request_id,
+                session_id=session.session_id,
             )
+            await message_bus.publish_inbound(inbound)
 
-            async with contractor_locks.acquire(contractor.id):
-                # Reload contractor in case it was updated concurrently
-                store = get_contractor_store()
-                fresh = await store.get_by_id(contractor.id)
-                if fresh is not None:
-                    ctx.contractor = fresh
-                ctx = await run_pipeline(ctx, _WEBCHAT_PIPELINE)
+            return _ChatAccepted(request_id=request_id, session_id=session.session_id)
 
-            reply = ctx.response.reply_text if ctx.response else ""
-            return _ChatResponse(reply=reply, session_id=session.session_id)
+        @router.get("/user/chat/events/{request_id}")
+        async def chat_events(
+            request_id: str,
+            _contractor: ContractorData = Depends(get_current_user),
+        ) -> StreamingResponse:
+            """SSE endpoint: streams the agent reply for a given request_id."""
+
+            async def event_stream() -> collections.abc.AsyncIterator[str]:
+                try:
+                    outbound = await message_bus.wait_for_response(request_id, timeout=120)
+                    data = json.dumps({"reply": outbound.content})
+                    yield f"data: {data}\n\n"
+                except TimeoutError:
+                    data = json.dumps({"error": "Response timed out"})
+                    yield f"data: {data}\n\n"
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
 
         return router
 
@@ -165,15 +152,15 @@ class WebChatChannel(BaseChannel):
         return True
 
     async def send_text(self, to: str, body: str) -> str:
-        """No-op: web chat returns responses via the HTTP response body."""
+        """No-op: web chat delivers responses via the message bus / SSE."""
         return ""
 
     async def send_media(self, to: str, body: str, media_url: str) -> str:
-        """No-op: web chat returns responses via the HTTP response body."""
+        """No-op: web chat delivers responses via the message bus / SSE."""
         return ""
 
     async def send_message(self, to: str, body: str, media_urls: list[str] | None = None) -> str:
-        """No-op: web chat returns responses via the HTTP response body."""
+        """No-op: web chat delivers responses via the message bus / SSE."""
         return ""
 
     async def send_typing_indicator(self, to: str) -> None:

@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Generator
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -6,6 +7,7 @@ from fastapi.testclient import TestClient
 
 from backend.app.agent.file_store import ContractorData, get_contractor_store, reset_stores
 from backend.app.auth.dependencies import get_current_user
+from backend.app.bus import message_bus
 from backend.app.config import settings
 from backend.app.main import app
 from backend.app.services.messaging import MessagingService, get_messaging_service
@@ -44,6 +46,18 @@ def mock_messaging_service() -> MessagingService:
     service.send_typing_indicator = AsyncMock()
     service.download_media = AsyncMock()
     return service
+
+
+@pytest.fixture(autouse=True)
+def _reset_bus_queues() -> Generator[None]:
+    """Reset bus queues between tests so messages don't leak."""
+    message_bus.inbound = asyncio.Queue()
+    message_bus.outbound = asyncio.Queue()
+    message_bus._response_futures.clear()
+    yield
+    message_bus.inbound = asyncio.Queue()
+    message_bus.outbound = asyncio.Queue()
+    message_bus._response_futures.clear()
 
 
 @pytest.fixture()
