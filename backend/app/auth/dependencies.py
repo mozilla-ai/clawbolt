@@ -17,5 +17,4 @@ async def get_current_user() -> ContractorData:
         return all_contractors[0]
     return await store.create(
         user_id=LOCAL_USER_ID,
-        name="Local Contractor",
     )
