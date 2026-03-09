@@ -1,10 +1,11 @@
-import { cn } from '@/lib/utils';
+import { Spinner as HeroSpinner } from '@heroui/spinner';
 
 export default function Spinner({ className }: { className?: string }) {
   return (
-    <div
-      className={cn('w-5 h-5 border-2 border-muted-foreground/30 border-t-primary rounded-full animate-spin', className)}
-      role="status"
+    <HeroSpinner
+      color="primary"
+      size="md"
+      className={className}
       aria-label="Loading"
     />
   );

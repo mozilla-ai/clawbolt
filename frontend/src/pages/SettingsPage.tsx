@@ -5,8 +5,10 @@ import Input from '@/components/ui/input';
 import Textarea from '@/components/ui/textarea';
 import Button from '@/components/ui/button';
 import Select from '@/components/ui/select';
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs';
-import { toast } from 'sonner';
+import { Tabs, Tab } from '@heroui/tabs';
+import Checkbox from '@/components/ui/checkbox';
+import Field from '@/components/ui/field';
+import { toast } from '@/lib/toast';
 import api from '@/api';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
@@ -45,58 +47,45 @@ export default function SettingsPage() {
     navigate(`/app/settings/${value}`, { replace: true });
   };
 
+  // Build tab list
+  const ossTabs = showOssSettingsTabs(isPremium)
+    ? [
+        { key: 'user', label: 'User' },
+        { key: 'soul', label: 'Soul' },
+        { key: 'heartbeat', label: 'Heartbeat' },
+      ]
+    : [];
+  const allTabs = [...ossTabs, ...extraTabs.map((t) => ({ key: t.key, label: t.label }))];
+
   // Premium-only tab
   const premiumContent = renderPremiumSettingsTab(activeTab);
-  if (premiumContent) {
-    return (
-      <div>
-        <h2 className="text-xl font-semibold mb-6">Settings</h2>
-        <Tabs value={activeTab} onValueChange={handleTabChange}>
-          <TabsList>
-            {showOssSettingsTabs(isPremium) && (
-              <>
-                <TabsTrigger value="user">User</TabsTrigger>
-                <TabsTrigger value="soul">Soul</TabsTrigger>
-                <TabsTrigger value="heartbeat">Heartbeat</TabsTrigger>
-              </>
-            )}
-            {extraTabs.map((t) => (
-              <TabsTrigger key={t.key} value={t.key}>{t.label}</TabsTrigger>
-            ))}
-          </TabsList>
-          <TabsContent value={activeTab}>
-            {premiumContent}
-          </TabsContent>
-        </Tabs>
-      </div>
-    );
-  }
+
+  // Render tab content based on active tab
+  const renderContent = () => {
+    if (premiumContent) return premiumContent;
+    switch (activeTab) {
+      case 'user': return profile ? <UserTab profile={profile} onSaved={reloadProfile} /> : null;
+      case 'soul': return profile ? <SoulTab profile={profile} onSaved={reloadProfile} /> : null;
+      case 'heartbeat': return profile ? <HeartbeatTab profile={profile} onSaved={reloadProfile} /> : null;
+      default: return null;
+    }
+  };
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-6">Settings</h2>
-      <Tabs value={activeTab} onValueChange={handleTabChange}>
-        <TabsList>
-          <TabsTrigger value="user">User</TabsTrigger>
-          <TabsTrigger value="soul">Soul</TabsTrigger>
-          <TabsTrigger value="heartbeat">Heartbeat</TabsTrigger>
-          {extraTabs.map((t) => (
-            <TabsTrigger key={t.key} value={t.key}>{t.label}</TabsTrigger>
-          ))}
-        </TabsList>
-
-        <TabsContent value="user">
-          {profile && <UserTab profile={profile} onSaved={reloadProfile} />}
-        </TabsContent>
-
-        <TabsContent value="soul">
-          {profile && <SoulTab profile={profile} onSaved={reloadProfile} />}
-        </TabsContent>
-
-        <TabsContent value="heartbeat">
-          {profile && <HeartbeatTab profile={profile} onSaved={reloadProfile} />}
-        </TabsContent>
+      <h2 className="heading-page mb-6">Settings</h2>
+      <Tabs
+        selectedKey={activeTab}
+        onSelectionChange={(key) => handleTabChange(String(key))}
+        variant="underlined"
+      >
+        {allTabs.map((t) => (
+          <Tab key={t.key} title={t.label} />
+        ))}
       </Tabs>
+      <div className="mt-4">
+        {renderContent()}
+      </div>
     </div>
   );
 }
@@ -140,7 +129,7 @@ function UserTab({
             rows={12}
             placeholder="Tell your assistant about yourself: your name, phone, timezone, preferences, what projects you're working on..."
           />
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="helper-text">
             Everything your assistant knows about you lives here. Updated over time as it learns about you.
           </p>
         </Field>
@@ -193,7 +182,7 @@ function SoulTab({
             rows={14}
             placeholder="Describe how your assistant should behave, speak, and interact with clients. Include what it should call itself (e.g. 'Your name is Claw')..."
           />
-          <p className="text-xs text-muted-foreground mt-1">
+          <p className="helper-text">
             This guides your assistant's personality, name, and communication style.
           </p>
         </Field>
@@ -269,12 +258,10 @@ function HeartbeatTab({
     <Card>
       <div className="grid gap-4">
         <div className="flex items-center gap-3">
-          <input
-            type="checkbox"
+          <Checkbox
             id="heartbeat-opt-in"
             checked={form.heartbeat_opt_in}
             onChange={(e) => setForm((prev) => ({ ...prev, heartbeat_opt_in: e.target.checked }))}
-            className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
           />
           <label htmlFor="heartbeat-opt-in" className="text-sm">
             Enable heartbeat check-ins
@@ -303,7 +290,7 @@ function HeartbeatTab({
               disabled={!form.heartbeat_opt_in}
               placeholder="e.g. 45m, 3h, 2d"
             />
-            <p className="text-xs text-muted-foreground mt-1">
+            <p className="helper-text">
               Use a number followed by m (minutes), h (hours), or d (days).
             </p>
           </Field>
@@ -318,13 +305,3 @@ function HeartbeatTab({
   );
 }
 
-// --- Shared field wrapper ---
-
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return (
-    <div>
-      <label className="text-xs font-medium text-muted-foreground block mb-1">{label}</label>
-      {children}
-    </div>
-  );
-}

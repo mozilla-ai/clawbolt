@@ -1,6 +1,8 @@
 import { useState, useCallback, useEffect } from 'react';
 import Card from '@/components/ui/card';
-import { toast } from 'sonner';
+import Button from '@/components/ui/button';
+import Checkbox from '@/components/ui/checkbox';
+import { toast } from '@/lib/toast';
 import api from '@/api';
 import type { ToolConfigEntry } from '@/types';
 
@@ -35,7 +37,7 @@ export default function ToolsPage() {
   if (loading) {
     return (
       <div>
-        <h2 className="text-xl font-semibold mb-6">Tools</h2>
+        <h2 className="heading-page mb-6">Tools</h2>
         <Card>
           <p className="text-sm text-muted-foreground">Loading tool configuration...</p>
         </Card>
@@ -63,7 +65,7 @@ export default function ToolsPage() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-6">Tools</h2>
+      <h2 className="heading-page mb-6">Tools</h2>
       <Card>
         <div className="grid gap-6">
           <div>
@@ -77,19 +79,17 @@ export default function ToolsPage() {
               <h3 className="text-sm font-medium mb-3">{group}</h3>
               <div className="grid gap-2">
                 {domainGroups[group].map((tool) => (
-                  <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded border border-border">
+                  <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded-md border border-border hover:bg-secondary-hover transition-all duration-150">
                     <div>
                       <span className="text-sm font-medium">{tool.name}</span>
                       {tool.description && (
                         <p className="text-xs text-muted-foreground">{tool.description}</p>
                       )}
                     </div>
-                    <input
-                      type="checkbox"
+                    <Checkbox
                       checked={tool.enabled}
                       disabled={saving === tool.name}
                       onChange={(e) => handleToggle(tool.name, e.target.checked)}
-                      className="w-4 h-4 rounded border-border text-primary focus:ring-primary"
                     />
                   </div>
                 ))}
@@ -99,11 +99,11 @@ export default function ToolsPage() {
 
           {coreTools.length > 0 && (
             <div className="border-t border-border pt-4">
-              <button
-                type="button"
-                aria-expanded={coreExpanded}
+              <Button
+                variant="ghost"
+                className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground font-medium"
                 onClick={() => setCoreExpanded(!coreExpanded)}
-                className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
+                aria-expanded={coreExpanded}
               >
                 <svg
                   className={`w-4 h-4 transition-transform ${coreExpanded ? 'rotate-90' : ''}`}
@@ -115,23 +115,18 @@ export default function ToolsPage() {
                   <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
                 </svg>
                 Core Tools (always enabled)
-              </button>
+              </Button>
               {coreExpanded && (
                 <div className="grid gap-2 mt-3">
                   {coreTools.map((tool) => (
-                    <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded bg-muted/50">
+                    <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded-md bg-panel/50">
                       <div>
                         <span className="text-sm font-medium">{tool.name}</span>
                         {tool.description && (
                           <p className="text-xs text-muted-foreground">{tool.description}</p>
                         )}
                       </div>
-                      <input
-                        type="checkbox"
-                        checked={true}
-                        disabled={true}
-                        className="w-4 h-4 rounded border-border text-primary opacity-50 cursor-not-allowed"
-                      />
+                      <Checkbox checked disabled />
                     </div>
                   ))}
                 </div>

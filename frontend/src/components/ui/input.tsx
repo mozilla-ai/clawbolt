@@ -1,17 +1,35 @@
-import { type InputHTMLAttributes, forwardRef } from 'react';
-import { cn } from '@/lib/utils';
+import { forwardRef, type InputHTMLAttributes } from 'react';
+import { Input as HeroInput } from '@heroui/input';
 
-const Input = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLInputElement>>(
-  ({ className, ...props }, ref) => (
-    <input
-      ref={ref}
-      className={cn(
-        'w-full px-3 py-2.5 sm:py-2 text-base sm:text-sm bg-card border border-border rounded-[--radius-md] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors',
-        className,
-      )}
-      {...props}
-    />
-  ),
+type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'size' | 'color'>;
+
+const Input = forwardRef<HTMLInputElement, InputProps>(
+  ({ className, disabled, onChange, value, placeholder, type, id, autoComplete, ...rest }, ref) => {
+    void rest;
+    return (
+      <HeroInput
+        ref={ref}
+        variant="bordered"
+        size="sm"
+        radius="md"
+        isDisabled={disabled}
+        value={value as string | undefined}
+        placeholder={placeholder}
+        type={type}
+        id={id}
+        autoComplete={autoComplete}
+        onValueChange={(val) => {
+          if (onChange) {
+            const syntheticEvent = {
+              target: { value: val },
+            } as React.ChangeEvent<HTMLInputElement>;
+            onChange(syntheticEvent);
+          }
+        }}
+        className={className}
+      />
+    );
+  },
 );
 Input.displayName = 'Input';
 export default Input;

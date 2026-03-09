@@ -1,10 +1,10 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import Button from '@/components/ui/button';
 import Card from '@/components/ui/card';
+import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import api from '@/api';
-import { toast } from 'sonner';
+import { toast } from '@/lib/toast';
 import type { SessionSummary } from '@/types';
 
 interface FileAttachment {
@@ -64,7 +64,7 @@ export default function ChatPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [pickerOpen, setPickerOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const pickerRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
@@ -242,8 +242,8 @@ export default function ChatPage() {
       {/* Header */}
       <div className="py-4 sm:py-6 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold">Chat</h2>
-          <p className="text-sm text-muted-foreground mt-1">
+          <h2 className="heading-page">Chat</h2>
+          <p className="page-subtitle">
             Talk with your AI assistant directly from the dashboard.
           </p>
         </div>
@@ -254,10 +254,11 @@ export default function ChatPage() {
             <>
               {/* Session picker */}
               <div className="relative" ref={pickerRef}>
-                <button
-                  type="button"
+                <Button
+                  variant="secondary"
+                  size="sm"
                   onClick={() => setPickerOpen((v) => !v)}
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-base sm:text-xs bg-card border border-border rounded-[--radius-md] text-foreground hover:bg-secondary-hover focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors max-w-[220px]"
+                  className="gap-1.5 text-base sm:text-xs max-w-[220px]"
                 >
                   <span className="truncate">
                     {activeSession
@@ -267,43 +268,47 @@ export default function ChatPage() {
                       : 'New conversation'}
                   </span>
                   <ChevronIcon open={pickerOpen} />
-                </button>
+                </Button>
 
                 {pickerOpen && (
-                  <div className="absolute right-0 top-full mt-1 w-72 bg-card border border-border rounded-[--radius-lg] shadow-lg z-50 overflow-hidden">
+                  <div className="absolute right-0 top-full mt-1 w-72 bg-card border border-border rounded-lg shadow-lg z-50 overflow-hidden">
                     <div className="p-1.5">
-                      <button
-                        type="button"
+                      <Button
+                        variant="ghost"
+                        size="sm"
                         onClick={startNewChat}
-                        className="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-[--radius-md] text-primary hover:bg-secondary-hover transition-colors"
+                        className="w-full justify-start gap-2 text-primary"
                       >
                         <PlusIcon />
                         New conversation
-                      </button>
+                      </Button>
                     </div>
                     {sessions.length > 0 && (
                       <>
                         <div className="border-t border-border" />
                         <div className="max-h-64 overflow-y-auto p-1.5 space-y-0.5">
                           {sessions.map((s) => (
-                            <button
+                            <Button
                               key={s.id}
-                              type="button"
+                              variant="ghost"
+                              size="sm"
                               onClick={() => selectSession(s.id)}
-                              className={`w-full text-left px-3 py-2 rounded-[--radius-md] transition-colors ${
+                              className={`w-full justify-start text-left h-auto py-2 ${
                                 s.id === activeSessionId
                                   ? 'bg-selected-bg text-primary'
-                                  : 'hover:bg-secondary-hover text-foreground'
+                                  : 'text-foreground'
                               }`}
                             >
-                              <p className="text-sm truncate">
-                                {s.last_message_preview || 'Empty conversation'}
-                              </p>
-                              <p className="text-[10px] text-muted-foreground mt-0.5">
-                                {formatSessionTime(s.start_time)}
-                                {s.message_count > 0 && ` | ${s.message_count} messages`}
-                              </p>
-                            </button>
+                              <div className="min-w-0">
+                                <p className="text-sm truncate">
+                                  {s.last_message_preview || 'Empty conversation'}
+                                </p>
+                                <p className="text-[10px] text-muted-foreground mt-0.5 font-normal">
+                                  {formatSessionTime(s.start_time)}
+                                  {s.message_count > 0 && ` | ${s.message_count} messages`}
+                                </p>
+                              </div>
+                            </Button>
                           ))}
                         </div>
                       </>
@@ -335,10 +340,10 @@ export default function ChatPage() {
                 className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
               >
                 <div
-                  className={`max-w-[80%] rounded-[--radius-lg] px-4 py-2.5 ${
+                  className={`max-w-[80%] px-4 py-2.5 animate-message-in ${
                     msg.role === 'user'
-                      ? 'bg-primary text-white'
-                      : 'bg-card border border-border'
+                      ? 'bg-primary text-white rounded-[12px_12px_4px_12px]'
+                      : 'bg-card border border-border rounded-[12px_12px_12px_4px]'
                   }`}
                 >
                   {/* Attachments */}
@@ -369,7 +374,9 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.body && (
-                    <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
+                    <div className={msg.role === 'assistant' ? 'prose-chat' : ''}>
+                      <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
+                    </div>
                   )}
                   <p
                     className={`text-[10px] mt-1 ${
@@ -384,10 +391,20 @@ export default function ChatPage() {
 
             {sending && (
               <div className="flex justify-start">
-                <div className="bg-card border border-border rounded-[--radius-lg] px-4 py-2.5">
-                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                    <Spinner className="w-4 h-4" />
-                    Thinking...
+                <div className="bg-card border border-border rounded-[12px_12px_12px_4px] px-4 py-3 animate-message-in">
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className="status-dot bg-muted-foreground/60"
+                      style={{ animation: 'typing-bounce 1.2s ease-in-out infinite' }}
+                    />
+                    <span
+                      className="status-dot bg-muted-foreground/60"
+                      style={{ animation: 'typing-bounce 1.2s ease-in-out 0.2s infinite' }}
+                    />
+                    <span
+                      className="status-dot bg-muted-foreground/60"
+                      style={{ animation: 'typing-bounce 1.2s ease-in-out 0.4s infinite' }}
+                    />
                   </div>
                 </div>
               </div>
@@ -396,39 +413,9 @@ export default function ChatPage() {
         )}
       </div>
 
-      {/* File preview strip */}
-      {selectedFiles.length > 0 && (
-        <div className="flex flex-wrap gap-2 px-1 pb-2">
-          {selectedFiles.map((file, i) => (
-            <div
-              key={i}
-              className="flex items-center gap-1.5 bg-muted text-foreground text-xs px-2 py-1 rounded"
-            >
-              {file.type.startsWith('image/') ? (
-                <img
-                  src={URL.createObjectURL(file)}
-                  alt={file.name}
-                  className="w-6 h-6 rounded object-cover"
-                />
-              ) : (
-                <FileIcon />
-              )}
-              <span className="truncate max-w-[100px]">{file.name}</span>
-              <button
-                type="button"
-                onClick={() => removeFile(i)}
-                className="ml-0.5 text-muted-foreground hover:text-foreground"
-              >
-                x
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
       {/* Input area */}
-      <div className="border-t border-border pt-4 pb-4 sm:pb-6">
-        <form onSubmit={handleSubmit} className="flex gap-2">
+      <div className="pt-3 pb-4 sm:pb-6">
+        <form onSubmit={handleSubmit}>
           <input
             ref={fileInputRef}
             type="file"
@@ -437,28 +424,85 @@ export default function ChatPage() {
             onChange={handleFileSelect}
             className="hidden"
           />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={sending}
-            className="px-2 py-2 text-muted-foreground hover:text-foreground transition-colors disabled:opacity-50"
-            title="Attach files"
-          >
-            <PaperclipIcon />
-          </button>
-          <input
-            ref={inputRef}
-            type="text"
-            value={input}
-            onChange={(e) => setInput(e.target.value)}
-            placeholder="Type a message..."
-            disabled={sending}
-            className="flex-1 px-3 py-2.5 sm:py-2 text-base sm:text-sm bg-card border border-border rounded-[--radius-md] text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors disabled:opacity-50"
-            autoComplete="off"
-          />
-          <Button type="submit" disabled={!canSend}>
-            Send
-          </Button>
+          <div className="flex flex-col gap-2 p-2 bg-panel border border-border rounded-lg">
+            <textarea
+              ref={inputRef}
+              value={input}
+              onChange={(e) => {
+                setInput(e.target.value);
+                // Auto-grow: reset height then set to scrollHeight
+                const el = e.target;
+                el.style.height = 'auto';
+                el.style.height = Math.min(el.scrollHeight, 160) + 'px';
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && !e.shiftKey && !sending) {
+                  e.preventDefault();
+                  if (canSend) handleSubmit(e);
+                }
+              }}
+              placeholder="Type a message..."
+              disabled={sending}
+              rows={1}
+              className="w-full px-2 py-1.5 text-base sm:text-sm bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none resize-none disabled:opacity-50"
+              autoComplete="off"
+              style={{ height: 'auto' }}
+            />
+
+            {/* File preview chips */}
+            {selectedFiles.length > 0 && (
+              <div className="flex flex-wrap gap-1.5 px-1">
+                {selectedFiles.map((file, i) => (
+                  <div
+                    key={i}
+                    className="flex items-center gap-1.5 bg-card border border-border text-foreground text-xs px-2 py-1 rounded-md"
+                  >
+                    {file.type.startsWith('image/') ? (
+                      <img
+                        src={URL.createObjectURL(file)}
+                        alt={file.name}
+                        className="w-5 h-5 rounded object-cover"
+                      />
+                    ) : (
+                      <FileIcon />
+                    )}
+                    <span className="truncate max-w-[100px]">{file.name}</span>
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      onClick={() => removeFile(i)}
+                      className="ml-0.5 text-muted-foreground hover:text-foreground"
+                      aria-label={`Remove ${file.name}`}
+                    >
+                      <CloseIcon />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* Toolbar row */}
+            <div className="flex items-center justify-between">
+              <Button
+                variant="ghost"
+                size="icon"
+                onClick={() => fileInputRef.current?.click()}
+                disabled={sending}
+                className="text-muted-foreground hover:text-foreground"
+                title="Attach files"
+              >
+                <PaperclipIcon />
+              </Button>
+              <Button
+                type="submit"
+                size="icon"
+                disabled={!canSend}
+                aria-label="Send message"
+              >
+                <SendIcon />
+              </Button>
+            </div>
+          </div>
         </form>
       </div>
     </div>
@@ -536,6 +580,27 @@ function FileIcon() {
         strokeWidth={1.5}
         d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"
       />
+    </svg>
+  );
+}
+
+function SendIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={2}
+        d="M5 12h14m-7-7l7 7-7 7"
+      />
+    </svg>
+  );
+}
+
+function CloseIcon() {
+  return (
+    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
     </svg>
   );
 }

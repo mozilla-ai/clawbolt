@@ -1,37 +1,60 @@
-import { type ButtonHTMLAttributes, forwardRef } from 'react';
-import { cn } from '@/lib/utils';
+import { forwardRef, type ButtonHTMLAttributes, type ReactNode } from 'react';
+import { Button as HeroButton } from '@heroui/button';
 
-const variants = {
-  primary: 'bg-primary text-white hover:bg-primary-hover',
-  secondary: 'bg-card text-foreground border border-border hover:bg-secondary-hover',
-  danger: 'bg-danger text-white hover:opacity-90',
-  ghost: 'text-foreground hover:bg-secondary-hover',
-} as const;
+type Variant = 'primary' | 'secondary' | 'danger' | 'ghost';
+type Size = 'sm' | 'md' | 'lg' | 'icon' | 'icon-sm';
 
-const sizes = {
-  sm: 'px-3 py-1.5 text-sm',
-  md: 'px-4 py-2 text-sm',
-  lg: 'px-6 py-2.5 text-base',
-} as const;
+function mapVariant(v: Variant) {
+  switch (v) {
+    case 'primary': return { color: 'primary' as const, variant: 'solid' as const };
+    case 'secondary': return { color: 'default' as const, variant: 'bordered' as const };
+    case 'danger': return { color: 'danger' as const, variant: 'solid' as const };
+    case 'ghost': return { color: 'default' as const, variant: 'light' as const };
+  }
+}
 
-type ButtonProps = ButtonHTMLAttributes<HTMLButtonElement> & {
-  variant?: keyof typeof variants;
-  size?: keyof typeof sizes;
+function mapSize(s: Size) {
+  switch (s) {
+    case 'sm': return 'sm' as const;
+    case 'md': return 'md' as const;
+    case 'lg': return 'lg' as const;
+    case 'icon': return 'md' as const;
+    case 'icon-sm': return 'sm' as const;
+  }
+}
+
+type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'color'> & {
+  variant?: Variant;
+  size?: Size;
+  children?: ReactNode;
 };
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'primary', size = 'md', ...props }, ref) => (
-    <button
-      ref={ref}
-      className={cn(
-        'inline-flex items-center justify-center font-medium rounded-[--radius-md] transition-colors disabled:opacity-50 disabled:pointer-events-none',
-        variants[variant],
-        sizes[size],
-        className,
-      )}
-      {...props}
-    />
-  ),
+  ({ className, variant = 'primary', size = 'md', disabled, onClick, type, children, title, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, ...rest }, ref) => {
+    const mapped = mapVariant(variant);
+    const isIconOnly = size === 'icon' || size === 'icon-sm';
+    // Avoid passing rest to prevent incompatible HTML attribute types
+    void rest;
+
+    return (
+      <HeroButton
+        ref={ref}
+        color={mapped.color}
+        variant={mapped.variant}
+        size={mapSize(size)}
+        isIconOnly={isIconOnly}
+        isDisabled={disabled}
+        onPress={onClick as unknown as undefined}
+        type={type}
+        className={className}
+        title={title}
+        aria-label={ariaLabel}
+        aria-expanded={ariaExpanded}
+      >
+        {children}
+      </HeroButton>
+    );
+  },
 );
 Button.displayName = 'Button';
 export default Button;
