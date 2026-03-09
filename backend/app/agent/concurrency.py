@@ -1,11 +1,11 @@
-"""Per-contractor processing lock to prevent race conditions.
+"""Per-user processing lock to prevent race conditions.
 
-When two messages from the same contractor arrive in quick succession,
+When two messages from the same user arrive in quick succession,
 both background tasks could run the agent pipeline simultaneously,
 causing duplicate memory saves, conflicting tool executions, and
-interleaved responses.  This module provides a simple per-contractor
-``asyncio.Lock`` manager that serializes processing for each contractor
-while allowing different contractors to be processed in parallel.
+interleaved responses.  This module provides a simple per-user
+``asyncio.Lock`` manager that serializes processing for each user
+while allowing different users to be processed in parallel.
 """
 
 from __future__ import annotations
@@ -33,14 +33,14 @@ class _LockEntry:
         self.last_used = time.monotonic()
 
 
-class ContractorLockManager:
-    """Manages per-contractor asyncio locks.
+class UserLockManager:
+    """Manages per-user asyncio locks.
 
     Usage::
 
-        lock_manager = ContractorLockManager()
+        lock_manager = UserLockManager()
 
-        async with lock_manager.acquire(contractor_id):
+        async with lock_manager.acquire(user_id):
             await run_agent_pipeline(...)
     """
 
@@ -48,16 +48,16 @@ class ContractorLockManager:
         self._locks: dict[int, _LockEntry] = {}
         self._expiry_seconds = expiry_seconds
 
-    def acquire(self, contractor_id: int) -> asyncio.Lock:
-        """Get the lock for a contractor, creating one if needed.
+    def acquire(self, user_id: int) -> asyncio.Lock:
+        """Get the lock for a user, creating one if needed.
 
         Returns the ``asyncio.Lock`` itself so callers can use
-        ``async with lock_manager.acquire(contractor_id):``.
+        ``async with lock_manager.acquire(user_id):``.
         """
-        entry = self._locks.get(contractor_id)
+        entry = self._locks.get(user_id)
         if entry is None:
             entry = _LockEntry()
-            self._locks[contractor_id] = entry
+            self._locks[user_id] = entry
         entry.touch()
         return entry.lock
 
@@ -75,7 +75,7 @@ class ContractorLockManager:
         for cid in stale:
             del self._locks[cid]
         if stale:
-            logger.debug("Cleaned up %d stale contractor locks", len(stale))
+            logger.debug("Cleaned up %d stale user locks", len(stale))
         return len(stale)
 
     @property
@@ -85,4 +85,4 @@ class ContractorLockManager:
 
 
 # Module-level singleton
-contractor_locks = ContractorLockManager()
+user_locks = UserLockManager()

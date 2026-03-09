@@ -16,7 +16,7 @@
 
 ---
 
-Clawbolt is a messaging-first AI assistant that helps contractors manage their business: estimates, client records, job photos, voice memos, and more, all through Telegram. No app to install, no dashboard to learn. Just text.
+Clawbolt is a messaging-first AI assistant that helps users manage their business: estimates, client records, job photos, voice memos, and more, all through Telegram. No app to install, no dashboard to learn. Just text.
 
 **[Read the full documentation](https://mozilla-ai.github.io/clawbolt)**
 
@@ -32,7 +32,7 @@ Clawbolt is a messaging-first AI assistant that helps contractors manage their b
 - **Voice memos** -- Send a voice note, get it transcribed and processed as a message
 - **File cataloging** -- Photos and documents auto-organized in Dropbox or Google Drive
 - **Proactive heartbeat** -- Clawbolt checks in periodically with reminders about stale drafts and follow-ups
-- **Onboarding** -- First-time contractors get a friendly conversation to set up their profile
+- **Onboarding** -- First-time users get a friendly conversation to set up their profile
 
 ## Quick Start
 

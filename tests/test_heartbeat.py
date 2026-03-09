@@ -11,9 +11,9 @@ from any_llm.types.messages import MessageContentBlock, MessageResponse, Message
 
 from backend.app.agent.file_store import (
     ChecklistItem,
-    ContractorData,
     HeartbeatLogEntry,
     StoredMessage,
+    UserData,
 )
 from backend.app.agent.heartbeat import (
     COMPOSE_MESSAGE_TOOL,
@@ -31,7 +31,7 @@ from backend.app.agent.heartbeat import (
     is_within_business_hours,
     parse_frequency_to_minutes,
     run_cheap_checks,
-    run_heartbeat_for_contractor,
+    run_heartbeat_for_user,
 )
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
@@ -41,8 +41,8 @@ from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
 @pytest.fixture()
-def contractor() -> ContractorData:
-    return ContractorData(
+def user() -> UserData:
+    return UserData(
         id=1,
         user_id="hb-user-001",
         name="Mike the Plumber",
@@ -52,8 +52,8 @@ def contractor() -> ContractorData:
 
 
 @pytest.fixture()
-def contractor_no_hours() -> ContractorData:
-    return ContractorData(
+def user_no_hours() -> UserData:
+    return UserData(
         id=2,
         user_id="hb-user-002",
         name="Jane Electric",
@@ -63,8 +63,8 @@ def contractor_no_hours() -> ContractorData:
 
 
 @pytest.fixture()
-def contractor_with_timezone() -> ContractorData:
-    return ContractorData(
+def user_with_timezone() -> UserData:
+    return UserData(
         id=3,
         user_id="hb-user-003",
         name="Carlos Roofing",
@@ -132,37 +132,33 @@ class TestParseBusinessHours:
 
 class TestIsWithinBusinessHours:
     @patch("backend.app.agent.heartbeat.settings")
-    def test_outside_quiet_hours(
-        self, mock_settings: MagicMock, contractor: ContractorData
-    ) -> None:
+    def test_outside_quiet_hours(self, mock_settings: MagicMock, user: UserData) -> None:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
         # 10 AM -- outside quiet hours, should be True
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is True
+        assert is_within_business_hours(user, now) is True
 
     @patch("backend.app.agent.heartbeat.settings")
-    def test_inside_quiet_hours_evening(
-        self, mock_settings: MagicMock, contractor: ContractorData
-    ) -> None:
+    def test_inside_quiet_hours_evening(self, mock_settings: MagicMock, user: UserData) -> None:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
         # 22:00 -- inside quiet hours, should be False
         now = datetime.datetime(2025, 6, 15, 22, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is False
+        assert is_within_business_hours(user, now) is False
 
     @patch("backend.app.agent.heartbeat.settings")
     def test_inside_quiet_hours_early_morning(
-        self, mock_settings: MagicMock, contractor: ContractorData
+        self, mock_settings: MagicMock, user: UserData
     ) -> None:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
         # 3 AM -- inside quiet hours, should be False
         now = datetime.datetime(2025, 6, 15, 3, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is False
+        assert is_within_business_hours(user, now) is False
 
 
 class TestToLocalTime:
@@ -196,44 +192,42 @@ class TestIsWithinBusinessHoursTimezone:
 
     @patch("backend.app.agent.heartbeat.settings")
     def test_timezone_converts_before_quiet_check(
-        self, mock_settings: MagicMock, contractor_with_timezone: ContractorData
+        self, mock_settings: MagicMock, user_with_timezone: UserData
     ) -> None:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
         # 2 PM UTC -> 7 AM Pacific (PDT). Outside quiet hours.
         now = datetime.datetime(2025, 6, 15, 14, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor_with_timezone, now) is True
+        assert is_within_business_hours(user_with_timezone, now) is True
 
     @patch("backend.app.agent.heartbeat.settings")
     def test_utc_morning_is_night_in_pacific(
-        self, mock_settings: MagicMock, contractor_with_timezone: ContractorData
+        self, mock_settings: MagicMock, user_with_timezone: UserData
     ) -> None:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
         # 5 AM UTC -> 10 PM Pacific (PDT, previous day). Inside quiet hours.
         now = datetime.datetime(2025, 6, 15, 5, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor_with_timezone, now) is False
+        assert is_within_business_hours(user_with_timezone, now) is False
 
     @patch("backend.app.agent.heartbeat.settings")
-    def test_no_timezone_uses_utc(
-        self, mock_settings: MagicMock, contractor: ContractorData
-    ) -> None:
+    def test_no_timezone_uses_utc(self, mock_settings: MagicMock, user: UserData) -> None:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
-        # Contractor without timezone uses UTC directly.
+        # User without timezone uses UTC directly.
         # 10 AM UTC, outside quiet hours.
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(contractor, now) is True
+        assert is_within_business_hours(user, now) is True
 
     @patch("backend.app.agent.heartbeat.settings")
     def test_invalid_timezone_falls_back_to_utc(self, mock_settings: MagicMock) -> None:
         mock_settings.heartbeat_quiet_hours_start = 20
         mock_settings.heartbeat_quiet_hours_end = 7
 
-        c = ContractorData(
+        c = UserData(
             id=99,
             user_id="hb-user-bad-tz",
             name="Bad TZ",
@@ -252,18 +246,18 @@ class TestIsWithinBusinessHoursTimezone:
 
 class TestRunCheapChecks:
     @pytest.mark.asyncio
-    async def test_no_flags_when_clean(self, contractor: ContractorData) -> None:
+    async def test_no_flags_when_clean(self, user: UserData) -> None:
         """No stale estimates, no checklist items, no time-sensitive memories."""
-        result = await run_cheap_checks(contractor)
+        result = await run_cheap_checks(user)
         assert not result.has_flags
         assert result.flags == []
 
     @pytest.mark.asyncio
-    async def test_stale_estimate_flagged(self, contractor: ContractorData) -> None:
+    async def test_stale_estimate_flagged(self, user: UserData) -> None:
         """Draft estimate older than 24h should be flagged."""
         from backend.app.agent.file_store import EstimateStore
 
-        store = EstimateStore(contractor.id)
+        store = EstimateStore(user.id)
         est = await store.create(
             description="Deck build for Smith",
             total_amount=3000,
@@ -276,18 +270,18 @@ class TestRunCheapChecks:
         _write_json(store._estimate_path(est.id), est.model_dump())
 
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        result = await run_cheap_checks(contractor, now=now)
+        result = await run_cheap_checks(user, now=now)
         assert result.has_flags
         assert len(result.stale_estimates) == 1
         assert "Deck build" in result.flags[0]
 
     @pytest.mark.asyncio
-    async def test_recent_draft_not_flagged(self, contractor: ContractorData) -> None:
+    async def test_recent_draft_not_flagged(self, user: UserData) -> None:
         """Draft estimate less than 24h old should NOT be flagged."""
         from backend.app.agent.file_store import EstimateStore, _write_json
 
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        store = EstimateStore(contractor.id)
+        store = EstimateStore(user.id)
         est = await store.create(
             description="Fresh estimate",
             total_amount=1000,
@@ -296,16 +290,16 @@ class TestRunCheapChecks:
         est.created_at = (now - datetime.timedelta(hours=12)).isoformat()
         _write_json(store._estimate_path(est.id), est.model_dump())
 
-        result = await run_cheap_checks(contractor, now=now)
+        result = await run_cheap_checks(user, now=now)
         assert not result.has_flags
         assert len(result.stale_estimates) == 0
 
     @pytest.mark.asyncio
-    async def test_sent_estimate_not_flagged(self, contractor: ContractorData) -> None:
+    async def test_sent_estimate_not_flagged(self, user: UserData) -> None:
         """Sent estimates should not be flagged regardless of age."""
         from backend.app.agent.file_store import EstimateStore, _write_json
 
-        store = EstimateStore(contractor.id)
+        store = EstimateStore(user.id)
         est = await store.create(
             description="Already sent",
             total_amount=5000,
@@ -315,81 +309,81 @@ class TestRunCheapChecks:
         _write_json(store._estimate_path(est.id), est.model_dump())
 
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        result = await run_cheap_checks(contractor, now=now)
+        result = await run_cheap_checks(user, now=now)
         assert not result.has_flags
 
     @pytest.mark.asyncio
-    async def test_checklist_item_due(self, contractor: ContractorData) -> None:
+    async def test_checklist_item_due(self, user: UserData) -> None:
         """Active checklist item with no last_triggered_at should be flagged."""
         from backend.app.agent.file_store import HeartbeatStore
 
-        store = HeartbeatStore(contractor.id)
+        store = HeartbeatStore(user.id)
         await store.add_checklist_item(
             description="Check material prices",
             schedule="daily",
         )
 
-        result = await run_cheap_checks(contractor)
+        result = await run_cheap_checks(user)
         assert result.has_flags
         assert len(result.due_checklist_items) == 1
         assert "material prices" in result.flags[0]
 
     @pytest.mark.asyncio
-    async def test_checklist_item_paused_not_flagged(self, contractor: ContractorData) -> None:
+    async def test_checklist_item_paused_not_flagged(self, user: UserData) -> None:
         """Paused checklist items should not be flagged."""
         from backend.app.agent.file_store import HeartbeatStore
 
-        store = HeartbeatStore(contractor.id)
+        store = HeartbeatStore(user.id)
         item = await store.add_checklist_item(
             description="Paused item",
             schedule="daily",
         )
         await store.update_checklist_item(item.id, status="paused")
 
-        result = await run_cheap_checks(contractor)
+        result = await run_cheap_checks(user)
         assert not result.has_flags
 
     @pytest.mark.asyncio
-    async def test_time_sensitive_memory_flagged(self, contractor: ContractorData) -> None:
+    async def test_time_sensitive_memory_flagged(self, user: UserData) -> None:
         """Memory facts with time-sensitive keywords should be flagged."""
         from backend.app.agent.file_store import get_memory_store
 
-        store = get_memory_store(contractor.id)
+        store = get_memory_store(user.id)
         await store.save_memory(
             key="smith_followup",
             value="Follow up with Smith about deck quote",
             category="client",
         )
 
-        result = await run_cheap_checks(contractor)
+        result = await run_cheap_checks(user)
         assert result.has_flags
         assert len(result.time_sensitive_memories) == 1
         assert "smith_followup" in result.flags[0]
 
     @pytest.mark.asyncio
-    async def test_regular_memory_not_flagged(self, contractor: ContractorData) -> None:
+    async def test_regular_memory_not_flagged(self, user: UserData) -> None:
         """Memory facts without time-sensitive keywords should not be flagged."""
         from backend.app.agent.file_store import get_memory_store
 
-        store = get_memory_store(contractor.id)
+        store = get_memory_store(user.id)
         await store.save_memory(
             key="kitchen_rate",
             value="Standard kitchen remodel rate is $150/hour",
             category="pricing",
         )
 
-        result = await run_cheap_checks(contractor)
+        result = await run_cheap_checks(user)
         assert not result.has_flags
 
     @pytest.mark.asyncio
-    async def test_multiple_flags_combined(self, contractor: ContractorData) -> None:
+    async def test_multiple_flags_combined(self, user: UserData) -> None:
         """Multiple issues should produce multiple flags."""
         from backend.app.agent.file_store import EstimateStore, HeartbeatStore, _write_json
 
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
 
         # Stale estimate
-        est_store = EstimateStore(contractor.id)
+        est_store = EstimateStore(user.id)
         est = await est_store.create(
             description="Old estimate",
             total_amount=2000,
@@ -399,23 +393,23 @@ class TestRunCheapChecks:
         _write_json(est_store._estimate_path(est.id), est.model_dump())
 
         # Due checklist item
-        hb_store = HeartbeatStore(contractor.id)
+        hb_store = HeartbeatStore(user.id)
         await hb_store.add_checklist_item(
             description="Check inbox",
             schedule="daily",
         )
 
-        result = await run_cheap_checks(contractor, now=now)
+        result = await run_cheap_checks(user, now=now)
         assert result.has_flags
         assert len(result.flags) == 2
 
     @pytest.mark.asyncio
-    async def test_idle_contractor_flagged(self, contractor: ContractorData) -> None:
-        """Contractor with last inbound message older than idle_days should be flagged."""
+    async def test_idle_user_flagged(self, user: UserData) -> None:
+        """User with last inbound message older than idle_days should be flagged."""
         from backend.app.agent.file_store import get_session_store
 
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        store = get_session_store(contractor.id)
+        store = get_session_store(user.id)
 
         session, _ = await store.get_or_create_session()
         # Write a backdated inbound message directly to the JSONL file
@@ -429,19 +423,19 @@ class TestRunCheapChecks:
         )
         _append_jsonl(store._session_path(session.session_id), msg.model_dump())
 
-        result = await run_cheap_checks(contractor, now=now)
+        result = await run_cheap_checks(user, now=now)
         assert result.has_flags
         idle_flags = [f for f in result.flags if "idle" in f.lower()]
         assert len(idle_flags) == 1
         assert "5 days" in idle_flags[0]
 
     @pytest.mark.asyncio
-    async def test_active_contractor_not_flagged_idle(self, contractor: ContractorData) -> None:
-        """Contractor with recent inbound message should not be flagged as idle."""
+    async def test_active_user_not_flagged_idle(self, user: UserData) -> None:
+        """User with recent inbound message should not be flagged as idle."""
         from backend.app.agent.file_store import _append_jsonl, get_session_store
 
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        store = get_session_store(contractor.id)
+        store = get_session_store(user.id)
 
         session, _ = await store.get_or_create_session()
         msg = StoredMessage(
@@ -452,15 +446,15 @@ class TestRunCheapChecks:
         )
         _append_jsonl(store._session_path(session.session_id), msg.model_dump())
 
-        result = await run_cheap_checks(contractor, now=now)
+        result = await run_cheap_checks(user, now=now)
         idle_flags = [f for f in result.flags if "idle" in f.lower()]
         assert len(idle_flags) == 0
 
     @pytest.mark.asyncio
-    async def test_no_messages_old_contractor_flagged(self) -> None:
-        """Contractor with no messages who was created more than idle_days ago should be flagged."""
+    async def test_no_messages_old_user_flagged(self) -> None:
+        """User with no messages who was created more than idle_days ago should be flagged."""
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        c = ContractorData(
+        c = UserData(
             id=50,
             user_id="hb-idle-001",
             name="Old Timer",
@@ -476,10 +470,10 @@ class TestRunCheapChecks:
         assert "onboarding" in idle_flags[0]
 
     @pytest.mark.asyncio
-    async def test_no_messages_new_contractor_not_flagged(self) -> None:
-        """Contractor with no messages who just onboarded should not be flagged as idle."""
+    async def test_no_messages_new_user_not_flagged(self) -> None:
+        """User with no messages who just onboarded should not be flagged as idle."""
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        c = ContractorData(
+        c = UserData(
             id=51,
             user_id="hb-new-001",
             name="Fresh Start",
@@ -493,15 +487,15 @@ class TestRunCheapChecks:
         assert len(idle_flags) == 0
 
     @pytest.mark.asyncio
-    async def test_outbound_only_still_flagged_idle(self, contractor: ContractorData) -> None:
-        """Contractor with only outbound messages (no inbound) should check created_at."""
+    async def test_outbound_only_still_flagged_idle(self, user: UserData) -> None:
+        """User with only outbound messages (no inbound) should check created_at."""
         from backend.app.agent.file_store import _append_jsonl, get_session_store
 
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        # Backdate the contractor's created_at
-        contractor.created_at = now - datetime.timedelta(days=5)
+        # Backdate the user's created_at
+        user.created_at = now - datetime.timedelta(days=5)
 
-        store = get_session_store(contractor.id)
+        store = get_session_store(user.id)
         session, _ = await store.get_or_create_session()
         msg = StoredMessage(
             direction="outbound",
@@ -511,7 +505,7 @@ class TestRunCheapChecks:
         )
         _append_jsonl(store._session_path(session.session_id), msg.model_dump())
 
-        result = await run_cheap_checks(contractor, now=now)
+        result = await run_cheap_checks(user, now=now)
         idle_flags = [f for f in result.flags if "idle" in f.lower()]
         assert len(idle_flags) == 1
         assert "onboarding" in idle_flags[0]
@@ -526,7 +520,7 @@ class TestIsChecklistItemDue:
     def test_never_triggered(self) -> None:
         """Item that has never been triggered is always due."""
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Test",
             schedule="daily",
             last_triggered_at=None,
@@ -538,7 +532,7 @@ class TestIsChecklistItemDue:
         """Daily item triggered 2 hours ago should not be due."""
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Test",
             schedule="daily",
             last_triggered_at=(now - datetime.timedelta(hours=2)).isoformat(),
@@ -549,7 +543,7 @@ class TestIsChecklistItemDue:
         """Daily item triggered 24 hours ago should be due."""
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Test",
             schedule="daily",
             last_triggered_at=(now - datetime.timedelta(hours=24)).isoformat(),
@@ -560,7 +554,7 @@ class TestIsChecklistItemDue:
         """Once-scheduled item that was already triggered is never due again."""
         now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Test",
             schedule="once",
             last_triggered_at=(now - datetime.timedelta(hours=1)).isoformat(),
@@ -572,7 +566,7 @@ class TestIsChecklistItemDue:
         # 2025-06-14 is a Saturday
         saturday = datetime.datetime(2025, 6, 14, 10, 0, tzinfo=datetime.UTC)
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Test",
             schedule="weekdays",
             last_triggered_at=None,
@@ -584,7 +578,7 @@ class TestIsChecklistItemDue:
         # 2025-06-16 is a Monday
         monday = datetime.datetime(2025, 6, 16, 10, 0, tzinfo=datetime.UTC)
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Test",
             schedule="weekdays",
             last_triggered_at=None,
@@ -597,7 +591,7 @@ class TestIsChecklistItemDue:
         # Simulate naive datetime as ISO string (no tz info)
         naive_last = "2025-06-14T08:00:00"
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Test",
             schedule="daily",
             last_triggered_at=naive_last,
@@ -609,14 +603,14 @@ class TestIsChecklistItemDue:
         """Weekday item should fire when UTC is Saturday but local time is still Friday.
 
         Regression test: before this fix, _is_checklist_item_due checked
-        now.weekday() in UTC. A contractor in America/Los_Angeles at 5 PM
+        now.weekday() in UTC. A user in America/Los_Angeles at 5 PM
         Friday Pacific (00:00 Saturday UTC) would have the weekday gate
         incorrectly skip the item.
         """
         # Saturday 00:00 UTC = Friday 5:00 PM Pacific (PDT, UTC-7)
         saturday_utc = datetime.datetime(2025, 6, 14, 0, 0, tzinfo=datetime.UTC)
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Weekly check-in",
             schedule="weekdays",
             last_triggered_at=None,
@@ -631,7 +625,7 @@ class TestIsChecklistItemDue:
         # Sunday 10 AM Pacific = Sunday 5 PM UTC
         sunday_utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
         item = ChecklistItem(
-            contractor_id=1,
+            user_id=1,
             description="Test",
             schedule="weekdays",
             last_triggered_at=None,
@@ -855,7 +849,7 @@ class TestEvaluateHeartbeatNeed:
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
     ) -> None:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
@@ -869,7 +863,7 @@ class TestEvaluateHeartbeatNeed:
             reasoning="Nothing actionable",
             priority=1,
         )
-        action = await evaluate_heartbeat_need(contractor, ["Stale draft estimate"])
+        action = await evaluate_heartbeat_need(user, ["Stale draft estimate"])
         assert action.action_type == "no_action"
         assert action.message == ""
 
@@ -880,7 +874,7 @@ class TestEvaluateHeartbeatNeed:
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
     ) -> None:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
@@ -894,7 +888,7 @@ class TestEvaluateHeartbeatNeed:
             reasoning="Stale draft estimate",
             priority=4,
         )
-        action = await evaluate_heartbeat_need(contractor, ["Stale draft estimate"])
+        action = await evaluate_heartbeat_need(user, ["Stale draft estimate"])
         assert action.action_type == "send_message"
         assert "draft estimate" in action.message
 
@@ -905,7 +899,7 @@ class TestEvaluateHeartbeatNeed:
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
     ) -> None:
         """When heartbeat_model is configured, it should be used instead of llm_model."""
         mock_settings.llm_model = "gpt-4o"
@@ -917,7 +911,7 @@ class TestEvaluateHeartbeatNeed:
         mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action", message="", reasoning="", priority=1
         )
-        await evaluate_heartbeat_need(contractor, ["test flag"])
+        await evaluate_heartbeat_need(user, ["test flag"])
 
         # Verify the cheap model was used
         call_kwargs = mock_llm.call_args
@@ -930,7 +924,7 @@ class TestEvaluateHeartbeatNeed:
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
     ) -> None:
         """Regression test: acompletion must receive api_base, not api_key."""
         mock_settings.llm_model = "gpt-4o"
@@ -942,7 +936,7 @@ class TestEvaluateHeartbeatNeed:
         mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action", message="", reasoning="test", priority=1
         )
-        await evaluate_heartbeat_need(contractor, ["test flag"])
+        await evaluate_heartbeat_need(user, ["test flag"])
         _, kwargs = mock_llm.call_args
         assert "api_base" in kwargs
         assert kwargs["api_base"] == "http://localhost:1234/v1"
@@ -955,7 +949,7 @@ class TestEvaluateHeartbeatNeed:
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
     ) -> None:
         """If LLM returns text instead of tool call, default to no_action."""
         mock_settings.llm_model = "gpt-4o"
@@ -965,7 +959,7 @@ class TestEvaluateHeartbeatNeed:
         mock_settings.heartbeat_provider = ""
         mock_settings.llm_max_tokens_heartbeat = 256
         mock_llm.return_value = make_text_response("I'm not sure what to do {broken json")
-        action = await evaluate_heartbeat_need(contractor, ["test flag"])
+        action = await evaluate_heartbeat_need(user, ["test flag"])
         assert action.action_type == "no_action"
         assert action.priority == 0
 
@@ -976,7 +970,7 @@ class TestEvaluateHeartbeatNeed:
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
     ) -> None:
         """acompletion should receive tools=[COMPOSE_MESSAGE_TOOL]."""
         mock_settings.llm_model = "gpt-4o"
@@ -988,7 +982,7 @@ class TestEvaluateHeartbeatNeed:
         mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action", message="", reasoning="test", priority=1
         )
-        await evaluate_heartbeat_need(contractor, ["test flag"])
+        await evaluate_heartbeat_need(user, ["test flag"])
         _, kwargs = mock_llm.call_args
         assert "tools" in kwargs
         assert kwargs["tools"] == [COMPOSE_MESSAGE_TOOL]
@@ -1000,7 +994,7 @@ class TestEvaluateHeartbeatNeed:
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
     ) -> None:
         """System prompt should not contain 'Respond with ONLY a JSON object'."""
         mock_settings.llm_model = "gpt-4o"
@@ -1012,7 +1006,7 @@ class TestEvaluateHeartbeatNeed:
         mock_llm.return_value = _make_heartbeat_tool_call(
             action="no_action", message="", reasoning="test", priority=1
         )
-        await evaluate_heartbeat_need(contractor, ["test flag"])
+        await evaluate_heartbeat_need(user, ["test flag"])
         call_args = mock_llm.call_args
         system_content = call_args.kwargs["system"]
         assert "Respond with ONLY a JSON object" not in system_content
@@ -1020,15 +1014,15 @@ class TestEvaluateHeartbeatNeed:
 
 
 # ---------------------------------------------------------------------------
-# run_heartbeat_for_contractor
+# run_heartbeat_for_user
 # ---------------------------------------------------------------------------
 
 
-class TestRunHeartbeatForContractor:
+class TestRunHeartbeatForUser:
     @pytest.mark.asyncio
     async def test_skip_not_onboarded(self, mock_messaging: MagicMock) -> None:
-        c = ContractorData(id=10, user_id="hb-new", phone="+15550000000", onboarding_complete=False)
-        result = await run_heartbeat_for_contractor(c, mock_messaging, 5)
+        c = UserData(id=10, user_id="hb-new", phone="+15550000000", onboarding_complete=False)
+        result = await run_heartbeat_for_user(c, mock_messaging, 5)
         assert result is None
         mock_messaging.send_text.assert_not_called()
 
@@ -1037,10 +1031,10 @@ class TestRunHeartbeatForContractor:
     async def test_skip_outside_hours(
         self,
         _mock_hours: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
-        result = await run_heartbeat_for_contractor(contractor, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, mock_messaging, 5)
         assert result is None
 
     @pytest.mark.asyncio
@@ -1050,11 +1044,11 @@ class TestRunHeartbeatForContractor:
         self,
         mock_count: AsyncMock,
         _mock_hours: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
         mock_count.return_value = 5
-        result = await run_heartbeat_for_contractor(contractor, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, mock_messaging, 5)
         assert result is None
 
     @pytest.mark.asyncio
@@ -1062,11 +1056,11 @@ class TestRunHeartbeatForContractor:
     async def test_no_action_when_checks_clean(
         self,
         _mock_hours: MagicMock,
-        contractor: ContractorData,
+        user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
         """When cheap checks return no flags, LLM is skipped and no message sent."""
-        result = await run_heartbeat_for_contractor(contractor, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, mock_messaging, 5)
         assert result is not None
         assert result.action_type == "no_action"
         assert "cheap checks clean" in result.reasoning
@@ -1081,7 +1075,7 @@ class TestRunHeartbeatForContractor:
         _mock_hours: MagicMock,
         mock_checks: AsyncMock,
         mock_eval: AsyncMock,
-        contractor: ContractorData,
+        user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
         """When cheap checks flag something and LLM says send, message is delivered."""
@@ -1095,16 +1089,16 @@ class TestRunHeartbeatForContractor:
             reasoning="Stale draft",
             priority=4,
         )
-        result = await run_heartbeat_for_contractor(contractor, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, mock_messaging, 5)
 
         assert result is not None
         assert result.action_type == "send_message"
         mock_messaging.send_text.assert_awaited_once_with(
-            to=contractor.phone, body="Reminder: draft estimate pending!"
+            to=user.phone, body="Reminder: draft estimate pending!"
         )
         # LLM was called with the flags
         mock_eval.assert_awaited_once_with(
-            contractor, ["Stale draft estimate"], messaging_service=mock_messaging
+            user, ["Stale draft estimate"], messaging_service=mock_messaging
         )
 
     @pytest.mark.asyncio
@@ -1116,7 +1110,7 @@ class TestRunHeartbeatForContractor:
         _mock_hours: MagicMock,
         mock_checks: AsyncMock,
         mock_eval: AsyncMock,
-        contractor: ContractorData,
+        user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
         mock_checks.return_value = CheapCheckResult(flags=["test flag"])
@@ -1127,7 +1121,7 @@ class TestRunHeartbeatForContractor:
             priority=3,
         )
         mock_messaging.send_text = AsyncMock(side_effect=Exception("Messaging service down"))
-        result = await run_heartbeat_for_contractor(contractor, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, mock_messaging, 5)
         # Should still return the action, just not record a message
         assert result is not None
         assert result.action_type == "send_message"
@@ -1141,14 +1135,14 @@ class TestRunHeartbeatForContractor:
         _mock_hours: MagicMock,
         mock_checks: AsyncMock,
         mock_eval: AsyncMock,
-        contractor: ContractorData,
+        user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
         """After sending a message, due checklist items should be marked as triggered."""
         from backend.app.agent.file_store import HeartbeatStore
 
         # Write the item to disk so the runner can update it
-        hb_store = HeartbeatStore(contractor.id)
+        hb_store = HeartbeatStore(user.id)
         item = await hb_store.add_checklist_item(
             description="Check inbox",
             schedule="daily",
@@ -1164,7 +1158,7 @@ class TestRunHeartbeatForContractor:
             reasoning="checklist",
             priority=3,
         )
-        await run_heartbeat_for_contractor(contractor, mock_messaging, 5)
+        await run_heartbeat_for_user(user, mock_messaging, 5)
 
         # Read back from disk to verify the item was updated
         updated_items = await hb_store.get_checklist()
@@ -1181,14 +1175,14 @@ class TestRunHeartbeatForContractor:
         _mock_hours: MagicMock,
         mock_checks: AsyncMock,
         mock_eval: AsyncMock,
-        contractor: ContractorData,
+        user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
         """A once-scheduled checklist item should be marked completed after triggering."""
         from backend.app.agent.file_store import HeartbeatStore
 
         # Write the item to disk so the runner can update it
-        hb_store = HeartbeatStore(contractor.id)
+        hb_store = HeartbeatStore(user.id)
         item = await hb_store.add_checklist_item(
             description="Remind about meeting",
             schedule="once",
@@ -1204,7 +1198,7 @@ class TestRunHeartbeatForContractor:
             reasoning="once item",
             priority=4,
         )
-        await run_heartbeat_for_contractor(contractor, mock_messaging, 5)
+        await run_heartbeat_for_user(user, mock_messaging, 5)
 
         # Read back from disk to verify the item was updated
         updated_items = await hb_store.get_checklist()
@@ -1220,40 +1214,40 @@ class TestRunHeartbeatForContractor:
 
 class TestGetDailyHeartbeatCount:
     @pytest.mark.asyncio
-    async def test_zero_when_no_logs(self, contractor: ContractorData) -> None:
-        assert await get_daily_heartbeat_count(contractor.id) == 0
+    async def test_zero_when_no_logs(self, user: UserData) -> None:
+        assert await get_daily_heartbeat_count(user.id) == 0
 
     @pytest.mark.asyncio
-    async def test_counts_today_only(self, contractor: ContractorData) -> None:
+    async def test_counts_today_only(self, user: UserData) -> None:
         """Logs from yesterday should not count toward today's limit."""
         from backend.app.agent.file_store import HeartbeatStore, _append_jsonl
 
-        store = HeartbeatStore(contractor.id)
+        store = HeartbeatStore(user.id)
         # Add a log from today
         await store.log_heartbeat()
         # Add a log from yesterday directly to the JSONL file
         yesterday = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=1)
-        entry = HeartbeatLogEntry(contractor_id=contractor.id, created_at=yesterday.isoformat())
+        entry = HeartbeatLogEntry(user_id=user.id, created_at=yesterday.isoformat())
         _append_jsonl(store._log_path, entry.model_dump())
 
-        assert await get_daily_heartbeat_count(contractor.id) == 1
+        assert await get_daily_heartbeat_count(user.id) == 1
 
     @pytest.mark.asyncio
-    async def test_counts_multiple_today(self, contractor: ContractorData) -> None:
+    async def test_counts_multiple_today(self, user: UserData) -> None:
         from backend.app.agent.file_store import HeartbeatStore
 
-        store = HeartbeatStore(contractor.id)
+        store = HeartbeatStore(user.id)
         for _ in range(3):
             await store.log_heartbeat()
 
-        assert await get_daily_heartbeat_count(contractor.id) == 3
+        assert await get_daily_heartbeat_count(user.id) == 3
 
     @pytest.mark.asyncio
-    async def test_scoped_to_contractor(self, contractor: ContractorData) -> None:
-        """Logs from other contractors should not count."""
+    async def test_scoped_to_user(self, user: UserData) -> None:
+        """Logs from other users should not count."""
         from backend.app.agent.file_store import HeartbeatStore
 
-        other = ContractorData(
+        other = UserData(
             id=60,
             user_id="hb-other",
             phone="+15551112222",
@@ -1263,7 +1257,7 @@ class TestGetDailyHeartbeatCount:
         other_store = HeartbeatStore(other.id)
         await other_store.log_heartbeat()
 
-        assert await get_daily_heartbeat_count(contractor.id) == 0
+        assert await get_daily_heartbeat_count(user.id) == 0
         assert await get_daily_heartbeat_count(other.id) == 1
 
 
@@ -1274,12 +1268,12 @@ class TestGetDailyHeartbeatCount:
 
 class TestBuildHeartbeatContext:
     @pytest.mark.asyncio
-    async def test_includes_profile_and_flags(self, contractor: ContractorData) -> None:
+    async def test_includes_profile_and_flags(self, user: UserData) -> None:
         from backend.app.agent.file_store import get_session_store
         from backend.app.enums import MessageDirection
 
         # Add a session with a message so context builder works
-        store = get_session_store(contractor.id)
+        store = get_session_store(user.id)
         session, _ = await store.get_or_create_session()
         await store.add_message(
             session=session,
@@ -1288,7 +1282,7 @@ class TestBuildHeartbeatContext:
         )
 
         flags = ["Stale draft estimate: Kitchen remodel"]
-        prompt = await build_heartbeat_context(contractor, flags)
+        prompt = await build_heartbeat_context(user, flags)
 
         # build_heartbeat_context now returns a full prompt string
         assert "Plumber" in prompt
@@ -1315,12 +1309,12 @@ class TestHeartbeatScheduler:
         assert scheduler._task is None
 
     @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.get_contractor_store")
+    @patch("backend.app.agent.heartbeat.get_user_store")
     @patch("backend.app.agent.heartbeat.get_default_channel")
     async def test_tick_queries_onboarded(
         self, mock_messaging_cls: MagicMock, mock_get_store: MagicMock
     ) -> None:
-        """Tick should query all contractors via list_all and filter by onboarding_complete."""
+        """Tick should query all users via list_all and filter by onboarding_complete."""
         mock_store = AsyncMock()
         mock_store.list_all.return_value = []
         mock_get_store.return_value = mock_store
@@ -1331,8 +1325,8 @@ class TestHeartbeatScheduler:
         mock_store.list_all.assert_awaited_once()
 
     @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
-    @patch("backend.app.agent.heartbeat.get_contractor_store")
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
     @patch("backend.app.agent.heartbeat.get_default_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_concurrent_processing(
@@ -1342,21 +1336,21 @@ class TestHeartbeatScheduler:
         mock_get_store: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
-        """tick() should process multiple contractors concurrently."""
+        """tick() should process multiple users concurrently."""
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
 
-        # Create mock contractors
-        contractors = []
+        # Create mock users
+        users = []
         for i in range(4):
             c = MagicMock()
             c.id = i + 1
             c.onboarding_complete = True
             c.preferred_channel = "telegram"
-            contractors.append(c)
+            users.append(c)
 
         mock_store = AsyncMock()
-        mock_store.list_all.return_value = contractors
+        mock_store.list_all.return_value = users
         mock_get_store.return_value = mock_store
 
         mock_run.return_value = None
@@ -1364,12 +1358,12 @@ class TestHeartbeatScheduler:
         scheduler = HeartbeatScheduler()
         await scheduler.tick()
 
-        # run_heartbeat_for_contractor called once per contractor
-        assert mock_run.await_count == len(contractors)
+        # run_heartbeat_for_user called once per user
+        assert mock_run.await_count == len(users)
 
     @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
-    @patch("backend.app.agent.heartbeat.get_contractor_store")
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
     @patch("backend.app.agent.heartbeat.get_default_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_error_isolation(
@@ -1379,23 +1373,23 @@ class TestHeartbeatScheduler:
         mock_get_store: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
-        """One contractor failure should not prevent others from being processed."""
+        """One user failure should not prevent others from being processed."""
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 5
 
-        contractors = []
+        users = []
         for i in range(3):
             c = MagicMock()
             c.id = i + 1
             c.onboarding_complete = True
             c.preferred_channel = "telegram"
-            contractors.append(c)
+            users.append(c)
 
         mock_store = AsyncMock()
-        mock_store.list_all.return_value = contractors
+        mock_store.list_all.return_value = users
         mock_get_store.return_value = mock_store
 
-        # Second contractor raises, others succeed
+        # Second user raises, others succeed
         mock_run.side_effect = [
             HeartbeatAction("no_action", "", "clean", 0),
             RuntimeError("LLM timeout"),
@@ -1403,15 +1397,15 @@ class TestHeartbeatScheduler:
         ]
 
         scheduler = HeartbeatScheduler()
-        # Should not raise despite one contractor failing
+        # Should not raise despite one user failing
         await scheduler.tick()
 
         # All three were attempted
         assert mock_run.await_count == 3
 
     @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.run_heartbeat_for_contractor")
-    @patch("backend.app.agent.heartbeat.get_contractor_store")
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
     @patch("backend.app.agent.heartbeat.get_default_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_semaphore_limits_concurrency(
@@ -1421,21 +1415,21 @@ class TestHeartbeatScheduler:
         mock_get_store: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
-        """Semaphore should limit the number of concurrent contractor evaluations."""
+        """Semaphore should limit the number of concurrent user evaluations."""
         concurrency_limit = 2
         mock_settings.heartbeat_concurrency = concurrency_limit
         mock_settings.heartbeat_max_daily_messages = 5
 
-        contractors = []
+        users = []
         for i in range(5):
             c = MagicMock()
             c.id = i + 1
             c.onboarding_complete = True
             c.preferred_channel = "telegram"
-            contractors.append(c)
+            users.append(c)
 
         mock_store = AsyncMock()
-        mock_store.list_all.return_value = contractors
+        mock_store.list_all.return_value = users
         mock_get_store.return_value = mock_store
 
         # Track max concurrent executions
@@ -1466,12 +1460,12 @@ class TestHeartbeatScheduler:
         assert max_concurrent <= concurrency_limit
 
     @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.get_contractor_store")
+    @patch("backend.app.agent.heartbeat.get_user_store")
     @patch("backend.app.agent.heartbeat.get_default_channel")
-    async def test_tick_no_contractors(
+    async def test_tick_no_users(
         self, mock_messaging_cls: MagicMock, mock_get_store: MagicMock
     ) -> None:
-        """tick() with no onboarded contractors should return early."""
+        """tick() with no onboarded users should return early."""
         mock_store = AsyncMock()
         mock_store.list_all.return_value = []
         mock_get_store.return_value = mock_store

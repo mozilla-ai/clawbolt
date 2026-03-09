@@ -1,6 +1,6 @@
 """Integration tests for the onboarding flow via a real LLM.
 
-Verifies that a new contractor's first message triggers onboarding,
+Verifies that a new user's first message triggers onboarding,
 the agent extracts profile fields via update_profile, and the profile
 is updated in the file store.
 
@@ -13,7 +13,7 @@ from unittest.mock import patch
 import pytest
 
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.file_store import get_contractor_store
+from backend.app.agent.file_store import get_user_store
 from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
     is_onboarding_needed,
@@ -32,15 +32,15 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 async def test_onboarding_extracts_profile_from_intro() -> None:
     """Agent should extract name and trade from a natural introduction message."""
 
-    # Create a blank contractor (no profile info)
-    store = get_contractor_store()
-    contractor = await store.create(
+    # Create a blank user (no profile info)
+    store = get_user_store()
+    user = await store.create(
         user_id="onboarding-test-user",
         channel_identifier="onboard_test_1",
         preferred_channel="telegram",
     )
 
-    assert is_onboarding_needed(contractor)
+    assert is_onboarding_needed(user)
 
     with patch("backend.app.agent.core.settings") as mock_settings:
         mock_settings.llm_provider = "anthropic"
@@ -48,12 +48,12 @@ async def test_onboarding_extracts_profile_from_intro() -> None:
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = ClawboltAgent(contractor=contractor)
-        tools = create_memory_tools(contractor.id)
-        tools.extend(create_profile_tools(contractor))
+        agent = ClawboltAgent(user=user)
+        tools = create_memory_tools(user.id)
+        tools.extend(create_profile_tools(user))
         agent.register_tools(tools)
 
-        system_prompt = build_onboarding_system_prompt(contractor)
+        system_prompt = build_onboarding_system_prompt(user)
         response = await agent.process_message(
             "Hey! I'm Jake, I'm a plumber based in Portland.",
             system_prompt_override=system_prompt,

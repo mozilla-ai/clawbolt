@@ -5,15 +5,13 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import ContractorData
+from backend.app.agent.file_store import UserData
 from backend.app.config import settings
 
 
-def _create_session(
-    contractor: ContractorData, session_id: str, messages: list[dict[str, object]]
-) -> None:
+def _create_session(user: UserData, session_id: str, messages: list[dict[str, object]]) -> None:
     """Create a test session JSONL file."""
-    base = Path(settings.data_dir) / str(contractor.id) / "sessions"
+    base = Path(settings.data_dir) / str(user.id) / "sessions"
     base.mkdir(parents=True, exist_ok=True)
     path = base / f"{session_id}.jsonl"
     lines = [
@@ -21,7 +19,7 @@ def _create_session(
             {
                 "_type": "metadata",
                 "session_id": session_id,
-                "contractor_id": contractor.id,
+                "user_id": user.id,
                 "created_at": "2025-01-15T10:00:00+00:00",
                 "last_message_at": "2025-01-15T10:05:00+00:00",
                 "is_active": True,
@@ -42,9 +40,9 @@ def test_list_sessions_empty(client: TestClient) -> None:
     assert data["total"] == 0
 
 
-def test_list_sessions(client: TestClient, test_contractor: ContractorData) -> None:
+def test_list_sessions(client: TestClient, test_user: UserData) -> None:
     _create_session(
-        test_contractor,
+        test_user,
         "1_100",
         [
             {"direction": "inbound", "body": "Hello", "timestamp": "2025-01-15T10:01:00", "seq": 1},
@@ -64,10 +62,10 @@ def test_list_sessions(client: TestClient, test_contractor: ContractorData) -> N
     assert data["sessions"][0]["id"] == "1_100"
 
 
-def test_get_session_detail(client: TestClient, test_contractor: ContractorData) -> None:
+def test_get_session_detail(client: TestClient, test_user: UserData) -> None:
     tool_json = json.dumps([{"tool": "save_fact", "input": {"key": "rate"}, "result": "saved"}])
     _create_session(
-        test_contractor,
+        test_user,
         "1_200",
         [
             {
@@ -96,10 +94,10 @@ def test_get_session_detail(client: TestClient, test_contractor: ContractorData)
     assert data["messages"][1]["tool_interactions"][0]["tool"] == "save_fact"
 
 
-def test_session_direction_values(client: TestClient, test_contractor: ContractorData) -> None:
+def test_session_direction_values(client: TestClient, test_user: UserData) -> None:
     """API response direction values must be 'inbound'/'outbound' (not 'incoming'/'outgoing')."""
     _create_session(
-        test_contractor,
+        test_user,
         "1_300",
         [
             {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
@@ -123,10 +121,10 @@ def test_get_session_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
-def test_list_sessions_pagination(client: TestClient, test_contractor: ContractorData) -> None:
+def test_list_sessions_pagination(client: TestClient, test_user: UserData) -> None:
     for i in range(5):
         _create_session(
-            test_contractor,
+            test_user,
             f"1_{i}",
             [
                 {

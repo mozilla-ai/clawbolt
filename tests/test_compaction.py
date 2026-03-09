@@ -14,9 +14,9 @@ from backend.app.agent.compaction import (
 )
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.file_store import (
-    ContractorData,
     SessionState,
     StoredMessage,
+    UserData,
 )
 from backend.app.agent.memory import get_all_memories
 from backend.app.agent.messages import AssistantMessage, UserMessage
@@ -24,11 +24,11 @@ from tests.mocks.llm import make_text_response
 
 
 @pytest.fixture()
-def session(test_contractor: ContractorData) -> SessionState:
-    """Create a SessionState for the test contractor."""
+def session(test_user: UserData) -> SessionState:
+    """Create a SessionState for the test user."""
     return SessionState(
         session_id="test-session",
-        contractor_id=test_contractor.id,
+        user_id=test_user.id,
         messages=[],
         is_active=True,
     )
@@ -50,16 +50,16 @@ def _add_messages(session: SessionState, count: int) -> None:
 
 
 def test_format_messages_basic() -> None:
-    """Format should produce readable Contractor/Assistant lines."""
+    """Format should produce readable User/Assistant lines."""
     messages = [
         UserMessage(content="I charge $45/sqft for composite decks"),
         AssistantMessage(content="Got it, I'll remember that pricing."),
         UserMessage(content="My supplier is ABC Lumber on 5th Ave"),
     ]
     result = _format_messages_for_compaction(messages)
-    assert "Contractor: I charge $45/sqft" in result
+    assert "User: I charge $45/sqft" in result
     assert "Assistant: Got it" in result
-    assert "Contractor: My supplier is ABC Lumber" in result
+    assert "User: My supplier is ABC Lumber" in result
 
 
 def test_format_messages_empty() -> None:
@@ -76,8 +76,8 @@ def test_format_messages_skips_empty_assistant() -> None:
     ]
     result = _format_messages_for_compaction(messages)
     assert "Assistant:" not in result
-    assert "Contractor: Hello" in result
-    assert "Contractor: World" in result
+    assert "User: Hello" in result
+    assert "User: World" in result
 
 
 # --- _parse_compaction_response tests ---
@@ -182,7 +182,7 @@ def test_parse_skips_non_dict_items() -> None:
 
 @pytest.mark.asyncio()
 async def test_compact_session_extracts_and_saves_facts(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """compact_session should call LLM and save extracted facts to memory."""
     llm_response_content = json.dumps(
@@ -201,7 +201,7 @@ async def test_compact_session_extracts_and_saves_facts(
     ]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
-        saved, max_seq = await compact_session(test_contractor.id, messages)
+        saved, max_seq = await compact_session(test_user.id, messages)
 
     assert len(saved) == 2
     assert saved[0]["key"] == "deck_rate"
@@ -210,7 +210,7 @@ async def test_compact_session_extracts_and_saves_facts(
     assert max_seq is None
 
     # Verify facts were persisted
-    memories = await get_all_memories(test_contractor.id)
+    memories = await get_all_memories(test_user.id)
     assert len(memories) == 2
     keys = {m.key for m in memories}
     assert "deck_rate" in keys
@@ -228,7 +228,7 @@ async def test_compact_session_extracts_and_saves_facts(
 
 @pytest.mark.asyncio()
 async def test_compact_session_returns_max_message_seq(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """compact_session should return the max_message_seq when provided."""
     mock_response = make_text_response(
@@ -238,7 +238,7 @@ async def test_compact_session_returns_max_message_seq(
     messages = [UserMessage(content="test")]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        saved, max_seq = await compact_session(test_contractor.id, messages, max_message_seq=42)
+        saved, max_seq = await compact_session(test_user.id, messages, max_message_seq=42)
 
     assert len(saved) == 1
     assert max_seq == 42
@@ -246,11 +246,11 @@ async def test_compact_session_returns_max_message_seq(
 
 @pytest.mark.asyncio()
 async def test_compact_session_empty_messages(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """compact_session with no messages should return empty list without LLM call."""
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
-        saved, max_seq = await compact_session(test_contractor.id, [])
+        saved, max_seq = await compact_session(test_user.id, [])
 
     assert saved == []
     assert max_seq is None
@@ -258,7 +258,7 @@ async def test_compact_session_empty_messages(
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_disabled(test_contractor: ContractorData) -> None:
+async def test_compact_session_disabled(test_user: UserData) -> None:
     """compact_session should skip when compaction_enabled is False."""
     messages = [UserMessage(content="Some content")]
 
@@ -267,7 +267,7 @@ async def test_compact_session_disabled(test_contractor: ContractorData) -> None
         patch("backend.app.agent.compaction.amessages") as mock_llm,
     ):
         mock_settings.compaction_enabled = False
-        saved, max_seq = await compact_session(test_contractor.id, messages)
+        saved, max_seq = await compact_session(test_user.id, messages)
 
     assert saved == []
     assert max_seq is None
@@ -276,7 +276,7 @@ async def test_compact_session_disabled(test_contractor: ContractorData) -> None
 
 @pytest.mark.asyncio()
 async def test_compact_session_llm_failure_returns_empty(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """compact_session should return empty list if LLM call fails."""
     messages = [UserMessage(content="Some content")]
@@ -285,7 +285,7 @@ async def test_compact_session_llm_failure_returns_empty(
         "backend.app.agent.compaction.amessages",
         side_effect=Exception("LLM unavailable"),
     ):
-        saved, max_seq = await compact_session(test_contractor.id, messages)
+        saved, max_seq = await compact_session(test_user.id, messages)
 
     assert saved == []
     assert max_seq is None
@@ -293,7 +293,7 @@ async def test_compact_session_llm_failure_returns_empty(
 
 @pytest.mark.asyncio()
 async def test_compact_session_invalid_llm_response(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """compact_session should handle unparseable LLM responses gracefully."""
     mock_response = make_text_response("Sorry, I can't do that.")
@@ -301,7 +301,7 @@ async def test_compact_session_invalid_llm_response(
     messages = [UserMessage(content="Some content")]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        saved, max_seq = await compact_session(test_contractor.id, messages)
+        saved, max_seq = await compact_session(test_user.id, messages)
 
     assert saved == []
     assert max_seq is None
@@ -309,7 +309,7 @@ async def test_compact_session_invalid_llm_response(
 
 @pytest.mark.asyncio()
 async def test_compact_session_no_durable_facts(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """compact_session should handle LLM returning empty array (no facts)."""
     mock_response = make_text_response("[]")
@@ -320,17 +320,17 @@ async def test_compact_session_no_durable_facts(
     ]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        saved, max_seq = await compact_session(test_contractor.id, messages)
+        saved, max_seq = await compact_session(test_user.id, messages)
 
     assert saved == []
     assert max_seq is None
-    memories = await get_all_memories(test_contractor.id)
+    memories = await get_all_memories(test_user.id)
     assert len(memories) == 0
 
 
 @pytest.mark.asyncio()
 async def test_compact_session_uses_configured_model(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """compact_session should use compaction_model/provider when configured."""
     mock_response = make_text_response("[]")
@@ -348,7 +348,7 @@ async def test_compact_session_uses_configured_model(
         mock_settings.llm_model = "test-model"
         mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
-        await compact_session(test_contractor.id, messages)
+        await compact_session(test_user.id, messages)
 
     mock_llm.assert_called_once()
     call_kwargs = mock_llm.call_args
@@ -357,7 +357,7 @@ async def test_compact_session_uses_configured_model(
 
 @pytest.mark.asyncio()
 async def test_compact_session_falls_back_to_llm_model(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """compact_session should fall back to llm_model when compaction_model is empty."""
     mock_response = make_text_response("[]")
@@ -375,7 +375,7 @@ async def test_compact_session_falls_back_to_llm_model(
         mock_settings.llm_model = "test-model"
         mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
-        await compact_session(test_contractor.id, messages)
+        await compact_session(test_user.id, messages)
 
     call_kwargs = mock_llm.call_args
     assert call_kwargs.kwargs.get("model") == "test-model"
@@ -387,7 +387,7 @@ async def test_compact_session_falls_back_to_llm_model(
 
 @pytest.mark.asyncio()
 async def test_load_history_triggers_compaction_when_full(
-    test_contractor: ContractorData,
+    test_user: UserData,
     session: SessionState,
 ) -> None:
     """When history exceeds limit, compaction should run on trimmed messages."""
@@ -402,9 +402,7 @@ async def test_load_history_triggers_compaction_when_full(
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         # Use limit=5, so 3 messages are trimmed (8 total, 5 loaded, minus current = 4 history)
-        history = await load_conversation_history(
-            session, limit=5, contractor_id=test_contractor.id
-        )
+        history = await load_conversation_history(session, limit=5, user_id=test_user.id)
         # Allow the background compaction task to complete
         await asyncio.sleep(0.1)
 
@@ -412,14 +410,14 @@ async def test_load_history_triggers_compaction_when_full(
     assert len(history) == 4
 
     # Compacted fact should have been saved
-    memories = await get_all_memories(test_contractor.id)
+    memories = await get_all_memories(test_user.id)
     assert len(memories) == 1
     assert memories[0].key == "fact_from_compaction"
 
 
 @pytest.mark.asyncio()
 async def test_load_history_updates_last_compacted_seq(
-    test_contractor: ContractorData,
+    test_user: UserData,
     session: SessionState,
 ) -> None:
     """Compaction should update last_compacted_seq on the session."""
@@ -430,7 +428,7 @@ async def test_load_history_updates_last_compacted_seq(
     )
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        await load_conversation_history(session, limit=5, contractor_id=test_contractor.id)
+        await load_conversation_history(session, limit=5, user_id=test_user.id)
         await asyncio.sleep(0.1)
 
     # The trimmed messages are the first 3 (8 total - 5 limit).
@@ -440,7 +438,7 @@ async def test_load_history_updates_last_compacted_seq(
 
 @pytest.mark.asyncio()
 async def test_load_history_skips_already_compacted_messages(
-    test_contractor: ContractorData,
+    test_user: UserData,
     session: SessionState,
 ) -> None:
     """Messages already compacted should not be re-compacted."""
@@ -454,7 +452,7 @@ async def test_load_history_skips_already_compacted_messages(
     )
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
-        await load_conversation_history(session, limit=5, contractor_id=test_contractor.id)
+        await load_conversation_history(session, limit=5, user_id=test_user.id)
         await asyncio.sleep(0.1)
 
     # LLM should have been called with only the 1 un-compacted trimmed message
@@ -472,7 +470,7 @@ async def test_load_history_skips_already_compacted_messages(
 
 @pytest.mark.asyncio()
 async def test_load_history_no_compaction_when_all_already_compacted(
-    test_contractor: ContractorData,
+    test_user: UserData,
     session: SessionState,
 ) -> None:
     """When all trimmed messages are already compacted, no LLM call should happen."""
@@ -482,7 +480,7 @@ async def test_load_history_no_compaction_when_all_already_compacted(
     session.last_compacted_seq = 3
 
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
-        await load_conversation_history(session, limit=5, contractor_id=test_contractor.id)
+        await load_conversation_history(session, limit=5, user_id=test_user.id)
         await asyncio.sleep(0.1)
 
     mock_llm.assert_not_called()
@@ -490,16 +488,14 @@ async def test_load_history_no_compaction_when_all_already_compacted(
 
 @pytest.mark.asyncio()
 async def test_load_history_no_compaction_when_under_limit(
-    test_contractor: ContractorData,
+    test_user: UserData,
     session: SessionState,
 ) -> None:
     """When history is under limit, no compaction should occur."""
     _add_messages(session, 3)
 
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
-        history = await load_conversation_history(
-            session, limit=20, contractor_id=test_contractor.id
-        )
+        history = await load_conversation_history(session, limit=20, user_id=test_user.id)
 
     # Should not call LLM since we're under the limit
     mock_llm.assert_not_called()
@@ -508,11 +504,11 @@ async def test_load_history_no_compaction_when_under_limit(
 
 
 @pytest.mark.asyncio()
-async def test_load_history_no_compaction_without_contractor_id(
-    test_contractor: ContractorData,
+async def test_load_history_no_compaction_without_user_id(
+    test_user: UserData,
     session: SessionState,
 ) -> None:
-    """Without contractor_id, compaction should not run even at limit."""
+    """Without user_id, compaction should not run even at limit."""
     _add_messages(session, 8)
 
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
@@ -524,7 +520,7 @@ async def test_load_history_no_compaction_without_contractor_id(
 
 @pytest.mark.asyncio()
 async def test_load_history_compaction_failure_does_not_break_history(
-    test_contractor: ContractorData,
+    test_user: UserData,
     session: SessionState,
 ) -> None:
     """Compaction failure should not prevent history from loading."""
@@ -534,9 +530,7 @@ async def test_load_history_compaction_failure_does_not_break_history(
         "backend.app.agent.compaction.amessages",
         side_effect=Exception("LLM down"),
     ):
-        history = await load_conversation_history(
-            session, limit=5, contractor_id=test_contractor.id
-        )
+        history = await load_conversation_history(session, limit=5, user_id=test_user.id)
         # Allow the background task to complete (and fail gracefully)
         await asyncio.sleep(0.1)
 
@@ -546,7 +540,7 @@ async def test_load_history_compaction_failure_does_not_break_history(
 
 @pytest.mark.asyncio()
 async def test_compaction_runs_in_background_not_blocking(
-    test_contractor: ContractorData,
+    test_user: UserData,
     session: SessionState,
 ) -> None:
     """Compaction should run as a background task, not blocking history loading."""
@@ -556,7 +550,7 @@ async def test_compaction_runs_in_background_not_blocking(
     compaction_proceed = asyncio.Event()
 
     async def slow_compact(
-        contractor_id: int,
+        user_id: int,
         trimmed_messages: list[object],
         max_message_seq: int | None = None,
     ) -> tuple[list[dict[str, str]], int | None]:
@@ -565,9 +559,7 @@ async def test_compaction_runs_in_background_not_blocking(
         return [], max_message_seq
 
     with patch("backend.app.agent.context.compact_session", side_effect=slow_compact):
-        history = await load_conversation_history(
-            session, limit=5, contractor_id=test_contractor.id
-        )
+        history = await load_conversation_history(session, limit=5, user_id=test_user.id)
 
         # History should be returned immediately, even though compaction hasn't finished
         assert len(history) == 4

@@ -1,7 +1,7 @@
 """Proactive heartbeat engine.
 
 Every ``heartbeat_interval_minutes`` the scheduler wakes up, iterates over
-onboarded contractors, and runs **cheap deterministic checks** first.  Only when
+onboarded users, and runs **cheap deterministic checks** first.  Only when
 a cheap check flags something actionable does the engine escalate to an LLM call
 to compose a natural-language message.  Most ticks produce **no** outbound
 messages and **no** LLM calls -- saving cost and avoiding noise.
@@ -24,12 +24,12 @@ from pydantic import BaseModel, Field, ValidationError
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.file_store import (
     ChecklistItem,
-    ContractorData,
     EstimateData,
     HeartbeatStore,
     MemoryFact,
-    get_contractor_store,
+    UserData,
     get_session_store,
+    get_user_store,
 )
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt
@@ -114,7 +114,7 @@ def parse_frequency_to_minutes(freq: str) -> int | None:
 
 @dataclass
 class CheapCheckResult:
-    """Result of deterministic pre-checks for a single contractor."""
+    """Result of deterministic pre-checks for a single user."""
 
     flags: list[str] = field(default_factory=list)
     stale_estimates: list[EstimateData] = field(default_factory=list)
@@ -192,17 +192,17 @@ def _to_local_time(
 
 
 def is_within_business_hours(
-    contractor: ContractorData,
+    user: UserData,
     now: datetime.datetime | None = None,
 ) -> bool:
-    """Return *True* if *now* falls within the contractor's business hours.
+    """Return *True* if *now* falls within the user's business hours.
 
-    When the contractor has a ``timezone`` set, *now* is converted to their
+    When the user has a ``timezone`` set, *now* is converted to their
     local time before comparing against business hours or the global quiet
     hours window.  Falls back to UTC when the timezone is empty or invalid.
     """
     now = now or datetime.datetime.now(datetime.UTC)
-    local_now = _to_local_time(now, contractor.timezone)
+    local_now = _to_local_time(now, user.timezone)
     current_hour = local_now.hour
 
     # Use global quiet hours to determine business hours.
@@ -222,7 +222,7 @@ def is_within_business_hours(
 
 
 async def run_cheap_checks(
-    contractor: ContractorData,
+    user: UserData,
     now: datetime.datetime | None = None,
 ) -> CheapCheckResult:
     """Run fast, deterministic checks that don't require an LLM call.
@@ -236,7 +236,7 @@ async def run_cheap_checks(
     # 1. Stale draft estimates (older than STALE_ESTIMATE_HOURS)
     from backend.app.agent.file_store import EstimateStore
 
-    estimate_store = EstimateStore(contractor.id)
+    estimate_store = EstimateStore(user.id)
     all_estimates = await estimate_store.list_all()
     cutoff = now - datetime.timedelta(hours=STALE_ESTIMATE_HOURS)
     stale: list[EstimateData] = []
@@ -256,19 +256,19 @@ async def run_cheap_checks(
         result.flags.append(f"Stale draft estimate(s) older than 24h: {descs}")
 
     # 2. Due checklist items
-    heartbeat_store = HeartbeatStore(contractor.id)
+    heartbeat_store = HeartbeatStore(user.id)
     all_items = await heartbeat_store.get_checklist()
     for item in all_items:
         if item.status != ChecklistStatus.ACTIVE:
             continue
-        if _is_checklist_item_due(item, now, tz_name=contractor.timezone or ""):
+        if _is_checklist_item_due(item, now, tz_name=user.timezone or ""):
             result.due_checklist_items.append(item)
             result.flags.append(f"Checklist item due: {item.description}")
 
     # 3. Time-sensitive memory facts
     from backend.app.agent.file_store import get_memory_store
 
-    memory_store = get_memory_store(contractor.id)
+    memory_store = get_memory_store(user.id)
     memories = await memory_store.get_all_memories()
     for mem in memories:
         text = f"{mem.key} {mem.value}"
@@ -276,16 +276,16 @@ async def run_cheap_checks(
             result.time_sensitive_memories.append(mem)
             result.flags.append(f"Time-sensitive memory: {mem.key} = {mem.value}")
 
-    # 4. Idle contractor -- no inbound messages for IDLE_DAYS
+    # 4. Idle user -- no inbound messages for IDLE_DAYS
     idle_cutoff = now - datetime.timedelta(days=IDLE_DAYS)
-    session_store = get_session_store(contractor.id)
+    session_store = get_session_store(user.id)
     last_inbound = session_store.get_last_inbound_timestamp()
     if last_inbound is not None:
         if last_inbound <= idle_cutoff:
             days = (now - last_inbound).days
             result.flags.append(f"User idle for {days} days -- no recent messages")
-    elif contractor.created_at is not None:
-        created = contractor.created_at
+    elif user.created_at is not None:
+        created = user.created_at
         if isinstance(created, str):
             try:
                 created = datetime.datetime.fromisoformat(created)
@@ -307,7 +307,7 @@ def _is_checklist_item_due(
     tz_name: str = "",
 ) -> bool:
     """Determine whether a checklist item should fire on this tick."""
-    # Weekday gate: convert to contractor's local timezone so that
+    # Weekday gate: convert to user's local timezone so that
     # e.g. Friday 5 PM Pacific is not treated as Saturday (UTC).
     local_now = _to_local_time(now, tz_name) if tz_name else now
     if item.schedule == ChecklistSchedule.WEEKDAYS and local_now.weekday() > WEEKDAY_FRIDAY:
@@ -338,9 +338,9 @@ def _is_checklist_item_due(
 # ---------------------------------------------------------------------------
 
 
-def _load_recent_messages(contractor: ContractorData) -> str:
+def _load_recent_messages(user: UserData) -> str:
     """Load recent messages as formatted text for heartbeat context."""
-    session_store = get_session_store(contractor.id)
+    session_store = get_session_store(user.id)
     recent = session_store.get_recent_messages(count=HEARTBEAT_RECENT_MESSAGES_COUNT)
     if not recent:
         return "(no recent messages)"
@@ -353,12 +353,12 @@ def _load_recent_messages(contractor: ContractorData) -> str:
 
 
 async def build_heartbeat_context(
-    contractor: ContractorData,
+    user: UserData,
     flags: list[str],
 ) -> str:
     """Build the full heartbeat system prompt via the composable builder."""
-    recent_messages = _load_recent_messages(contractor)
-    return await build_heartbeat_system_prompt(contractor, flags, recent_messages)
+    recent_messages = _load_recent_messages(user)
+    return await build_heartbeat_system_prompt(user, flags, recent_messages)
 
 
 # ---------------------------------------------------------------------------
@@ -430,7 +430,7 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
 
 
 async def evaluate_heartbeat_need(
-    contractor: ContractorData,
+    user: UserData,
     flags: list[str],
     messaging_service: MessagingService | None = None,
 ) -> HeartbeatAction:
@@ -440,11 +440,11 @@ async def evaluate_heartbeat_need(
     If the LLM does not call the tool, defaults to no_action.
     Sends a typing indicator before the LLM call when a messaging_service is provided.
     """
-    prompt = await build_heartbeat_context(contractor, flags)
+    prompt = await build_heartbeat_context(user, flags)
 
     # Send typing indicator before LLM call
     if messaging_service:
-        to_address = contractor.channel_identifier or contractor.phone
+        to_address = user.channel_identifier or user.phone
         if to_address:
             try:
                 await messaging_service.send_typing_indicator(to=to_address)
@@ -472,7 +472,7 @@ async def evaluate_heartbeat_need(
         ),
     )
 
-    log_llm_usage(contractor.id, model, response, "heartbeat")
+    log_llm_usage(user.id, model, response, "heartbeat")
     return _parse_tool_call_response(response)
 
 
@@ -481,51 +481,51 @@ async def evaluate_heartbeat_need(
 # ---------------------------------------------------------------------------
 
 
-async def get_daily_heartbeat_count(contractor_id: int) -> int:
-    """Count heartbeat messages sent to a contractor today (UTC).
+async def get_daily_heartbeat_count(user_id: int) -> int:
+    """Count heartbeat messages sent to a user today (UTC).
 
     Queries the heartbeat log instead of relying on in-memory state
     so that rate limits survive process restarts and work across multiple
     workers.
     """
-    heartbeat_store = HeartbeatStore(contractor_id)
+    heartbeat_store = HeartbeatStore(user_id)
     return await heartbeat_store.get_daily_count()
 
 
 # ---------------------------------------------------------------------------
-# Per-contractor runner
+# Per-user runner
 # ---------------------------------------------------------------------------
 
 
-async def run_heartbeat_for_contractor(
-    contractor: ContractorData,
+async def run_heartbeat_for_user(
+    user: UserData,
     messaging_service: MessagingService,
     max_daily: int,
 ) -> HeartbeatAction | None:
-    """Full heartbeat pipeline for a single contractor.
+    """Full heartbeat pipeline for a single user.
 
     Returns the action taken, or *None* if skipped.
     """
     # Gate: onboarding must be complete
-    if not contractor.onboarding_complete:
+    if not user.onboarding_complete:
         return None
 
-    # Gate: contractor heartbeat opt-in
-    if not contractor.heartbeat_opt_in:
+    # Gate: user heartbeat opt-in
+    if not user.heartbeat_opt_in:
         return None
 
     # Gate: business hours
-    if not is_within_business_hours(contractor):
+    if not is_within_business_hours(user):
         return None
 
     # Gate: daily rate limit (persistent via heartbeat log)
-    if await get_daily_heartbeat_count(contractor.id) >= max_daily:
+    if await get_daily_heartbeat_count(user.id) >= max_daily:
         return None
 
-    # Gate: per-contractor frequency override
-    freq_minutes = parse_frequency_to_minutes(contractor.heartbeat_frequency)
+    # Gate: per-user frequency override
+    freq_minutes = parse_frequency_to_minutes(user.heartbeat_frequency)
     if freq_minutes is not None:
-        session_store = get_session_store(contractor.id)
+        session_store = get_session_store(user.id)
         last_outbound = session_store.get_last_outbound_timestamp()
         if last_outbound is not None:
             now = datetime.datetime.now(datetime.UTC)
@@ -534,7 +534,7 @@ async def run_heartbeat_for_contractor(
                 return None
 
     # Cheap checks -- skip LLM entirely if nothing is flagged
-    check_result = await run_cheap_checks(contractor)
+    check_result = await run_cheap_checks(user)
     if not check_result.has_flags:
         return HeartbeatAction(
             action_type="no_action",
@@ -545,23 +545,23 @@ async def run_heartbeat_for_contractor(
 
     # Something was flagged -- escalate to LLM for message composition
     action = await evaluate_heartbeat_need(
-        contractor, check_result.flags, messaging_service=messaging_service
+        user, check_result.flags, messaging_service=messaging_service
     )
 
     if action.action_type != "send_message" or not action.message:
         return action
 
     # Send message
-    to_address = contractor.channel_identifier or contractor.phone
+    to_address = user.channel_identifier or user.phone
     try:
         await messaging_service.send_text(to=to_address, body=action.message)
     except Exception:
-        logger.exception("Heartbeat message failed for contractor %d", contractor.id)
+        logger.exception("Heartbeat message failed for user %d", user.id)
         return action
 
     # Record outbound message
-    session, _ = await get_or_create_conversation(contractor.id)
-    session_store = get_session_store(contractor.id)
+    session, _ = await get_or_create_conversation(user.id)
+    session_store = get_session_store(user.id)
     await session_store.add_message(
         session=session,
         direction=MessageDirection.OUTBOUND,
@@ -569,7 +569,7 @@ async def run_heartbeat_for_contractor(
     )
 
     # Record heartbeat log for persistent rate limiting
-    heartbeat_store = HeartbeatStore(contractor.id)
+    heartbeat_store = HeartbeatStore(user.id)
     await heartbeat_store.log_heartbeat()
 
     # Mark checklist items as triggered
@@ -631,48 +631,46 @@ class HeartbeatScheduler:
             await asyncio.sleep(settings.heartbeat_interval_minutes * 60)
 
     async def tick(self) -> None:
-        """Single heartbeat pass: evaluate every onboarded contractor concurrently."""
-        store = get_contractor_store()
-        all_contractors = await store.list_all()
-        contractors = [c for c in all_contractors if c.onboarding_complete]
+        """Single heartbeat pass: evaluate every onboarded user concurrently."""
+        store = get_user_store()
+        all_users = await store.list_all()
+        users = [c for c in all_users if c.onboarding_complete]
 
-        if not contractors:
+        if not users:
             return
 
         semaphore = asyncio.Semaphore(settings.heartbeat_concurrency)
 
-        async def _process_one(contractor: ContractorData) -> None:
-            """Process a single contractor."""
+        async def _process_one(user: UserData) -> None:
+            """Process a single user."""
             async with semaphore:
                 try:
-                    # Route to the contractor's preferred channel, falling
+                    # Route to the user's preferred channel, falling
                     # back to the first registered channel.
                     try:
-                        messaging_service: MessagingService = get_channel(
-                            contractor.preferred_channel
-                        )
+                        messaging_service: MessagingService = get_channel(user.preferred_channel)
                     except KeyError:
                         messaging_service = get_default_channel()
 
-                    await run_heartbeat_for_contractor(
-                        contractor=contractor,
+                    await run_heartbeat_for_user(
+                        user=user,
                         messaging_service=messaging_service,
                         max_daily=settings.heartbeat_max_daily_messages,
                     )
                 except Exception:
-                    logger.exception("Heartbeat failed for contractor %d", contractor.id)
+                    logger.exception("Heartbeat failed for user %d", user.id)
 
         results = await asyncio.gather(
-            *[_process_one(c) for c in contractors],
+            *[_process_one(c) for c in users],
             return_exceptions=True,
         )
 
-        # Log any unexpected exceptions that escaped the per-contractor handler
+        # Log any unexpected exceptions that escaped the per-user handler
         for i, result in enumerate(results):
             if isinstance(result, BaseException):
                 logger.error(
-                    "Unhandled error in heartbeat for contractor %d: %s",
-                    contractors[i].id,
+                    "Unhandled error in heartbeat for user %d: %s",
+                    users[i].id,
                     result,
                     exc_info=result if isinstance(result, Exception) else None,
                 )

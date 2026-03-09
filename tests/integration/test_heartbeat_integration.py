@@ -12,8 +12,8 @@ from unittest.mock import patch
 import pytest
 
 from backend.app.agent.file_store import (
-    ContractorData,
     EstimateStore,
+    UserData,
     get_session_store,
 )
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
@@ -24,7 +24,7 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_heartbeat_evaluate_returns_valid_action(
-    onboarded_contractor: ContractorData,
+    onboarded_user: UserData,
 ) -> None:
     """evaluate_heartbeat_need() should return a valid HeartbeatAction from a real LLM."""
     with patch("backend.app.agent.heartbeat.settings") as mock_settings:
@@ -35,7 +35,7 @@ async def test_heartbeat_evaluate_returns_valid_action(
         mock_settings.heartbeat_model = None
         mock_settings.llm_max_tokens_heartbeat = 300
 
-        action = await evaluate_heartbeat_need(onboarded_contractor, ["Test flag: check-in needed"])
+        action = await evaluate_heartbeat_need(onboarded_user, ["Test flag: check-in needed"])
 
     assert action.action_type in ("send_message", "no_action")
     assert isinstance(action.reasoning, str)
@@ -46,11 +46,11 @@ async def test_heartbeat_evaluate_returns_valid_action(
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_heartbeat_evaluate_with_context(
-    onboarded_contractor: ContractorData,
+    onboarded_user: UserData,
 ) -> None:
-    """Heartbeat should handle a contractor with real conversation history and pending estimates."""
+    """Heartbeat should handle a user with real conversation history and pending estimates."""
     # Set up conversation with messages via file store
-    session_store = get_session_store(onboarded_contractor.id)
+    session_store = get_session_store(onboarded_user.id)
     session, _ = await session_store.get_or_create_session()
 
     await session_store.add_message(
@@ -65,7 +65,7 @@ async def test_heartbeat_evaluate_with_context(
     )
 
     # Add a pending draft estimate
-    estimate_store = EstimateStore(onboarded_contractor.id)
+    estimate_store = EstimateStore(onboarded_user.id)
     await estimate_store.create(
         description="12x12 composite deck build",
         total_amount=4500,
@@ -81,7 +81,7 @@ async def test_heartbeat_evaluate_with_context(
         mock_settings.llm_max_tokens_heartbeat = 300
 
         action = await evaluate_heartbeat_need(
-            onboarded_contractor,
+            onboarded_user,
             ["Stale draft estimate: 12x12 composite deck build"],
         )
 

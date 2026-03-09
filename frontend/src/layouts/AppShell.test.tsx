@@ -20,7 +20,7 @@ beforeEach(() => {
     new Response(JSON.stringify({
       id: 1,
       user_id: 'local@clawbolt.local',
-      name: 'Test Contractor',
+      name: 'Test User',
       phone: '555-0100',
       timezone: 'America/Los_Angeles',
       assistant_name: 'Claw',
@@ -57,11 +57,11 @@ describe('AppShell', () => {
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 
-  it('displays contractor name when loaded', async () => {
+  it('displays user name when loaded', async () => {
     renderWithRouter(<AppShell />, { route: '/app' });
 
     await waitFor(() => {
-      expect(screen.getByText('Test Contractor')).toBeInTheDocument();
+      expect(screen.getByText('Test User')).toBeInTheDocument();
     });
   });
 

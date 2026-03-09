@@ -1,8 +1,8 @@
 """Generic file tools for reading and writing workspace files.
 
-Gives the agent direct access to markdown files in the contractor's data
+Gives the agent direct access to markdown files in the user's data
 directory (SOUL.md, USER.md, memory/, etc.), following the same pattern
-used by openclaw and nanobot.  Files are scoped to the contractor's
+used by openclaw and nanobot.  Files are scoped to the user's
 directory for safety.
 """
 
@@ -50,12 +50,12 @@ class EditFileParams(BaseModel):
     new_text: str = Field(description="Replacement text")
 
 
-def _resolve_path(contractor_id: int, relative_path: str) -> tuple[Path, str | None]:
-    """Resolve a relative path to an absolute path within the contractor directory.
+def _resolve_path(user_id: int, relative_path: str) -> tuple[Path, str | None]:
+    """Resolve a relative path to an absolute path within the user directory.
 
     Returns (resolved_path, error_message).  error_message is None on success.
     """
-    base = Path(settings.data_dir) / str(contractor_id)
+    base = Path(settings.data_dir) / str(user_id)
     try:
         resolved = (base / relative_path).resolve()
     except (ValueError, OSError):
@@ -75,12 +75,12 @@ def _resolve_path(contractor_id: int, relative_path: str) -> tuple[Path, str | N
     return resolved, None
 
 
-def create_workspace_tools(contractor_id: int) -> list[Tool]:
-    """Create generic file tools scoped to the contractor's data directory."""
+def create_workspace_tools(user_id: int) -> list[Tool]:
+    """Create generic file tools scoped to the user's data directory."""
 
     async def read_file(path: str) -> ToolResult:
         """Read a markdown file from the workspace."""
-        resolved, err = _resolve_path(contractor_id, path)
+        resolved, err = _resolve_path(user_id, path)
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
         if not resolved.exists():
@@ -93,7 +93,7 @@ def create_workspace_tools(contractor_id: int) -> list[Tool]:
 
     async def write_file(path: str, content: str) -> ToolResult:
         """Write or overwrite a markdown file in the workspace."""
-        resolved, err = _resolve_path(contractor_id, path)
+        resolved, err = _resolve_path(user_id, path)
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
         resolved.parent.mkdir(parents=True, exist_ok=True)
@@ -102,7 +102,7 @@ def create_workspace_tools(contractor_id: int) -> list[Tool]:
 
     async def edit_file(path: str, old_text: str, new_text: str) -> ToolResult:
         """Replace exact text in a markdown file."""
-        resolved, err = _resolve_path(contractor_id, path)
+        resolved, err = _resolve_path(user_id, path)
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
         if not resolved.exists():
@@ -174,7 +174,7 @@ def create_workspace_tools(contractor_id: int) -> list[Tool]:
 
 def _workspace_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for workspace tools, used by the registry."""
-    return create_workspace_tools(ctx.contractor.id)
+    return create_workspace_tools(ctx.user.id)
 
 
 def _register() -> None:

@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import ContractorData, EstimateStore, get_contractor_store
+from backend.app.agent.file_store import EstimateStore, UserData, get_user_store
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
 from tests.mocks.storage import MockStorageBackend
 
@@ -24,10 +24,10 @@ def _use_tmp_pdf_dir(tmp_path: Path) -> Generator[None]:
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_creates_records(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """generate_estimate should create Estimate and EstimateLineItem records."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -42,7 +42,7 @@ async def test_generate_estimate_creates_records(
     assert "$4,200.00" in result.content
     assert result.is_error is False
 
-    store = EstimateStore(test_contractor.id)
+    store = EstimateStore(test_user.id)
     estimates = await store.list_all()
     assert len(estimates) == 1
     assert estimates[0].total_amount == 4200.00
@@ -53,10 +53,10 @@ async def test_generate_estimate_creates_records(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_with_client_info(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """generate_estimate should include client info."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -70,18 +70,18 @@ async def test_generate_estimate_with_client_info(
     assert "$8,500.00" in result.content
 
     # Verify estimate is filed under the client slug
-    store = EstimateStore(test_contractor.id)
+    store = EstimateStore(test_user.id)
     estimates = await store.list_all()
     assert estimates[0].client_id == "john_johnson"
 
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_pdf_generated(
-    test_contractor: ContractorData,
+    test_user: UserData,
     tmp_path: Path,
 ) -> None:
     """generate_estimate should generate a PDF (nonzero bytes)."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -91,24 +91,22 @@ async def test_generate_estimate_pdf_generated(
 
     assert ".pdf" in result.content
 
-    # Verify PDF file was actually written in the temp directory (per-contractor subdir)
-    store = EstimateStore(test_contractor.id)
+    # Verify PDF file was actually written in the temp directory (per-user subdir)
+    store = EstimateStore(test_user.id)
     estimates = await store.list_all()
     assert len(estimates) == 1
     # Without client info, PDFs go under the "unsorted" subfolder
-    pdf_path = (
-        tmp_path / "estimates" / str(test_contractor.id) / "unsorted" / f"{estimates[0].id}.pdf"
-    )
+    pdf_path = tmp_path / "estimates" / str(test_user.id) / "unsorted" / f"{estimates[0].id}.pdf"
     assert pdf_path.exists()
     assert pdf_path.stat().st_size > 0
 
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_sequential_numbers(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
-    """Estimate numbers should be sequential per contractor."""
-    tools = create_estimate_tools(test_contractor)
+    """Estimate numbers should be sequential per user."""
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result1 = await generate(
@@ -126,10 +124,10 @@ async def test_generate_estimate_sequential_numbers(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_single_line_item(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Estimate with single line item should work."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -143,10 +141,10 @@ async def test_generate_estimate_single_line_item(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_custom_terms(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Custom terms should be accepted."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -160,10 +158,10 @@ async def test_generate_estimate_custom_terms(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_no_terms_omits_default(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Omitting terms should pass None to the PDF, not a hardcoded default."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     with patch(
@@ -182,10 +180,10 @@ async def test_generate_estimate_no_terms_omits_default(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_rejects_negative_quantity(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Negative quantity should return an error instead of creating a record."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -197,16 +195,16 @@ async def test_generate_estimate_rejects_negative_quantity(
     assert "negative" in result.content.lower()
     assert result.is_error is True
 
-    store = EstimateStore(test_contractor.id)
+    store = EstimateStore(test_user.id)
     assert len(await store.list_all()) == 0
 
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_rejects_negative_price(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Negative unit_price should return an error."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -218,16 +216,16 @@ async def test_generate_estimate_rejects_negative_price(
     assert "negative" in result.content.lower()
     assert result.is_error is True
 
-    store = EstimateStore(test_contractor.id)
+    store = EstimateStore(test_user.id)
     assert len(await store.list_all()) == 0
 
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_rejects_non_numeric_values(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Non-numeric quantity/price should return an error."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -238,18 +236,18 @@ async def test_generate_estimate_rejects_non_numeric_values(
     assert "Error" in result.content
     assert result.is_error is True
 
-    store = EstimateStore(test_contractor.id)
+    store = EstimateStore(test_user.id)
     assert len(await store.list_all()) == 0
 
 
 def test_serve_estimate_pdf_endpoint(
-    client: TestClient, test_contractor: ContractorData, tmp_path: Path
+    client: TestClient, test_user: UserData, tmp_path: Path
 ) -> None:
     """GET /api/estimates/{id}/pdf should serve existing PDF for authenticated owner."""
     import asyncio
 
     # Create an estimate record via the file store
-    store = EstimateStore(test_contractor.id)
+    store = EstimateStore(test_user.id)
     estimate = asyncio.get_event_loop().run_until_complete(
         store.create(
             description="Test estimate",
@@ -259,9 +257,9 @@ def test_serve_estimate_pdf_endpoint(
 
     # Create a test PDF file in the temp directory (patched via _use_tmp_pdf_dir)
     # Estimates without client_id go under "unsorted"
-    contractor_dir = tmp_path / "estimates" / str(test_contractor.id) / "unsorted"
-    contractor_dir.mkdir(parents=True, exist_ok=True)
-    test_pdf = contractor_dir / f"{estimate.id}.pdf"
+    user_dir = tmp_path / "estimates" / str(test_user.id) / "unsorted"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    test_pdf = user_dir / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 test content")
 
     response = client.get(f"/api/estimates/{estimate.id}/pdf")
@@ -280,18 +278,18 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, tmp_path: Pa
     """GET /api/estimates/{id}/pdf should return 404 for another user's estimate."""
     import asyncio
 
-    # Create a different contractor
-    contractor_store = get_contractor_store()
-    other_contractor = asyncio.get_event_loop().run_until_complete(
-        contractor_store.create(
+    # Create a different user
+    user_store = get_user_store()
+    other_user = asyncio.get_event_loop().run_until_complete(
+        user_store.create(
             user_id="other-user-999",
-            name="Other Contractor",
+            name="Other User",
             phone="+15559999999",
         )
     )
 
-    # Create an estimate owned by the other contractor
-    store = EstimateStore(other_contractor.id)
+    # Create an estimate owned by the other user
+    store = EstimateStore(other_user.id)
     estimate = asyncio.get_event_loop().run_until_complete(
         store.create(
             description="Other user's estimate",
@@ -300,9 +298,9 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, tmp_path: Pa
     )
 
     # Create the PDF file so we can verify auth blocks access, not file absence
-    contractor_dir = tmp_path / "estimates" / str(other_contractor.id) / "unsorted"
-    contractor_dir.mkdir(parents=True, exist_ok=True)
-    test_pdf = contractor_dir / f"{estimate.id}.pdf"
+    user_dir = tmp_path / "estimates" / str(other_user.id) / "unsorted"
+    user_dir.mkdir(parents=True, exist_ok=True)
+    test_pdf = user_dir / f"{estimate.id}.pdf"
     test_pdf.write_bytes(b"%PDF-1.4 secret content")
 
     response = client.get(f"/api/estimates/{estimate.id}/pdf")
@@ -312,11 +310,11 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, tmp_path: Pa
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_uploads_to_cloud_storage(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """When storage is provided, estimate PDF should be uploaded to cloud storage."""
     storage = MockStorageBackend()
-    tools = create_estimate_tools(test_contractor, storage)
+    tools = create_estimate_tools(test_user, storage)
     generate = tools[0].function
 
     await generate(
@@ -335,11 +333,11 @@ async def test_generate_estimate_uploads_to_cloud_storage(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_storage_uses_unsorted_without_client(
-    test_contractor: ContractorData,
+    test_user: UserData,
 ) -> None:
     """Without client info, estimate PDF should go to Unsorted in cloud storage."""
     storage = MockStorageBackend()
-    tools = create_estimate_tools(test_contractor, storage)
+    tools = create_estimate_tools(test_user, storage)
     generate = tools[0].function
 
     await generate(
@@ -354,11 +352,11 @@ async def test_generate_estimate_storage_uses_unsorted_without_client(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_no_storage_still_saves_locally(
-    test_contractor: ContractorData,
+    test_user: UserData,
     tmp_path: Path,
 ) -> None:
     """Without storage backend, estimate PDF should still save to local filesystem."""
-    tools = create_estimate_tools(test_contractor)
+    tools = create_estimate_tools(test_user)
     generate = tools[0].function
 
     result = await generate(
@@ -367,12 +365,10 @@ async def test_generate_estimate_no_storage_still_saves_locally(
     )
 
     assert "EST-0001" in result.content
-    store = EstimateStore(test_contractor.id)
+    store = EstimateStore(test_user.id)
     estimates = await store.list_all()
     assert len(estimates) == 1
-    pdf_path = (
-        tmp_path / "estimates" / str(test_contractor.id) / "unsorted" / f"{estimates[0].id}.pdf"
-    )
+    pdf_path = tmp_path / "estimates" / str(test_user.id) / "unsorted" / f"{estimates[0].id}.pdf"
     assert pdf_path.exists()
 
 
@@ -392,7 +388,7 @@ def test_serve_estimate_pdf_requires_auth_dependency() -> None:
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_cloud_upload_failure_does_not_kill_call(
-    test_contractor: ContractorData,
+    test_user: UserData,
     tmp_path: Path,
 ) -> None:
     """Cloud upload failure should be logged but not prevent local PDF generation."""
@@ -404,7 +400,7 @@ async def test_generate_estimate_cloud_upload_failure_does_not_kill_call(
 
     storage.upload_file = failing_upload  # type: ignore[assignment]
 
-    tools = create_estimate_tools(test_contractor, storage)
+    tools = create_estimate_tools(test_user, storage)
     generate = tools[0].function
 
     result = await generate(
@@ -418,10 +414,8 @@ async def test_generate_estimate_cloud_upload_failure_does_not_kill_call(
     assert "$2,000.00" in result.content
 
     # Verify local PDF was saved (client_name="John Smith" -> john_smith subfolder)
-    store = EstimateStore(test_contractor.id)
+    store = EstimateStore(test_user.id)
     estimates = await store.list_all()
     assert len(estimates) == 1
-    pdf_path = (
-        tmp_path / "estimates" / str(test_contractor.id) / "john_smith" / f"{estimates[0].id}.pdf"
-    )
+    pdf_path = tmp_path / "estimates" / str(test_user.id) / "john_smith" / f"{estimates[0].id}.pdf"
     assert pdf_path.exists()

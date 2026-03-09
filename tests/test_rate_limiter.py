@@ -9,7 +9,7 @@ import pytest
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import ContractorData, get_contractor_store, reset_stores
+from backend.app.agent.file_store import UserData, get_user_store, reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
 from backend.app.main import app
@@ -42,8 +42,8 @@ def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
     with patch.object(settings, "data_dir", str(tmp_path)):
         reset_stores()
 
-        store = get_contractor_store()
-        contractor = asyncio.get_event_loop().run_until_complete(
+        store = get_user_store()
+        user = asyncio.get_event_loop().run_until_complete(
             store.create(
                 user_id="rl-test-user",
                 name="RL Test",
@@ -53,8 +53,8 @@ def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
             )
         )
 
-        def _override_get_current_user() -> ContractorData:
-            return contractor
+        def _override_get_current_user() -> UserData:
+            return user
 
         mock_messaging = MagicMock(spec=MessagingService)
         mock_messaging.send_text = AsyncMock(return_value="mock_msg_id")

@@ -35,7 +35,7 @@ class SystemMessage:
 
 @dataclass(frozen=True)
 class UserMessage:
-    """User (contractor) message."""
+    """User (user) message."""
 
     content: str
 

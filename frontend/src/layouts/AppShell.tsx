@@ -6,11 +6,11 @@ import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import { useAuth } from '@/contexts/AuthContext';
 import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
-import type { ContractorProfile } from '@/types';
+import type { UserProfile } from '@/types';
 
 /** Context value provided to child routes via useOutletContext(). */
 export interface AppShellContext {
-  profile: ContractorProfile | null;
+  profile: UserProfile | null;
   reloadProfile: () => void;
   isPremium: boolean;
   isAdmin: boolean;
@@ -28,7 +28,7 @@ const NAV_ITEMS = [
 
 export default function AppShell() {
   const { authState, currentAuthUser, isPremium, handleLogout } = useAuth();
-  const [profile, setProfile] = useState<ContractorProfile | null>(null);
+  const [profile, setProfile] = useState<UserProfile | null>(null);
   const [profileError, setProfileError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 

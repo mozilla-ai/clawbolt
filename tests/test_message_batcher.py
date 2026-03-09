@@ -1,11 +1,11 @@
-"""Tests for MessageBatcher: rapid-fire message batching per contractor."""
+"""Tests for MessageBatcher: rapid-fire message batching per user."""
 
 import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.agent.file_store import ContractorData, SessionState, StoredMessage
+from backend.app.agent.file_store import SessionState, StoredMessage, UserData
 from backend.app.agent.ingestion import MessageBatcher
 
 
@@ -18,9 +18,9 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=50)
         messaging = MagicMock()
 
-        mock_contractor = ContractorData(id=1, channel_identifier="123", phone="")
+        mock_user = UserData(id=1, channel_identifier="123", phone="")
 
-        mock_session = SessionState(session_id="sess-1", contractor_id=1)
+        mock_session = SessionState(session_id="sess-1", user_id=1)
 
         mock_message = StoredMessage(direction="inbound", body="hello")
 
@@ -29,13 +29,13 @@ class TestMessageBatcher:
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
             ) as mock_handle,
-            patch("backend.app.agent.ingestion.contractor_locks") as mock_locks,
+            patch("backend.app.agent.ingestion.user_locks") as mock_locks,
         ):
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
 
-            await batcher.enqueue(mock_contractor, mock_session, mock_message, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], messaging)
             await asyncio.sleep(0.1)
 
             mock_handle.assert_called_once()
@@ -49,9 +49,9 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=100)
         messaging = MagicMock()
 
-        mock_contractor = ContractorData(id=1, channel_identifier="123", phone="")
+        mock_user = UserData(id=1, channel_identifier="123", phone="")
 
-        mock_session = SessionState(session_id="sess-1", contractor_id=1)
+        mock_session = SessionState(session_id="sess-1", user_id=1)
 
         mock_msg_1 = StoredMessage(direction="inbound", body="first")
         mock_msg_2 = StoredMessage(direction="inbound", body="second")
@@ -62,7 +62,7 @@ class TestMessageBatcher:
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
             ) as mock_handle,
-            patch("backend.app.agent.ingestion.contractor_locks") as mock_locks,
+            patch("backend.app.agent.ingestion.user_locks") as mock_locks,
         ):
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
@@ -70,15 +70,15 @@ class TestMessageBatcher:
 
             # Enqueue 3 messages rapidly (within the batch window)
             await batcher.enqueue(
-                mock_contractor,
+                mock_user,
                 mock_session,
                 mock_msg_1,
                 [("file_a", "image/jpeg")],
                 messaging,
             )
-            await batcher.enqueue(mock_contractor, mock_session, mock_msg_2, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_msg_2, [], messaging)
             await batcher.enqueue(
-                mock_contractor,
+                mock_user,
                 mock_session,
                 mock_msg_3,
                 [("file_b", "audio/ogg")],
@@ -99,16 +99,16 @@ class TestMessageBatcher:
             ]
 
     @pytest.mark.asyncio
-    async def test_different_contractors_not_batched(self) -> None:
-        """Messages from different contractors should be processed independently."""
+    async def test_different_users_not_batched(self) -> None:
+        """Messages from different users should be processed independently."""
         batcher = MessageBatcher(window_ms=50)
         messaging = MagicMock()
 
-        mock_c1 = ContractorData(id=1, channel_identifier="111", phone="")
-        mock_c2 = ContractorData(id=2, channel_identifier="222", phone="")
+        mock_c1 = UserData(id=1, channel_identifier="111", phone="")
+        mock_c2 = UserData(id=2, channel_identifier="222", phone="")
 
-        mock_session_1 = SessionState(session_id="sess-1", contractor_id=1)
-        mock_session_2 = SessionState(session_id="sess-2", contractor_id=2)
+        mock_session_1 = SessionState(session_id="sess-1", user_id=1)
+        mock_session_2 = SessionState(session_id="sess-2", user_id=2)
 
         mock_msg_1 = StoredMessage(direction="inbound", body="from c1")
         mock_msg_2 = StoredMessage(direction="inbound", body="from c2")
@@ -118,7 +118,7 @@ class TestMessageBatcher:
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
             ) as mock_handle,
-            patch("backend.app.agent.ingestion.contractor_locks") as mock_locks,
+            patch("backend.app.agent.ingestion.user_locks") as mock_locks,
         ):
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
@@ -129,7 +129,7 @@ class TestMessageBatcher:
 
             await asyncio.sleep(0.15)
 
-            # Both contractors should get their own pipeline call
+            # Both users should get their own pipeline call
             assert mock_handle.call_count == 2
 
     @pytest.mark.asyncio
@@ -138,9 +138,9 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=100)
         messaging = MagicMock()
 
-        mock_contractor = ContractorData(id=1, channel_identifier="123", phone="")
+        mock_user = UserData(id=1, channel_identifier="123", phone="")
 
-        mock_session = SessionState(session_id="sess-1", contractor_id=1)
+        mock_session = SessionState(session_id="sess-1", user_id=1)
 
         mock_msg_1 = StoredMessage(direction="inbound", body="first")
         mock_msg_2 = StoredMessage(direction="inbound", body="second")
@@ -150,21 +150,21 @@ class TestMessageBatcher:
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
             ) as mock_handle,
-            patch("backend.app.agent.ingestion.contractor_locks") as mock_locks,
+            patch("backend.app.agent.ingestion.user_locks") as mock_locks,
         ):
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
 
             # First message
-            await batcher.enqueue(mock_contractor, mock_session, mock_msg_1, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_msg_1, [], messaging)
 
             # Wait 70ms (within the 100ms window)
             await asyncio.sleep(0.07)
             mock_handle.assert_not_called()
 
             # Second message resets the timer
-            await batcher.enqueue(mock_contractor, mock_session, mock_msg_2, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_msg_2, [], messaging)
 
             # Wait 70ms again (still within the new 100ms window)
             await asyncio.sleep(0.07)
@@ -180,9 +180,9 @@ class TestMessageBatcher:
         batcher = MessageBatcher(window_ms=0)
         messaging = MagicMock()
 
-        mock_contractor = ContractorData(id=1, channel_identifier="123", phone="")
+        mock_user = UserData(id=1, channel_identifier="123", phone="")
 
-        mock_session = SessionState(session_id="sess-1", contractor_id=1)
+        mock_session = SessionState(session_id="sess-1", user_id=1)
 
         mock_message = StoredMessage(direction="inbound", body="hello")
 
@@ -191,13 +191,13 @@ class TestMessageBatcher:
                 "backend.app.agent.ingestion.handle_inbound_message",
                 new_callable=AsyncMock,
             ) as mock_handle,
-            patch("backend.app.agent.ingestion.contractor_locks") as mock_locks,
+            patch("backend.app.agent.ingestion.user_locks") as mock_locks,
         ):
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
 
-            await batcher.enqueue(mock_contractor, mock_session, mock_message, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], messaging)
             await asyncio.sleep(0.05)
 
             mock_handle.assert_called_once()

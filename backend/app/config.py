@@ -71,7 +71,7 @@ class Settings(BaseSettings):
     whisper_compute_type: str = "int8"
 
     # Agent loop
-    message_batch_window_ms: int = 1500  # Batch rapid-fire messages per contractor
+    message_batch_window_ms: int = 1500  # Batch rapid-fire messages per user
     max_tool_rounds: int = 10
     max_input_tokens: int = 120_000
     context_trim_target_tokens: int = 80_000
@@ -106,10 +106,10 @@ class Settings(BaseSettings):
     heartbeat_max_daily_messages: int = 5
     heartbeat_quiet_hours_start: int = 20  # 8 PM
     heartbeat_quiet_hours_end: int = 7  # 7 AM
-    heartbeat_idle_days: int = 3  # flag contractors with no inbound messages for N days
+    heartbeat_idle_days: int = 3  # flag users with no inbound messages for N days
     heartbeat_model: str = ""  # empty = fall back to llm_model
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
-    heartbeat_concurrency: int = 5  # max concurrent contractor evaluations per tick
+    heartbeat_concurrency: int = 5  # max concurrent user evaluations per tick
     checklist_daily_interval_hours: int = 20
     heartbeat_recent_messages_count: int = 5
 
