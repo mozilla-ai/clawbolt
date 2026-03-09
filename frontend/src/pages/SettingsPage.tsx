@@ -157,22 +157,16 @@ function SoulTab({
   profile,
   onSaved,
 }: {
-  profile: { assistant_name: string; soul_text: string };
+  profile: { soul_text: string };
   onSaved: () => void;
 }) {
-  const [form, setForm] = useState({
-    assistant_name: profile.assistant_name,
-    soul_text: profile.soul_text,
-  });
+  const [soulText, setSoulText] = useState(profile.soul_text);
   const [saving, setSaving] = useState(false);
 
   const handleSave = useCallback(async () => {
     setSaving(true);
     try {
-      await api.updateProfile({
-        assistant_name: form.assistant_name,
-        soul_text: form.soul_text,
-      });
+      await api.updateProfile({ soul_text: soulText });
       onSaved();
       toast.success('Soul settings updated');
     } catch (e) {
@@ -180,27 +174,20 @@ function SoulTab({
     } finally {
       setSaving(false);
     }
-  }, [form, onSaved]);
+  }, [soulText, onSaved]);
 
   return (
     <Card>
       <div className="grid gap-4">
-        <Field label="Assistant Name">
-          <Input
-            value={form.assistant_name}
-            onChange={(e) => setForm((prev) => ({ ...prev, assistant_name: e.target.value }))}
-            placeholder="e.g. Claw"
-          />
-        </Field>
         <Field label="Personality (SOUL.md)">
           <Textarea
-            value={form.soul_text}
-            onChange={(e) => setForm((prev) => ({ ...prev, soul_text: e.target.value }))}
-            rows={12}
-            placeholder="Describe how your assistant should behave, speak, and interact with clients..."
+            value={soulText}
+            onChange={(e) => setSoulText(e.target.value)}
+            rows={14}
+            placeholder="Describe how your assistant should behave, speak, and interact with clients. Include what it should call itself (e.g. 'Your name is Claw')..."
           />
           <p className="text-xs text-muted-foreground mt-1">
-            This guides your assistant's personality and communication style.
+            This guides your assistant's personality, name, and communication style.
           </p>
         </Field>
         <div className="flex justify-end">
