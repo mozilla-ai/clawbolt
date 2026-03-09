@@ -46,16 +46,20 @@ export default function ToolsPage() {
   const coreTools = tools.filter((t) => t.category === 'core');
   const domainTools = tools.filter((t) => t.category === 'domain');
 
-  // Group domain tools by domain_group
+  // Group domain tools by domain_group, sorted by domain_group_order
   const domainGroups: Record<string, ToolConfigEntry[]> = {};
+  const groupOrder: Record<string, number> = {};
   for (const tool of domainTools) {
     const group = tool.domain_group || 'Other';
     if (!domainGroups[group]) {
       domainGroups[group] = [];
+      groupOrder[group] = tool.domain_group_order;
     }
     domainGroups[group].push(tool);
   }
-  const groupNames = Object.keys(domainGroups).sort();
+  const groupNames = Object.keys(domainGroups).sort(
+    (a, b) => (groupOrder[a] ?? 0) - (groupOrder[b] ?? 0) || a.localeCompare(b),
+  );
 
   return (
     <div>

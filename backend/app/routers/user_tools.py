@@ -4,6 +4,8 @@ Users can view and toggle domain-specific agent tools. Core tools
 (workspace, profile, memory, messaging) are always enabled.
 """
 
+from typing import NamedTuple
+
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.agent.file_store import (
@@ -30,22 +32,36 @@ ensure_tool_modules_imported()
 # Factories whose tools are always available and cannot be disabled.
 _CORE_FACTORIES: frozenset[str] = frozenset({"workspace", "profile", "memory", "messaging"})
 
-# Human-readable descriptions for each factory group.
-_FACTORY_DESCRIPTIONS: dict[str, str] = {
-    "workspace": "Read, write, and edit markdown files in the workspace",
-    "profile": "View and update user profile information",
-    "memory": "Save, recall, and forget long-term facts",
-    "messaging": "Send text and media replies to the user",
-    "estimate": "Generate professional estimates and quotes with PDF output",
-    "file": "Upload and organize files in cloud storage",
-    "checklist": "Manage recurring reminders and task checklists",
-}
+# Consolidated metadata for each factory group: description, display group,
+# and sort order.  Adding a new tool only requires one entry here.
 
-# Display group for domain-specific factories. Core factories have no group.
-_FACTORY_GROUPS: dict[str, str] = {
-    "estimate": "Local Management",
-    "file": "Local Management",
-    "checklist": "Local Management",
+
+class _FactoryMeta(NamedTuple):
+    description: str
+    domain_group: str = ""
+    domain_group_order: int = 0
+
+
+_FACTORY_META: dict[str, _FactoryMeta] = {
+    "workspace": _FactoryMeta("Read, write, and edit markdown files in the workspace"),
+    "profile": _FactoryMeta("View and update user profile information"),
+    "memory": _FactoryMeta("Save, recall, and forget long-term facts"),
+    "messaging": _FactoryMeta("Send text and media replies to the user"),
+    "estimate": _FactoryMeta(
+        "Generate professional estimates and quotes with PDF output",
+        domain_group="Local Management",
+        domain_group_order=1,
+    ),
+    "file": _FactoryMeta(
+        "Upload and organize files in cloud storage",
+        domain_group="Local Management",
+        domain_group_order=1,
+    ),
+    "checklist": _FactoryMeta(
+        "Manage recurring reminders and task checklists",
+        domain_group="Local Management",
+        domain_group_order=1,
+    ),
 }
 
 
@@ -61,12 +77,14 @@ def _build_tool_list(
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
         is_core = name in _CORE_FACTORIES
+        meta = _FACTORY_META.get(name)
         entries.append(
             ToolConfigEntry(
                 name=name,
-                description=_FACTORY_DESCRIPTIONS.get(name, ""),
+                description=meta.description if meta else "",
                 category="core" if is_core else "domain",
-                domain_group=_FACTORY_GROUPS.get(name, ""),
+                domain_group=meta.domain_group if meta else "",
+                domain_group_order=meta.domain_group_order if meta else 0,
                 enabled=True if is_core else name not in disabled_names,
             )
         )
@@ -89,6 +107,7 @@ async def get_tool_config(
                 description=e.description,
                 category=e.category,
                 domain_group=e.domain_group,
+                domain_group_order=e.domain_group_order,
                 enabled=e.enabled,
             )
             for e in entries
@@ -141,6 +160,7 @@ async def update_tool_config(
                 description=e.description,
                 category=e.category,
                 domain_group=e.domain_group,
+                domain_group_order=e.domain_group_order,
                 enabled=e.enabled,
             )
             for e in entries

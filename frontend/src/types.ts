@@ -130,6 +130,7 @@ export interface ToolConfigEntry {
   description: string;
   category: string;
   domain_group: string;
+  domain_group_order: number;
   enabled: boolean;
 }
 
