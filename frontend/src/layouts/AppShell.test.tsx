@@ -49,7 +49,7 @@ describe('AppShell', () => {
     renderWithRouter(<AppShell />, { route: '/app' });
 
     await waitFor(() => {
-      expect(screen.getByText('Overview')).toBeInTheDocument();
+      expect(screen.getByText('Chat')).toBeInTheDocument();
     });
     expect(screen.getByText('Conversations')).toBeInTheDocument();
     expect(screen.getByText('Memory')).toBeInTheDocument();

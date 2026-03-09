@@ -1,7 +1,6 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Spinner from '@/components/ui/spinner';
 import AppShell from '@/layouts/AppShell';
-import OverviewPage from '@/pages/OverviewPage';
 import ConversationsPage from '@/pages/ConversationsPage';
 import MemoryPage from '@/pages/MemoryPage';
 import SettingsPage from '@/pages/SettingsPage';
@@ -39,7 +38,7 @@ export default function App() {
 
       {/* Authenticated app */}
       <Route path="/app" element={<AppShell />}>
-        <Route index element={<OverviewPage />} />
+        <Route index element={<Navigate to="/app/chat" replace />} />
         <Route path="chat" element={<ChatPage />} />
         <Route path="conversations" element={<ConversationsPage />} />
         <Route path="conversations/:sessionId" element={<ConversationsPage />} />

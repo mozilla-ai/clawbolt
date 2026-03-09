@@ -92,14 +92,6 @@ export interface ChecklistItemUpdate {
   status?: string;
 }
 
-export interface ContractorStats {
-  total_sessions: number;
-  messages_this_month: number;
-  active_checklist_items: number;
-  total_memory_facts: number;
-  last_conversation_at: string | null;
-}
-
 export interface AuthConfig {
   required: boolean;
   method?: string;
