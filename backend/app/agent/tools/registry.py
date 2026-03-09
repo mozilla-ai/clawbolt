@@ -247,11 +247,7 @@ class ToolRegistry:
         a ``ToolContext`` and does not filter by dependency availability.
         Useful for prompt building where the full capability list is wanted.
         """
-        return {
-            name: f.summary
-            for name, f in self._factories.items()
-            if not f.core and f.summary
-        }
+        return {name: f.summary for name, f in self._factories.items() if not f.core and f.summary}
 
 
 # Module-level singleton used by tool modules for self-registration.
