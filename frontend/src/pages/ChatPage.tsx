@@ -22,6 +22,33 @@ interface ChatMessage {
 }
 
 const ACCEPTED_FILE_TYPES = 'image/*,audio/*,application/pdf';
+const LAST_SESSION_KEY = 'clawbolt:lastChatSession';
+
+function saveLastSession(sessionId: string) {
+  try { localStorage.setItem(LAST_SESSION_KEY, sessionId); } catch { /* ignore */ }
+}
+
+function loadLastSession(): string | null {
+  try { return localStorage.getItem(LAST_SESSION_KEY); } catch { return null; }
+}
+
+function clearLastSession() {
+  try { localStorage.removeItem(LAST_SESSION_KEY); } catch { /* ignore */ }
+}
+
+function formatSessionTime(dateStr: string): string {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const diffMs = now.getTime() - d.getTime();
+  const diffMins = Math.floor(diffMs / 60000);
+  if (diffMins < 1) return 'Just now';
+  if (diffMins < 60) return `${diffMins}m ago`;
+  const diffHours = Math.floor(diffMins / 60);
+  if (diffHours < 24) return `${diffHours}h ago`;
+  const diffDays = Math.floor(diffHours / 24);
+  if (diffDays < 7) return `${diffDays}d ago`;
+  return d.toLocaleDateString();
+}
 
 export default function ChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
@@ -35,10 +62,13 @@ export default function ChatPage() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pickerRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
+  const autoAttachDone = useRef(false);
 
   // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
   // bug that occurs when scrollIntoView fires during keyboard dismissal.
@@ -64,18 +94,42 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Load recent sessions for the selector
+  // Close picker when clicking outside
+  useEffect(() => {
+    if (!pickerOpen) return;
+    const handleClick = (e: MouseEvent) => {
+      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
+        setPickerOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClick);
+    return () => document.removeEventListener('mousedown', handleClick);
+  }, [pickerOpen]);
+
+  // Load recent sessions, then auto-attach to last active or most recent
   useEffect(() => {
     api.listSessions(0, 50)
-      .then((res) => setSessions(res.sessions))
+      .then((res) => {
+        setSessions(res.sessions);
+        // Auto-attach: only if no explicit ?session= param and not already done
+        if (!autoAttachDone.current && !searchParams.get('session') && res.sessions.length > 0) {
+          autoAttachDone.current = true;
+          const saved = loadLastSession();
+          const match = saved ? res.sessions.find((s) => s.id === saved) : null;
+          const target = match ?? res.sessions[0];
+          setActiveSessionId(target.id);
+          setSearchParams({ session: target.id }, { replace: true });
+        }
+      })
       .catch(() => {})
       .finally(() => setLoadingSessions(false));
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load history when activeSessionId is set
   useEffect(() => {
     if (!activeSessionId) return;
     setLoadingHistory(true);
+    saveLastSession(activeSessionId);
     api.getSession(activeSessionId)
       .then((detail) => {
         const loaded: ChatMessage[] = detail.messages.map((m) => ({
@@ -95,15 +149,18 @@ export default function ChatPage() {
       .finally(() => setLoadingHistory(false));
   }, [activeSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleSessionChange = (value: string) => {
-    if (value === '__new__') {
-      setActiveSessionId(null);
-      setMessages([]);
-      setSearchParams({}, { replace: true });
-    } else {
-      setActiveSessionId(value);
-      setSearchParams({ session: value }, { replace: true });
-    }
+  const selectSession = (sessionId: string) => {
+    setActiveSessionId(sessionId);
+    setSearchParams({ session: sessionId }, { replace: true });
+    setPickerOpen(false);
+  };
+
+  const startNewChat = () => {
+    setActiveSessionId(null);
+    setMessages([]);
+    clearLastSession();
+    setSearchParams({}, { replace: true });
+    setPickerOpen(false);
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -158,6 +215,7 @@ export default function ChatPage() {
       if (!activeSessionId) {
         setActiveSessionId(res.session_id);
         setSearchParams({ session: res.session_id }, { replace: true });
+        saveLastSession(res.session_id);
         // Refresh session list to include the new session
         api.listSessions(0, 50)
           .then((r) => setSessions(r.sessions))
@@ -177,6 +235,7 @@ export default function ChatPage() {
   };
 
   const canSend = !sending && (input.trim().length > 0 || selectedFiles.length > 0);
+  const activeSession = sessions.find((s) => s.id === activeSessionId);
 
   return (
     <div className="flex flex-col h-full -my-4 sm:-my-6">
@@ -192,20 +251,67 @@ export default function ChatPage() {
           {loadingSessions ? (
             <Spinner className="w-4 h-4" />
           ) : (
-            <select
-              value={activeSessionId ?? '__new__'}
-              onChange={(e) => handleSessionChange(e.target.value)}
-              className="px-2 py-1.5 text-base sm:text-xs bg-card border border-border rounded-[--radius-md] text-foreground focus:outline-none focus:ring-2 focus:ring-primary/30 focus:border-primary transition-colors max-w-[200px]"
-            >
-              <option value="__new__">New conversation</option>
-              {sessions.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.last_message_preview
-                    ? s.last_message_preview.slice(0, 40) + (s.last_message_preview.length > 40 ? '...' : '')
-                    : new Date(s.start_time).toLocaleDateString()}
-                </option>
-              ))}
-            </select>
+            <>
+              {/* Session picker */}
+              <div className="relative" ref={pickerRef}>
+                <button
+                  type="button"
+                  onClick={() => setPickerOpen((v) => !v)}
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 text-base sm:text-xs bg-card border border-border rounded-[--radius-md] text-foreground hover:bg-secondary-hover focus:outline-none focus:ring-2 focus:ring-primary/30 transition-colors max-w-[220px]"
+                >
+                  <span className="truncate">
+                    {activeSession
+                      ? (activeSession.last_message_preview
+                          ? activeSession.last_message_preview.slice(0, 30) + (activeSession.last_message_preview.length > 30 ? '...' : '')
+                          : formatSessionTime(activeSession.start_time))
+                      : 'New conversation'}
+                  </span>
+                  <ChevronIcon open={pickerOpen} />
+                </button>
+
+                {pickerOpen && (
+                  <div className="absolute right-0 top-full mt-1 w-72 bg-card border border-border rounded-[--radius-lg] shadow-lg z-50 overflow-hidden">
+                    <div className="p-1.5">
+                      <button
+                        type="button"
+                        onClick={startNewChat}
+                        className="w-full flex items-center gap-2 px-3 py-2 text-sm rounded-[--radius-md] text-primary hover:bg-secondary-hover transition-colors"
+                      >
+                        <PlusIcon />
+                        New conversation
+                      </button>
+                    </div>
+                    {sessions.length > 0 && (
+                      <>
+                        <div className="border-t border-border" />
+                        <div className="max-h-64 overflow-y-auto p-1.5 space-y-0.5">
+                          {sessions.map((s) => (
+                            <button
+                              key={s.id}
+                              type="button"
+                              onClick={() => selectSession(s.id)}
+                              className={`w-full text-left px-3 py-2 rounded-[--radius-md] transition-colors ${
+                                s.id === activeSessionId
+                                  ? 'bg-selected-bg text-primary'
+                                  : 'hover:bg-secondary-hover text-foreground'
+                              }`}
+                            >
+                              <p className="text-sm truncate">
+                                {s.last_message_preview || 'Empty conversation'}
+                              </p>
+                              <p className="text-[10px] text-muted-foreground mt-0.5">
+                                {formatSessionTime(s.start_time)}
+                                {s.message_count > 0 && ` | ${s.message_count} messages`}
+                              </p>
+                            </button>
+                          ))}
+                        </div>
+                      </>
+                    )}
+                  </div>
+                )}
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -356,6 +462,27 @@ export default function ChatPage() {
         </form>
       </div>
     </div>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+    </svg>
+  );
+}
+
+function PlusIcon() {
+  return (
+    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+    </svg>
   );
 }
 
