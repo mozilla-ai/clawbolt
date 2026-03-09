@@ -97,6 +97,7 @@ export default function ToolsPage() {
             <div className="border-t border-border pt-4">
               <button
                 type="button"
+                aria-expanded={coreExpanded}
                 onClick={() => setCoreExpanded(!coreExpanded)}
                 className="flex items-center gap-2 text-sm font-medium text-muted-foreground hover:text-foreground transition-colors w-full"
               >
