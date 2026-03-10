@@ -22,7 +22,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
-| `DATA_DIR` | `data/contractors` | Directory for file-based contractor data storage |
+| `DATA_DIR` | `data/users` | Directory for file-based user data storage |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated list of allowed CORS origins |
 | `JWT_SECRET` | `change-me-in-production` | Secret key for JWT signing. **Change this in production** |
 | `JWT_EXPIRY_MINUTES` | `15` | JWT token expiry time in minutes |
@@ -119,13 +119,13 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | `HEARTBEAT_ENABLED` | `true` | Enable proactive check-in messages |
 | `HEARTBEAT_DEFAULT_FREQUENCY` | `30m` | Default check-in frequency shown to new users (e.g. `15m`, `1h`, `daily`) |
 | `HEARTBEAT_INTERVAL_MINUTES` | `30` | Minutes between heartbeat evaluation ticks |
-| `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per contractor per day |
+| `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per user per day |
 | `HEARTBEAT_QUIET_HOURS_START` | `20` | Hour (24h) to stop sending heartbeats |
 | `HEARTBEAT_QUIET_HOURS_END` | `7` | Hour (24h) to resume sending heartbeats |
-| `HEARTBEAT_IDLE_DAYS` | `3` | Days of inactivity before flagging a contractor |
+| `HEARTBEAT_IDLE_DAYS` | `3` | Days of inactivity before flagging a user |
 | `HEARTBEAT_MODEL` | (same as `LLM_MODEL`) | Model used for heartbeat messages |
 | `HEARTBEAT_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for heartbeat messages |
-| `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent contractor evaluations per tick |
+| `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent user evaluations per tick |
 | `HEARTBEAT_RECENT_MESSAGES_COUNT` | `5` | Number of recent messages included in heartbeat context |
 
 ## HTTP timeouts

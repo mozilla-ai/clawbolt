@@ -36,7 +36,7 @@ All data is stored as files under the `data/` directory. By default, Docker Comp
 
 ```bash
 # View stored data
-ls data/contractors/
+ls data/users/
 ```
 
 ## Verify it's running
@@ -70,7 +70,7 @@ docker compose up --build -e APP_PORT=8080
 ### Reset all data
 
 ```bash
-# Remove all contractor data
-rm -rf data/contractors/
+# Remove all user data
+rm -rf data/users/
 docker compose up --build
 ```
