@@ -21,12 +21,12 @@ from backend.app.agent.heartbeat import (
     HeartbeatScheduler,
     _parse_tool_call_response,
     _pick_heartbeat_channel,
-    _to_local_time,
     evaluate_heartbeat_need,
     get_daily_heartbeat_count,
     is_within_business_hours,
     run_heartbeat_for_user,
 )
+from backend.app.agent.system_prompt import to_local_time
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -124,28 +124,28 @@ class TestIsWithinBusinessHours:
 
 
 class TestToLocalTime:
-    """Tests for the _to_local_time helper."""
+    """Tests for the to_local_time helper."""
 
     def test_converts_utc_to_pacific(self) -> None:
         utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        local = _to_local_time(utc_time, "America/Los_Angeles")
+        local = to_local_time(utc_time, "America/Los_Angeles")
         # UTC 17:00 in June (PDT, UTC-7) -> 10:00 local
         assert local.hour == 10
 
     def test_converts_utc_to_eastern(self) -> None:
         utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        local = _to_local_time(utc_time, "America/New_York")
+        local = to_local_time(utc_time, "America/New_York")
         # UTC 17:00 in June (EDT, UTC-4) -> 13:00 local
         assert local.hour == 13
 
     def test_empty_timezone_returns_unchanged(self) -> None:
         utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        result = _to_local_time(utc_time, "")
+        result = to_local_time(utc_time, "")
         assert result.hour == 17
 
     def test_invalid_timezone_returns_unchanged(self) -> None:
         utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        result = _to_local_time(utc_time, "Not/A_Real_Zone")
+        result = to_local_time(utc_time, "Not/A_Real_Zone")
         assert result.hour == 17
 
 

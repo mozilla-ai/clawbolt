@@ -36,7 +36,7 @@ def _build_test_registry() -> ToolRegistry:
     # Core factories
     registry.register("memory", lambda ctx: [_make_tool("save_fact"), _make_tool("recall_facts")])
     registry.register("messaging", lambda ctx: [_make_tool("send_reply")])
-    registry.register("profile", lambda ctx: [_make_tool("view_profile")])
+    registry.register("workspace", lambda ctx: [_make_tool("read_file")])
     # Specialist factories
     registry.register(
         "estimate",
@@ -65,7 +65,7 @@ class TestCoreSpecialistClassification:
 
     def test_core_factory_names(self) -> None:
         registry = _build_test_registry()
-        assert registry.core_factory_names == {"memory", "messaging", "profile"}
+        assert registry.core_factory_names == {"memory", "messaging", "workspace"}
 
     def test_specialist_factory_names(self) -> None:
         registry = _build_test_registry()
@@ -86,7 +86,7 @@ class TestCreateCoreTools:
         ctx = ToolContext(user=UserData(id=1))
         tools = registry.create_core_tools(ctx)
         names = {t.name for t in tools}
-        assert names == {"save_fact", "recall_facts", "send_reply", "view_profile"}
+        assert names == {"save_fact", "recall_facts", "send_reply", "read_file"}
 
     def test_specialist_tools_excluded(self) -> None:
         registry = _build_test_registry()
@@ -128,7 +128,7 @@ class TestAvailableSpecialistSummaries:
         summaries = registry.get_available_specialist_summaries(ctx)
         assert "memory" not in summaries
         assert "messaging" not in summaries
-        assert "profile" not in summaries
+        assert "workspace" not in summaries
 
 
 class TestListCapabilitiesTool:

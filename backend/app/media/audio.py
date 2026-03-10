@@ -6,12 +6,11 @@ from faster_whisper import WhisperModel
 from backend.app.config import settings
 
 
-async def transcribe_audio(audio_bytes: bytes, mime_type: str = "audio/ogg") -> str:
+async def transcribe_audio(audio_bytes: bytes) -> str:
     """Transcribe audio using faster-whisper.
 
     Args:
         audio_bytes: Raw audio data
-        mime_type: Audio MIME type
 
     Returns:
         Transcribed text

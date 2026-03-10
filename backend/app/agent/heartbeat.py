@@ -12,7 +12,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import zoneinfo
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -28,7 +27,7 @@ from backend.app.agent.file_store import (
     get_user_store,
 )
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
-from backend.app.agent.system_prompt import build_heartbeat_system_prompt
+from backend.app.agent.system_prompt import build_heartbeat_system_prompt, to_local_time
 from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel, get_default_channel, get_manager
 from backend.app.config import settings
@@ -75,27 +74,13 @@ class HeartbeatAction:
 # ---------------------------------------------------------------------------
 
 
-def _to_local_time(
-    now: datetime.datetime,
-    tz_name: str,
-) -> datetime.datetime:
-    """Convert *now* to the given IANA timezone, returning *now* unchanged on error."""
-    if not tz_name:
-        return now
-    try:
-        return now.astimezone(zoneinfo.ZoneInfo(tz_name))
-    except (zoneinfo.ZoneInfoNotFoundError, KeyError, ValueError):
-        logger.warning("Invalid timezone %r, falling back to UTC", tz_name)
-        return now
-
-
 def is_within_business_hours(
     user: UserData,
     now: datetime.datetime | None = None,
 ) -> bool:
     """Return *True* if *now* falls outside the quiet-hours window."""
     now = now or datetime.datetime.now(datetime.UTC)
-    local_now = _to_local_time(now, user.timezone)
+    local_now = to_local_time(now, user.timezone)
     current_hour = local_now.hour
 
     qstart = settings.heartbeat_quiet_hours_start

@@ -85,11 +85,6 @@ class OrganizeFileParams(BaseModel):
     )
 
 
-def _slugify(text: str, max_length: int = DESCRIPTION_SLUG_MAX_LENGTH) -> str:
-    """Convert text to a filesystem-safe slug."""
-    return _store_slugify(text, max_length)
-
-
 def _build_client_folder(
     client_name: str | None = None,
     client_address: str | None = None,
@@ -145,7 +140,7 @@ def _build_filename(
     base = fallback_names.get(category, "file")
 
     if description and description.strip():
-        base = _slugify(description, max_length=FILENAME_SLUG_MAX_LENGTH)
+        base = _store_slugify(description, max_length=FILENAME_SLUG_MAX_LENGTH)
 
     return f"{base}_{index:03d}.{extension}"
 

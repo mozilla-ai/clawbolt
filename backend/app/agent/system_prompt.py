@@ -113,11 +113,11 @@ def build_recall_section() -> str:
     return load_prompt("recall")
 
 
-def _to_user_time(
+def to_local_time(
     now: datetime.datetime,
     tz_name: str,
 ) -> datetime.datetime:
-    """Convert *now* to the user's IANA timezone, falling back to UTC."""
+    """Convert *now* to the given IANA timezone, returning *now* unchanged on error."""
     if not tz_name:
         return now
     try:
@@ -133,14 +133,14 @@ def build_date_section(user: UserData) -> str:
     Uses date-only granularity (no minutes) to avoid prompt-cache busting.
     """
     now = datetime.datetime.now(datetime.UTC)
-    local = _to_user_time(now, user.timezone)
+    local = to_local_time(now, user.timezone)
     return local.strftime("%A, %Y-%m-%d")
 
 
 def build_local_datetime_section(user: UserData) -> str:
     """Build a human-readable local datetime for the heartbeat evaluator."""
     now = datetime.datetime.now(datetime.UTC)
-    local = _to_user_time(now, user.timezone)
+    local = to_local_time(now, user.timezone)
     return local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
 
 
@@ -234,8 +234,8 @@ async def build_heartbeat_system_prompt(
     builder = SystemPromptBuilder()
     builder.set_preamble(load_prompt("heartbeat_preamble"))
 
-    builder.add_section("About the user", build_identity_section(user))
-    builder.add_section("About the user", build_user_section(user))
+    builder.add_section("About You", build_identity_section(user))
+    builder.add_section("About Your User", build_user_section(user))
 
     memory = await build_memory_section(user.id)
     builder.add_section("User's memory", memory)

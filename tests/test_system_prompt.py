@@ -8,7 +8,6 @@ import pytest
 from backend.app.agent.file_store import UserData
 from backend.app.agent.system_prompt import (
     SystemPromptBuilder,
-    _to_user_time,
     build_agent_system_prompt,
     build_cross_session_context,
     build_date_section,
@@ -19,6 +18,7 @@ from backend.app.agent.system_prompt import (
     build_proactive_section,
     build_recall_section,
     build_tool_guidelines_section,
+    to_local_time,
 )
 
 
@@ -259,21 +259,21 @@ class TestBuildAgentSystemPrompt:
         assert "Mike {The Plumber}" in result
 
 
-class TestToUserTime:
+class TestToLocalTime:
     def test_converts_to_pacific(self) -> None:
         utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        result = _to_user_time(utc, "America/Los_Angeles")
+        result = to_local_time(utc, "America/Los_Angeles")
         # UTC 17:00 in June (PDT, UTC-7) -> 10:00 local
         assert result.hour == 10
 
     def test_empty_timezone_returns_utc(self) -> None:
         utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        result = _to_user_time(utc, "")
+        result = to_local_time(utc, "")
         assert result.hour == 17
 
     def test_invalid_timezone_returns_utc(self) -> None:
         utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        result = _to_user_time(utc, "Not/A_Real_Zone")
+        result = to_local_time(utc, "Not/A_Real_Zone")
         assert result.hour == 17
 
 
@@ -291,7 +291,7 @@ class TestBuildDateSection:
         assert result == "Monday, 2025-06-16"
 
     @patch("backend.app.agent.system_prompt.datetime")
-    def test_converts_to_user_timezone(self, mock_dt: MagicMock) -> None:
+    def test_converts_to_local_timezone(self, mock_dt: MagicMock) -> None:
         mock_dt.UTC = datetime.UTC
         # Saturday 3 AM UTC -> Friday 8 PM Pacific (PDT)
         mock_dt.datetime.now.return_value = datetime.datetime(
