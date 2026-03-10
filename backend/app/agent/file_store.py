@@ -893,7 +893,9 @@ class FileSessionStore:
                 timestamp=now,
                 seq=seq,
             )
-            _append_jsonl(self._session_path(session.session_id), msg.model_dump())
+            await asyncio.to_thread(
+                _append_jsonl, self._session_path(session.session_id), msg.model_dump()
+            )
             session.messages.append(msg)
             # Update last_message_at and channel (if provided)
             meta_update: dict[str, str] = {"last_message_at": now}
@@ -1402,7 +1404,7 @@ class HeartbeatStore:
     async def log_heartbeat(self) -> None:
         """Append to heartbeat log."""
         entry = HeartbeatLogEntry(user_id=self.user_id)
-        _append_jsonl(self._log_path, entry.model_dump())
+        await asyncio.to_thread(_append_jsonl, self._log_path, entry.model_dump())
 
     async def get_daily_count(self) -> int:
         """Count heartbeat messages sent today (UTC)."""

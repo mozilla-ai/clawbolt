@@ -1,5 +1,6 @@
 """Endpoints for estimate PDF serving."""
 
+import asyncio
 import logging
 from pathlib import Path
 
@@ -38,8 +39,9 @@ async def serve_estimate_pdf(
     if not pdf_path.exists():
         raise HTTPException(status_code=404, detail="Estimate PDF not found")
 
+    content = await asyncio.to_thread(pdf_path.read_bytes)
     return Response(
-        content=pdf_path.read_bytes(),
+        content=content,
         media_type="application/pdf",
         headers={"Content-Disposition": f"inline; filename=estimate-{estimate_id}.pdf"},
     )

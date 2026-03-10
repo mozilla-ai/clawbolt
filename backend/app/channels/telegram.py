@@ -344,7 +344,7 @@ class TelegramChannel(BaseChannel):
 
         local_path = Path(media_url)
         if local_path.is_file():
-            data = local_path.read_bytes()
+            data = await asyncio.to_thread(local_path.read_bytes)
             content_type = mimetypes.guess_type(str(local_path))[0] or "application/octet-stream"
             filename = local_path.name
         else:
