@@ -27,6 +27,7 @@ dev = [
     "ruff>=0.5",
     "pre-commit>=3.0",
     "ty>=0.0.1a0",
+    "vulture>=2.14",
 ]
 
 [build-system]
@@ -52,6 +53,10 @@ markers = [
     "integration: integration tests that call a real LLM API (requires ANTHROPIC_API_KEY)",
 ]
 addopts = "-m 'not e2e and not integration'"
+
+[tool.vulture]
+paths = ["backend/", "tests/"]
+min_confidence = 80
 
 [tool.ty.environment]
 python-version = "3.11"

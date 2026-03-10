@@ -602,6 +602,7 @@ dev = [
     { name = "pytest-timeout" },
     { name = "ruff" },
     { name = "ty" },
+    { name = "vulture" },
 ]
 
 [package.metadata]
@@ -625,6 +626,7 @@ requires-dist = [
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.5" },
     { name = "ty", marker = "extra == 'dev'", specifier = ">=0.0.1a0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.30.0" },
+    { name = "vulture", marker = "extra == 'dev'", specifier = ">=2.14" },
 ]
 provides-extras = ["dev"]
 
@@ -3644,6 +3646,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/94/16/1b46b3cd401e1717a68197c1fe336d7bb4e0a1833f8105e1738f5b1add05/voyageai-0.3.7.tar.gz", hash = "sha256:826cd97f97223f42b5babc5c459c9c80f3a8215ce5c0e007b0b276550f790d24", size = 26485, upload-time = "2025-12-16T18:43:05.26Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/60/64/89f6325666d6836979f94ac88b96fefc7527e02e61abc81359843585e088/voyageai-0.3.7-py3-none-any.whl", hash = "sha256:909f6c033001e5a3b3caf970525bf3614a1bfef9003cf3c3b68207dfdb53e86d", size = 34691, upload-time = "2025-12-16T18:43:04.073Z" },
+]
+
+[[package]]
+name = "vulture"
+version = "2.15"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/59/c6/4f147b621b4c0899eb1770f98113334bb706ebd251ac2be979316b1985fa/vulture-2.15.tar.gz", hash = "sha256:f9d8b4ce29c69950d323f21dceab4a4d6c694403dffbed7713c4691057e561fe", size = 52438, upload-time = "2026-03-04T21:41:39.096Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/1c/f3/07cf122e145bc6df976030e9935123124c3fcb5044cf407b5e71e85821b4/vulture-2.15-py3-none-any.whl", hash = "sha256:a3d8ebef918694326620eb128fa783486c8d285b23381c2b457d864ac056ef8d", size = 26895, upload-time = "2026-03-04T21:41:39.878Z" },
 ]
 
 [[package]]

@@ -19,14 +19,6 @@ import type {
 import { getAccessToken, setAccessToken, setRefreshToken } from '@/lib/api-client';
 import { tryRestoreSession as _tryRestoreSession } from '@/extensions';
 
-// --- Storage keys ---
-const STORAGE_KEYS = {
-  REFRESH_TOKEN: 'clawbolt_refresh_token',
-  THEME: 'clawbolt_theme',
-} as const;
-
-export { STORAGE_KEYS };
-
 // --- Shared helpers ---
 
 function _getAuthHeaders(): Record<string, string> {
