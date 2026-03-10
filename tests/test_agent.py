@@ -25,7 +25,7 @@ from backend.app.agent.messages import (
 )
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.trimming import trim_messages
-from tests.mocks.llm import make_text_response, make_tool_call_response
+from tests.mocks.llm import make_error_response, make_text_response, make_tool_call_response
 
 
 class _EmptyParams(BaseModel):
@@ -1737,3 +1737,115 @@ async def test_agent_emits_debug_logs_for_full_loop(
     assert any("Agent finished" in m for m in debug_messages)
     # LLM call
     assert any("Calling LLM" in m for m in debug_messages)
+
+
+# ---------------------------------------------------------------------------
+# Error stop_reason guard (context poisoning prevention)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_error_stop_reason_sets_is_error_fallback(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """LLM response with an error stop_reason should set is_error_fallback."""
+    mock_amessages.return_value = make_error_response(stop_reason="error")  # type: ignore[union-attr]
+
+    agent = ClawboltAgent(user=test_user)
+    response = await agent.process_message("Hello")
+
+    assert response.is_error_fallback is True
+    assert response.reply_text  # should have a fallback message
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_error_stop_reason_mid_loop_preserves_earlier_tool_calls(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """Error stop_reason after a successful tool round should preserve tool records."""
+    tool_func = AsyncMock(return_value=ToolResult(content="saved"))
+    tool = Tool(
+        name="save_fact",
+        description="save",
+        function=tool_func,
+        params_model=_KeyValueParams,
+    )
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(
+            [{"name": "save_fact", "arguments": {"key": "color", "value": "blue"}}]
+        ),
+        # Second LLM call returns an error
+        make_error_response(stop_reason="error"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("Remember blue")
+
+    assert response.is_error_fallback is True
+    # The successful tool call from round 0 should still be in the records
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].name == "save_fact"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_tool_errors_still_returned_to_llm_in_loop(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """Tool-level errors should still be fed back to the LLM for self-correction."""
+    tool_func = AsyncMock(return_value=ToolResult(content="saved"))
+    tool = Tool(
+        name="save_fact",
+        description="save",
+        function=tool_func,
+        params_model=_KeyValueParams,
+    )
+    # Round 0: LLM calls an unknown tool (error result returned)
+    # Round 1: LLM self-corrects and calls the right tool
+    # Round 2: LLM produces final text reply
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(
+            [{"name": "nonexistent_tool", "arguments": {"key": "a", "value": "b"}}]
+        ),
+        make_tool_call_response(
+            [{"name": "save_fact", "arguments": {"key": "color", "value": "blue"}}]
+        ),
+        make_text_response("Done!"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("Remember blue")
+
+    # The agent should NOT be flagged as error (the loop recovered)
+    assert response.is_error_fallback is False
+    assert response.reply_text == "Done!"
+    # The LLM was called 3 times (error feedback allowed self-correction)
+    assert mock_amessages.call_count == 3  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_valid_stop_reasons_not_treated_as_error(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """Responses with valid stop_reasons should be processed normally."""
+    for stop_reason in ("end_turn", "max_tokens", "stop_sequence"):
+        from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
+
+        mock_amessages.return_value = MessageResponse(  # type: ignore[union-attr]
+            id="msg_mock",
+            content=[MessageContentBlock(type="text", text="Reply!")],
+            model="mock-model",
+            stop_reason=stop_reason,
+            usage=MessageUsage(input_tokens=0, output_tokens=0),
+        )
+
+        agent = ClawboltAgent(user=test_user)
+        response = await agent.process_message("Hello")
+
+        assert response.is_error_fallback is False, f"stop_reason={stop_reason} was wrongly error"
+        assert response.reply_text == "Reply!"

@@ -69,6 +69,14 @@ RATE_LIMIT_RETRY_DELAY = settings.rate_limit_retry_delay
 # Conservative default; most models support 128K+ but we leave room for output
 MAX_INPUT_TOKENS = settings.max_input_tokens
 
+# Stop reasons that represent a valid, non-error LLM response.
+# Anything outside this set indicates a provider-level error and the
+# response should *not* be persisted to session history to avoid
+# context poisoning.
+_VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "stop_sequence", None}
+
+_LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
+
 
 @dataclass
 class AgentResponse:
@@ -643,6 +651,31 @@ class ClawboltAgent:
                     "LLM usage: input_tokens=%d output_tokens=%d",
                     response.usage.input_tokens,
                     response.usage.output_tokens or 0,
+                )
+
+            # Guard: skip error responses to prevent context poisoning.
+            # The user still sees the error fallback text, but the response
+            # is NOT persisted to session history.
+            if response.stop_reason not in _VALID_STOP_REASONS:
+                logger.warning(
+                    "Round %d: LLM returned error stop_reason=%r, aborting loop",
+                    _round,
+                    response.stop_reason,
+                )
+                total_duration = (time.monotonic() - agent_start_time) * 1000
+                await self._emit(
+                    AgentEndEvent(
+                        reply_text=_LLM_ERROR_FALLBACK,
+                        actions_taken=actions_taken,
+                        total_duration_ms=total_duration,
+                    )
+                )
+                return AgentResponse(
+                    reply_text=_LLM_ERROR_FALLBACK,
+                    actions_taken=actions_taken,
+                    memories_saved=memories_saved,
+                    tool_calls=tool_call_records,
+                    is_error_fallback=True,
                 )
 
             # Parse tool calls via shared parser
