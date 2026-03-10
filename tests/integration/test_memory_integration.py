@@ -94,6 +94,7 @@ async def test_memory_save_then_recall(
     # The reply should mention $85 (LLM gets it via system prompt memory context)
     # The LLM may phrase it differently, so also accept tool-based recall
     recalled = any(tc.name == "recall_facts" for tc in response.tool_calls)
-    assert "85" in response.reply_text or recalled, (
+    reply_has_rate = response.reply_text and "85" in response.reply_text
+    assert reply_has_rate or recalled, (
         f"Expected '85' in reply or recall_facts call. Reply: {response.reply_text}"
     )

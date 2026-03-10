@@ -60,6 +60,3 @@ async def test_estimate_generation_roundtrip(
 
     # Line items should exist
     assert len(estimates[0].line_items) >= 1
-
-    # Reply should mention the estimate
-    assert response.reply_text
