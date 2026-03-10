@@ -56,6 +56,27 @@ class InboundMessage:
     session_id: str | None = None
 
 
+async def _send_error_fallback(
+    messaging_service: MessagingService,
+    user: UserData,
+    user_id: int,
+) -> None:
+    """Send a fallback error message to the user.
+
+    Swallows any exception so this never propagates.
+    """
+    to_address = user.channel_identifier or user.phone
+    if not to_address:
+        return
+    try:
+        await messaging_service.send_text(
+            to=to_address,
+            body="Sorry, something went wrong processing your message. Please try again.",
+        )
+    except Exception:
+        logger.exception("Failed to send error fallback to user %d", user_id)
+
+
 async def _get_or_create_user(channel: str, sender_id: str) -> UserData:
     """Look up or create a user by channel-specific sender ID.
 
@@ -229,6 +250,7 @@ class MessageBatcher:
                     last_entry.message.seq,
                     user_id,
                 )
+                await _send_error_fallback(messaging_service, user, user_id)
 
 
 # Module-level singleton
@@ -321,3 +343,4 @@ async def process_inbound_from_bus(
                     message.seq,
                     user.id,
                 )
+                await _send_error_fallback(messaging_service, user, user.id)
