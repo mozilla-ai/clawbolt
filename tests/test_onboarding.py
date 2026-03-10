@@ -17,7 +17,6 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
-from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -218,14 +217,8 @@ def onboarding_message() -> StoredMessage:
 
 
 @pytest.fixture()
-def mock_messaging() -> MessagingService:
-    service = MagicMock(spec=MessagingService)
-    service.send_text = AsyncMock(return_value="msg_42")
-    service.send_media = AsyncMock(return_value="msg_43")
-    service.send_message = AsyncMock(return_value="msg_42")
-    service.send_typing_indicator = AsyncMock()
-    service.download_media = AsyncMock()
-    return service
+def mock_download_media() -> AsyncMock:
+    return AsyncMock()
 
 
 # --- Integration tests ---
@@ -238,7 +231,6 @@ async def test_onboarding_uses_onboarding_prompt(
     new_user: UserData,
     onboarding_session: SessionState,
     onboarding_message: StoredMessage,
-    mock_messaging: MessagingService,
 ) -> None:
     """Router should use onboarding prompt for new users."""
     mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
@@ -250,7 +242,7 @@ async def test_onboarding_uses_onboarding_prompt(
         session=onboarding_session,
         message=onboarding_message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     assert response.reply_text == "Welcome to Clawbolt! What's your name?"
@@ -266,7 +258,6 @@ async def test_onboarding_extracts_profile_updates_via_update_profile(
     new_user: UserData,
     onboarding_session: SessionState,
     onboarding_message: StoredMessage,
-    mock_messaging: MessagingService,
 ) -> None:
     """Profile updates from update_profile tool should be saved to user record."""
     # First call returns update_profile tool call, second returns text reply
@@ -287,7 +278,7 @@ async def test_onboarding_extracts_profile_updates_via_update_profile(
         session=onboarding_session,
         message=onboarding_message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     store = get_user_store()
@@ -301,7 +292,6 @@ async def test_onboarding_extracts_profile_updates_via_update_profile(
 async def test_complete_profile_uses_normal_prompt(
     mock_amessages: object,
     test_user: UserData,
-    mock_messaging: MessagingService,
 ) -> None:
     """User with complete profile should use normal agent prompt."""
     session = SessionState(
@@ -323,7 +313,7 @@ async def test_complete_profile_uses_normal_prompt(
         session=session,
         message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     assert response.reply_text == "Let me help with that estimate!"
@@ -342,7 +332,6 @@ async def test_complete_profile_uses_normal_prompt(
 async def test_profile_updates_post_onboarding_single_field(
     mock_amessages: object,
     test_user: UserData,
-    mock_messaging: MessagingService,
 ) -> None:
     """Post-onboarding update_profile calls should update UserData profile fields."""
     session = SessionState(
@@ -374,7 +363,7 @@ async def test_profile_updates_post_onboarding_single_field(
         session=session,
         message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     store = get_user_store()
@@ -390,7 +379,6 @@ async def test_profile_updates_during_onboarding_still_work(
     new_user: UserData,
     onboarding_session: SessionState,
     onboarding_message: StoredMessage,
-    mock_messaging: MessagingService,
 ) -> None:
     """Profile updates during onboarding still work with update_profile tool.
 
@@ -423,7 +411,7 @@ async def test_profile_updates_during_onboarding_still_work(
         session=onboarding_session,
         message=onboarding_message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     store = get_user_store()
@@ -442,7 +430,6 @@ async def test_profile_updates_during_onboarding_still_work(
 @patch("backend.app.agent.core.amessages")
 async def test_prepopulated_user_gets_onboarding_complete(
     mock_amessages: object,
-    mock_messaging: MessagingService,
 ) -> None:
     """User with pre-populated name should get onboarding_complete=True.
 
@@ -491,7 +478,7 @@ async def test_prepopulated_user_gets_onboarding_complete(
         session=session,
         message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     store = get_user_store()
@@ -508,7 +495,6 @@ async def test_prepopulated_user_included_in_heartbeat(
     mock_amessages: object,
     mock_cheap_checks: MagicMock,
     _mock_hours: MagicMock,
-    mock_messaging: MessagingService,
 ) -> None:
     """User with pre-populated fields should be eligible for heartbeat after first message."""
     from backend.app.agent.heartbeat import CheapCheckResult, run_heartbeat_for_user
@@ -552,7 +538,7 @@ async def test_prepopulated_user_included_in_heartbeat(
         session=session,
         message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     store = get_user_store()
@@ -564,7 +550,8 @@ async def test_prepopulated_user_included_in_heartbeat(
     mock_cheap_checks.return_value = CheapCheckResult(flags=[])
     result = await run_heartbeat_for_user(
         user=refreshed,
-        messaging_service=mock_messaging,
+        channel="telegram",
+        chat_id=refreshed.channel_identifier,
         max_daily=5,
     )
     # Should get a result (not None which means skipped)
@@ -581,7 +568,6 @@ async def test_prepopulated_user_included_in_heartbeat(
 @patch("backend.app.agent.core.amessages")
 async def test_onboarding_completion_message_appended(
     mock_amessages: object,
-    mock_messaging: MessagingService,
 ) -> None:
     """Completion summary should be appended when onboarding transitions to complete."""
     # User with no name -- needs onboarding
@@ -634,7 +620,7 @@ async def test_onboarding_completion_message_appended(
         session=session,
         message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     assert "Setup complete!" in response.reply_text
@@ -648,7 +634,6 @@ async def test_onboarding_completion_message_appended(
 async def test_no_completion_message_when_already_onboarded(
     mock_amessages: object,
     test_user: UserData,
-    mock_messaging: MessagingService,
 ) -> None:
     """Completion message should NOT be appended for already-onboarded users."""
     session = SessionState(
@@ -676,7 +661,7 @@ async def test_no_completion_message_when_already_onboarded(
         session=session,
         message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     assert response.reply_text == "Sure, I can help!"

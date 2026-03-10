@@ -91,7 +91,7 @@ Tool selection is context-aware: the registry picks relevant tools based on mess
 
 ### Channel abstraction
 
-The `MessagingService` protocol defines a channel-agnostic interface. The current implementation is Telegram, but the protocol enables adding other channels without modifying the agent loop.
+The async message bus (`bus.py`) decouples the agent from delivery mechanics. Channels publish inbound messages to the bus and the `ChannelManager` dispatches outbound replies to the correct channel. The agent only interacts with the bus, never with channel implementations directly. The current channel is Telegram, but new channels can be added without modifying the agent.
 
 ### Storage abstraction
 

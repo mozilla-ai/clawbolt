@@ -7,9 +7,7 @@ from fastapi import APIRouter
 
 from backend.app.channels.base import BaseChannel
 from backend.app.channels.manager import ChannelManager
-from backend.app.channels.telegram import TelegramChannel
 from backend.app.media.download import DownloadedMedia
-from backend.app.services.messaging import MessagingService
 
 # -- Stub channel for manager tests ----------------------------------------
 
@@ -63,12 +61,6 @@ def test_base_channel_cannot_be_instantiated() -> None:
     """BaseChannel is abstract and should not be directly instantiable."""
     with pytest.raises(TypeError):
         BaseChannel()
-
-
-def test_telegram_channel_satisfies_messaging_protocol() -> None:
-    """TelegramChannel should satisfy the MessagingService protocol."""
-    channel = TelegramChannel(bot_token="test-token")
-    assert isinstance(channel, MessagingService)
 
 
 # -- ChannelManager tests --------------------------------------------------

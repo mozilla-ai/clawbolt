@@ -74,13 +74,6 @@ def user_with_timezone() -> UserData:
     )
 
 
-@pytest.fixture()
-def mock_messaging() -> MagicMock:
-    svc = MagicMock()
-    svc.send_text = AsyncMock(return_value="mock_heartbeat_msg_id")
-    return svc
-
-
 def _make_heartbeat_tool_call(
     action: str = "no_action",
     message: str = "",
@@ -899,11 +892,10 @@ class TestEvaluateHeartbeatNeed:
 
 class TestRunHeartbeatForUser:
     @pytest.mark.asyncio
-    async def test_skip_not_onboarded(self, mock_messaging: MagicMock) -> None:
+    async def test_skip_not_onboarded(self) -> None:
         c = UserData(id=10, user_id="hb-new", phone="+15550000000", onboarding_complete=False)
-        result = await run_heartbeat_for_user(c, mock_messaging, 5)
+        result = await run_heartbeat_for_user(c, "telegram", c.phone, 5)
         assert result is None
-        mock_messaging.send_text.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=False)
@@ -911,9 +903,8 @@ class TestRunHeartbeatForUser:
         self,
         _mock_hours: MagicMock,
         user: UserData,
-        mock_messaging: MagicMock,
     ) -> None:
-        result = await run_heartbeat_for_user(user, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
         assert result is None
 
     @pytest.mark.asyncio
@@ -924,10 +915,9 @@ class TestRunHeartbeatForUser:
         mock_count: AsyncMock,
         _mock_hours: MagicMock,
         user: UserData,
-        mock_messaging: MagicMock,
     ) -> None:
         mock_count.return_value = 5
-        result = await run_heartbeat_for_user(user, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
         assert result is None
 
     @pytest.mark.asyncio
@@ -936,14 +926,12 @@ class TestRunHeartbeatForUser:
         self,
         _mock_hours: MagicMock,
         user: UserData,
-        mock_messaging: MagicMock,
     ) -> None:
         """When cheap checks return no flags, LLM is skipped and no message sent."""
-        result = await run_heartbeat_for_user(user, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
         assert result is not None
         assert result.action_type == "no_action"
         assert "cheap checks clean" in result.reasoning
-        mock_messaging.send_text.assert_not_called()
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
@@ -955,9 +943,10 @@ class TestRunHeartbeatForUser:
         mock_checks: AsyncMock,
         mock_eval: AsyncMock,
         user: UserData,
-        mock_messaging: MagicMock,
     ) -> None:
         """When cheap checks flag something and LLM says send, message is delivered."""
+        from backend.app.bus import message_bus
+
         check_result = CheapCheckResult(
             flags=["Stale draft estimate"],
         )
@@ -968,19 +957,22 @@ class TestRunHeartbeatForUser:
             reasoning="Stale draft",
             priority=4,
         )
-        result = await run_heartbeat_for_user(user, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
 
         assert result is not None
         assert result.action_type == "send_message"
-        mock_messaging.send_text.assert_awaited_once_with(
-            to=user.phone, body="Reminder: draft estimate pending!"
-        )
-        # LLM was called with the flags
+        # Check the outbound message was published to the bus
+        outbound = message_bus.outbound.get_nowait()
+        assert outbound.content == "Reminder: draft estimate pending!"
+        assert outbound.channel == "telegram"
+        assert outbound.chat_id == user.phone
+        # LLM was called with the flags and new keyword args
         mock_eval.assert_awaited_once_with(
-            user, ["Stale draft estimate"], messaging_service=mock_messaging
+            user, ["Stale draft estimate"], channel="telegram", chat_id=user.phone
         )
 
     @pytest.mark.asyncio
+    @patch("backend.app.bus.message_bus.publish_outbound", side_effect=Exception("Bus down"))
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.run_cheap_checks")
     @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
@@ -989,8 +981,8 @@ class TestRunHeartbeatForUser:
         _mock_hours: MagicMock,
         mock_checks: AsyncMock,
         mock_eval: AsyncMock,
+        _mock_publish: AsyncMock,
         user: UserData,
-        mock_messaging: MagicMock,
     ) -> None:
         mock_checks.return_value = CheapCheckResult(flags=["test flag"])
         mock_eval.return_value = HeartbeatAction(
@@ -999,8 +991,7 @@ class TestRunHeartbeatForUser:
             reasoning="test",
             priority=3,
         )
-        mock_messaging.send_text = AsyncMock(side_effect=Exception("Messaging service down"))
-        result = await run_heartbeat_for_user(user, mock_messaging, 5)
+        result = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
         # Should still return the action, just not record a message
         assert result is not None
         assert result.action_type == "send_message"
@@ -1015,7 +1006,6 @@ class TestRunHeartbeatForUser:
         mock_checks: AsyncMock,
         mock_eval: AsyncMock,
         user: UserData,
-        mock_messaging: MagicMock,
     ) -> None:
         """Heartbeat sends message and logs when checklist flags are raised."""
         mock_checks.return_value = CheapCheckResult(
@@ -1027,7 +1017,7 @@ class TestRunHeartbeatForUser:
             reasoning="checklist",
             priority=3,
         )
-        action = await run_heartbeat_for_user(user, mock_messaging, 5)
+        action = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
         assert action is not None
         assert action.action_type == "send_message"
 
@@ -1041,7 +1031,6 @@ class TestRunHeartbeatForUser:
         mock_checks: AsyncMock,
         mock_eval: AsyncMock,
         user: UserData,
-        mock_messaging: MagicMock,
     ) -> None:
         """Heartbeat sends message when flags are raised."""
         mock_checks.return_value = CheapCheckResult(
@@ -1053,7 +1042,7 @@ class TestRunHeartbeatForUser:
             reasoning="once item",
             priority=4,
         )
-        action = await run_heartbeat_for_user(user, mock_messaging, 5)
+        action = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
         assert action is not None
         assert action.action_type == "send_message"
 
@@ -1163,7 +1152,7 @@ class TestHeartbeatScheduler:
     @patch("backend.app.agent.heartbeat.get_user_store")
     @patch("backend.app.agent.heartbeat.get_default_channel")
     async def test_tick_queries_onboarded(
-        self, mock_messaging_cls: MagicMock, mock_get_store: MagicMock
+        self, mock_default_channel: MagicMock, mock_get_store: MagicMock
     ) -> None:
         """Tick should query all users via list_all and filter by onboarding_complete."""
         mock_store = AsyncMock()
@@ -1183,7 +1172,7 @@ class TestHeartbeatScheduler:
     async def test_tick_concurrent_processing(
         self,
         mock_settings: MagicMock,
-        mock_messaging_cls: MagicMock,
+        mock_default_channel: MagicMock,
         mock_get_store: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
@@ -1220,7 +1209,7 @@ class TestHeartbeatScheduler:
     async def test_tick_error_isolation(
         self,
         mock_settings: MagicMock,
-        mock_messaging_cls: MagicMock,
+        mock_default_channel: MagicMock,
         mock_get_store: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
@@ -1262,7 +1251,7 @@ class TestHeartbeatScheduler:
     async def test_tick_semaphore_limits_concurrency(
         self,
         mock_settings: MagicMock,
-        mock_messaging_cls: MagicMock,
+        mock_default_channel: MagicMock,
         mock_get_store: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
@@ -1314,7 +1303,7 @@ class TestHeartbeatScheduler:
     @patch("backend.app.agent.heartbeat.get_user_store")
     @patch("backend.app.agent.heartbeat.get_default_channel")
     async def test_tick_no_users(
-        self, mock_messaging_cls: MagicMock, mock_get_store: MagicMock
+        self, mock_default_channel: MagicMock, mock_get_store: MagicMock
     ) -> None:
         """tick() with no onboarded users should return early."""
         mock_store = AsyncMock()
@@ -1390,13 +1379,12 @@ class TestPickHeartbeatChannel:
     def test_preferred_channel_is_pushable(self, mock_get_channel: MagicMock) -> None:
         """When preferred_channel is pushable, use it directly."""
         user = UserData(id=1, preferred_channel="telegram")
-        mock_telegram = MagicMock()
-        mock_get_channel.return_value = mock_telegram
+        mock_get_channel.return_value = MagicMock()
 
         result = _pick_heartbeat_channel(user)
 
         mock_get_channel.assert_called_once_with("telegram")
-        assert result is mock_telegram
+        assert result == "telegram"
 
     @patch("backend.app.agent.heartbeat.get_manager")
     @patch("backend.app.agent.heartbeat.get_channel")
@@ -1405,17 +1393,15 @@ class TestPickHeartbeatChannel:
     ) -> None:
         """When preferred_channel is webchat, fall back to the first pushable channel."""
         user = UserData(id=1, preferred_channel="webchat")
-        mock_telegram = MagicMock()
-        mock_webchat = MagicMock()
 
         mock_manager = MagicMock()
-        mock_manager.channels = {"telegram": mock_telegram, "webchat": mock_webchat}
+        mock_manager.channels = {"telegram": MagicMock(), "webchat": MagicMock()}
         mock_get_manager.return_value = mock_manager
 
         result = _pick_heartbeat_channel(user)
 
         mock_get_channel.assert_not_called()
-        assert result is mock_telegram
+        assert result == "telegram"
 
     @patch("backend.app.agent.heartbeat.get_manager")
     @patch("backend.app.agent.heartbeat.get_channel")
@@ -1425,15 +1411,14 @@ class TestPickHeartbeatChannel:
         """When preferred_channel is not registered, fall back to first pushable."""
         user = UserData(id=1, preferred_channel="sms")
         mock_get_channel.side_effect = KeyError("sms not registered")
-        mock_telegram = MagicMock()
 
         mock_manager = MagicMock()
-        mock_manager.channels = {"telegram": mock_telegram}
+        mock_manager.channels = {"telegram": MagicMock()}
         mock_get_manager.return_value = mock_manager
 
         result = _pick_heartbeat_channel(user)
 
-        assert result is mock_telegram
+        assert result == "telegram"
 
     @patch("backend.app.agent.heartbeat.get_default_channel")
     @patch("backend.app.agent.heartbeat.get_manager")
@@ -1446,17 +1431,18 @@ class TestPickHeartbeatChannel:
     ) -> None:
         """When only non-pushable channels are registered, fall back to default."""
         user = UserData(id=1, preferred_channel="webchat")
-        mock_webchat = MagicMock()
-        mock_get_default.return_value = mock_webchat
+        mock_default = MagicMock()
+        mock_default.name = "webchat"
+        mock_get_default.return_value = mock_default
 
         mock_manager = MagicMock()
-        mock_manager.channels = {"webchat": mock_webchat}
+        mock_manager.channels = {"webchat": MagicMock()}
         mock_get_manager.return_value = mock_manager
 
         result = _pick_heartbeat_channel(user)
 
         mock_get_default.assert_called_once()
-        assert result is mock_webchat
+        assert result == "webchat"
 
     @patch("backend.app.agent.heartbeat.get_manager")
     @patch("backend.app.agent.heartbeat.get_channel")
@@ -1465,16 +1451,14 @@ class TestPickHeartbeatChannel:
     ) -> None:
         """webchat should be skipped even if it is the first registered channel."""
         user = UserData(id=1, preferred_channel="webchat")
-        mock_webchat = MagicMock()
-        mock_telegram = MagicMock()
 
         mock_manager = MagicMock()
-        mock_manager.channels = {"webchat": mock_webchat, "telegram": mock_telegram}
+        mock_manager.channels = {"webchat": MagicMock(), "telegram": MagicMock()}
         mock_get_manager.return_value = mock_manager
 
         result = _pick_heartbeat_channel(user)
 
-        assert result is mock_telegram
+        assert result == "telegram"
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
@@ -1492,13 +1476,14 @@ class TestPickHeartbeatChannel:
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
 
-        mock_telegram = MagicMock()
-        mock_pick_channel.return_value = mock_telegram
+        mock_pick_channel.return_value = "telegram"
 
         user = MagicMock()
         user.id = 1
         user.onboarding_complete = True
         user.preferred_channel = "webchat"
+        user.channel_identifier = ""
+        user.phone = "+15559990000"
 
         mock_store = AsyncMock()
         mock_store.list_all.return_value = [user]

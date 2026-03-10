@@ -24,7 +24,6 @@ from backend.app.agent.messages import (
     UserMessage,
 )
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
-from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -1552,8 +1551,8 @@ class TestToolRegistry:
         tools = registry.create_tools(ctx)
         assert len(tools) == 0
 
-    def test_skips_factory_when_messaging_missing(self, test_user: UserData) -> None:
-        """Factories requiring messaging should be skipped when messaging is None."""
+    def test_skips_factory_when_outbound_missing(self, test_user: UserData) -> None:
+        """Factories requiring outbound should be skipped when publish_outbound is None."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
         registry = ToolRegistry()
@@ -1561,25 +1560,24 @@ class TestToolRegistry:
         def msg_factory(ctx: ToolContext) -> list[Tool]:
             return [
                 Tool(
-                    name="needs_messaging",
+                    name="needs_outbound",
                     description="test",
                     function=lambda: None,
                     params_model=_EmptyParams,
                 )
             ]
 
-        registry.register("msg_tool", msg_factory, requires_messaging=True)
-        ctx = ToolContext(user=test_user, messaging_service=None)
+        registry.register("msg_tool", msg_factory, requires_outbound=True)
+        ctx = ToolContext(user=test_user, publish_outbound=None)
         tools = registry.create_tools(ctx)
         assert len(tools) == 0
 
     def test_includes_factory_when_deps_satisfied(
         self,
         test_user: UserData,
-        mock_messaging_service: MessagingService,
     ) -> None:
         """Factories should produce tools when required dependencies are present."""
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
@@ -1606,13 +1604,14 @@ class TestToolRegistry:
             ]
 
         registry.register("s", storage_factory, requires_storage=True)
-        registry.register("m", msg_factory, requires_messaging=True)
+        registry.register("m", msg_factory, requires_outbound=True)
 
         mock_storage = MagicMock()
+        mock_publish = AsyncMock()
         ctx = ToolContext(
             user=test_user,
             storage=mock_storage,
-            messaging_service=mock_messaging_service,
+            publish_outbound=mock_publish,
         )
         tools = registry.create_tools(ctx)
         names = {t.name for t in tools}

@@ -12,10 +12,9 @@ class BaseChannel(ABC):
 
     Each channel (Telegram, SMS, web chat, ...) subclasses ``BaseChannel``
     and provides both inbound webhook parsing and outbound message sending.
-    The five outbound methods (``send_text``, ``send_media``, ``send_message``,
-    ``send_typing_indicator``, ``download_media``) match the
-    ``MessagingService`` protocol so that a channel instance can be used
-    anywhere a ``MessagingService`` is expected (structural subtyping).
+    The outbound dispatcher in ``ChannelManager`` calls the five outbound
+    methods (``send_text``, ``send_media``, ``send_message``,
+    ``send_typing_indicator``, ``download_media``) to deliver messages.
     """
 
     @property
@@ -41,7 +40,7 @@ class BaseChannel(ABC):
     def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return ``True`` if the sender passes the channel's allowlist."""
 
-    # -- Outbound (matches MessagingService protocol) --------------------------
+    # -- Outbound --------------------------------------------------------------
 
     @abstractmethod
     async def send_text(self, to: str, body: str) -> str:

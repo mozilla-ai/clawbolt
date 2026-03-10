@@ -31,6 +31,7 @@ class OutboundMessage:
     content: str
     media: list[str] = field(default_factory=list)
     request_id: str = ""
+    is_typing_indicator: bool = False
 
 
 class MessageBus:

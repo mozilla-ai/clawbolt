@@ -5,11 +5,13 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
+
+from backend.app.media.download import DownloadedMedia
 
 if TYPE_CHECKING:
     from backend.app.agent.ingestion import InboundMessage
-    from backend.app.services.messaging import MessagingService
 
 from backend.app.channels.base import BaseChannel
 
@@ -66,9 +68,7 @@ class ChannelManager:
     async def _run_inbound_consumer(self) -> None:
         """Loop: consume inbound messages from the bus and dispatch processing."""
         from backend.app.bus import message_bus
-        from backend.app.services.messaging import _build_messaging_service
 
-        messaging_service = _build_messaging_service()
         bg_tasks: set[asyncio.Task[None]] = set()
 
         while True:
@@ -80,7 +80,7 @@ class ChannelManager:
             # Dispatch each message as its own task so the consumer is not
             # blocked while the agent pipeline runs.
             task = asyncio.create_task(
-                self._handle_inbound(inbound, messaging_service),
+                self._handle_inbound(inbound),
             )
             bg_tasks.add(task)
             task.add_done_callback(bg_tasks.discard)
@@ -88,18 +88,20 @@ class ChannelManager:
     async def _handle_inbound(
         self,
         inbound: InboundMessage,
-        messaging_service: MessagingService,
     ) -> None:
         """Process a single inbound message (runs as an asyncio task)."""
         from backend.app.agent.ingestion import process_inbound_from_bus
 
-        # Channel-specific messaging service: use the channel that sent the
-        # message if available, otherwise fall back to the default.
+        # Extract download_media callback from the channel that sent the
+        # message if available, otherwise fall back to the default channel.
         channel = self._channels.get(inbound.channel)
-        svc: MessagingService = channel if channel is not None else messaging_service
+        if channel is None:
+            channel = self.get_default()
+
+        download_media: Callable[[str], Awaitable[DownloadedMedia]] = channel.download_media
 
         try:
-            await process_inbound_from_bus(inbound, svc)
+            await process_inbound_from_bus(inbound, download_media=download_media)
         except Exception:
             logger.exception(
                 "Failed to process inbound message from %s/%s",
@@ -134,7 +136,9 @@ class ChannelManager:
                 continue
 
             try:
-                if outbound.media:
+                if outbound.is_typing_indicator:
+                    await channel.send_typing_indicator(to=outbound.chat_id)
+                elif outbound.media:
                     await channel.send_message(
                         to=outbound.chat_id,
                         body=outbound.content,
