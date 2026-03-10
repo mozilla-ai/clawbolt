@@ -39,19 +39,7 @@ def user() -> UserData:
     return UserData(
         id=1,
         user_id="hb-user-001",
-        name="Mike the Plumber",
         phone="+15559990000",
-        onboarding_complete=True,
-    )
-
-
-@pytest.fixture()
-def user_no_hours() -> UserData:
-    return UserData(
-        id=2,
-        user_id="hb-user-002",
-        name="Jane Electric",
-        phone="+15559990001",
         onboarding_complete=True,
     )
 
@@ -61,7 +49,6 @@ def user_with_timezone() -> UserData:
     return UserData(
         id=3,
         user_id="hb-user-003",
-        name="Carlos Roofing",
         phone="+15559990002",
         timezone="America/Los_Angeles",
         onboarding_complete=True,
@@ -192,7 +179,6 @@ class TestIsWithinBusinessHoursTimezone:
         c = UserData(
             id=99,
             user_id="hb-user-bad-tz",
-            name="Bad TZ",
             timezone="Invalid/Timezone",
             onboarding_complete=True,
         )

@@ -492,7 +492,7 @@ def _make_tool(name: str, params_model: type[BaseModel]) -> Tool:
     return Tool(name=name, description="test", function=dummy, params_model=params_model)
 
 
-def testsummarize_tool_params_includes_array_item_structure() -> None:
+def test_summarize_tool_params_includes_array_item_structure() -> None:
     """Validation error summary should describe array item fields, not just 'array'.
 
     Regression test for #434: when the LLM omits line_items, the error
@@ -508,7 +508,7 @@ def testsummarize_tool_params_includes_array_item_structure() -> None:
     assert '"unit_price": number' in summary
 
 
-def testsummarize_tool_params_resolves_anyof_types() -> None:
+def test_summarize_tool_params_resolves_anyof_types() -> None:
     """Optional union fields (str | None) should show the concrete type, not 'any'."""
     tool = _make_tool("generate_estimate", GenerateEstimateParams)
     summary = summarize_tool_params(tool)
