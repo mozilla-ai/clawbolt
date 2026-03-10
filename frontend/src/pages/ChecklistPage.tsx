@@ -22,7 +22,7 @@ export default function ChecklistPage() {
         .then((p) => {
           setChecklistText(p.checklist_text);
         })
-        .catch(() => {})
+        .catch(() => { /* profile loaded via outlet; fallback fetch is best-effort */ })
         .finally(() => setLoading(false));
     }
   }, [profile]);
@@ -60,7 +60,7 @@ export default function ChecklistPage() {
       <div className="mb-6">
         <h2 className="heading-page">Checklist</h2>
         <p className="page-subtitle">
-          Items your assistant will check on during heartbeat reminders.
+          A general-purpose checklist for tracking tasks and to-dos your assistant can reference.
         </p>
       </div>
       <Card>
@@ -70,10 +70,10 @@ export default function ChecklistPage() {
               value={checklistText}
               onChange={(e) => setChecklistText(e.target.value)}
               rows={14}
-              placeholder="Add checklist items for your assistant to remind you about. Use markdown format, e.g. - [ ] Follow up with new leads"
+              placeholder="Track tasks and to-dos in markdown format, e.g. - [ ] Follow up with new leads"
             />
             <p className="helper-text">
-              Your assistant uses this checklist during heartbeat check-ins to remind you about important tasks.
+              Your personal checklist, stored as CHECKLIST.md. Your assistant can read this to stay aware of your priorities.
             </p>
           </Field>
           <div className="flex justify-end">
