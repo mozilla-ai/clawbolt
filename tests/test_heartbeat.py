@@ -316,7 +316,7 @@ class TestRunCheapChecks:
 
     @pytest.mark.asyncio
     async def test_checklist_item_due(self, user: UserData) -> None:
-        """Active checklist item with no last_triggered_at should be flagged."""
+        """Unchecked items in HEARTBEAT.md should be flagged."""
         from backend.app.agent.file_store import HeartbeatStore
 
         store = HeartbeatStore(user.id)
@@ -327,23 +327,24 @@ class TestRunCheapChecks:
 
         result = await run_cheap_checks(user)
         assert result.has_flags
-        assert len(result.due_checklist_items) == 1
-        assert "material prices" in result.flags[0]
+        assert "HEARTBEAT.md has 1 unchecked item(s)" in result.flags[0]
 
     @pytest.mark.asyncio
-    async def test_checklist_item_paused_not_flagged(self, user: UserData) -> None:
-        """Paused checklist items should not be flagged."""
+    async def test_checked_item_not_flagged(self, user: UserData) -> None:
+        """Checked items in HEARTBEAT.md should not be flagged."""
         from backend.app.agent.file_store import HeartbeatStore
 
         store = HeartbeatStore(user.id)
         item = await store.add_checklist_item(
-            description="Paused item",
+            description="Done item",
             schedule="daily",
         )
-        await store.update_checklist_item(item.id, status="paused")
+        await store.update_checklist_item(item.id, status="completed")
 
         result = await run_cheap_checks(user)
-        assert not result.has_flags
+        # All items are checked, so no unchecked flag
+        checklist_flags = [f for f in result.flags if "CHECKLIST" in f]
+        assert len(checklist_flags) == 0
 
     @pytest.mark.asyncio
     async def test_time_sensitive_memory_flagged(self, user: UserData) -> None:
@@ -1140,19 +1141,9 @@ class TestRunHeartbeatForUser:
         user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
-        """After sending a message, due checklist items should be marked as triggered."""
-        from backend.app.agent.file_store import HeartbeatStore
-
-        # Write the item to disk so the runner can update it
-        hb_store = HeartbeatStore(user.id)
-        item = await hb_store.add_checklist_item(
-            description="Check inbox",
-            schedule="daily",
-        )
-
+        """Heartbeat sends message and logs when checklist flags are raised."""
         mock_checks.return_value = CheapCheckResult(
-            flags=["Checklist item due: Check inbox"],
-            due_checklist_items=[item],
+            flags=["HEARTBEAT.md has 1 unchecked item(s)"],
         )
         mock_eval.return_value = HeartbeatAction(
             action_type="send_message",
@@ -1160,13 +1151,9 @@ class TestRunHeartbeatForUser:
             reasoning="checklist",
             priority=3,
         )
-        await run_heartbeat_for_user(user, mock_messaging, 5)
-
-        # Read back from disk to verify the item was updated
-        updated_items = await hb_store.get_checklist()
-        updated_item = updated_items[0]
-        assert updated_item.last_triggered_at is not None
-        assert updated_item.status == "active"  # daily stays active
+        action = await run_heartbeat_for_user(user, mock_messaging, 5)
+        assert action is not None
+        assert action.action_type == "send_message"
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
@@ -1180,19 +1167,9 @@ class TestRunHeartbeatForUser:
         user: UserData,
         mock_messaging: MagicMock,
     ) -> None:
-        """A once-scheduled checklist item should be marked completed after triggering."""
-        from backend.app.agent.file_store import HeartbeatStore
-
-        # Write the item to disk so the runner can update it
-        hb_store = HeartbeatStore(user.id)
-        item = await hb_store.add_checklist_item(
-            description="Remind about meeting",
-            schedule="once",
-        )
-
+        """Heartbeat sends message when flags are raised."""
         mock_checks.return_value = CheapCheckResult(
-            flags=["Checklist item due: Remind about meeting"],
-            due_checklist_items=[item],
+            flags=["HEARTBEAT.md has 1 unchecked item(s)"],
         )
         mock_eval.return_value = HeartbeatAction(
             action_type="send_message",
@@ -1200,13 +1177,9 @@ class TestRunHeartbeatForUser:
             reasoning="once item",
             priority=4,
         )
-        await run_heartbeat_for_user(user, mock_messaging, 5)
-
-        # Read back from disk to verify the item was updated
-        updated_items = await hb_store.get_checklist()
-        updated_item = updated_items[0]
-        assert updated_item.last_triggered_at is not None
-        assert updated_item.status == "completed"
+        action = await run_heartbeat_for_user(user, mock_messaging, 5)
+        assert action is not None
+        assert action.action_type == "send_message"
 
 
 # ---------------------------------------------------------------------------

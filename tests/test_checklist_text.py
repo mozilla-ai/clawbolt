@@ -1,4 +1,4 @@
-"""Tests for checklist_text field via the profile endpoint (CHECKLIST.md)."""
+"""Tests for checklist_text field via the profile endpoint (HEARTBEAT.md)."""
 
 from pathlib import Path
 
@@ -28,14 +28,14 @@ def test_update_checklist_text(client: TestClient) -> None:
 
 
 def test_checklist_text_writes_checklist_md(client: TestClient) -> None:
-    """Updating checklist_text should create a CHECKLIST.md file on disk."""
+    """Updating checklist_text should create a HEARTBEAT.md file on disk."""
     checklist = "- [ ] Review pending estimates"
     resp = client.put("/api/user/profile", json={"checklist_text": checklist})
     assert resp.status_code == 200
 
     # Find the user directory (user id=1 is the test user)
     user_dir = Path(settings.data_dir) / "1"
-    checklist_path = user_dir / "CHECKLIST.md"
+    checklist_path = user_dir / "HEARTBEAT.md"
     assert checklist_path.exists()
     content = checklist_path.read_text(encoding="utf-8")
     assert "# Checklist" in content
@@ -62,7 +62,7 @@ async def test_checklist_text_round_trip_via_store() -> None:
 
     # Verify the file on disk
     user_dir = Path(settings.data_dir) / str(user.id)
-    checklist_path = user_dir / "CHECKLIST.md"
+    checklist_path = user_dir / "HEARTBEAT.md"
     assert checklist_path.exists()
     content = checklist_path.read_text(encoding="utf-8")
     assert "# Checklist" in content
@@ -70,7 +70,7 @@ async def test_checklist_text_round_trip_via_store() -> None:
 
 
 async def test_default_checklist_seeded_on_create() -> None:
-    """New users should get a default CHECKLIST.md file."""
+    """New users should get a default HEARTBEAT.md file."""
     store = get_user_store()
     user = await store.create(
         user_id="default-checklist-test",
@@ -78,7 +78,7 @@ async def test_default_checklist_seeded_on_create() -> None:
         phone="+15559998888",
     )
     user_dir = Path(settings.data_dir) / str(user.id)
-    checklist_path = user_dir / "CHECKLIST.md"
+    checklist_path = user_dir / "HEARTBEAT.md"
     assert checklist_path.exists()
     content = checklist_path.read_text(encoding="utf-8")
     assert "# Checklist" in content
