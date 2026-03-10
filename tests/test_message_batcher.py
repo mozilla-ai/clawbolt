@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.app.agent.file_store import SessionState, StoredMessage, UserData
-from backend.app.agent.ingestion import MessageBatcher
+from backend.app.agent.ingestion import InboundMessage, MessageBatcher, process_inbound_from_bus
 
 
 class TestMessageBatcher:
@@ -201,3 +201,131 @@ class TestMessageBatcher:
             await asyncio.sleep(0.05)
 
             mock_handle.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_pipeline_failure_sends_fallback_error(self) -> None:
+        """When the agent pipeline raises, a fallback error is sent to the user."""
+        batcher = MessageBatcher(window_ms=50)
+        messaging = AsyncMock()
+
+        mock_user = UserData(id=1, channel_identifier="123", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_message = StoredMessage(direction="inbound", body="hello")
+
+        with (
+            patch(
+                "backend.app.agent.ingestion.handle_inbound_message",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("LLM API down"),
+            ),
+            patch("backend.app.agent.ingestion.user_locks") as mock_locks,
+            patch("backend.app.agent.ingestion.get_user_store") as mock_user_store,
+        ):
+            mock_locks.acquire.return_value = AsyncMock(
+                __aenter__=AsyncMock(), __aexit__=AsyncMock()
+            )
+            mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
+
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], messaging)
+            await asyncio.sleep(0.15)
+
+            messaging.send_text.assert_awaited_once_with(
+                to="123",
+                body="Sorry, something went wrong processing your message. Please try again.",
+            )
+
+    @pytest.mark.asyncio
+    async def test_pipeline_failure_fallback_send_also_fails(self) -> None:
+        """When both the pipeline and the fallback send fail, no exception propagates."""
+        batcher = MessageBatcher(window_ms=50)
+        messaging = AsyncMock()
+        messaging.send_text.side_effect = RuntimeError("network error")
+
+        mock_user = UserData(id=1, channel_identifier="123", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_message = StoredMessage(direction="inbound", body="hello")
+
+        with (
+            patch(
+                "backend.app.agent.ingestion.handle_inbound_message",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("LLM API down"),
+            ),
+            patch("backend.app.agent.ingestion.user_locks") as mock_locks,
+            patch("backend.app.agent.ingestion.get_user_store") as mock_user_store,
+        ):
+            mock_locks.acquire.return_value = AsyncMock(
+                __aenter__=AsyncMock(), __aexit__=AsyncMock()
+            )
+            mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
+
+            # Should not raise even when both pipeline and fallback fail
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], messaging)
+            await asyncio.sleep(0.15)
+
+            messaging.send_text.assert_awaited_once()
+
+
+class TestProcessInboundFallbackError:
+    """Tests for error fallback in process_inbound_from_bus (non-batcher path)."""
+
+    @pytest.mark.asyncio
+    async def test_pipeline_failure_sends_fallback_error(self) -> None:
+        """When the agent pipeline raises in the non-batcher path, a fallback is sent."""
+        messaging = AsyncMock()
+        inbound = InboundMessage(
+            channel="telegram",
+            sender_id="456",
+            text="hi there",
+        )
+
+        mock_user = UserData(id=1, channel_identifier="456", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_message = StoredMessage(direction="inbound", body="hi there")
+
+        with (
+            patch(
+                "backend.app.agent.ingestion._get_or_create_user",
+                new_callable=AsyncMock,
+                return_value=mock_user,
+            ),
+            patch(
+                "backend.app.agent.ingestion.get_approval_gate",
+            ) as mock_gate,
+            patch(
+                "backend.app.agent.ingestion.get_or_create_conversation",
+                new_callable=AsyncMock,
+                return_value=(mock_session, True),
+            ),
+            patch(
+                "backend.app.agent.ingestion.get_session_store",
+            ) as mock_store_fn,
+            patch(
+                "backend.app.agent.ingestion.settings",
+            ) as mock_settings,
+            patch(
+                "backend.app.agent.ingestion.handle_inbound_message",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("LLM API down"),
+            ),
+            patch("backend.app.agent.ingestion.user_locks") as mock_locks,
+            patch(
+                "backend.app.agent.ingestion.get_user_store",
+            ) as mock_user_store,
+        ):
+            mock_gate.return_value.has_pending.return_value = False
+            mock_session_store = AsyncMock()
+            mock_session_store.add_message.return_value = mock_message
+            mock_store_fn.return_value = mock_session_store
+            mock_settings.message_batch_window_ms = 0
+            mock_locks.acquire.return_value = AsyncMock(
+                __aenter__=AsyncMock(), __aexit__=AsyncMock()
+            )
+            mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
+
+            await process_inbound_from_bus(inbound, messaging)
+
+            messaging.send_text.assert_awaited_once_with(
+                to="456",
+                body="Sorry, something went wrong processing your message. Please try again.",
+            )
