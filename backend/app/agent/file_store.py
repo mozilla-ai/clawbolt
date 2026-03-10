@@ -38,6 +38,7 @@ import datetime
 import json
 import logging
 import re
+from abc import ABC, abstractmethod
 from pathlib import Path
 from typing import Any, Generic, TypeVar
 
@@ -350,7 +351,7 @@ class PerUserStore:
         self._lock = asyncio.Lock()
 
 
-class JsonListStore(PerUserStore, Generic[T]):
+class JsonListStore(PerUserStore, ABC, Generic[T]):
     """Base for stores backed by a single JSON list file.
 
     Subclasses must set ``_model_class`` and define the ``_path`` property.
@@ -360,8 +361,8 @@ class JsonListStore(PerUserStore, Generic[T]):
     _id_field: str = "id"
 
     @property
-    def _path(self) -> Path:
-        raise NotImplementedError
+    @abstractmethod
+    def _path(self) -> Path: ...
 
     def _load_all(self) -> list[dict[str, Any]]:
         return _read_json(self._path, [])
