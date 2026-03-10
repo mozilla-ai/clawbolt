@@ -227,6 +227,16 @@ async def test_delete_file_protected(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_delete_file_protected_via_path_variant(test_user: UserData) -> None:
+    """delete_file should catch protected files even with path variations like ./USER.md."""
+    delete_fn = _get_tool_fn(test_user.id, "delete_file")
+    for variant in ("./USER.md", "subdir/../SOUL.md"):
+        result = await delete_fn(path=variant)
+        assert result.is_error is True
+        assert "protected" in result.content.lower()
+
+
+@pytest.mark.asyncio()
 async def test_delete_file_rejects_non_markdown(test_user: UserData) -> None:
     """delete_file should reject non-markdown files."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")

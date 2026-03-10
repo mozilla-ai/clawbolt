@@ -142,16 +142,16 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
 
     async def delete_file(path: str) -> ToolResult:
         """Delete a markdown file from the workspace."""
-        # Check protected files before resolving
-        if path in _PROTECTED_FILES:
+        resolved, err = _resolve_path(user_id, path)
+        if err:
+            return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
+        # Check protected files after resolving to prevent bypass via ./USER.md
+        if resolved.name in _PROTECTED_FILES:
             return ToolResult(
                 content=f"Cannot delete protected file: {path}",
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
-        resolved, err = _resolve_path(user_id, path)
-        if err:
-            return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
         if not resolved.exists():
             return ToolResult(
                 content=f"File not found: {path}",

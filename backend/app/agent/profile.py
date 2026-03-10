@@ -1,7 +1,6 @@
 import logging
 
 from backend.app.agent.file_store import UserData
-from backend.app.agent.prompts import load_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -13,13 +12,3 @@ def build_soul_prompt(user: UserData) -> str:
     lives in the markdown, written by the agent during onboarding.
     """
     return user.soul_text or ""
-
-
-def build_onboarding_prompt() -> str:
-    """Build the system prompt for the onboarding conversation.
-
-    Inspired by openclaw's bootstrap ritual: the user names their AI,
-    shapes its personality, and covers the essential profile fields, all
-    through natural conversation rather than a form.
-    """
-    return load_prompt("bootstrap")
