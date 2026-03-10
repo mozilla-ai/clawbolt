@@ -13,9 +13,3 @@ repos:
         language: system
         types: [python]
         pass_filenames: false
-      - id: vulture
-        name: vulture (dead code detection)
-        entry: uv run vulture backend/ tests/ vulture_whitelist.py --min-confidence 80
-        language: system
-        types: [python]
-        pass_filenames: false

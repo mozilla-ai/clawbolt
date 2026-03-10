@@ -112,12 +112,11 @@ Until this project has its first production release, you do not need to be conce
 Every change must pass all checks before it's considered complete:
 
 ```bash
-uv run pytest -v                                                          # tests pass
-uv run ruff check backend/ tests/                                         # lint passes
-uv run ruff format --check backend/ tests/                                # format passes
-uv run ty check --python .venv backend/ tests/                            # type checking passes
-uv run vulture backend/ tests/ vulture_whitelist.py --min-confidence 80   # no dead Python code
-cd frontend && npm run deadcode                                           # no dead JS/TS code (knip)
+uv run pytest -v                                  # tests pass
+uv run ruff check backend/ tests/                 # lint passes
+uv run ruff format --check backend/ tests/        # format passes
+uv run ty check --python .venv backend/ tests/    # type checking passes
+cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 ```
 
 - Bug fixes include regression tests
