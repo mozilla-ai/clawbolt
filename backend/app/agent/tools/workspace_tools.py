@@ -8,6 +8,7 @@ directory for safety.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -89,7 +90,8 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
-        return ToolResult(content=resolved.read_text(encoding="utf-8"))
+        file_content = await asyncio.to_thread(resolved.read_text, "utf-8")
+        return ToolResult(content=file_content)
 
     async def write_file(path: str, content: str) -> ToolResult:
         """Write or overwrite a markdown file in the workspace."""
@@ -97,7 +99,7 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
         resolved.parent.mkdir(parents=True, exist_ok=True)
-        resolved.write_text(content, encoding="utf-8")
+        await asyncio.to_thread(resolved.write_text, content, "utf-8")
         return ToolResult(content=f"Wrote {path}")
 
     async def edit_file(path: str, old_text: str, new_text: str) -> ToolResult:
@@ -111,7 +113,7 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
-        text = resolved.read_text(encoding="utf-8")
+        text = await asyncio.to_thread(resolved.read_text, "utf-8")
         if old_text not in text:
             return ToolResult(
                 content=f"Text not found in {path}. Read the file first to see current contents.",
@@ -126,7 +128,7 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
                 error_kind=ToolErrorKind.VALIDATION,
             )
         updated = text.replace(old_text, new_text, 1)
-        resolved.write_text(updated, encoding="utf-8")
+        await asyncio.to_thread(resolved.write_text, updated, "utf-8")
         return ToolResult(content=f"Updated {path}")
 
     return [

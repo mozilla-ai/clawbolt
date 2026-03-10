@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 from pathlib import Path
@@ -140,7 +141,7 @@ def create_estimate_tools(
         pdf_dir = PDF_BASE_DIR / str(user.id) / (client_slug or "unsorted")
         pdf_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = pdf_dir / f"{estimate.id}.pdf"
-        pdf_path.write_bytes(pdf_bytes)
+        await asyncio.to_thread(pdf_path.write_bytes, pdf_bytes)
 
         # Also upload to cloud storage if available
         cloud_path = ""
