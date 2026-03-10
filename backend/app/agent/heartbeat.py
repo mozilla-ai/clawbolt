@@ -37,7 +37,6 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel, get_default_channel, get_manager
 from backend.app.config import settings
 from backend.app.enums import (
-    ChecklistSchedule,
     EstimateStatus,
     MessageDirection,
 )
@@ -79,9 +78,7 @@ _TIME_KEYWORDS = re.compile(
 
 STALE_ESTIMATE_HOURS = settings.heartbeat_stale_estimate_hours
 IDLE_DAYS = settings.heartbeat_idle_days
-CHECKLIST_DAILY_INTERVAL_HOURS = settings.checklist_daily_interval_hours
 HEARTBEAT_RECENT_MESSAGES_COUNT = settings.heartbeat_recent_messages_count
-WEEKDAY_FRIDAY = 4  # Monday=0 ... Friday=4
 
 _FREQ_RE = re.compile(r"^(\d+)\s*(m|h|d)(?:in(?:utes?)?|ours?|ays?)?$", re.IGNORECASE)
 
@@ -301,38 +298,6 @@ async def run_cheap_checks(
                 result.flags.append(f"User idle for {days} days -- no messages since onboarding")
 
     return result
-
-
-def _is_checklist_item_due(
-    item: ChecklistItem,
-    now: datetime.datetime,
-    tz_name: str = "",
-) -> bool:
-    """Determine whether a checklist item should fire on this tick."""
-    # Weekday gate: convert to user's local timezone so that
-    # e.g. Friday 5 PM Pacific is not treated as Saturday (UTC).
-    local_now = _to_local_time(now, tz_name) if tz_name else now
-    if item.schedule == ChecklistSchedule.WEEKDAYS and local_now.weekday() > WEEKDAY_FRIDAY:
-        return False
-
-    # Never triggered -> due (for daily/weekdays/once)
-    if item.last_triggered_at is None:
-        return True
-
-    last_str = item.last_triggered_at
-    try:
-        last = datetime.datetime.fromisoformat(last_str)
-    except (ValueError, TypeError):
-        return True
-    if last.tzinfo is None:
-        last = last.replace(tzinfo=datetime.UTC)
-    elapsed = now - last
-
-    if item.schedule == ChecklistSchedule.ONCE:
-        # Already triggered once -> not due again
-        return False
-    # Default: "daily" or "weekdays" (weekday gate already passed above)
-    return elapsed >= datetime.timedelta(hours=CHECKLIST_DAILY_INTERVAL_HOURS)
 
 
 # ---------------------------------------------------------------------------

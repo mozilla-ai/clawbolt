@@ -128,14 +128,3 @@ def messages_to_messages_api(
     _flush_tool_results()
 
     return system, result
-
-
-# Keep backward-compatible alias used in a few call sites.
-def messages_to_dicts(messages: list[AgentMessage]) -> list[dict[str, Any]]:
-    """Serialize typed messages to dicts (Messages API format).
-
-    This is a convenience wrapper that discards the system prompt.
-    Prefer ``messages_to_messages_api`` for new code.
-    """
-    _, dicts = messages_to_messages_api(messages)
-    return dicts

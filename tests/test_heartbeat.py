@@ -10,7 +10,6 @@ import pytest
 from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
 
 from backend.app.agent.file_store import (
-    ChecklistItem,
     HeartbeatLogEntry,
     StoredMessage,
     UserData,
@@ -22,7 +21,6 @@ from backend.app.agent.heartbeat import (
     ComposeMessageParams,
     HeartbeatAction,
     HeartbeatScheduler,
-    _is_checklist_item_due,
     _parse_business_hours,
     _parse_tool_call_response,
     _pick_heartbeat_channel,
@@ -512,128 +510,6 @@ class TestRunCheapChecks:
         idle_flags = [f for f in result.flags if "idle" in f.lower()]
         assert len(idle_flags) == 1
         assert "onboarding" in idle_flags[0]
-
-
-# ---------------------------------------------------------------------------
-# Checklist item due logic
-# ---------------------------------------------------------------------------
-
-
-class TestIsChecklistItemDue:
-    def test_never_triggered(self) -> None:
-        """Item that has never been triggered is always due."""
-        item = ChecklistItem(
-            user_id=1,
-            description="Test",
-            schedule="daily",
-            last_triggered_at=None,
-        )
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        assert _is_checklist_item_due(item, now) is True
-
-    def test_daily_recently_triggered(self) -> None:
-        """Daily item triggered 2 hours ago should not be due."""
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        item = ChecklistItem(
-            user_id=1,
-            description="Test",
-            schedule="daily",
-            last_triggered_at=(now - datetime.timedelta(hours=2)).isoformat(),
-        )
-        assert _is_checklist_item_due(item, now) is False
-
-    def test_daily_triggered_yesterday(self) -> None:
-        """Daily item triggered 24 hours ago should be due."""
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        item = ChecklistItem(
-            user_id=1,
-            description="Test",
-            schedule="daily",
-            last_triggered_at=(now - datetime.timedelta(hours=24)).isoformat(),
-        )
-        assert _is_checklist_item_due(item, now) is True
-
-    def test_once_already_triggered(self) -> None:
-        """Once-scheduled item that was already triggered is never due again."""
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        item = ChecklistItem(
-            user_id=1,
-            description="Test",
-            schedule="once",
-            last_triggered_at=(now - datetime.timedelta(hours=1)).isoformat(),
-        )
-        assert _is_checklist_item_due(item, now) is False
-
-    def test_weekdays_on_saturday(self) -> None:
-        """Weekday item should not fire on Saturday."""
-        # 2025-06-14 is a Saturday
-        saturday = datetime.datetime(2025, 6, 14, 10, 0, tzinfo=datetime.UTC)
-        item = ChecklistItem(
-            user_id=1,
-            description="Test",
-            schedule="weekdays",
-            last_triggered_at=None,
-        )
-        assert _is_checklist_item_due(item, saturday) is False
-
-    def test_weekdays_on_monday(self) -> None:
-        """Weekday item should fire on Monday if not triggered recently."""
-        # 2025-06-16 is a Monday
-        monday = datetime.datetime(2025, 6, 16, 10, 0, tzinfo=datetime.UTC)
-        item = ChecklistItem(
-            user_id=1,
-            description="Test",
-            schedule="weekdays",
-            last_triggered_at=None,
-        )
-        assert _is_checklist_item_due(item, monday) is True
-
-    def test_naive_last_triggered_at(self) -> None:
-        """Timezone-naive last_triggered_at (as ISO string) should not raise TypeError."""
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        # Simulate naive datetime as ISO string (no tz info)
-        naive_last = "2025-06-14T08:00:00"
-        item = ChecklistItem(
-            user_id=1,
-            description="Test",
-            schedule="daily",
-            last_triggered_at=naive_last,
-        )
-        # Should not raise TypeError and should be due (>20h elapsed)
-        assert _is_checklist_item_due(item, now) is True
-
-    def test_weekdays_saturday_utc_but_friday_local(self) -> None:
-        """Weekday item should fire when UTC is Saturday but local time is still Friday.
-
-        Regression test: before this fix, _is_checklist_item_due checked
-        now.weekday() in UTC. A user in America/Los_Angeles at 5 PM
-        Friday Pacific (00:00 Saturday UTC) would have the weekday gate
-        incorrectly skip the item.
-        """
-        # Saturday 00:00 UTC = Friday 5:00 PM Pacific (PDT, UTC-7)
-        saturday_utc = datetime.datetime(2025, 6, 14, 0, 0, tzinfo=datetime.UTC)
-        item = ChecklistItem(
-            user_id=1,
-            description="Weekly check-in",
-            schedule="weekdays",
-            last_triggered_at=None,
-        )
-        # Without timezone: UTC says Saturday -> should skip (old buggy behavior)
-        assert _is_checklist_item_due(item, saturday_utc) is False
-        # With timezone: local is Friday -> should fire (fixed behavior)
-        assert _is_checklist_item_due(item, saturday_utc, tz_name="America/Los_Angeles") is True
-
-    def test_weekdays_sunday_local_still_skipped(self) -> None:
-        """Weekday item should still be skipped on a genuine local Sunday."""
-        # Sunday 10 AM Pacific = Sunday 5 PM UTC
-        sunday_utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
-        item = ChecklistItem(
-            user_id=1,
-            description="Test",
-            schedule="weekdays",
-            last_triggered_at=None,
-        )
-        assert _is_checklist_item_due(item, sunday_utc, tz_name="America/Los_Angeles") is False
 
 
 # ---------------------------------------------------------------------------
