@@ -1,10 +1,10 @@
 import pytest
 
 from backend.app.agent.file_store import MediaStore, UserData
+from backend.app.agent.file_store import slugify as _slugify
 from backend.app.agent.tools.file_tools import (
     _build_client_folder,
     _build_filename,
-    _slugify,
     auto_save_media,
     build_folder_path,
     create_file_tools,

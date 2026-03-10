@@ -8,7 +8,7 @@ Clawbolt is a FastAPI backend with a Telegram messaging interface and a custom t
 ## Request flow
 
 ```
-Contractor sends a Telegram message
+User sends a Telegram message
         |
         v
   Telegram webhook  -->  Media pipeline (photos, voice, docs)
@@ -32,7 +32,7 @@ Contractor sends a Telegram message
 ## Tech stack
 
 - **Python 3.11+** with FastAPI and async throughout
-- **File-based storage**: all data in JSON, JSONL, and Markdown files under `data/contractors/`. No database required
+- **File-based storage**: all data in JSON, JSONL, and Markdown files under `data/users/`. No database required
 - **Pydantic v2** for data classes and request/response schemas
 - **any-llm** for LLM provider abstraction (swap between OpenAI, Anthropic, etc.)
 - **python-telegram-bot** for the Telegram Bot API
@@ -41,35 +41,37 @@ Contractor sends a Telegram message
 
 ## Storage
 
-All data is stored as files under `data/contractors/`. Each contractor gets an isolated directory:
+All data is stored as files under `data/users/`. Each user gets an isolated directory:
 
 ```
 data/
-  contractor_index.json              # Channel -> contractor_id routing
-  seen_messages.json                 # Webhook idempotency (capped at 10K)
-  contractors/
+  user_index.json                  # Channel -> user_id routing
+  seen_messages.json               # Webhook idempotency (capped at 10K)
+  users/
     {id}/
-      contractor.json                # Profile data
-      SOUL.md                        # Personality/behavioral guidance
+      user.json                    # Profile data
+      SOUL.md                      # Personality/behavioral guidance
+      USER.md                      # User info and preferences
+      HEARTBEAT.md                 # Heartbeat checklist (single source of truth)
+      BOOTSTRAP.md                 # First-run onboarding prompt (deleted after onboarding)
       memory/
-        MEMORY.md                    # Structured facts by category
-        HISTORY.md                   # Compaction log
+        MEMORY.md                  # Structured facts by category
+        HISTORY.md                 # Compaction log
       sessions/
-        {session_id}.jsonl           # Conversation transcripts
-      clients.json                   # Client records
+        {session_id}.jsonl         # Conversation transcripts
+      clients.json                 # Client records
       estimates/
-        {estimate_id}.json           # Estimates with line items
-      media.json                     # Media file manifest
+        {estimate_id}.json         # Estimates with line items
+      media.json                   # Media file manifest
       heartbeat/
-        checklist.json               # Scheduled checklist items
-        log.jsonl                    # Heartbeat send log
-      llm_usage.jsonl                # Token usage log
+        log.jsonl                  # Heartbeat send log
+      llm_usage.jsonl              # Token usage log
 ```
 
 Key store classes in `backend/app/agent/file_store.py`:
-- `ContractorStore` (singleton via `get_contractor_store()`)
-- `FileMemoryStore` (per-contractor via `get_memory_store(id)`)
-- `FileSessionStore` (per-contractor via `get_session_store(id)`)
+- `UserStore` (singleton via `get_user_store()`)
+- `FileMemoryStore` (per-user via `get_memory_store(id)`)
+- `FileSessionStore` (per-user via `get_session_store(id)`)
 - `ClientStore`, `EstimateStore`, `MediaStore`, `HeartbeatStore` (instantiated per use)
 
 ## Agent tools
@@ -79,7 +81,7 @@ The agent has access to these tool groups:
 | Tool group | Tools | Purpose |
 |------------|-------|---------|
 | Memory | `save_fact`, `recall_facts`, `forget_fact` | Persistent key-value memory for pricing, clients, jobs |
-| Messaging | `send_reply`, `send_media_reply` | Send text or media messages back to the contractor |
+| Messaging | `send_reply`, `send_media_reply` | Send text or media messages back to the user |
 | Estimates | `generate_estimate` | Create professional PDF estimates with line items |
 | Workspace | `read_file`, `write_file`, `edit_file`, `delete_file` | Read/write markdown files (USER.md, SOUL.md, etc.) |
 | Checklist | `add_checklist_item`, `list_checklist_items`, `remove_checklist_item` | Reminder checklists |
@@ -95,7 +97,7 @@ The async message bus (`bus.py`) decouples the agent from delivery mechanics. Ch
 
 ### Storage abstraction
 
-The `StorageBackend` ABC allows swapping between local filesystem, Dropbox, and Google Drive. Each contractor's files are organized in per-client folders.
+The `StorageBackend` ABC allows swapping between local filesystem, Dropbox, and Google Drive. Each user's files are organized in per-client folders.
 
 ### Auth plugin infrastructure
 
@@ -111,7 +113,7 @@ The [heartbeat system](../features/heartbeat/) separates cheap deterministic che
 
 | Data class | Purpose |
 |------------|---------|
-| `ContractorData` | User profile, heartbeat settings |
+| `UserData` | User profile, heartbeat settings |
 | `ClientData` | Client records (name, phone, email, address, notes) |
 | `MemoryFact` | Key-value facts with category and confidence |
 | `SessionState` | Conversation session with messages |

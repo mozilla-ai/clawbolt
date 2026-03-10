@@ -55,14 +55,14 @@ async def _process_single_media(
             extracted_text = VISION_FALLBACK
     elif category == "audio":
         try:
-            extracted_text = await transcribe_audio(media.content, media.mime_type)
+            extracted_text = await transcribe_audio(media.content)
         except Exception:
             logger.warning("Could not transcribe audio: %s", media.original_url)
             extracted_text = AUDIO_ERROR_FALLBACK
     elif category == "video":
         # Future: extract audio track. For now, try audio transcription.
         try:
-            extracted_text = await transcribe_audio(media.content, media.mime_type)
+            extracted_text = await transcribe_audio(media.content)
         except Exception:
             logger.warning("Could not process video file: %s", media.original_url)
             extracted_text = VIDEO_ERROR_FALLBACK
