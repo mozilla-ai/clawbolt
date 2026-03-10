@@ -41,6 +41,7 @@ class Settings(BaseSettings):
 
     # Messaging
     messaging_provider: str = "telegram"
+    default_folder_scheme: str = "by_client"
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
     telegram_allowed_chat_ids: str = (
@@ -103,6 +104,7 @@ class Settings(BaseSettings):
 
     # Heartbeat
     heartbeat_enabled: bool = True
+    heartbeat_default_frequency: str = "30m"
     heartbeat_interval_minutes: int = Field(default=30, ge=1)
     heartbeat_max_daily_messages: int = Field(default=5, ge=1)
     heartbeat_quiet_hours_start: int = Field(default=20, ge=0, le=23)  # 8 PM

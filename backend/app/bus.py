@@ -16,6 +16,8 @@ import logging
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+from backend.app.config import settings
+
 if TYPE_CHECKING:
     from backend.app.agent.ingestion import InboundMessage
 
@@ -97,11 +99,15 @@ class MessageBus:
             return True
         return False
 
-    async def wait_for_response(self, request_id: str, timeout: float = 120) -> OutboundMessage:
+    async def wait_for_response(
+        self, request_id: str, timeout: float | None = None
+    ) -> OutboundMessage:
         """Wait for the outbound reply matching *request_id*.
 
         Raises ``asyncio.TimeoutError`` if no reply arrives within *timeout* seconds.
         """
+        if timeout is None:
+            timeout = settings.approval_timeout_seconds
         fut = self._response_futures.get(request_id)
         if fut is None:
             fut = self.register_response_future(request_id)

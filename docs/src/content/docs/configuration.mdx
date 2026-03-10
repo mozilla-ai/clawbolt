@@ -45,6 +45,7 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MESSAGING_PROVIDER` | `telegram` | Messaging backend (currently only `telegram` is supported) |
+| `DEFAULT_FOLDER_SCHEME` | `by_client` | Default folder scheme for organizing client files (`by_client`, `by_address`, or `by_client_and_address`) |
 | `TELEGRAM_BOT_TOKEN` | | Bot token from @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | (auto-derived) | Webhook validation secret. Auto-derived from bot token if not set |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | (empty) | Comma-separated allowlist of Telegram chat IDs, or `*` to allow all. Empty = deny all |
@@ -116,6 +117,7 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HEARTBEAT_ENABLED` | `true` | Enable proactive check-in messages |
+| `HEARTBEAT_DEFAULT_FREQUENCY` | `30m` | Default check-in frequency shown to new users (e.g. `15m`, `1h`, `daily`) |
 | `HEARTBEAT_INTERVAL_MINUTES` | `30` | Minutes between heartbeat evaluation ticks |
 | `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per contractor per day |
 | `HEARTBEAT_QUIET_HOURS_START` | `20` | Hour (24h) to stop sending heartbeats |

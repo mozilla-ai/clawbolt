@@ -147,7 +147,7 @@ def build_local_datetime_section(user: UserData) -> str:
 def build_cross_session_context(
     user_id: int,
     current_session_id: str,
-    count: int = 5,
+    count: int | None = None,
 ) -> str:
     """Build a summary of recent messages from other sessions.
 
