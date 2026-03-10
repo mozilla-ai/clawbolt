@@ -6,8 +6,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from pydantic import BaseModel, Field
 
-from backend.app.agent.core import ClawboltAgent, _summarize_tool_params
+from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.file_store import UserData
+from backend.app.agent.tool_errors import summarize_tool_params
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
 from backend.app.agent.tools.checklist_tools import (
     AddChecklistItemParams,
@@ -502,14 +503,14 @@ def _make_tool(name: str, params_model: type[BaseModel]) -> Tool:
     return Tool(name=name, description="test", function=dummy, params_model=params_model)
 
 
-def test_summarize_tool_params_includes_array_item_structure() -> None:
+def testsummarize_tool_params_includes_array_item_structure() -> None:
     """Validation error summary should describe array item fields, not just 'array'.
 
     Regression test for #434: when the LLM omits line_items, the error
     message must show the expected item structure so it can self-correct.
     """
     tool = _make_tool("generate_estimate", GenerateEstimateParams)
-    summary = _summarize_tool_params(tool)
+    summary = summarize_tool_params(tool)
 
     # Should show nested item fields, not bare 'array'
     assert "array of {" in summary
@@ -518,10 +519,10 @@ def test_summarize_tool_params_includes_array_item_structure() -> None:
     assert '"unit_price": number' in summary
 
 
-def test_summarize_tool_params_resolves_anyof_types() -> None:
+def testsummarize_tool_params_resolves_anyof_types() -> None:
     """Optional union fields (str | None) should show the concrete type, not 'any'."""
     tool = _make_tool("generate_estimate", GenerateEstimateParams)
-    summary = _summarize_tool_params(tool)
+    summary = summarize_tool_params(tool)
 
     assert '"client_name": string (optional)' in summary
 

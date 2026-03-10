@@ -32,7 +32,7 @@ from backend.app.agent.events import (
     TurnStartEvent,
 )
 from backend.app.agent.file_store import UserData
-from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
+from backend.app.agent.llm_parsing import ParsedToolCall, get_response_text, parse_tool_calls
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -43,16 +43,21 @@ from backend.app.agent.messages import (
     messages_to_messages_api,
 )
 from backend.app.agent.system_prompt import build_agent_system_prompt
+from backend.app.agent.tool_errors import (
+    _DEFAULT_ERROR_HINT,
+    _ERROR_KIND_HINTS,
+    build_error_hint,
+    format_validation_error,
+)
 from backend.app.agent.tools.base import (
     Tool,
     ToolErrorKind,
-    ToolResult,
     ToolTags,
-    _inline_refs,
     tool_to_function_schema,
 )
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext, ToolRegistry
+from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
 from backend.app.services.llm_usage import log_llm_usage
 
@@ -60,151 +65,9 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = settings.max_tool_rounds
 RATE_LIMIT_RETRY_DELAY = settings.rate_limit_retry_delay
-# Target token budget when trimming for context length (leave room for output tokens)
-CONTEXT_TRIM_TARGET_TOKENS = settings.context_trim_target_tokens
 
 # Conservative default; most models support 128K+ but we leave room for output
 MAX_INPUT_TOKENS = settings.max_input_tokens
-
-_SUMMARY_MAX_CHARS = 500
-
-
-def _summarize_dropped_messages(dropped: list[AgentMessage]) -> str:
-    """Build a deterministic summary of messages that were trimmed from context.
-
-    Extracts message count, tool calls made, and key topics (first line of
-    each user/assistant message). Fast and deterministic: no LLM call needed.
-    """
-    user_snippets: list[str] = []
-    assistant_snippets: list[str] = []
-    tool_calls_made: list[str] = []
-
-    for msg in dropped:
-        if isinstance(msg, UserMessage) and msg.content:
-            first_line = msg.content.split("\n", 1)[0][:80]
-            user_snippets.append(first_line)
-        elif isinstance(msg, AssistantMessage):
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    tool_calls_made.append(tc.name)
-            if msg.content:
-                first_line = msg.content.split("\n", 1)[0][:80]
-                assistant_snippets.append(first_line)
-        # ToolResultMessages are covered by the tool_calls_made list
-
-    parts: list[str] = [f"{len(dropped)} earlier message(s) were trimmed from context."]
-
-    if user_snippets:
-        topics = "; ".join(user_snippets[:5])
-        if len(user_snippets) > 5:
-            topics += f" (and {len(user_snippets) - 5} more)"
-        parts.append(f"User topics: {topics}")
-
-    if assistant_snippets:
-        topics = "; ".join(assistant_snippets[:3])
-        parts.append(f"Assistant discussed: {topics}")
-
-    if tool_calls_made:
-        unique_tools = sorted(set(tool_calls_made))
-        parts.append(f"Tools used: {', '.join(unique_tools)}")
-
-    summary = " ".join(parts)
-    return summary[:_SUMMARY_MAX_CHARS]
-
-
-def _format_validation_error(tool_name: str, exc: ValidationError, tool: Tool | None = None) -> str:
-    """Format a Pydantic ValidationError into a structured message for the LLM."""
-    error_lines: list[str] = [f"Validation error for {tool_name}:"]
-    for err in exc.errors():
-        loc = " -> ".join(str(part) for part in err["loc"])
-        error_lines.append(f"  {loc}: {err['msg']} (type={err['type']})")
-
-    if tool is not None:
-        schema_summary = _summarize_tool_params(tool)
-        if schema_summary:
-            error_lines.append(f"\nExpected parameters: {schema_summary}")
-
-    return "\n".join(error_lines)
-
-
-def _extract_type_label(info: dict[str, Any]) -> str:
-    """Extract a human-readable type label from a JSON Schema property."""
-    if "type" in info:
-        ptype = info["type"]
-        if ptype == "array" and "items" in info:
-            items = info["items"]
-            if items.get("type") == "object" and "properties" in items:
-                item_parts = _summarize_properties(
-                    items["properties"], set(items.get("required", []))
-                )
-                return "array of {" + ", ".join(item_parts) + "}"
-            return f"array of {_extract_type_label(items)}"
-        return ptype
-    if "anyOf" in info:
-        types = [alt.get("type", "any") for alt in info["anyOf"] if alt.get("type") != "null"]
-        return types[0] if types else "any"
-    return "any"
-
-
-def _summarize_properties(props: dict[str, Any], required: set[str]) -> list[str]:
-    """Summarize a set of JSON Schema properties into label strings."""
-    parts: list[str] = []
-    for name, info in props.items():
-        ptype = _extract_type_label(info)
-        req = "required" if name in required else "optional"
-        default = info.get("default")
-        if default is not None:
-            parts.append(f'"{name}": {ptype} ({req}, default: {default})')
-        else:
-            parts.append(f'"{name}": {ptype} ({req})')
-    return parts
-
-
-def _summarize_tool_params(tool: Tool) -> str:
-    """Build a concise parameter summary string from a tool's schema."""
-    schema = tool.params_model.model_json_schema()
-    schema = _inline_refs(schema)
-    props = schema.get("properties", {})
-    required = set(schema.get("required", []))
-    if not props:
-        return ""
-
-    parts = _summarize_properties(props, required)
-    return "{" + ", ".join(parts) + "}"
-
-
-_DEFAULT_ERROR_HINT = "[Analyze the error above and try a different approach.]"
-
-_ERROR_KIND_HINTS: dict[ToolErrorKind, str] = {
-    ToolErrorKind.VALIDATION: (
-        "[Check the expected parameter format and try again with corrected arguments.]"
-    ),
-    ToolErrorKind.NOT_FOUND: (
-        "[The requested resource was not found. Verify the identifier and try again.]"
-    ),
-    ToolErrorKind.SERVICE: (
-        "[An external service is temporarily unavailable."
-        " Try a different approach or inform the user.]"
-    ),
-    ToolErrorKind.PERMISSION: ("[You do not have permission for this operation. Inform the user.]"),
-    ToolErrorKind.INTERNAL: (
-        "[An internal error occurred."
-        " Inform the user that this operation is temporarily unavailable.]"
-    ),
-}
-
-
-def _build_error_hint(result: ToolResult) -> str:
-    """Build the LLM guidance suffix for an error ToolResult.
-
-    Priority: explicit ``hint`` on the result, then ``error_kind`` mapping,
-    then the generic default.
-    """
-    if result.hint:
-        return f"[{result.hint}]" if not result.hint.startswith("[") else result.hint
-    if result.error_kind is not None:
-        return _ERROR_KIND_HINTS.get(result.error_kind, _DEFAULT_ERROR_HINT)
-    return _DEFAULT_ERROR_HINT
 
 
 @dataclass
@@ -480,7 +343,7 @@ class ClawboltAgent:
                 ),
             )
         except ContextLengthExceededError:
-            trimmed = self._trim_messages(
+            trimmed = trim_messages(
                 messages,
                 input_tokens=self._last_input_tokens or MAX_INPUT_TOKENS,
             )
@@ -510,98 +373,6 @@ class ClawboltAgent:
             logger.critical("LLM authentication failed -- check API key configuration")
             raise
 
-    @staticmethod
-    def _trim_messages(
-        messages: list[AgentMessage],
-        target_tokens: int = CONTEXT_TRIM_TARGET_TOKENS,
-        input_tokens: int | None = None,
-    ) -> list[AgentMessage]:
-        """Trim conversation messages to fit within a token budget.
-
-        Requires *input_tokens* (from ``response.usage.input_tokens``) to
-        make accurate trimming decisions using the API-reported token count.
-        When *input_tokens* is ``None`` (e.g. first call in a session),
-        returns messages unchanged and relies on the provider raising
-        ``ContextLengthExceededError`` to trigger reactive trimming.
-
-        Keeps the system prompt (first message) and removes the oldest
-        conversation messages until the content fits within *target_tokens*.
-        Tool-call / tool-result pairs are treated as atomic units: an
-        ``AssistantMessage`` with ``tool_calls`` is never removed without also
-        removing the ``ToolResultMessage`` entries that follow it (and
-        vice-versa).
-
-        Dropped messages are summarized and injected as a context note so
-        the LLM retains awareness of what was discussed.
-        """
-        if input_tokens is None or len(messages) <= 2:
-            return messages
-
-        def _content_length(msgs: list[AgentMessage]) -> int:
-            """Return total character count (used only for proportional scaling)."""
-            total = 0
-            for m in msgs:
-                if isinstance(m, (SystemMessage, UserMessage)):
-                    total += len(m.content or "")
-                elif isinstance(m, AssistantMessage):
-                    total += len(m.content or "")
-                    for tc in m.tool_calls:
-                        total += len(tc.name) + len(str(tc.arguments))
-                elif isinstance(m, ToolResultMessage):
-                    total += len(m.content or "")
-            return total
-
-        def _tokens_for(msgs: list[AgentMessage]) -> int:
-            """Scale the known input_tokens by the content-length ratio."""
-            orig_len = _content_length(messages) or 1
-            return int(input_tokens * _content_length(msgs) / orig_len)
-
-        if _tokens_for(messages) <= target_tokens:
-            return messages
-
-        system = messages[0]
-        body = list(messages[1:])
-
-        # Group the body into "blocks" that must be removed together.
-        blocks: list[list[AgentMessage]] = []
-        i = 0
-        while i < len(body):
-            msg = body[i]
-            if isinstance(msg, AssistantMessage) and msg.tool_calls:
-                block: list[AgentMessage] = [msg]
-                j = i + 1
-                while j < len(body):
-                    if isinstance(body[j], ToolResultMessage):
-                        block.append(body[j])
-                        j += 1
-                    else:
-                        break
-                blocks.append(block)
-                i = j
-            else:
-                blocks.append([msg])
-                i += 1
-
-        # Remove blocks from the front (oldest) until we fit the budget,
-        # but always keep at least the last block.
-        dropped: list[AgentMessage] = []
-        while len(blocks) > 1:
-            remaining: list[AgentMessage] = [system]
-            for blk in blocks:
-                remaining.extend(blk)
-            if _tokens_for(remaining) <= target_tokens:
-                break
-            removed_block = blocks.pop(0)
-            dropped.extend(removed_block)
-
-        result: list[AgentMessage] = [system]
-        if dropped:
-            summary = _summarize_dropped_messages(dropped)
-            result.append(UserMessage(content=f"[Summary of earlier conversation: {summary}]"))
-        for blk in blocks:
-            result.extend(blk)
-        return result
-
     def _validate_tool_args(
         self, tool: Tool, tool_args: dict[str, Any]
     ) -> tuple[dict[str, Any], str | None]:
@@ -616,12 +387,185 @@ class ClawboltAgent:
             validated = tool.params_model.model_validate(tool_args)
             return validated.model_dump(), None
         except ValidationError as exc:
-            return tool_args, _format_validation_error(tool.name, exc, tool)
+            return tool_args, format_validation_error(tool.name, exc, tool)
 
     def _get_tool_tags(self, tool_name: str) -> set[ToolTags]:
         """Look up the tags for a registered tool by name."""
         tool = self._tools_by_name.get(tool_name)
         return tool.tags if tool else set()
+
+    async def _execute_tool_round(
+        self,
+        parsed_calls: list[ToolCallRequest],
+        parsed_raw: list[ParsedToolCall],
+        actions_taken: list[str],
+        memories_saved: list[dict[str, str]],
+        tool_call_records: list[StoredToolInteraction],
+    ) -> list[ToolResultMessage]:
+        """Validate and execute a round of tool calls.
+
+        Phase 1 validates all tool calls before executing any.
+        Phase 2 runs approval checks and executes only the validated calls.
+        Returns the list of ``ToolResultMessage`` objects for the round.
+        """
+        # -- Phase 1: validate ALL tool calls before executing any -------
+        pre_validated: list[tuple[int, Tool, dict[str, Any]]] = []
+        tool_results: list[ToolResultMessage] = []
+
+        for i, tc_req in enumerate(parsed_calls):
+            tool_name = tc_req.name
+            tool_args = tc_req.arguments
+
+            # Handle malformed arguments (arguments was None in ParsedToolCall)
+            if not tool_args and parsed_raw[i].arguments is None:
+                logger.warning(
+                    "Malformed tool arguments for %s",
+                    tool_name,
+                )
+                tool_results.append(
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=f"Error: malformed arguments for {tool_name}",
+                    )
+                )
+                actions_taken.append(f"Failed: {tool_name} (bad args)")
+                continue
+
+            tool_obj = self._tools_by_name.get(tool_name)
+            if not tool_obj:
+                logger.debug("Unknown tool %r requested by LLM", tool_name)
+                available = ", ".join(sorted(self._tools_by_name.keys()))
+                result_str = (
+                    f'Error: unknown tool "{tool_name}".'
+                    f" Available tools: {available}"
+                    f"\n\n{_DEFAULT_ERROR_HINT}"
+                )
+                tool_results.append(
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=result_str,
+                    )
+                )
+                continue
+
+            validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
+            if validation_error is not None:
+                logger.warning(
+                    "Validation failed for %s: %s",
+                    tool_name,
+                    validation_error,
+                )
+                tool_tags = self._get_tool_tags(tool_name)
+                hint = _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
+                result_str = validation_error + "\n\n" + hint
+                actions_taken.append(f"Failed: {tool_name} (validation)")
+                tool_call_records.append(
+                    StoredToolInteraction(
+                        tool_call_id=tc_req.id,
+                        name=tool_name,
+                        args=tool_args,
+                        result=result_str,
+                        is_error=True,
+                        tags=set(tool_tags),
+                    )
+                )
+                tool_results.append(
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=result_str,
+                    )
+                )
+                continue
+
+            pre_validated.append((i, tool_obj, validated_args))
+
+        # -- Phase 2: execute only the validated tool calls --------------
+        for i, tool_obj, validated_args in pre_validated:
+            tc_req = parsed_calls[i]
+            tool_name = tc_req.name
+            tool_tags = self._get_tool_tags(tool_name)
+
+            # -- Approval check --
+            approval_result = await self._check_approval(tool_obj, validated_args)
+            if approval_result == PermissionLevel.DENY:
+                hint = _ERROR_KIND_HINTS[ToolErrorKind.PERMISSION]
+                deny_msg = f"Error: permission denied for tool '{tool_name}'\n\n{hint}"
+                actions_taken.append(f"Denied: {tool_name}")
+                tool_call_records.append(
+                    StoredToolInteraction(
+                        tool_call_id=tc_req.id,
+                        name=tool_name,
+                        args=validated_args,
+                        result=deny_msg,
+                        is_error=True,
+                        tags=set(tool_tags),
+                    )
+                )
+                tool_results.append(
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=deny_msg,
+                    )
+                )
+                continue
+
+            await self._emit(ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args))
+            tool_start = time.monotonic()
+            result_str = ""
+            is_error = False
+            try:
+                result = await tool_obj.function(**validated_args)
+                result_str = result.content
+                is_error = result.is_error
+                if is_error:
+                    hint = build_error_hint(result)
+                    result_str += "\n\n" + hint
+                if is_error:
+                    actions_taken.append(f"Failed: {tool_name}")
+                else:
+                    actions_taken.append(f"Called {tool_name}")
+                tool_call_records.append(
+                    StoredToolInteraction(
+                        tool_call_id=tc_req.id,
+                        name=tool_name,
+                        args=validated_args,
+                        result=result_str,
+                        is_error=is_error,
+                        tags=set(tool_tags),
+                    )
+                )
+                if ToolTags.SAVES_MEMORY in tool_tags:
+                    memories_saved.append(validated_args)
+            except Exception:
+                logger.exception("Tool call failed: %s", tool_name)
+                hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
+                result_str = f"Error: tool {tool_name} failed\n\n{hint}"
+                is_error = True
+                actions_taken.append(f"Failed: {tool_name}")
+            tool_duration = (time.monotonic() - tool_start) * 1000
+            logger.debug(
+                "Tool %s completed in %.1fms, is_error=%s, result_length=%d",
+                tool_name,
+                tool_duration,
+                is_error,
+                len(result_str),
+            )
+            await self._emit(
+                ToolExecutionEndEvent(
+                    tool_name=tool_name,
+                    result=result_str,
+                    is_error=is_error,
+                    duration_ms=tool_duration,
+                )
+            )
+            tool_results.append(
+                ToolResultMessage(
+                    tool_call_id=tc_req.id,
+                    content=result_str,
+                )
+            )
+
+        return tool_results
 
     async def process_message(
         self,
@@ -657,7 +601,7 @@ class ClawboltAgent:
         # Uses the block-based trimmer which preserves tool-call/result pairing
         # and injects a summary of dropped messages.
         original_count = len(messages)
-        messages = self._trim_messages(
+        messages = trim_messages(
             messages,
             target_tokens=MAX_INPUT_TOKENS,
             input_tokens=self._last_input_tokens or None,
@@ -738,164 +682,14 @@ class ClawboltAgent:
                 )
             )
 
-            # -- Phase 1: validate ALL tool calls before executing any -------
-            pre_validated: list[tuple[int, Tool, dict[str, Any]]] = []
-            tool_results: list[ToolResultMessage] = []
-
-            for i, tc_req in enumerate(parsed_calls):
-                tool_name = tc_req.name
-                tool_args = tc_req.arguments
-
-                # Handle malformed arguments (arguments was None in ParsedToolCall)
-                if not tool_args and parsed_raw[i].arguments is None:
-                    logger.warning(
-                        "Malformed tool arguments for %s",
-                        tool_name,
-                    )
-                    tool_results.append(
-                        ToolResultMessage(
-                            tool_call_id=tc_req.id,
-                            content=f"Error: malformed arguments for {tool_name}",
-                        )
-                    )
-                    actions_taken.append(f"Failed: {tool_name} (bad args)")
-                    continue
-
-                tool_obj = self._tools_by_name.get(tool_name)
-                if not tool_obj:
-                    logger.debug("Unknown tool %r requested by LLM", tool_name)
-                    available = ", ".join(sorted(self._tools_by_name.keys()))
-                    result_str = (
-                        f'Error: unknown tool "{tool_name}".'
-                        f" Available tools: {available}"
-                        f"\n\n{_DEFAULT_ERROR_HINT}"
-                    )
-                    tool_results.append(
-                        ToolResultMessage(
-                            tool_call_id=tc_req.id,
-                            content=result_str,
-                        )
-                    )
-                    continue
-
-                validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
-                if validation_error is not None:
-                    logger.warning(
-                        "Validation failed for %s: %s",
-                        tool_name,
-                        validation_error,
-                    )
-                    tool_tags = self._get_tool_tags(tool_name)
-                    hint = _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
-                    result_str = validation_error + "\n\n" + hint
-                    actions_taken.append(f"Failed: {tool_name} (validation)")
-                    tool_call_records.append(
-                        StoredToolInteraction(
-                            tool_call_id=tc_req.id,
-                            name=tool_name,
-                            args=tool_args,
-                            result=result_str,
-                            is_error=True,
-                            tags=set(tool_tags),
-                        )
-                    )
-                    tool_results.append(
-                        ToolResultMessage(
-                            tool_call_id=tc_req.id,
-                            content=result_str,
-                        )
-                    )
-                    continue
-
-                pre_validated.append((i, tool_obj, validated_args))
-
-            # -- Phase 2: execute only the validated tool calls --------------
-            for i, tool_obj, validated_args in pre_validated:
-                tc_req = parsed_calls[i]
-                tool_name = tc_req.name
-                tool_tags = self._get_tool_tags(tool_name)
-
-                # -- Approval check --
-                approval_result = await self._check_approval(tool_obj, validated_args)
-                if approval_result == PermissionLevel.DENY:
-                    hint = _ERROR_KIND_HINTS[ToolErrorKind.PERMISSION]
-                    deny_msg = f"Error: permission denied for tool '{tool_name}'\n\n{hint}"
-                    actions_taken.append(f"Denied: {tool_name}")
-                    tool_call_records.append(
-                        StoredToolInteraction(
-                            tool_call_id=tc_req.id,
-                            name=tool_name,
-                            args=validated_args,
-                            result=deny_msg,
-                            is_error=True,
-                            tags=set(tool_tags),
-                        )
-                    )
-                    tool_results.append(
-                        ToolResultMessage(
-                            tool_call_id=tc_req.id,
-                            content=deny_msg,
-                        )
-                    )
-                    continue
-
-                await self._emit(
-                    ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args)
-                )
-                tool_start = time.monotonic()
-                result_str = ""
-                is_error = False
-                try:
-                    result = await tool_obj.function(**validated_args)
-                    result_str = result.content
-                    is_error = result.is_error
-                    if is_error:
-                        hint = _build_error_hint(result)
-                        result_str += "\n\n" + hint
-                    if is_error:
-                        actions_taken.append(f"Failed: {tool_name}")
-                    else:
-                        actions_taken.append(f"Called {tool_name}")
-                    tool_call_records.append(
-                        StoredToolInteraction(
-                            tool_call_id=tc_req.id,
-                            name=tool_name,
-                            args=validated_args,
-                            result=result_str,
-                            is_error=is_error,
-                            tags=set(tool_tags),
-                        )
-                    )
-                    if ToolTags.SAVES_MEMORY in tool_tags:
-                        memories_saved.append(validated_args)
-                except Exception:
-                    logger.exception("Tool call failed: %s", tool_name)
-                    hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
-                    result_str = f"Error: tool {tool_name} failed\n\n{hint}"
-                    is_error = True
-                    actions_taken.append(f"Failed: {tool_name}")
-                tool_duration = (time.monotonic() - tool_start) * 1000
-                logger.debug(
-                    "Tool %s completed in %.1fms, is_error=%s, result_length=%d",
-                    tool_name,
-                    tool_duration,
-                    is_error,
-                    len(result_str),
-                )
-                await self._emit(
-                    ToolExecutionEndEvent(
-                        tool_name=tool_name,
-                        result=result_str,
-                        is_error=is_error,
-                        duration_ms=tool_duration,
-                    )
-                )
-                tool_results.append(
-                    ToolResultMessage(
-                        tool_call_id=tc_req.id,
-                        content=result_str,
-                    )
-                )
+            # Execute the tool round (validate, approve, run)
+            tool_results = await self._execute_tool_round(
+                parsed_calls,
+                parsed_raw,
+                actions_taken,
+                memories_saved,
+                tool_call_records,
+            )
 
             # Activate any specialist factories requested via list_capabilities.
             # New tool schemas will be picked up at the top of the next round.

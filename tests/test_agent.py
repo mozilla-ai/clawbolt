@@ -24,6 +24,7 @@ from backend.app.agent.messages import (
     UserMessage,
 )
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.trimming import trim_messages
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -576,7 +577,7 @@ def test_trim_messages_preserves_tool_call_result_pairs() -> None:
 
     # Use a small budget that forces trimming. Simulate prior API response
     # reporting 2625 input tokens for this conversation.
-    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=1000, input_tokens=2625)
+    trimmed = trim_messages(messages, target_tokens=1000, input_tokens=2625)
 
     # The trimmed result should never contain tool_result without assistant_tc
     has_tool_msg = any(isinstance(m, ToolResultMessage) for m in trimmed)
@@ -729,7 +730,7 @@ def test_trim_messages_skips_without_input_tokens() -> None:
         SystemMessage(content="System prompt"),
         *[UserMessage(content=big_content) for _ in range(50)],
     ]
-    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=100)
+    trimmed = trim_messages(messages, target_tokens=100)
     assert trimmed is messages
 
 
@@ -741,7 +742,7 @@ def test_trim_messages_preserves_short_conversation() -> None:
         AssistantMessage(content="Hi there!"),
     ]
     # With a small input_tokens count that fits the budget, no trimming occurs.
-    trimmed = ClawboltAgent._trim_messages(messages, input_tokens=50)
+    trimmed = trim_messages(messages, input_tokens=50)
     assert trimmed == messages
 
 
@@ -758,7 +759,7 @@ def test_trim_messages_keeps_system_and_recent() -> None:
         ],
     ]
     # Simulate a prior API response reporting 20_000 input tokens.
-    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000, input_tokens=20_000)
+    trimmed = trim_messages(messages, target_tokens=5000, input_tokens=20_000)
     assert isinstance(trimmed[0], SystemMessage)
     # Should have been trimmed significantly
     assert len(trimmed) < len(messages)
@@ -833,20 +834,20 @@ async def test_agent_logs_warning_when_trimming(
 
 def test_summarize_dropped_messages_includes_user_topics() -> None:
     """Summary should include first lines from dropped user messages."""
-    from backend.app.agent.core import _summarize_dropped_messages
+    from backend.app.agent.trimming import summarize_dropped_messages
 
     dropped: list[AgentMessage] = [
         UserMessage(content="What did I quote for the Johnson deck?"),
         AssistantMessage(content="You quoted $4,500 for the 12x12 composite deck."),
     ]
-    summary = _summarize_dropped_messages(dropped)
+    summary = summarize_dropped_messages(dropped)
     assert "2 earlier message(s)" in summary
     assert "Johnson deck" in summary
 
 
 def test_summarize_dropped_messages_includes_tool_calls() -> None:
     """Summary should mention tools that were called in dropped messages."""
-    from backend.app.agent.core import _summarize_dropped_messages
+    from backend.app.agent.trimming import summarize_dropped_messages
 
     dropped: list[AgentMessage] = [
         UserMessage(content="Save my rate"),
@@ -857,16 +858,16 @@ def test_summarize_dropped_messages_includes_tool_calls() -> None:
         ToolResultMessage(tool_call_id="call_1", content="Saved"),
         AssistantMessage(content="Done!"),
     ]
-    summary = _summarize_dropped_messages(dropped)
+    summary = summarize_dropped_messages(dropped)
     assert "save_fact" in summary
     assert "Tools used:" in summary
 
 
 def test_summarize_dropped_messages_empty_list() -> None:
     """Empty dropped list should produce a zero-count summary."""
-    from backend.app.agent.core import _summarize_dropped_messages
+    from backend.app.agent.trimming import summarize_dropped_messages
 
-    summary = _summarize_dropped_messages([])
+    summary = summarize_dropped_messages([])
     assert "0 earlier message(s)" in summary
 
 
@@ -882,7 +883,7 @@ def test_trim_messages_injects_summary_when_trimming() -> None:
             for i in range(20)
         ],
     ]
-    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000, input_tokens=20_000)
+    trimmed = trim_messages(messages, target_tokens=5000, input_tokens=20_000)
     assert isinstance(trimmed[0], SystemMessage)
     # Second message should be the summary
     assert isinstance(trimmed[1], UserMessage)
@@ -897,7 +898,7 @@ def test_trim_messages_no_summary_when_not_trimmed() -> None:
         UserMessage(content="Hello"),
         AssistantMessage(content="Hi there!"),
     ]
-    trimmed = ClawboltAgent._trim_messages(messages, input_tokens=50)
+    trimmed = trim_messages(messages, input_tokens=50)
     assert trimmed == messages
     # No summary message should be present
     for msg in trimmed:
