@@ -16,6 +16,7 @@ from backend.app.agent.file_store import (
     UserData,
 )
 from backend.app.agent.heartbeat import (
+    _NON_PUSHABLE_CHANNELS,
     COMPOSE_MESSAGE_TOOL,
     CheapCheckResult,
     ComposeMessageParams,
@@ -24,6 +25,7 @@ from backend.app.agent.heartbeat import (
     _is_checklist_item_due,
     _parse_business_hours,
     _parse_tool_call_response,
+    _pick_heartbeat_channel,
     _to_local_time,
     build_heartbeat_context,
     evaluate_heartbeat_need,
@@ -1521,3 +1523,142 @@ class TestParseFrequencyToMinutes:
     def test_invalid_returns_none(self) -> None:
         assert parse_frequency_to_minutes("never") is None
         assert parse_frequency_to_minutes("weekly") is None
+
+
+# ---------------------------------------------------------------------------
+# _pick_heartbeat_channel
+# ---------------------------------------------------------------------------
+
+
+class TestPickHeartbeatChannel:
+    """Heartbeat should route to a pushable channel, never to webchat."""
+
+    def test_webchat_in_non_pushable(self) -> None:
+        """webchat must be listed as a non-pushable channel."""
+        assert "webchat" in _NON_PUSHABLE_CHANNELS
+
+    @patch("backend.app.agent.heartbeat.get_channel")
+    def test_preferred_channel_is_pushable(self, mock_get_channel: MagicMock) -> None:
+        """When preferred_channel is pushable, use it directly."""
+        user = UserData(id=1, preferred_channel="telegram")
+        mock_telegram = MagicMock()
+        mock_get_channel.return_value = mock_telegram
+
+        result = _pick_heartbeat_channel(user)
+
+        mock_get_channel.assert_called_once_with("telegram")
+        assert result is mock_telegram
+
+    @patch("backend.app.agent.heartbeat.get_manager")
+    @patch("backend.app.agent.heartbeat.get_channel")
+    def test_webchat_preferred_falls_back_to_telegram(
+        self, mock_get_channel: MagicMock, mock_get_manager: MagicMock
+    ) -> None:
+        """When preferred_channel is webchat, fall back to the first pushable channel."""
+        user = UserData(id=1, preferred_channel="webchat")
+        mock_telegram = MagicMock()
+        mock_webchat = MagicMock()
+
+        mock_manager = MagicMock()
+        mock_manager.channels = {"telegram": mock_telegram, "webchat": mock_webchat}
+        mock_get_manager.return_value = mock_manager
+
+        result = _pick_heartbeat_channel(user)
+
+        mock_get_channel.assert_not_called()
+        assert result is mock_telegram
+
+    @patch("backend.app.agent.heartbeat.get_manager")
+    @patch("backend.app.agent.heartbeat.get_channel")
+    def test_unregistered_preferred_falls_back(
+        self, mock_get_channel: MagicMock, mock_get_manager: MagicMock
+    ) -> None:
+        """When preferred_channel is not registered, fall back to first pushable."""
+        user = UserData(id=1, preferred_channel="sms")
+        mock_get_channel.side_effect = KeyError("sms not registered")
+        mock_telegram = MagicMock()
+
+        mock_manager = MagicMock()
+        mock_manager.channels = {"telegram": mock_telegram}
+        mock_get_manager.return_value = mock_manager
+
+        result = _pick_heartbeat_channel(user)
+
+        assert result is mock_telegram
+
+    @patch("backend.app.agent.heartbeat.get_default_channel")
+    @patch("backend.app.agent.heartbeat.get_manager")
+    @patch("backend.app.agent.heartbeat.get_channel")
+    def test_no_pushable_channels_falls_back_to_default(
+        self,
+        mock_get_channel: MagicMock,
+        mock_get_manager: MagicMock,
+        mock_get_default: MagicMock,
+    ) -> None:
+        """When only non-pushable channels are registered, fall back to default."""
+        user = UserData(id=1, preferred_channel="webchat")
+        mock_webchat = MagicMock()
+        mock_get_default.return_value = mock_webchat
+
+        mock_manager = MagicMock()
+        mock_manager.channels = {"webchat": mock_webchat}
+        mock_get_manager.return_value = mock_manager
+
+        result = _pick_heartbeat_channel(user)
+
+        mock_get_default.assert_called_once()
+        assert result is mock_webchat
+
+    @patch("backend.app.agent.heartbeat.get_manager")
+    @patch("backend.app.agent.heartbeat.get_channel")
+    def test_webchat_skipped_even_when_first_registered(
+        self, mock_get_channel: MagicMock, mock_get_manager: MagicMock
+    ) -> None:
+        """webchat should be skipped even if it is the first registered channel."""
+        user = UserData(id=1, preferred_channel="webchat")
+        mock_webchat = MagicMock()
+        mock_telegram = MagicMock()
+
+        mock_manager = MagicMock()
+        mock_manager.channels = {"webchat": mock_webchat, "telegram": mock_telegram}
+        mock_get_manager.return_value = mock_manager
+
+        result = _pick_heartbeat_channel(user)
+
+        assert result is mock_telegram
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
+    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_uses_pick_heartbeat_channel(
+        self,
+        mock_settings: MagicMock,
+        mock_pick_channel: MagicMock,
+        mock_get_store: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """tick() should use _pick_heartbeat_channel instead of get_channel."""
+        mock_settings.heartbeat_concurrency = 2
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        mock_telegram = MagicMock()
+        mock_pick_channel.return_value = mock_telegram
+
+        user = MagicMock()
+        user.id = 1
+        user.onboarding_complete = True
+        user.preferred_channel = "webchat"
+
+        mock_store = AsyncMock()
+        mock_store.list_all.return_value = [user]
+        mock_get_store.return_value = mock_store
+
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        mock_pick_channel.assert_called_once_with(user)
+        mock_run.assert_awaited_once()
