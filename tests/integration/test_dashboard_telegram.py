@@ -37,7 +37,6 @@ def telegram_user() -> UserData:
     return asyncio.get_event_loop().run_until_complete(
         store.create(
             user_id="telegram_123456789",
-            name="Telegram User",
             phone="+15551234567",
             channel_identifier="123456789",
             preferred_channel="telegram",
@@ -114,7 +113,7 @@ class TestDashboardSeesTelegramData:
         resp = real_auth_client.get("/api/user/profile")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["name"] == "Telegram User"
+        assert data["user_id"] == "telegram_123456789"
 
     def test_sessions_returns_telegram_sessions(
         self,
@@ -195,7 +194,7 @@ class TestMultiChannelSingleTenant:
         """When a web-created user exists, Telegram reuses it."""
         store = get_user_store()
         web_user = asyncio.get_event_loop().run_until_complete(
-            store.create(user_id="local@clawbolt.local", name="Web User")
+            store.create(user_id="local@clawbolt.local")
         )
 
         tg_user = asyncio.get_event_loop().run_until_complete(
@@ -207,9 +206,7 @@ class TestMultiChannelSingleTenant:
     def test_telegram_link_sets_channel_identifier(self) -> None:
         """Linking a Telegram chat to an existing user persists channel_identifier."""
         store = get_user_store()
-        asyncio.get_event_loop().run_until_complete(
-            store.create(user_id="local@clawbolt.local", name="Web User")
-        )
+        asyncio.get_event_loop().run_until_complete(store.create(user_id="local@clawbolt.local"))
 
         tg_user = asyncio.get_event_loop().run_until_complete(
             _get_or_create_user("telegram", "11223344")
@@ -222,7 +219,7 @@ class TestMultiChannelSingleTenant:
         """Sessions created via Telegram appear in dashboard when web created first."""
         store = get_user_store()
         web_user = asyncio.get_event_loop().run_until_complete(
-            store.create(user_id="local@clawbolt.local", name="Web User")
+            store.create(user_id="local@clawbolt.local")
         )
 
         # Simulate Telegram ingestion linking to the same user
@@ -263,9 +260,7 @@ class TestMultiChannelSingleTenant:
     def test_subsequent_telegram_lookup_uses_index(self) -> None:
         """After linking, future messages find the user via the index."""
         store = get_user_store()
-        asyncio.get_event_loop().run_until_complete(
-            store.create(user_id="local@clawbolt.local", name="Web User")
-        )
+        asyncio.get_event_loop().run_until_complete(store.create(user_id="local@clawbolt.local"))
 
         # First call links the channel
         first = asyncio.get_event_loop().run_until_complete(

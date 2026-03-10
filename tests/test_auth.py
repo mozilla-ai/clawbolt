@@ -13,7 +13,6 @@ async def test_get_current_user_creates_local_user() -> None:
     """OSS mode should auto-create a local user when store is empty."""
     user = await get_current_user()
     assert user.user_id == LOCAL_USER_ID
-    assert user.name == ""
     assert user.id is not None
 
 
@@ -39,7 +38,6 @@ async def test_get_current_user_returns_existing_telegram_user() -> None:
     store = get_user_store()
     telegram_user = await store.create(
         user_id="telegram_123456789",
-        name="Telegram User",
         channel_identifier="123456789",
         preferred_channel="telegram",
     )
@@ -62,8 +60,8 @@ def test_auth_config_returns_none_mode(client: TestClient) -> None:
 async def test_scoping_returns_404_for_wrong_user() -> None:
     """Scoping should return 404 when user doesn't belong to requester."""
     store = get_user_store()
-    user1 = await store.create(user_id="user-1", name="User 1")
-    user2 = await store.create(user_id="user-2", name="User 2")
+    user1 = await store.create(user_id="user-1")
+    user2 = await store.create(user_id="user-2")
 
     # User 1 should not be able to access user 2
     with pytest.raises(HTTPException) as exc_info:
@@ -75,7 +73,7 @@ async def test_scoping_returns_404_for_wrong_user() -> None:
 async def test_scoping_returns_user_for_correct_user() -> None:
     """Scoping should return user when user_id matches."""
     store = get_user_store()
-    user = await store.create(user_id="user-1", name="My User")
+    user = await store.create(user_id="user-1")
 
     result = await get_scoped_user(user, user.id)
     assert result.id == user.id

@@ -101,7 +101,7 @@ async def test_agent_system_prompt_includes_soul(
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
     system_prompt = call_args.kwargs["system"]
-    assert test_user.name in system_prompt
+    assert "AI assistant for solo tradespeople" in system_prompt
 
 
 @pytest.mark.asyncio()
@@ -1639,8 +1639,8 @@ class TestToolRegistry:
         assert "messaging" in names
         assert "estimate" in names
         assert "checklist" in names
-        assert "profile" in names
         assert "file" in names
+        assert "workspace" in names
 
     def test_ensure_tool_modules_imported_idempotent(self) -> None:
         """Calling ensure_tool_modules_imported() multiple times should be safe."""

@@ -193,7 +193,7 @@ class TestDefaultRegistryCoreSpecialistSplit:
         core = default_registry.core_factory_names
         assert "memory" in core
         assert "messaging" in core
-        assert "profile" in core
+        assert "workspace" in core
 
     def test_specialist_factories(self) -> None:
         from backend.app.agent.tools.registry import default_registry

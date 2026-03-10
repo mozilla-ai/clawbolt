@@ -45,7 +45,6 @@ def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
         user = asyncio.get_event_loop().run_until_complete(
             store.create(
                 user_id="rl-test-user",
-                name="RL Test",
                 phone="+15559999999",
                 channel_identifier="777777",
                 preferred_channel="telegram",

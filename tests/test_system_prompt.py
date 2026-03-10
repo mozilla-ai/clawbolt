@@ -90,12 +90,9 @@ class TestSystemPromptBuilder:
 
 class TestSectionBuilders:
     def test_build_identity_section(self) -> None:
-        """Should include user name."""
+        """Should include soul_text content."""
         user = MagicMock()
-        user.name = "Mike"
-        user.soul_text = None
-        user.preferences_json = None
-        user.assistant_name = "Clawbolt"
+        user.soul_text = "I'm Bolt, the AI assistant for Mike."
         result = build_identity_section(user)
         assert "Mike" in result
 
@@ -166,11 +163,10 @@ class TestBuildAgentSystemPrompt:
     async def test_assembles_all_sections(self) -> None:
         """Full agent prompt should contain all key sections."""
         user = MagicMock()
-        user.name = "Jake"
-        user.soul_text = None
-        user.preferences_json = None
-        user.assistant_name = "Clawbolt"
+        user.soul_text = "I'm Bolt, the AI assistant for Jake."
+        user.user_text = ""
         user.id = 1
+        user.timezone = ""
 
         tool = MagicMock()
         tool.usage_hint = "Use save_fact for memories"
@@ -186,7 +182,7 @@ class TestBuildAgentSystemPrompt:
                 message_context="how much for a roof repair?",
             )
 
-        assert "Clawbolt" in result
+        assert "AI assistant for solo tradespeople" in result
         assert "Jake" in result
         assert "Jane" in result
         assert "Tool Guidelines" in result
@@ -195,14 +191,13 @@ class TestBuildAgentSystemPrompt:
         assert "Recall Behavior" in result
 
     @pytest.mark.asyncio
-    async def test_preamble_uses_assistant_name(self) -> None:
-        """Agent prompt preamble should use custom assistant_name."""
+    async def test_preamble_is_generic(self) -> None:
+        """Agent prompt preamble should be generic (no assistant_name)."""
         user = MagicMock()
-        user.name = "Jake"
-        user.soul_text = None
-        user.preferences_json = None
-        user.assistant_name = "Bolt"
+        user.soul_text = "I'm Bolt."
+        user.user_text = ""
         user.id = 1
+        user.timezone = ""
 
         with patch(
             "backend.app.agent.system_prompt.build_memory_context",
@@ -215,18 +210,16 @@ class TestBuildAgentSystemPrompt:
                 message_context="hello",
             )
 
-        assert "You are Bolt, an AI assistant" in result
-        assert "Clawbolt" not in result.split("\n")[0]
+        assert "You are an AI assistant for solo tradespeople" in result
 
     @pytest.mark.asyncio
     async def test_no_trade_guidance_in_prompt(self) -> None:
         """Agent prompt should not contain trade-specific guidance (removed from model)."""
         user = MagicMock()
-        user.name = "Sparky"
-        user.soul_text = None
-        user.preferences_json = None
-        user.assistant_name = "Clawbolt"
+        user.soul_text = ""
+        user.user_text = ""
         user.id = 1
+        user.timezone = ""
 
         with patch(
             "backend.app.agent.system_prompt.build_memory_context",
@@ -244,14 +237,13 @@ class TestBuildAgentSystemPrompt:
         assert "NEC codes" not in result
 
     @pytest.mark.asyncio
-    async def test_curly_braces_in_owner_name(self) -> None:
-        """User name with curly braces should not break the prompt."""
+    async def test_curly_braces_in_soul_text(self) -> None:
+        """Soul text with curly braces should not break the prompt."""
         user = MagicMock()
-        user.name = "Mike {The Plumber}"
-        user.soul_text = None
-        user.preferences_json = None
-        user.assistant_name = "Clawbolt"
+        user.soul_text = "I'm the AI for Mike {The Plumber}."
+        user.user_text = ""
         user.id = 1
+        user.timezone = ""
 
         with patch(
             "backend.app.agent.system_prompt.build_memory_context",
@@ -350,10 +342,8 @@ class TestAgentSystemPromptIncludesDate:
             2025, 6, 16, 15, 0, tzinfo=datetime.UTC
         )
         user = MagicMock()
-        user.name = "Jake"
-        user.soul_text = None
-        user.preferences_json = None
-        user.assistant_name = "Clawbolt"
+        user.soul_text = ""
+        user.user_text = ""
         user.timezone = "America/Los_Angeles"
         user.id = 1
 
@@ -456,12 +446,9 @@ class TestCrossSessionContext:
         await store.add_message(session_a, "outbound", "Sure, what size deck?")
 
         user = MagicMock()
-        user.name = "Jake"
-        user.soul_text = None
-        user.preferences_json = None
-        user.assistant_name = "Clawbolt"
-        user.id = test_user.id
+        user.soul_text = ""
         user.user_text = ""
+        user.id = test_user.id
         user.timezone = ""
 
         with patch(

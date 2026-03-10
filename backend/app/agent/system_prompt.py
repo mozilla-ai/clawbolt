@@ -186,11 +186,10 @@ async def build_agent_system_prompt(
 ) -> str:
     """Assemble the full system prompt for the main agent loop."""
     builder = SystemPromptBuilder()
-    assistant = user.assistant_name or "Clawbolt"
-    builder.set_preamble(f"You are {assistant}, an AI assistant for solo tradespeople.")
+    builder.set_preamble("You are an AI assistant for solo tradespeople.")
 
     builder.add_section(
-        f"About {user.name or 'User'}",
+        "About You",
         build_identity_section(user),
     )
 

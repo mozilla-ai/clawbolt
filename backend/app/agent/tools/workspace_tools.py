@@ -27,6 +27,9 @@ logger = logging.getLogger(__name__)
 # Only allow markdown files to be read/written by the agent.
 _ALLOWED_EXTENSIONS = {".md"}
 
+# Files that cannot be deleted by the agent.
+_PROTECTED_FILES = {"USER.md", "SOUL.md", "HEARTBEAT.md"}
+
 
 class ReadFileParams(BaseModel):
     """Parameters for the read_file tool."""
@@ -49,6 +52,12 @@ class EditFileParams(BaseModel):
     path: str = Field(description="Relative path within your workspace (e.g. 'USER.md')")
     old_text: str = Field(description="Exact text to find and replace")
     new_text: str = Field(description="Replacement text")
+
+
+class DeleteFileParams(BaseModel):
+    """Parameters for the delete_file tool."""
+
+    path: str = Field(description="Relative path within your workspace (e.g. 'BOOTSTRAP.md')")
 
 
 def _resolve_path(user_id: int, relative_path: str) -> tuple[Path, str | None]:
@@ -131,6 +140,27 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
         await asyncio.to_thread(resolved.write_text, updated, "utf-8")
         return ToolResult(content=f"Updated {path}")
 
+    async def delete_file(path: str) -> ToolResult:
+        """Delete a markdown file from the workspace."""
+        resolved, err = _resolve_path(user_id, path)
+        if err:
+            return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
+        # Check protected files after resolving to prevent bypass via ./USER.md
+        if resolved.name in _PROTECTED_FILES:
+            return ToolResult(
+                content=f"Cannot delete protected file: {path}",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        if not resolved.exists():
+            return ToolResult(
+                content=f"File not found: {path}",
+                is_error=True,
+                error_kind=ToolErrorKind.NOT_FOUND,
+            )
+        await asyncio.to_thread(resolved.unlink)
+        return ToolResult(content=f"Deleted {path}")
+
     return [
         Tool(
             name=ToolName.READ_FILE,
@@ -169,6 +199,16 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
             ),
             function=edit_file,
             params_model=EditFileParams,
+            tags={ToolTags.MODIFIES_PROFILE},
+        ),
+        Tool(
+            name=ToolName.DELETE_FILE,
+            description=(
+                "Delete a markdown file from your workspace. "
+                "Cannot delete protected files (USER.md, SOUL.md, HEARTBEAT.md)."
+            ),
+            function=delete_file,
+            params_model=DeleteFileParams,
             tags={ToolTags.MODIFIES_PROFILE},
         ),
     ]

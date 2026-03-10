@@ -19,10 +19,8 @@ def _profile_response(c: UserData) -> UserProfileResponse:
     return UserProfileResponse(
         id=c.id,
         user_id=c.user_id,
-        name=c.name,
         phone=c.phone,
         timezone=c.timezone,
-        assistant_name=c.assistant_name,
         soul_text=c.soul_text,
         user_text=c.user_text,
         checklist_text=c.checklist_text,

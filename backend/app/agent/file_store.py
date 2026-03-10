@@ -61,7 +61,6 @@ class UserData(BaseModel):
 
     id: int = 0
     user_id: str = ""
-    name: str = ""
     phone: str = ""
     soul_text: str = ""
     user_text: str = ""
@@ -69,7 +68,6 @@ class UserData(BaseModel):
     timezone: str = ""
     preferred_channel: str = Field(default_factory=lambda: settings.messaging_provider)
     channel_identifier: str = ""
-    assistant_name: str = "Clawbolt"
     onboarding_complete: bool = False
     is_active: bool = True
     role: str = "user"
@@ -493,6 +491,14 @@ class UserStore:
         elif not checklist_path.exists():
             checklist_path.write_text(
                 f"# Checklist\n\n{load_prompt('default_checklist')}\n",
+                encoding="utf-8",
+            )
+
+        # Seed BOOTSTRAP.md for new users
+        bootstrap_path = cdir / "BOOTSTRAP.md"
+        if not bootstrap_path.exists() and not user.onboarding_complete:
+            bootstrap_path.write_text(
+                load_prompt("bootstrap") + "\n",
                 encoding="utf-8",
             )
 

@@ -250,24 +250,22 @@ async def test_agent_untagged_tool_has_empty_tags(
     assert len(response.memories_saved) == 0
 
 
-# --- Profile tools tags ---
+# --- Workspace tools tags ---
 
 
-def test_update_profile_has_modifies_profile_tag() -> None:
-    """update_profile tool from create_profile_tools should have MODIFIES_PROFILE tag."""
-    from backend.app.agent.tools.profile_tools import create_profile_tools
+def test_delete_file_has_modifies_profile_tag() -> None:
+    """delete_file tool should have MODIFIES_PROFILE tag."""
+    from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
-    user = UserData(id=1, user_id="test", name="Test")
-    tools = create_profile_tools(user)
-    update_profile = next(t for t in tools if t.name == "update_profile")
-    assert ToolTags.MODIFIES_PROFILE in update_profile.tags
+    tools = create_workspace_tools(user_id=1)
+    delete_file = next(t for t in tools if t.name == "delete_file")
+    assert ToolTags.MODIFIES_PROFILE in delete_file.tags
 
 
-def test_view_profile_has_no_modifies_profile_tag() -> None:
-    """view_profile should not have MODIFIES_PROFILE tag."""
-    from backend.app.agent.tools.profile_tools import create_profile_tools
+def test_read_file_has_no_modifies_profile_tag() -> None:
+    """read_file should not have MODIFIES_PROFILE tag."""
+    from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
-    user = UserData(id=1, user_id="test", name="Test")
-    tools = create_profile_tools(user)
-    view_profile = next(t for t in tools if t.name == "view_profile")
-    assert ToolTags.MODIFIES_PROFILE not in view_profile.tags
+    tools = create_workspace_tools(user_id=1)
+    read_file = next(t for t in tools if t.name == "read_file")
+    assert ToolTags.MODIFIES_PROFILE not in read_file.tags

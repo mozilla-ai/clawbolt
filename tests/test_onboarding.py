@@ -11,7 +11,6 @@ from backend.app.agent.file_store import (
     get_user_store,
 )
 from backend.app.agent.onboarding import (
-    REQUIRED_PROFILE_FIELDS,
     build_onboarding_system_prompt,
     is_onboarding_needed,
 )
@@ -45,129 +44,77 @@ def _ensure_session_on_disk(user: UserData, session: SessionState) -> None:
         user_json.write_text(json.dumps(data, default=str), encoding="utf-8")
 
 
+def _create_bootstrap(user: UserData) -> None:
+    """Create a BOOTSTRAP.md file for the given user from the real template."""
+    from backend.app.agent.prompts import load_prompt
+
+    cdir = Path(settings.data_dir) / str(user.id)
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "BOOTSTRAP.md").write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
+
+
+def _remove_bootstrap(user: UserData) -> None:
+    """Remove BOOTSTRAP.md for the given user."""
+    path = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
+    if path.exists():
+        path.unlink()
+
+
 def test_is_onboarding_needed_new_user() -> None:
-    """New user with no name should need onboarding."""
+    """New user with BOOTSTRAP.md should need onboarding."""
     user = UserData(id=1, user_id="new-user", phone="+15550001111")
+    _create_bootstrap(user)
     assert is_onboarding_needed(user) is True
 
 
-def test_is_onboarding_needed_partial_profile() -> None:
-    """User with name should not need onboarding (name is the only required field)."""
-    user = UserData(id=1, user_id="partial-user", phone="+15550002222", name="Mike")
+def test_is_onboarding_needed_no_bootstrap() -> None:
+    """User without BOOTSTRAP.md should not need onboarding."""
+    user = UserData(id=2, user_id="no-bootstrap-user", phone="+15550002222")
+    # Ensure user dir exists but no BOOTSTRAP.md
+    cdir = Path(settings.data_dir) / str(user.id)
+    cdir.mkdir(parents=True, exist_ok=True)
     assert is_onboarding_needed(user) is False
 
 
 def test_is_onboarding_needed_complete_profile(test_user: UserData) -> None:
-    """User with name does not need onboarding."""
+    """User with onboarding_complete=True does not need onboarding."""
     assert is_onboarding_needed(test_user) is False
 
 
 def test_is_onboarding_needed_respects_flag() -> None:
-    """User with onboarding_complete=True should not need onboarding."""
+    """User with onboarding_complete=True should not need onboarding even with BOOTSTRAP.md."""
     user = UserData(
-        id=1,
+        id=3,
         user_id="flagged-user",
         phone="+15550007777",
-        name="",
         onboarding_complete=True,
     )
+    _create_bootstrap(user)
     assert is_onboarding_needed(user) is False
 
 
-def test_is_onboarding_needed_empty_strings() -> None:
-    """Empty strings should still trigger onboarding."""
-    user = UserData(id=1, user_id="empty-user", phone="+15550003333", name="")
+def test_is_onboarding_needed_bootstrap_deleted() -> None:
+    """After BOOTSTRAP.md is deleted, onboarding is not needed."""
+    user = UserData(id=4, user_id="deleted-bootstrap-user", phone="+15550003333")
+    _create_bootstrap(user)
     assert is_onboarding_needed(user) is True
-
-
-def test_required_profile_fields_only_name() -> None:
-    """REQUIRED_PROFILE_FIELDS should only include name."""
-    assert "name" in REQUIRED_PROFILE_FIELDS
-    assert "trade" not in REQUIRED_PROFILE_FIELDS
-    assert "location" not in REQUIRED_PROFILE_FIELDS
+    _remove_bootstrap(user)
+    assert is_onboarding_needed(user) is False
 
 
 def test_build_onboarding_system_prompt_new_user() -> None:
-    """Onboarding prompt for new user should not include known info."""
-    user = UserData(id=1, user_id="brand-new", phone="+15550004444")
+    """Onboarding prompt for new user should include bootstrap content."""
+    user = UserData(id=5, user_id="brand-new", phone="+15550004444")
+    _create_bootstrap(user)
 
     prompt = build_onboarding_system_prompt(user)
-    assert "first conversation" in prompt
-    assert "new user" in prompt
-    assert "You already know" not in prompt
     assert "help them with that request FIRST" in prompt
-
-
-def test_build_onboarding_system_prompt_partial_profile() -> None:
-    """Onboarding prompt should include already-known fields."""
-    user = UserData(
-        id=1,
-        user_id="partial-user",
-        phone="+15550005555",
-        name="Sarah",
-    )
-
-    prompt = build_onboarding_system_prompt(user)
-    assert "You already know" in prompt
-    assert "Sarah" in prompt
-    assert "Don't re-ask" in prompt
-
-
-def test_build_onboarding_system_prompt_includes_assistant_name() -> None:
-    """Onboarding prompt should include custom assistant_name in known fields."""
-    user = UserData(
-        id=1,
-        user_id="named-ai-user",
-        phone="+15550006666",
-        name="Jake",
-        assistant_name="Bolt",
-    )
-
-    prompt = build_onboarding_system_prompt(user)
-    assert "You already know" in prompt
-    assert "Bolt" in prompt
-    assert "Don't re-ask" in prompt
-
-
-def test_build_onboarding_prompt_mentions_update_profile() -> None:
-    """Onboarding prompt should mention update_profile tool."""
-    from backend.app.agent.profile import build_onboarding_prompt
-
-    prompt = build_onboarding_prompt()
-    assert "update_profile" in prompt
-
-
-def test_build_onboarding_prompt_lighthearted_tone() -> None:
-    """Onboarding prompt should use lighthearted, conversational tone (issue #446)."""
-    from backend.app.agent.profile import build_onboarding_prompt
-
-    prompt = build_onboarding_prompt()
-    assert "woke up" in prompt
-    assert "Have fun with it" in prompt
-    assert "not a form" in prompt
-
-
-def test_build_onboarding_prompt_mentions_workspace_files() -> None:
-    """Onboarding prompt should mention USER.md and SOUL.md for saving info."""
-    from backend.app.agent.profile import build_onboarding_prompt
-
-    prompt = build_onboarding_prompt()
-    assert "USER.md" in prompt
-    assert "SOUL.md" in prompt
-    assert "write_file" in prompt
-
-
-def test_build_onboarding_prompt_mentions_capabilities() -> None:
-    """Onboarding prompt should mention capabilities overview."""
-    from backend.app.agent.profile import build_onboarding_prompt
-
-    prompt = build_onboarding_prompt()
-    assert "capabilities" in prompt.lower()
 
 
 def test_build_onboarding_system_prompt_includes_tool_capabilities() -> None:
     """Onboarding system prompt should inject available specialist tool descriptions."""
-    user = UserData(id=1, user_id="new-user", phone="+15550001111")
+    user = UserData(id=6, user_id="new-user", phone="+15550001111")
+    _create_bootstrap(user)
 
     prompt = build_onboarding_system_prompt(user)
     # Should include specialist tool summaries from the registry
@@ -180,13 +127,15 @@ def test_build_onboarding_system_prompt_includes_tool_capabilities() -> None:
 
 @pytest.fixture()
 def new_user() -> UserData:
-    """User with no profile -- needs onboarding."""
-    return UserData(
+    """User with no profile, needs onboarding."""
+    user = UserData(
         id=20,
         user_id="new-user-onboard",
         phone="+15559999999",
         channel_identifier="999999999",
     )
+    _create_bootstrap(user)
+    return user
 
 
 @pytest.fixture()
@@ -253,24 +202,31 @@ async def test_onboarding_uses_onboarding_prompt(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-async def test_onboarding_extracts_profile_updates_via_update_profile(
+async def test_onboarding_completes_when_bootstrap_deleted(
     mock_amessages: object,
     new_user: UserData,
     onboarding_session: SessionState,
     onboarding_message: StoredMessage,
 ) -> None:
-    """Profile updates from update_profile tool should be saved to user record."""
-    # First call returns update_profile tool call, second returns text reply
+    """Onboarding should complete when BOOTSTRAP.md is deleted via delete_file."""
+    assert is_onboarding_needed(new_user) is True
+
+    # Simulate: agent calls write_file to save USER.md, then delete_file to remove BOOTSTRAP.md
     tool_response = make_tool_call_response(
         tool_calls=[
             {
-                "id": "call_profile",
-                "name": "update_profile",
-                "arguments": json.dumps({"name": "Mike"}),
-            }
+                "id": "call_write",
+                "name": "write_file",
+                "arguments": json.dumps({"path": "USER.md", "content": "# User\n\n- Name: Sarah"}),
+            },
+            {
+                "id": "call_delete",
+                "name": "delete_file",
+                "arguments": json.dumps({"path": "BOOTSTRAP.md"}),
+            },
         ]
     )
-    text_response = make_text_response("Nice to meet you, Mike!")
+    text_response = make_text_response("Welcome Sarah!")
     mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     await handle_inbound_message(
@@ -284,7 +240,7 @@ async def test_onboarding_extracts_profile_updates_via_update_profile(
     store = get_user_store()
     refreshed = await store.get_by_id(new_user.id)
     assert refreshed is not None
-    assert refreshed.name == "Mike"
+    assert refreshed.onboarding_complete is True
 
 
 @pytest.mark.asyncio()
@@ -323,105 +279,6 @@ async def test_complete_profile_uses_normal_prompt(
 
 
 # ---------------------------------------------------------------------------
-# Regression tests for #186 / #183: profile updates post-onboarding
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_profile_updates_post_onboarding_single_field(
-    mock_amessages: object,
-    test_user: UserData,
-) -> None:
-    """Post-onboarding update_profile calls should update UserData profile fields."""
-    session = SessionState(
-        session_id="test-session",
-        user_id=test_user.id,
-        is_active=True,
-        messages=[
-            StoredMessage(direction="inbound", body="My name is now Jake", seq=1),
-        ],
-    )
-    message = StoredMessage(direction="inbound", body="My name is now Jake", seq=1)
-
-    # First LLM call returns an update_profile tool call, second returns text reply
-    tool_response = make_tool_call_response(
-        tool_calls=[
-            {
-                "id": "call_name",
-                "name": "update_profile",
-                "arguments": json.dumps({"name": "Jake"}),
-            }
-        ]
-    )
-    text_response = make_text_response("Got it, updated your name to Jake!")
-
-    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
-
-    await handle_inbound_message(
-        user=test_user,
-        session=session,
-        message=message,
-        media_urls=[],
-        channel="telegram",
-    )
-
-    store = get_user_store()
-    refreshed = await store.get_by_id(test_user.id)
-    assert refreshed is not None
-    assert refreshed.name == "Jake"
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_profile_updates_during_onboarding_still_work(
-    mock_amessages: object,
-    new_user: UserData,
-    onboarding_session: SessionState,
-    onboarding_message: StoredMessage,
-) -> None:
-    """Profile updates during onboarding still work with update_profile tool.
-
-    When a new user provides name via update_profile,
-    onboarding should complete.
-    """
-    assert is_onboarding_needed(new_user) is True
-    assert not new_user.name  # empty or None
-
-    # LLM calls update_profile with name, then gives a text reply
-    tool_response = make_tool_call_response(
-        tool_calls=[
-            {
-                "id": "call_profile",
-                "name": "update_profile",
-                "arguments": json.dumps(
-                    {
-                        "name": "Sarah",
-                    }
-                ),
-            },
-        ]
-    )
-    text_response = make_text_response("Welcome Sarah!")
-
-    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
-
-    await handle_inbound_message(
-        user=new_user,
-        session=onboarding_session,
-        message=onboarding_message,
-        media_urls=[],
-        channel="telegram",
-    )
-
-    store = get_user_store()
-    refreshed = await store.get_by_id(new_user.id)
-    assert refreshed is not None
-    assert refreshed.name == "Sarah"
-    assert refreshed.onboarding_complete is True
-
-
-# ---------------------------------------------------------------------------
 # Regression tests for #180: pre-populated users
 # ---------------------------------------------------------------------------
 
@@ -431,22 +288,22 @@ async def test_profile_updates_during_onboarding_still_work(
 async def test_prepopulated_user_gets_onboarding_complete(
     mock_amessages: object,
 ) -> None:
-    """User with pre-populated name should get onboarding_complete=True.
+    """User without BOOTSTRAP.md should get onboarding_complete=True.
 
-    Regression test for #180: when required profile fields are already filled,
+    Regression test for #180: when BOOTSTRAP.md doesn't exist,
     is_onboarding_needed() returns False but onboarding_complete was never set
     because the 'if onboarding:' block was skipped entirely.
     """
     user = UserData(
         id=30,
         user_id="prepopulated-user",
-        name="Sarah",
         channel_identifier="888888888",
         preferred_channel="telegram",
         onboarding_complete=False,
     )
+    # No BOOTSTRAP.md created, so not onboarding
 
-    # Sanity: fields are populated but flag is not set
+    # Sanity: flag is not set but onboarding is not needed
     assert not user.onboarding_complete
     assert not is_onboarding_needed(user)
 
@@ -469,7 +326,7 @@ async def test_prepopulated_user_gets_onboarding_complete(
     )
 
     mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
-        "Sure thing, Sarah!"
+        "Sure thing!"
     )
     _ensure_session_on_disk(user, session)
 
@@ -496,13 +353,12 @@ async def test_prepopulated_user_included_in_heartbeat(
     mock_eval: AsyncMock,
     _mock_hours: MagicMock,
 ) -> None:
-    """User with pre-populated fields should be eligible for heartbeat after first message."""
+    """User without BOOTSTRAP.md should be eligible for heartbeat after first message."""
     from backend.app.agent.heartbeat import HeartbeatAction, run_heartbeat_for_user
 
     user = UserData(
         id=31,
         user_id="prepopulated-hb-user",
-        name="Jake",
         phone="+15550009999",
         channel_identifier="777777777",
         preferred_channel="telegram",
@@ -529,7 +385,7 @@ async def test_prepopulated_user_included_in_heartbeat(
 
     # Process a message to trigger the onboarding_complete fix
     mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
-        "Happy to help, Jake!"
+        "Happy to help!"
     )
     _ensure_session_on_disk(user, session)
 
@@ -565,73 +421,8 @@ async def test_prepopulated_user_included_in_heartbeat(
 
 
 # ---------------------------------------------------------------------------
-# Regression tests for #184: onboarding completion message
+# No completion message tests (finalize is now a no-op)
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_onboarding_completion_message_appended(
-    mock_amessages: object,
-) -> None:
-    """Completion summary should be appended when onboarding transitions to complete."""
-    # User with no name -- needs onboarding
-    user = UserData(
-        id=32,
-        user_id="completing-user",
-        phone="+15550008888",
-        channel_identifier="888888888",
-    )
-
-    session = SessionState(
-        session_id="test-session",
-        user_id=user.id,
-        is_active=True,
-        messages=[
-            StoredMessage(
-                direction="inbound",
-                body="I'm Jake, I'm a plumber in Portland",
-                seq=1,
-            ),
-        ],
-    )
-    message = StoredMessage(
-        direction="inbound",
-        body="I'm Jake, I'm a plumber in Portland",
-        seq=1,
-    )
-
-    # Simulate agent calling update_profile with name
-    tool_calls = [
-        {
-            "name": "update_profile",
-            "arguments": json.dumps(
-                {
-                    "name": "Jake",
-                }
-            ),
-        },
-    ]
-
-    # First call: tool calls to update profile; second call: text reply
-    mock_amessages.side_effect = [  # type: ignore[union-attr]
-        make_tool_call_response(tool_calls, content=None),
-        make_text_response("Great to meet you, Jake!"),
-    ]
-    _ensure_session_on_disk(user, session)
-
-    response = await handle_inbound_message(
-        user=user,
-        session=session,
-        message=message,
-        media_urls=[],
-        channel="telegram",
-    )
-
-    assert "Setup complete!" in response.reply_text
-    assert "- Name: Jake" in response.reply_text
-    assert "- Your AI: Clawbolt" in response.reply_text
-    assert "You can update any of this anytime" in response.reply_text
 
 
 @pytest.mark.asyncio()
@@ -640,7 +431,7 @@ async def test_no_completion_message_when_already_onboarded(
     mock_amessages: object,
     test_user: UserData,
 ) -> None:
-    """Completion message should NOT be appended for already-onboarded users."""
+    """No extra text should be appended for already-onboarded users."""
     session = SessionState(
         session_id="test-session",
         user_id=test_user.id,
@@ -670,4 +461,3 @@ async def test_no_completion_message_when_already_onboarded(
     )
 
     assert response.reply_text == "Sure, I can help!"
-    assert "Setup complete!" not in response.reply_text

@@ -19,7 +19,6 @@ async def webchat_user() -> UserData:
     store = get_user_store()
     return await store.create(
         user_id="webchat-test-user",
-        name="Test User",
     )
 
 

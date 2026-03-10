@@ -5,7 +5,7 @@ import pytest
 from backend.app.agent.prompts import load_prompt
 
 ALL_PROMPT_NAMES = [
-    "onboarding",
+    "bootstrap",
     "compaction",
     "instructions",
     "proactive",
@@ -38,4 +38,4 @@ def test_load_prompt_content_sanity() -> None:
     """Verify key substrings are present in a few prompts."""
     assert "concise" in load_prompt("instructions")
     assert "JSON" in load_prompt("compaction")
-    assert "onboarding" in load_prompt("onboarding") or "user" in load_prompt("onboarding")
+    assert "new user" in load_prompt("bootstrap") or "user" in load_prompt("bootstrap")

@@ -38,7 +38,6 @@ def _make_client(
         user = asyncio.get_event_loop().run_until_complete(
             store.create(
                 user_id="secret-test-user",
-                name="Secret Test",
                 phone="+15550000000",
                 channel_identifier="999999",
                 preferred_channel="telegram",

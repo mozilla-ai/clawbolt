@@ -47,7 +47,6 @@ async def test_checklist_text_round_trip_via_store() -> None:
     store = get_user_store()
     user = await store.create(
         user_id="checklist-test",
-        name="Checklist Tester",
         phone="+15551112222",
     )
     # Update with checklist text
@@ -74,7 +73,6 @@ async def test_default_checklist_seeded_on_create() -> None:
     store = get_user_store()
     user = await store.create(
         user_id="default-checklist-test",
-        name="Default Checklist Tester",
         phone="+15559998888",
     )
     user_dir = Path(settings.data_dir) / str(user.id)
