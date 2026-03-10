@@ -3,10 +3,8 @@
 export interface UserProfile {
   id: number;
   user_id: string;
-  name: string;
   phone: string;
   timezone: string;
-  assistant_name: string;
   soul_text: string;
   user_text: string;
   checklist_text: string;
@@ -21,10 +19,8 @@ export interface UserProfile {
 }
 
 export interface UserProfileUpdate {
-  name?: string;
   phone?: string;
   timezone?: string;
-  assistant_name?: string;
   soul_text?: string;
   user_text?: string;
   checklist_text?: string;

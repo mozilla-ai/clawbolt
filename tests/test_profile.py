@@ -1,74 +1,35 @@
-import pytest
-
 from backend.app.agent.file_store import UserData
 from backend.app.agent.profile import (
     build_onboarding_prompt,
     build_soul_prompt,
-    update_user_profile,
 )
 
 
-@pytest.mark.asyncio()
-async def test_update_user_profile(test_user: UserData) -> None:
-    """Should update allowed profile fields."""
-    updated = await update_user_profile(
-        test_user,
-        {"name": "Mike Chen"},
-    )
-    assert updated.name == "Mike Chen"
-
-
-@pytest.mark.asyncio()
-async def test_update_user_profile_ignores_unknown_fields(
-    test_user: UserData,
-) -> None:
-    """Should ignore fields not in the allowed set."""
-    original_name = test_user.name
-    await update_user_profile(test_user, {"id": 999, "unknown_field": "bad"})
-    assert test_user.name == original_name
-
-
-def test_build_soul_prompt_full_profile() -> None:
-    """Soul prompt should include name and soul_text."""
-    user = UserData(
-        user_id="test",
-        name="Mike Chen",
-        soul_text="I specialize in deck building and exterior renovations.",
-    )
-    prompt = build_soul_prompt(user)
-    assert "Clawbolt" in prompt  # default assistant_name
-    assert "Mike Chen" in prompt
-    assert "deck building" in prompt
-
-
-def test_build_soul_prompt_uses_assistant_name() -> None:
-    """Soul prompt should use custom assistant_name instead of Clawbolt."""
-    user = UserData(
-        user_id="test",
-        name="Jake",
-        assistant_name="Bolt",
-    )
-    prompt = build_soul_prompt(user)
-    assert "You are Bolt, the AI assistant for Jake" in prompt
-    assert "Clawbolt" not in prompt
-
-
-def test_build_soul_prompt_minimal_profile() -> None:
-    """Soul prompt should work with minimal profile data."""
-    user = UserData(user_id="test", name="", phone="+15551234567")
-    prompt = build_soul_prompt(user)
-    assert "a user" in prompt
-
-
 def test_build_soul_prompt_with_soul_text() -> None:
-    """Soul prompt should include custom soul_text."""
+    """Soul prompt should return soul_text content."""
     user = UserData(
         user_id="test",
-        name="Jake",
-        soul_text="Direct and practical. Keep estimates tight.",
+        soul_text="I'm Bolt. Direct and practical. Keep estimates tight.",
     )
     prompt = build_soul_prompt(user)
     assert "Direct and practical" in prompt
+
+
+def test_build_soul_prompt_empty_soul_text() -> None:
+    """Soul prompt should return empty string when no soul_text."""
+    user = UserData(user_id="test", soul_text="")
+    prompt = build_soul_prompt(user)
+    assert prompt == ""
+
+
+def test_build_soul_prompt_with_identity() -> None:
+    """Soul prompt should include identity info written to SOUL.md."""
+    user = UserData(
+        user_id="test",
+        soul_text="I'm Bolt, the AI assistant for Jake. Direct and practical.",
+    )
+    prompt = build_soul_prompt(user)
+    assert "Bolt" in prompt
     assert "Jake" in prompt
 
 
@@ -81,7 +42,6 @@ def test_build_onboarding_prompt() -> None:
 def test_build_onboarding_prompt_includes_personality_discovery() -> None:
     """Onboarding prompt should include personality/naming discovery."""
     prompt = build_onboarding_prompt()
-    assert "assistant_name" in prompt
     assert "SOUL.md" in prompt
     assert "personality" in prompt.lower()
 
@@ -92,10 +52,10 @@ def test_build_onboarding_prompt_includes_confirmation_instruction() -> None:
     assert "confirm what you've saved" in prompt
 
 
-def test_build_onboarding_prompt_mentions_update_profile_tool() -> None:
-    """Onboarding prompt should mention update_profile as the tool for profile data."""
+def test_build_onboarding_prompt_mentions_write_file() -> None:
+    """Onboarding prompt should mention write_file for saving profile data."""
     prompt = build_onboarding_prompt()
-    assert "update_profile" in prompt
+    assert "write_file" in prompt
 
 
 def test_build_onboarding_prompt_mentions_save_fact_for_general() -> None:
@@ -104,23 +64,27 @@ def test_build_onboarding_prompt_mentions_save_fact_for_general() -> None:
     assert "save_fact" in prompt
 
 
+def test_build_onboarding_prompt_mentions_delete_file() -> None:
+    """Onboarding prompt should mention delete_file for completion."""
+    prompt = build_onboarding_prompt()
+    assert "delete_file" in prompt
+
+
 class TestSoulPrompt:
     def test_soul_text_included(self) -> None:
         """When soul_text is set, it should appear in the prompt."""
         user = UserData(
             user_id="test",
-            name="Sparky",
             soul_text="I focus on residential panel upgrades only.",
         )
         prompt = build_soul_prompt(user)
         assert "residential panel upgrades" in prompt
 
     def test_no_soul_text(self) -> None:
-        """When soul_text is empty, prompt should just have identity."""
+        """When soul_text is empty, prompt should be empty string."""
         user = UserData(
             user_id="test",
-            name="Bob",
             soul_text="",
         )
         prompt = build_soul_prompt(user)
-        assert "Bob" in prompt
+        assert prompt == ""

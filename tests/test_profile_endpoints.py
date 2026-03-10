@@ -9,13 +9,13 @@ def test_get_profile(client: TestClient) -> None:
     resp = client.get("/api/user/profile")
     assert resp.status_code == 200
     data = resp.json()
-    assert data["name"] == "Test User"
-    assert data["assistant_name"] == "Clawbolt"
-    assert data["onboarding_complete"] is False
+    assert data["onboarding_complete"] is True
     assert data["is_active"] is True
     assert "created_at" in data
     assert "updated_at" in data
-    # These fields should no longer be in the response
+    # These fields should not be in the response
+    assert "name" not in data
+    assert "assistant_name" not in data
     assert "trade" not in data
     assert "location" not in data
     assert "hourly_rate" not in data
@@ -34,22 +34,21 @@ def test_profile_defaults_from_settings(client: TestClient) -> None:
 def test_update_profile_partial(client: TestClient) -> None:
     resp = client.put(
         "/api/user/profile",
-        json={"name": "Updated Name"},
+        json={"phone": "+15559999999"},
     )
     assert resp.status_code == 200
     data = resp.json()
-    assert data["name"] == "Updated Name"
+    assert data["phone"] == "+15559999999"
 
 
 def test_update_profile_soul_text(client: TestClient) -> None:
     resp = client.put(
         "/api/user/profile",
-        json={"soul_text": "Be friendly.", "assistant_name": "Bolt"},
+        json={"soul_text": "Be friendly."},
     )
     assert resp.status_code == 200
     data = resp.json()
     assert data["soul_text"] == "Be friendly."
-    assert data["assistant_name"] == "Bolt"
 
 
 def test_update_profile_empty_body(client: TestClient) -> None:

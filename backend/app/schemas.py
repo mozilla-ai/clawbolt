@@ -81,10 +81,8 @@ class EstimateResponse(EstimateBase):
 class UserProfileResponse(BaseModel):
     id: int
     user_id: str
-    name: str
     phone: str
     timezone: str
-    assistant_name: str
     soul_text: str
     user_text: str
     checklist_text: str
@@ -99,10 +97,8 @@ class UserProfileResponse(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
-    name: str | None = None
     phone: str | None = None
     timezone: str | None = None
-    assistant_name: str | None = None
     soul_text: str | None = None
     user_text: str | None = None
     checklist_text: str | None = None

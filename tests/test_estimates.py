@@ -283,7 +283,6 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, tmp_path: Pa
     other_user = asyncio.get_event_loop().run_until_complete(
         user_store.create(
             user_id="other-user-999",
-            name="Other User",
             phone="+15559999999",
         )
     )

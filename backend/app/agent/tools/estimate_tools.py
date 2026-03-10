@@ -121,7 +121,7 @@ def create_estimate_tools(
 
         # Generate PDF
         pdf_data = EstimatePDFData(
-            owner_name=user.name or "User",
+            owner_name="User",
             owner_phone=user.phone or "",
             owner_trade="",
             description=description,
