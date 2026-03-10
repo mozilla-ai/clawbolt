@@ -156,7 +156,8 @@ class MessageBatcher:
     ``_flush_delayed_entries`` pattern.
     """
 
-    def __init__(self, window_ms: int = 1500) -> None:
+    def __init__(self, window_ms: int | None = None) -> None:
+        window_ms = window_ms if window_ms is not None else settings.message_batch_window_ms
         self._window_ms = window_ms
         self._states: dict[int, _BatchState] = {}
         self._lock = asyncio.Lock()

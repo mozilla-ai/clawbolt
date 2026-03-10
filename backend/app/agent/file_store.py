@@ -67,7 +67,7 @@ class UserData(BaseModel):
     user_text: str = ""
     checklist_text: str = ""
     timezone: str = ""
-    preferred_channel: str = "telegram"
+    preferred_channel: str = Field(default_factory=lambda: settings.messaging_provider)
     channel_identifier: str = ""
     assistant_name: str = "Clawbolt"
     onboarding_complete: bool = False
@@ -75,8 +75,8 @@ class UserData(BaseModel):
     role: str = "user"
     preferences_json: str = "{}"
     heartbeat_opt_in: bool = True
-    heartbeat_frequency: str = ""
-    folder_scheme: str = "by_client"
+    heartbeat_frequency: str = Field(default_factory=lambda: settings.heartbeat_default_frequency)
+    folder_scheme: str = Field(default_factory=lambda: settings.default_folder_scheme)
     created_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.UTC)
     )
@@ -309,7 +309,7 @@ def _unique_slug(base_slug: str, existing_ids: set[str]) -> str:
 def make_client_slug(
     name: str = "",
     address: str = "",
-    folder_scheme: str = "by_client",
+    folder_scheme: str = "",
 ) -> str:
     """Build a client slug based on the folder scheme preference.
 
@@ -318,6 +318,7 @@ def make_client_slug(
         "by_address": slug from address
         "by_client_and_address": slug from "name address"
     """
+    folder_scheme = folder_scheme or settings.default_folder_scheme
     if folder_scheme == "by_address" and address.strip():
         return slugify(address)
     if folder_scheme == "by_client_and_address":
@@ -564,7 +565,7 @@ class UserStore:
         self,
         user_id: str,
         channel_identifier: str = "",
-        preferred_channel: str = "telegram",
+        preferred_channel: str = "",
         **kwargs: Any,
     ) -> UserData:
         """Create a new user."""
@@ -575,7 +576,7 @@ class UserStore:
                 id=cid,
                 user_id=user_id,
                 channel_identifier=channel_identifier,
-                preferred_channel=preferred_channel,
+                preferred_channel=preferred_channel or settings.messaging_provider,
                 created_at=now,
                 updated_at=now,
                 **kwargs,
@@ -1030,10 +1031,11 @@ class FileSessionStore(PerUserStore):
 
     def _collect_messages(
         self,
-        count: int = 5,
+        count: int | None = None,
         exclude_session_id: str | None = None,
     ) -> list[StoredMessage]:
         """Collect the most recent messages, optionally excluding a session."""
+        count = count if count is not None else settings.heartbeat_recent_messages_count
         all_msgs: list[StoredMessage] = []
         for path in reversed(self._list_session_files()):
             if exclude_session_id and path.stem == exclude_session_id:
@@ -1048,14 +1050,14 @@ class FileSessionStore(PerUserStore):
         all_msgs.sort(key=lambda m: m.timestamp, reverse=True)
         return list(reversed(all_msgs[:count]))
 
-    def get_recent_messages(self, count: int = 5) -> list[StoredMessage]:
+    def get_recent_messages(self, count: int | None = None) -> list[StoredMessage]:
         """Get the most recent messages across all sessions."""
         return self._collect_messages(count)
 
     def get_other_session_messages(
         self,
         exclude_session_id: str,
-        count: int = 5,
+        count: int | None = None,
     ) -> list[StoredMessage]:
         """Get recent messages from sessions other than *exclude_session_id*."""
         return self._collect_messages(count, exclude_session_id)
@@ -1082,7 +1084,7 @@ class ClientStore(JsonListStore[ClientData]):
         email: str = "",
         address: str = "",
         notes: str = "",
-        folder_scheme: str = "by_client",
+        folder_scheme: str = "",
     ) -> ClientData:
         """Create a new client with a slug-based ID."""
         async with self._lock:
