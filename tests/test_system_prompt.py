@@ -259,7 +259,7 @@ class TestBuildAgentSystemPrompt:
         assert "Mike {The Plumber}" in result
 
 
-class TestToUserTime:
+class TestToLocalTime:
     def test_converts_to_pacific(self) -> None:
         utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
         result = to_local_time(utc, "America/Los_Angeles")
@@ -291,7 +291,7 @@ class TestBuildDateSection:
         assert result == "Monday, 2025-06-16"
 
     @patch("backend.app.agent.system_prompt.datetime")
-    def test_convertsto_local_timezone(self, mock_dt: MagicMock) -> None:
+    def test_converts_to_local_timezone(self, mock_dt: MagicMock) -> None:
         mock_dt.UTC = datetime.UTC
         # Saturday 3 AM UTC -> Friday 8 PM Pacific (PDT)
         mock_dt.datetime.now.return_value = datetime.datetime(
