@@ -70,8 +70,6 @@ class UserData(BaseModel):
     channel_identifier: str = ""
     onboarding_complete: bool = False
     is_active: bool = True
-    role: str = "user"
-    preferences_json: str = "{}"
     heartbeat_opt_in: bool = True
     heartbeat_frequency: str = Field(default_factory=lambda: settings.heartbeat_default_frequency)
     folder_scheme: str = Field(default_factory=lambda: settings.default_folder_scheme)

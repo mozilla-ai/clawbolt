@@ -1,4 +1,3 @@
-import datetime
 from typing import Any
 
 from pydantic import BaseModel, Field
@@ -8,22 +7,6 @@ from backend.app.enums import ChecklistSchedule, EstimateStatus
 
 class HealthResponse(BaseModel):
     status: str
-
-
-class UserBase(BaseModel):
-    name: str = ""
-    phone: str = ""
-
-
-class UserCreate(UserBase):
-    user_id: str
-
-
-class UserResponse(UserBase):
-    id: int
-    user_id: str
-    created_at: datetime.datetime
-    updated_at: datetime.datetime
 
 
 class MemoryBase(BaseModel):
