@@ -173,6 +173,10 @@ async def test_agent_no_typing_indicator_without_chat_id(
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.agent.heartbeat.log_llm_usage")
+@patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+@patch("backend.app.agent.heartbeat.HeartbeatStore")
+@patch("backend.app.agent.heartbeat.get_session_store")
 @patch("backend.app.agent.heartbeat.settings")
 @patch("backend.app.agent.heartbeat.amessages")
 @patch("backend.app.bus.message_bus")
@@ -180,6 +184,10 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_bus: MagicMock,
     mock_llm: AsyncMock,
     mock_settings: MagicMock,
+    mock_get_session_store: MagicMock,
+    mock_heartbeat_store_cls: MagicMock,
+    mock_build_prompt: AsyncMock,
+    mock_log_usage: MagicMock,
     test_user: UserData,
 ) -> None:
     """Heartbeat should send typing indicator before calling the LLM."""
@@ -189,6 +197,17 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_settings.heartbeat_model = ""
     mock_settings.heartbeat_provider = ""
     mock_settings.llm_max_tokens_heartbeat = 256
+    mock_settings.heartbeat_recent_messages_count = 5
+
+    mock_session_store = MagicMock()
+    mock_session_store.get_recent_messages.return_value = []
+    mock_get_session_store.return_value = mock_session_store
+
+    mock_hb_store = MagicMock()
+    mock_hb_store.read_checklist_md.return_value = ""
+    mock_heartbeat_store_cls.return_value = mock_hb_store
+
+    mock_build_prompt.return_value = "system prompt"
 
     mock_llm.return_value = make_tool_call_response(
         [
@@ -210,7 +229,6 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
 
     await evaluate_heartbeat_need(
         test_user,
-        ["Stale draft estimate"],
         channel="telegram",
         chat_id=test_user.channel_identifier,
     )
@@ -227,11 +245,19 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.agent.heartbeat.log_llm_usage")
+@patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+@patch("backend.app.agent.heartbeat.HeartbeatStore")
+@patch("backend.app.agent.heartbeat.get_session_store")
 @patch("backend.app.agent.heartbeat.settings")
 @patch("backend.app.agent.heartbeat.amessages")
 async def test_heartbeat_works_without_channel(
     mock_llm: AsyncMock,
     mock_settings: MagicMock,
+    mock_get_session_store: MagicMock,
+    mock_heartbeat_store_cls: MagicMock,
+    mock_build_prompt: AsyncMock,
+    mock_log_usage: MagicMock,
     test_user: UserData,
 ) -> None:
     """Heartbeat should work when no channel is provided."""
@@ -241,6 +267,17 @@ async def test_heartbeat_works_without_channel(
     mock_settings.heartbeat_model = ""
     mock_settings.heartbeat_provider = ""
     mock_settings.llm_max_tokens_heartbeat = 256
+    mock_settings.heartbeat_recent_messages_count = 5
+
+    mock_session_store = MagicMock()
+    mock_session_store.get_recent_messages.return_value = []
+    mock_get_session_store.return_value = mock_session_store
+
+    mock_hb_store = MagicMock()
+    mock_hb_store.read_checklist_md.return_value = ""
+    mock_heartbeat_store_cls.return_value = mock_hb_store
+
+    mock_build_prompt.return_value = "system prompt"
 
     mock_llm.return_value = make_tool_call_response(
         [
@@ -259,8 +296,5 @@ async def test_heartbeat_works_without_channel(
     )
 
     # Should not raise when no channel is provided
-    action = await evaluate_heartbeat_need(
-        test_user,
-        ["Stale draft estimate"],
-    )
+    action = await evaluate_heartbeat_need(test_user)
     assert action.action_type == "no_action"

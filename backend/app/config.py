@@ -87,7 +87,6 @@ class Settings(BaseSettings):
     compaction_model: str = ""  # empty = fall back to llm_model
     compaction_provider: str = ""  # empty = fall back to llm_provider
     compaction_max_tokens: int = Field(default=500, ge=1)
-    heartbeat_stale_estimate_hours: int = Field(default=24, ge=1)
 
     # Rate limiting
     webhook_rate_limit_max_requests: int = Field(default=30, ge=1)
@@ -108,7 +107,6 @@ class Settings(BaseSettings):
     heartbeat_max_daily_messages: int = Field(default=5, ge=1)
     heartbeat_quiet_hours_start: int = Field(default=20, ge=0, le=23)  # 8 PM
     heartbeat_quiet_hours_end: int = Field(default=7, ge=0, le=23)  # 7 AM
-    heartbeat_idle_days: int = Field(default=3, ge=1)
     heartbeat_model: str = ""  # empty = fall back to llm_model
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
     heartbeat_concurrency: int = Field(default=5, ge=1)

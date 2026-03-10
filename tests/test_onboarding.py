@@ -489,15 +489,15 @@ async def test_prepopulated_user_gets_onboarding_complete(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
-@patch("backend.app.agent.heartbeat.run_cheap_checks")
+@patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
 @patch("backend.app.agent.core.amessages")
 async def test_prepopulated_user_included_in_heartbeat(
     mock_amessages: object,
-    mock_cheap_checks: MagicMock,
+    mock_eval: AsyncMock,
     _mock_hours: MagicMock,
 ) -> None:
     """User with pre-populated fields should be eligible for heartbeat after first message."""
-    from backend.app.agent.heartbeat import CheapCheckResult, run_heartbeat_for_user
+    from backend.app.agent.heartbeat import HeartbeatAction, run_heartbeat_for_user
 
     user = UserData(
         id=31,
@@ -547,7 +547,12 @@ async def test_prepopulated_user_included_in_heartbeat(
     assert refreshed.onboarding_complete is True
 
     # Now verify heartbeat doesn't skip this user
-    mock_cheap_checks.return_value = CheapCheckResult(flags=[])
+    mock_eval.return_value = HeartbeatAction(
+        action_type="no_action",
+        message="",
+        reasoning="Nothing actionable",
+        priority=0,
+    )
     result = await run_heartbeat_for_user(
         user=refreshed,
         channel="telegram",
@@ -556,7 +561,7 @@ async def test_prepopulated_user_included_in_heartbeat(
     )
     # Should get a result (not None which means skipped)
     assert result is not None
-    assert result.action_type == "no_action"  # Clean checks, no message needed
+    assert result.action_type == "no_action"
 
 
 # ---------------------------------------------------------------------------
