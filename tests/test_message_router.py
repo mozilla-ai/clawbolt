@@ -11,7 +11,7 @@ from backend.app.agent.router import (
     handle_inbound_message,
 )
 from backend.app.bus import message_bus
-from tests.mocks.llm import make_text_response, make_tool_call_response
+from tests.mocks.llm import make_error_response, make_text_response, make_tool_call_response
 from tests.mocks.storage import MockStorageBackend
 
 
@@ -1132,3 +1132,56 @@ async def test_dispatch_reply_step_sends_when_send_reply_fails() -> None:
     outbound = message_bus.outbound.get_nowait()
     assert outbound.content == "Fallback text"
     assert outbound.chat_id == "123"
+
+
+# ---------------------------------------------------------------------------
+# Error stop_reason: dispatched to user but NOT persisted
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_error_stop_reason_not_persisted_to_session(
+    mock_amessages: object,
+    test_user: UserData,
+    conversation: SessionState,
+    inbound_message: StoredMessage,
+) -> None:
+    """LLM error stop_reason should NOT be stored in session history."""
+    mock_amessages.return_value = make_error_response(stop_reason="error")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        user=test_user,
+        session=conversation,
+        message=inbound_message,
+        media_urls=[],
+        channel="telegram",
+    )
+
+    assert response.is_error_fallback is True
+    # No outbound message should be persisted
+    outbound_msgs = [m for m in conversation.messages if m.direction == "outbound"]
+    assert len(outbound_msgs) == 0
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_error_stop_reason_still_dispatches_reply_to_user(
+    mock_amessages: object,
+    test_user: UserData,
+    conversation: SessionState,
+    inbound_message: StoredMessage,
+) -> None:
+    """Error fallback should still be dispatched via the bus so the user sees a message."""
+    mock_amessages.return_value = make_error_response(stop_reason="error")  # type: ignore[union-attr]
+
+    response = await handle_inbound_message(
+        user=test_user,
+        session=conversation,
+        message=inbound_message,
+        media_urls=[],
+        channel="telegram",
+    )
+
+    assert response.is_error_fallback is True
+    assert response.reply_text  # user gets a fallback message
