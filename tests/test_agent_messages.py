@@ -6,7 +6,6 @@ from backend.app.agent.messages import (
     ToolCallRequest,
     ToolResultMessage,
     UserMessage,
-    messages_to_dicts,
     messages_to_messages_api,
 )
 
@@ -116,19 +115,7 @@ def test_messages_to_messages_api_merges_consecutive_tool_results() -> None:
     assert dicts[1]["content"][1]["tool_use_id"] == "call_2"
 
 
-def test_messages_to_dicts_backward_compat() -> None:
-    """messages_to_dicts should work as a convenience wrapper."""
-    messages = [
-        SystemMessage(content="sys"),
-        UserMessage(content="hi"),
-    ]
-    dicts = messages_to_dicts(messages)
-    # System message is skipped by messages_to_dicts (extracted as system param)
-    assert len(dicts) == 1
-    assert dicts[0]["role"] == "user"
-
-
-def test_messages_to_dicts_empty() -> None:
+def test_messages_to_messages_api_empty() -> None:
     _, dicts = messages_to_messages_api([])
     assert dicts == []
 

@@ -17,7 +17,6 @@ class EstimateStatus(StrEnum):
 
 class ChecklistStatus(StrEnum):
     ACTIVE = "active"
-    PAUSED = "paused"
     COMPLETED = "completed"
 
 

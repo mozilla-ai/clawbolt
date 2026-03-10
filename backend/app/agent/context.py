@@ -81,8 +81,8 @@ def _parse_tool_interactions(raw: str) -> list[StoredToolInteraction]:
     """Parse tool_interactions_json, returning validated models.
 
     Each item is validated against ``StoredToolInteraction``. Missing fields
-    receive defaults (backward compatible). Items that fail validation
-    entirely are logged and skipped so corrupt data never crashes loading.
+    receive defaults. Items that fail validation entirely are logged and
+    skipped so corrupt data never crashes loading.
     """
     if not raw:
         return []
@@ -161,8 +161,8 @@ async def load_conversation_history(
 
     For outbound messages that have ``tool_interactions_json``, the full
     tool call/result sequence is reconstructed so the LLM can see its
-    prior tool usage.  Old messages without tool interaction data are
-    loaded as flat ``AssistantMessage`` (backward compatible).
+    prior tool usage.  Messages without tool interaction data are loaded
+    as flat ``AssistantMessage``.
 
     When the session has more messages than *limit* and a *user_id*
     is provided, the messages that are about to age out are passed through

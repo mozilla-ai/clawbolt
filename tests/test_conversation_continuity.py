@@ -291,10 +291,10 @@ async def test_load_history_reconstructs_tool_interactions(
 
 
 @pytest.mark.asyncio()
-async def test_load_history_backward_compatible_without_tool_interactions(
+async def test_load_history_without_tool_interactions(
     conversation: SessionState,
 ) -> None:
-    """Old outbound messages without tool_interactions_json load as flat text."""
+    """Outbound messages without tool_interactions_json load as flat text."""
     conversation.messages.append(StoredMessage(direction="inbound", body="Hello", seq=1))
     conversation.messages.append(
         StoredMessage(
