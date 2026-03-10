@@ -225,8 +225,15 @@ async def build_heartbeat_system_prompt(
     user: UserData,
     flags: list[str],
     recent_messages: str,
+    checklist_md: str = "",
 ) -> str:
-    """Assemble the system prompt for the heartbeat evaluator."""
+    """Assemble the system prompt for the heartbeat evaluator.
+
+    When *checklist_md* is provided, the raw HEARTBEAT.md content is
+    included as a dedicated section so the LLM can evaluate which tasks
+    need attention.  This mirrors how nanobot passes HEARTBEAT.md content
+    to its heartbeat decision phase.
+    """
     builder = SystemPromptBuilder()
     builder.set_preamble(load_prompt("heartbeat_preamble"))
 
@@ -240,6 +247,9 @@ async def build_heartbeat_system_prompt(
         "Recent conversation (last 5 messages)",
         recent_messages or "(no recent messages)",
     )
+
+    if checklist_md:
+        builder.add_section("User's checklist (HEARTBEAT.md)", checklist_md)
 
     builder.add_section(
         "Flags raised by pre-checks",

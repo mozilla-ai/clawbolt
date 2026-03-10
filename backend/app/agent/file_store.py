@@ -15,7 +15,7 @@ Storage layout::
           user.json
           SOUL.md
           USER.md
-          CHECKLIST.md
+          HEARTBEAT.md
           memory/
             MEMORY.md
             HISTORY.md
@@ -27,7 +27,6 @@ Storage layout::
               EST-0001.json
           media.json
           heartbeat/
-            checklist.json
             log.jsonl
           llm_usage.jsonl
 """
@@ -375,8 +374,8 @@ class UserStore:
             if raw.startswith("# User"):
                 raw = raw[len("# User") :].strip()
             user.user_text = raw
-        # Load checklist_text from CHECKLIST.md
-        checklist_path = _user_dir(user_id) / "CHECKLIST.md"
+        # Load checklist_text from HEARTBEAT.md
+        checklist_path = _user_dir(user_id) / "HEARTBEAT.md"
         if checklist_path.exists():
             raw = checklist_path.read_text(encoding="utf-8").strip()
             if raw.startswith("# Checklist"):
@@ -417,8 +416,8 @@ class UserStore:
                 encoding="utf-8",
             )
 
-        # Save CHECKLIST.md
-        checklist_path = cdir / "CHECKLIST.md"
+        # Save HEARTBEAT.md
+        checklist_path = cdir / "HEARTBEAT.md"
         if checklist_text:
             checklist_path.write_text(f"# Checklist\n\n{checklist_text}\n", encoding="utf-8")
         elif not checklist_path.exists():
@@ -1332,74 +1331,180 @@ class MediaStore:
 
 
 class HeartbeatStore:
-    """File-based heartbeat storage. Replaces HeartbeatChecklistItem + HeartbeatLog."""
+    """File-based heartbeat storage.
+
+    Checklist items are stored in ``HEARTBEAT.md`` (the user's markdown
+    checklist file), making it the single source of truth for both the
+    heartbeat engine and the UI editor.
+    """
 
     def __init__(self, user_id: int) -> None:
         self.user_id = user_id
         self._lock = asyncio.Lock()
 
     @property
-    def _checklist_path(self) -> Path:
-        return _user_dir(self.user_id) / "heartbeat" / "checklist.json"
+    def _checklist_md_path(self) -> Path:
+        return _user_dir(self.user_id) / "HEARTBEAT.md"
 
     @property
     def _log_path(self) -> Path:
         return _user_dir(self.user_id) / "heartbeat" / "log.jsonl"
 
-    def _load_checklist(self) -> list[dict[str, Any]]:
-        return _read_json(self._checklist_path, [])
+    # -- HEARTBEAT.md I/O -------------------------------------------------
+
+    def read_checklist_md(self) -> str:
+        """Read raw HEARTBEAT.md content. Returns empty string if missing."""
+        if self._checklist_md_path.exists():
+            try:
+                return self._checklist_md_path.read_text(encoding="utf-8")
+            except OSError:
+                logger.warning("Failed to read HEARTBEAT.md for user %d", self.user_id)
+        return ""
+
+    def _write_checklist_md(self, content: str) -> None:
+        """Write content to HEARTBEAT.md, creating parent dirs as needed."""
+        self._checklist_md_path.parent.mkdir(parents=True, exist_ok=True)
+        self._checklist_md_path.write_text(content, encoding="utf-8")
+
+    # -- Structured checklist access (reads from HEARTBEAT.md) ------------
+
+    def _parse_checklist_md(self) -> list[dict[str, Any]]:
+        """Parse HEARTBEAT.md into a list of item dicts with ids.
+
+        Recognises lines matching ``- [ ] text`` or ``- [x] text`` as
+        checklist items.  An optional ``(schedule)`` suffix is extracted.
+        Each item gets an id derived from its 1-based position among
+        checklist items.  IDs are stable within a single read but may
+        shift after mutations (add/delete).
+        """
+        content = self.read_checklist_md()
+        if not content:
+            return []
+        items: list[dict[str, Any]] = []
+        item_id = 0
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- [ ] ") or stripped.startswith("- [x] "):
+                item_id += 1
+                is_checked = stripped.startswith("- [x] ")
+                text = stripped[6:].strip()
+                schedule = ChecklistSchedule.DAILY
+                if text.endswith(")"):
+                    paren_idx = text.rfind("(")
+                    if paren_idx > 0:
+                        maybe_sched = text[paren_idx + 1 : -1].strip().lower()
+                        if maybe_sched in list(ChecklistSchedule):
+                            schedule = maybe_sched
+                            text = text[:paren_idx].strip()
+                status = ChecklistStatus.COMPLETED if is_checked else ChecklistStatus.ACTIVE
+                items.append(
+                    {
+                        "id": item_id,
+                        "user_id": self.user_id,
+                        "description": text,
+                        "schedule": schedule,
+                        "status": status,
+                        "last_triggered_at": None,
+                        "created_at": datetime.datetime.now(datetime.UTC).isoformat(),
+                    }
+                )
+        return items
 
     async def get_checklist(self) -> list[ChecklistItem]:
-        """Get all checklist items."""
-        return [ChecklistItem.model_validate(item) for item in self._load_checklist()]
+        """Get all checklist items parsed from HEARTBEAT.md."""
+        return [ChecklistItem.model_validate(item) for item in self._parse_checklist_md()]
 
     async def add_checklist_item(
         self,
         description: str,
         schedule: str = ChecklistSchedule.DAILY,
     ) -> ChecklistItem:
-        """Add a checklist item."""
+        """Add a checklist item by appending a line to HEARTBEAT.md."""
         async with self._lock:
-            items = self._load_checklist()
-            iid = _next_id(items)
-            item = ChecklistItem(
-                id=iid,
-                user_id=self.user_id,
-                description=description,
-                schedule=schedule,
-            )
-            items.append(item.model_dump())
-            _write_json(self._checklist_path, items)
-            return item
+            content = self.read_checklist_md()
+            if not content:
+                content = "# Checklist\n\n"
+            if not content.endswith("\n"):
+                content += "\n"
+            schedule_note = f" ({schedule})" if schedule != ChecklistSchedule.DAILY else ""
+            content += f"- [ ] {description}{schedule_note}\n"
+            self._write_checklist_md(content)
+
+            items = self._parse_checklist_md()
+            return ChecklistItem.model_validate(items[-1])
 
     async def update_checklist_item(
         self,
         item_id: int,
         **fields: Any,
     ) -> ChecklistItem | None:
-        """Update a checklist item."""
+        """Update a checklist item in HEARTBEAT.md by id.
+
+        Supports updating description, schedule, and status.  When status
+        changes to completed the checkbox is checked (``[x]``).
+        """
         async with self._lock:
-            items = self._load_checklist()
-            for i, item in enumerate(items):
-                if item.get("id") == item_id:
-                    for k, v in fields.items():
-                        if v is not None:
-                            item[k] = v
-                    items[i] = item
-                    _write_json(self._checklist_path, items)
-                    return ChecklistItem.model_validate(item)
-            return None
+            items = self._parse_checklist_md()
+            target = None
+            for item in items:
+                if item["id"] == item_id:
+                    target = item
+                    break
+            if target is None:
+                return None
+
+            for k, v in fields.items():
+                if v is not None:
+                    target[k] = v
+
+            self._rebuild_checklist_md(items)
+            return ChecklistItem.model_validate(target)
 
     async def delete_checklist_item(self, item_id: int) -> bool:
-        """Delete a checklist item."""
+        """Delete a checklist item from HEARTBEAT.md by id."""
         async with self._lock:
-            items = self._load_checklist()
+            items = self._parse_checklist_md()
             original_len = len(items)
-            items = [i for i in items if i.get("id") != item_id]
+            items = [i for i in items if i["id"] != item_id]
             if len(items) == original_len:
                 return False
-            _write_json(self._checklist_path, items)
+            self._rebuild_checklist_md(items)
             return True
+
+    def _rebuild_checklist_md(self, items: list[dict[str, Any]]) -> None:
+        """Rebuild HEARTBEAT.md from a list of item dicts.
+
+        Preserves non-checklist-item lines (headings, blank lines, prose)
+        from the original file and replaces only the checklist item lines.
+        """
+        content = self.read_checklist_md()
+        new_lines: list[str] = []
+        item_idx = 0
+        for line in content.splitlines():
+            stripped = line.strip()
+            if stripped.startswith("- [ ] ") or stripped.startswith("- [x] "):
+                if item_idx < len(items):
+                    item = items[item_idx]
+                    checkbox = "[x]" if item.get("status") == ChecklistStatus.COMPLETED else "[ ]"
+                    desc = item["description"]
+                    sched = item.get("schedule", ChecklistSchedule.DAILY)
+                    suffix = f" ({sched})" if sched != ChecklistSchedule.DAILY else ""
+                    new_lines.append(f"- {checkbox} {desc}{suffix}")
+                    item_idx += 1
+            else:
+                new_lines.append(line)
+        while item_idx < len(items):
+            item = items[item_idx]
+            checkbox = "[x]" if item.get("status") == ChecklistStatus.COMPLETED else "[ ]"
+            desc = item["description"]
+            sched = item.get("schedule", ChecklistSchedule.DAILY)
+            suffix = f" ({sched})" if sched != ChecklistSchedule.DAILY else ""
+            new_lines.append(f"- {checkbox} {desc}{suffix}")
+            item_idx += 1
+        result = "\n".join(new_lines)
+        if not result.endswith("\n"):
+            result += "\n"
+        self._write_checklist_md(result)
 
     async def log_heartbeat(self) -> None:
         """Append to heartbeat log."""

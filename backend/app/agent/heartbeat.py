@@ -38,7 +38,6 @@ from backend.app.channels import get_channel, get_default_channel, get_manager
 from backend.app.config import settings
 from backend.app.enums import (
     ChecklistSchedule,
-    ChecklistStatus,
     EstimateStatus,
     MessageDirection,
 )
@@ -255,15 +254,18 @@ async def run_cheap_checks(
         descs = ", ".join(e.description[:40] for e in stale)
         result.flags.append(f"Stale draft estimate(s) older than 24h: {descs}")
 
-    # 2. Due checklist items
+    # 2. Checklist: read HEARTBEAT.md (single source of truth) and flag
+    #    when there are unchecked items for the LLM to evaluate.
     heartbeat_store = HeartbeatStore(user.id)
-    all_items = await heartbeat_store.get_checklist()
-    for item in all_items:
-        if item.status != ChecklistStatus.ACTIVE:
-            continue
-        if _is_checklist_item_due(item, now, tz_name=user.timezone or ""):
-            result.due_checklist_items.append(item)
-            result.flags.append(f"Checklist item due: {item.description}")
+    checklist_content = heartbeat_store.read_checklist_md()
+    if checklist_content:
+        unchecked = [
+            ln.strip()[6:]
+            for ln in checklist_content.splitlines()
+            if ln.strip().startswith("- [ ] ")
+        ]
+        if unchecked:
+            result.flags.append(f"HEARTBEAT.md has {len(unchecked)} unchecked item(s)")
 
     # 3. Time-sensitive memory facts
     from backend.app.agent.file_store import get_memory_store
@@ -356,9 +358,17 @@ async def build_heartbeat_context(
     user: UserData,
     flags: list[str],
 ) -> str:
-    """Build the full heartbeat system prompt via the composable builder."""
+    """Build the full heartbeat system prompt via the composable builder.
+
+    Reads HEARTBEAT.md and passes its content to the LLM as context,
+    following the same pattern nanobot uses with HEARTBEAT.md.
+    """
     recent_messages = _load_recent_messages(user)
-    return await build_heartbeat_system_prompt(user, flags, recent_messages)
+    heartbeat_store = HeartbeatStore(user.id)
+    checklist_md = heartbeat_store.read_checklist_md()
+    return await build_heartbeat_system_prompt(
+        user, flags, recent_messages, checklist_md=checklist_md
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -571,14 +581,6 @@ async def run_heartbeat_for_user(
     # Record heartbeat log for persistent rate limiting
     heartbeat_store = HeartbeatStore(user.id)
     await heartbeat_store.log_heartbeat()
-
-    # Mark checklist items as triggered
-    now = datetime.datetime.now(datetime.UTC)
-    for item in check_result.due_checklist_items:
-        updates: dict[str, Any] = {"last_triggered_at": now.isoformat()}
-        if item.schedule == ChecklistSchedule.ONCE:
-            updates["status"] = ChecklistStatus.COMPLETED
-        await heartbeat_store.update_checklist_item(item.id, **updates)
 
     return action
 
