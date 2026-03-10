@@ -15,7 +15,7 @@ Storage layout::
           user.json
           SOUL.md
           USER.md
-          CHECKLIST.md
+          HEARTBEAT.md
           memory/
             MEMORY.md
             HISTORY.md
@@ -374,8 +374,8 @@ class UserStore:
             if raw.startswith("# User"):
                 raw = raw[len("# User") :].strip()
             user.user_text = raw
-        # Load checklist_text from CHECKLIST.md
-        checklist_path = _user_dir(user_id) / "CHECKLIST.md"
+        # Load checklist_text from HEARTBEAT.md
+        checklist_path = _user_dir(user_id) / "HEARTBEAT.md"
         if checklist_path.exists():
             raw = checklist_path.read_text(encoding="utf-8").strip()
             if raw.startswith("# Checklist"):
@@ -416,8 +416,8 @@ class UserStore:
                 encoding="utf-8",
             )
 
-        # Save CHECKLIST.md
-        checklist_path = cdir / "CHECKLIST.md"
+        # Save HEARTBEAT.md
+        checklist_path = cdir / "HEARTBEAT.md"
         if checklist_text:
             checklist_path.write_text(f"# Checklist\n\n{checklist_text}\n", encoding="utf-8")
         elif not checklist_path.exists():
@@ -1331,10 +1331,9 @@ class MediaStore:
 class HeartbeatStore:
     """File-based heartbeat storage.
 
-    Checklist items are stored in ``CHECKLIST.md`` (the user's markdown
+    Checklist items are stored in ``HEARTBEAT.md`` (the user's markdown
     checklist file), making it the single source of truth for both the
-    heartbeat engine and the UI editor.  The legacy ``heartbeat/checklist.json``
-    is auto-migrated on first access and then ignored.
+    heartbeat engine and the UI editor.
     """
 
     def __init__(self, user_id: int) -> None:
@@ -1343,82 +1342,32 @@ class HeartbeatStore:
 
     @property
     def _checklist_md_path(self) -> Path:
-        return _user_dir(self.user_id) / "CHECKLIST.md"
-
-    @property
-    def _legacy_checklist_path(self) -> Path:
-        return _user_dir(self.user_id) / "heartbeat" / "checklist.json"
+        return _user_dir(self.user_id) / "HEARTBEAT.md"
 
     @property
     def _log_path(self) -> Path:
         return _user_dir(self.user_id) / "heartbeat" / "log.jsonl"
 
-    # -- CHECKLIST.md I/O -------------------------------------------------
+    # -- HEARTBEAT.md I/O -------------------------------------------------
 
     def read_checklist_md(self) -> str:
-        """Read raw CHECKLIST.md content. Returns empty string if missing."""
+        """Read raw HEARTBEAT.md content. Returns empty string if missing."""
         if self._checklist_md_path.exists():
             try:
                 return self._checklist_md_path.read_text(encoding="utf-8")
             except OSError:
-                logger.warning("Failed to read CHECKLIST.md for user %d", self.user_id)
+                logger.warning("Failed to read HEARTBEAT.md for user %d", self.user_id)
         return ""
 
     def _write_checklist_md(self, content: str) -> None:
-        """Write content to CHECKLIST.md, creating parent dirs as needed."""
+        """Write content to HEARTBEAT.md, creating parent dirs as needed."""
         self._checklist_md_path.parent.mkdir(parents=True, exist_ok=True)
         self._checklist_md_path.write_text(content, encoding="utf-8")
 
-    # -- Migration from legacy checklist.json -----------------------------
-
-    async def migrate_json_to_md(self) -> bool:
-        """Migrate legacy checklist.json items into CHECKLIST.md.
-
-        Appends markdown checklist lines for each active item in the old
-        JSON file, then renames the JSON file to ``checklist.json.migrated``
-        so it is not processed again.  Returns True if migration occurred.
-        """
-        if not self._legacy_checklist_path.exists():
-            return False
-        raw = _read_json(self._legacy_checklist_path, [])
-        if not raw:
-            self._legacy_checklist_path.rename(
-                self._legacy_checklist_path.with_suffix(".json.migrated")
-            )
-            return False
-
-        items = [ChecklistItem.model_validate(item) for item in raw]
-        active_items = [i for i in items if i.status == ChecklistStatus.ACTIVE]
-        if not active_items:
-            self._legacy_checklist_path.rename(
-                self._legacy_checklist_path.with_suffix(".json.migrated")
-            )
-            return False
-
-        lines: list[str] = []
-        for item in active_items:
-            schedule_note = (
-                f" ({item.schedule})" if item.schedule != ChecklistSchedule.DAILY else ""
-            )
-            lines.append(f"- [ ] {item.description}{schedule_note}")
-
-        existing = self.read_checklist_md()
-        if existing and not existing.endswith("\n"):
-            existing += "\n"
-        if not existing:
-            existing = "# Checklist\n\n"
-        new_content = existing + "\n".join(lines) + "\n"
-        self._write_checklist_md(new_content)
-
-        self._legacy_checklist_path.rename(
-            self._legacy_checklist_path.with_suffix(".json.migrated")
-        )
-        return True
-
-    # -- Structured checklist access (reads from CHECKLIST.md) ------------
+    # -- Structured checklist access (reads from HEARTBEAT.md) ------------
 
     def _parse_checklist_md(self) -> list[dict[str, Any]]:
-        """Parse CHECKLIST.md into a list of item dicts with ids.
+        """Parse HEARTBEAT.md into a list of item dicts with ids.
 
         Recognises lines matching ``- [ ] text`` or ``- [x] text`` as
         checklist items.  An optional ``(schedule)`` suffix is extracted.
@@ -1460,7 +1409,7 @@ class HeartbeatStore:
         return items
 
     async def get_checklist(self) -> list[ChecklistItem]:
-        """Get all checklist items parsed from CHECKLIST.md."""
+        """Get all checklist items parsed from HEARTBEAT.md."""
         return [ChecklistItem.model_validate(item) for item in self._parse_checklist_md()]
 
     async def add_checklist_item(
@@ -1468,7 +1417,7 @@ class HeartbeatStore:
         description: str,
         schedule: str = ChecklistSchedule.DAILY,
     ) -> ChecklistItem:
-        """Add a checklist item by appending a line to CHECKLIST.md."""
+        """Add a checklist item by appending a line to HEARTBEAT.md."""
         async with self._lock:
             content = self.read_checklist_md()
             if not content:
@@ -1487,7 +1436,7 @@ class HeartbeatStore:
         item_id: int,
         **fields: Any,
     ) -> ChecklistItem | None:
-        """Update a checklist item in CHECKLIST.md by id.
+        """Update a checklist item in HEARTBEAT.md by id.
 
         Supports updating description, schedule, and status.  When status
         changes to completed the checkbox is checked (``[x]``).
@@ -1510,7 +1459,7 @@ class HeartbeatStore:
             return ChecklistItem.model_validate(target)
 
     async def delete_checklist_item(self, item_id: int) -> bool:
-        """Delete a checklist item from CHECKLIST.md by id."""
+        """Delete a checklist item from HEARTBEAT.md by id."""
         async with self._lock:
             items = self._parse_checklist_md()
             original_len = len(items)
@@ -1521,7 +1470,7 @@ class HeartbeatStore:
             return True
 
     def _rebuild_checklist_md(self, items: list[dict[str, Any]]) -> None:
-        """Rebuild CHECKLIST.md from a list of item dicts.
+        """Rebuild HEARTBEAT.md from a list of item dicts.
 
         Preserves non-checklist-item lines (headings, blank lines, prose)
         from the original file and replaces only the checklist item lines.

@@ -316,7 +316,7 @@ class TestRunCheapChecks:
 
     @pytest.mark.asyncio
     async def test_checklist_item_due(self, user: UserData) -> None:
-        """Unchecked items in CHECKLIST.md should be flagged."""
+        """Unchecked items in HEARTBEAT.md should be flagged."""
         from backend.app.agent.file_store import HeartbeatStore
 
         store = HeartbeatStore(user.id)
@@ -327,11 +327,11 @@ class TestRunCheapChecks:
 
         result = await run_cheap_checks(user)
         assert result.has_flags
-        assert "CHECKLIST.md has 1 unchecked item(s)" in result.flags[0]
+        assert "HEARTBEAT.md has 1 unchecked item(s)" in result.flags[0]
 
     @pytest.mark.asyncio
     async def test_checked_item_not_flagged(self, user: UserData) -> None:
-        """Checked items in CHECKLIST.md should not be flagged."""
+        """Checked items in HEARTBEAT.md should not be flagged."""
         from backend.app.agent.file_store import HeartbeatStore
 
         store = HeartbeatStore(user.id)
@@ -1143,7 +1143,7 @@ class TestRunHeartbeatForUser:
     ) -> None:
         """Heartbeat sends message and logs when checklist flags are raised."""
         mock_checks.return_value = CheapCheckResult(
-            flags=["CHECKLIST.md has 1 unchecked item(s)"],
+            flags=["HEARTBEAT.md has 1 unchecked item(s)"],
         )
         mock_eval.return_value = HeartbeatAction(
             action_type="send_message",
@@ -1169,7 +1169,7 @@ class TestRunHeartbeatForUser:
     ) -> None:
         """Heartbeat sends message when flags are raised."""
         mock_checks.return_value = CheapCheckResult(
-            flags=["CHECKLIST.md has 1 unchecked item(s)"],
+            flags=["HEARTBEAT.md has 1 unchecked item(s)"],
         )
         mock_eval.return_value = HeartbeatAction(
             action_type="send_message",

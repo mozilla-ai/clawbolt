@@ -254,11 +254,9 @@ async def run_cheap_checks(
         descs = ", ".join(e.description[:40] for e in stale)
         result.flags.append(f"Stale draft estimate(s) older than 24h: {descs}")
 
-    # 2. Checklist: read CHECKLIST.md (single source of truth) and flag
+    # 2. Checklist: read HEARTBEAT.md (single source of truth) and flag
     #    when there are unchecked items for the LLM to evaluate.
     heartbeat_store = HeartbeatStore(user.id)
-    # Auto-migrate legacy checklist.json on first access
-    await heartbeat_store.migrate_json_to_md()
     checklist_content = heartbeat_store.read_checklist_md()
     if checklist_content:
         unchecked = [
@@ -267,7 +265,7 @@ async def run_cheap_checks(
             if ln.strip().startswith("- [ ] ")
         ]
         if unchecked:
-            result.flags.append(f"CHECKLIST.md has {len(unchecked)} unchecked item(s)")
+            result.flags.append(f"HEARTBEAT.md has {len(unchecked)} unchecked item(s)")
 
     # 3. Time-sensitive memory facts
     from backend.app.agent.file_store import get_memory_store
@@ -362,7 +360,7 @@ async def build_heartbeat_context(
 ) -> str:
     """Build the full heartbeat system prompt via the composable builder.
 
-    Reads CHECKLIST.md and passes its content to the LLM as context,
+    Reads HEARTBEAT.md and passes its content to the LLM as context,
     following the same pattern nanobot uses with HEARTBEAT.md.
     """
     recent_messages = _load_recent_messages(user)

@@ -44,7 +44,7 @@ data/
       user.json                      # Profile data
       SOUL.md                        # Personality/behavioral guidance
       USER.md                        # User info and preferences
-      CHECKLIST.md                   # Heartbeat checklist (single source of truth)
+      HEARTBEAT.md                   # Heartbeat checklist (single source of truth)
       memory/
         MEMORY.md                    # Structured facts by category
         HISTORY.md                   # Compaction log

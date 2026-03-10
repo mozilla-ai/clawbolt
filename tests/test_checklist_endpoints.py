@@ -4,11 +4,11 @@ from fastapi.testclient import TestClient
 
 
 def test_list_checklist_defaults(client: TestClient) -> None:
-    """Default CHECKLIST.md items should appear in the listing."""
+    """Default HEARTBEAT.md items should appear in the listing."""
     resp = client.get("/api/user/checklist")
     assert resp.status_code == 200
     items = resp.json()
-    # Default CHECKLIST.md is seeded with items
+    # Default HEARTBEAT.md is seeded with items
     assert len(items) >= 1
 
 

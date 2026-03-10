@@ -229,7 +229,7 @@ async def build_heartbeat_system_prompt(
 ) -> str:
     """Assemble the system prompt for the heartbeat evaluator.
 
-    When *checklist_md* is provided, the raw CHECKLIST.md content is
+    When *checklist_md* is provided, the raw HEARTBEAT.md content is
     included as a dedicated section so the LLM can evaluate which tasks
     need attention.  This mirrors how nanobot passes HEARTBEAT.md content
     to its heartbeat decision phase.
@@ -249,7 +249,7 @@ async def build_heartbeat_system_prompt(
     )
 
     if checklist_md:
-        builder.add_section("User's checklist (CHECKLIST.md)", checklist_md)
+        builder.add_section("User's checklist (HEARTBEAT.md)", checklist_md)
 
     builder.add_section(
         "Flags raised by pre-checks",

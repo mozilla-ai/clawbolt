@@ -65,7 +65,7 @@ export default function ChecklistPage() {
       </div>
       <Card>
         <div className="grid gap-4">
-          <Field label="Checklist (CHECKLIST.md)">
+          <Field label="Checklist (HEARTBEAT.md)">
             <Textarea
               value={checklistText}
               onChange={(e) => setChecklistText(e.target.value)}
@@ -73,7 +73,7 @@ export default function ChecklistPage() {
               placeholder="Track tasks and to-dos in markdown format, e.g. - [ ] Follow up with new leads"
             />
             <p className="helper-text">
-              Your personal checklist, stored as CHECKLIST.md. Your assistant can read this to stay aware of your priorities.
+              Your personal checklist, stored as HEARTBEAT.md. Your assistant can read this to stay aware of your priorities.
             </p>
           </Field>
           <div className="flex justify-end">

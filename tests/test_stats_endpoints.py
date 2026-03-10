@@ -15,7 +15,7 @@ def test_stats_empty(client: TestClient) -> None:
     data = resp.json()
     assert data["total_sessions"] == 0
     assert data["messages_this_month"] == 0
-    # Default CHECKLIST.md is seeded with items on user creation
+    # Default HEARTBEAT.md is seeded with items on user creation
     assert data["active_checklist_items"] >= 0
     assert data["total_memory_facts"] == 0
     assert data["last_conversation_at"] is None

@@ -21,7 +21,7 @@ async def test_add_checklist_item(test_user: UserData) -> None:
     store = HeartbeatStore(test_user.id)
     items = await store.get_checklist()
     active = [i for i in items if i.status == "active"]
-    # Default CHECKLIST.md has 3 items + 1 added
+    # Default HEARTBEAT.md has 3 items + 1 added
     assert len(active) >= 1
     added = [i for i in active if i.description == "Check material prices"]
     assert len(added) == 1
@@ -83,11 +83,11 @@ async def test_list_checklist_items(test_user: UserData) -> None:
 
 @pytest.mark.asyncio()
 async def test_list_checklist_items_with_defaults(test_user: UserData) -> None:
-    """list_checklist_items should include default CHECKLIST.md items."""
+    """list_checklist_items should include default HEARTBEAT.md items."""
     tools = create_checklist_tools(test_user.id)
     list_items = tools[1].function
     result = await list_items()
-    # Default CHECKLIST.md has seeded items
+    # Default HEARTBEAT.md has seeded items
     assert "Follow up with new leads" in result.content
 
 
@@ -147,7 +147,7 @@ async def test_remove_scoped_to_user(
 ) -> None:
     """remove_checklist_item should not delete another user's items.
 
-    Each user's CHECKLIST.md is a separate file, so IDs are per-user.
+    Each user's HEARTBEAT.md is a separate file, so IDs are per-user.
     Attempting to remove an ID that does not exist in the current user's
     checklist should return not-found.
     """
@@ -156,7 +156,7 @@ async def test_remove_scoped_to_user(
     other_items = await other_store.get_checklist()
     assert len(other_items) == 1
 
-    # Use an ID that definitely does not exist in test_user's CHECKLIST.md
+    # Use an ID that definitely does not exist in test_user's HEARTBEAT.md
     tools = create_checklist_tools(test_user.id)
     remove_item = tools[2].function
     result = await remove_item(item_id=9999)
