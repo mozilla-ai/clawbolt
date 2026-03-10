@@ -14,7 +14,7 @@ from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.channels.webchat import WebChatChannel
-from backend.app.config import load_persistent_config, settings
+from backend.app.config import load_persistent_config, log_config_warnings, settings
 from backend.app.routers import (
     auth,
     estimates,
@@ -124,6 +124,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # env_file directive; this call covers bare-host / local-dev setups.
     load_dotenv()
 
+    log_config_warnings()
     await _verify_llm_settings()
     heartbeat_scheduler.start()
 
