@@ -2,6 +2,8 @@
 
 from fastapi.testclient import TestClient
 
+from backend.app.config import settings
+
 
 def test_get_profile(client: TestClient) -> None:
     resp = client.get("/api/user/profile")
@@ -39,6 +41,14 @@ def test_update_profile_soul_text(client: TestClient) -> None:
     data = resp.json()
     assert data["soul_text"] == "Be friendly."
     assert data["assistant_name"] == "Bolt"
+
+
+def test_heartbeat_frequency_default(client: TestClient) -> None:
+    """New users should have heartbeat_frequency matching the server default."""
+    resp = client.get("/api/user/profile")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["heartbeat_frequency"] == settings.heartbeat_default_frequency
 
 
 def test_update_profile_empty_body(client: TestClient) -> None:

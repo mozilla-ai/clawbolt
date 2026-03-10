@@ -71,6 +71,10 @@ Data classes (Pydantic BaseModel, replace ORM models):
 - `UserData`, `StoredMessage`, `SessionState`, `ClientData`
 - `EstimateData`, `MediaData`, `ChecklistItem`, `HeartbeatLogEntry`, `MemoryFact`
 
+## Backwards Compatibility
+
+Until this project has its first production release, you do not need to be concerned about backwards compatible changes.
+
 ## Coding Standards
 
 - All type annotations required
