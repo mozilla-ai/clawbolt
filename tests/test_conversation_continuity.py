@@ -291,6 +291,31 @@ async def test_load_history_reconstructs_tool_interactions(
 
 
 @pytest.mark.asyncio()
+async def test_load_history_without_tool_interactions(
+    conversation: SessionState,
+) -> None:
+    """Outbound messages without tool_interactions_json load as flat text."""
+    conversation.messages.append(StoredMessage(direction="inbound", body="Hello", seq=1))
+    conversation.messages.append(
+        StoredMessage(
+            direction="outbound",
+            body="Hi there!",
+            tool_interactions_json="",
+            seq=2,
+        )
+    )
+    # Current
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 2
+    assert isinstance(history[0], UserMessage)
+    assert isinstance(history[1], AssistantMessage)
+    assert history[1].content == "Hi there!"
+    assert history[1].tool_calls == []
+
+
+@pytest.mark.asyncio()
 async def test_load_history_multiple_tool_calls_in_one_turn(
     conversation: SessionState,
 ) -> None:
