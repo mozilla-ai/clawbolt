@@ -9,6 +9,7 @@ export interface UserProfile {
   assistant_name: string;
   soul_text: string;
   user_text: string;
+  checklist_text: string;
   preferred_channel: string;
   channel_identifier: string;
   heartbeat_opt_in: boolean;
@@ -26,6 +27,7 @@ export interface UserProfileUpdate {
   assistant_name?: string;
   soul_text?: string;
   user_text?: string;
+  checklist_text?: string;
   heartbeat_opt_in?: boolean;
   heartbeat_frequency?: string;
 }

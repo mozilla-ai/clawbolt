@@ -43,6 +43,8 @@ data/
     {id}/
       user.json                      # Profile data
       SOUL.md                        # Personality/behavioral guidance
+      USER.md                        # User info and preferences
+      CHECKLIST.md                   # General-purpose task checklist
       memory/
         MEMORY.md                    # Structured facts by category
         HISTORY.md                   # Compaction log

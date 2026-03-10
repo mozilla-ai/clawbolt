@@ -15,6 +15,7 @@ Storage layout::
           user.json
           SOUL.md
           USER.md
+          CHECKLIST.md
           memory/
             MEMORY.md
             HISTORY.md
@@ -64,6 +65,7 @@ class UserData(BaseModel):
     phone: str = ""
     soul_text: str = ""
     user_text: str = ""
+    checklist_text: str = ""
     timezone: str = ""
     preferred_channel: str = "telegram"
     channel_identifier: str = ""
@@ -373,6 +375,13 @@ class UserStore:
             if raw.startswith("# User"):
                 raw = raw[len("# User") :].strip()
             user.user_text = raw
+        # Load checklist_text from CHECKLIST.md
+        checklist_path = _user_dir(user_id) / "CHECKLIST.md"
+        if checklist_path.exists():
+            raw = checklist_path.read_text(encoding="utf-8").strip()
+            if raw.startswith("# Checklist"):
+                raw = raw[len("# Checklist") :].strip()
+            user.checklist_text = raw
         return user
 
     def _save(self, user: UserData) -> None:
@@ -380,10 +389,11 @@ class UserStore:
         cdir = _user_dir(user.id)
         cdir.mkdir(parents=True, exist_ok=True)
 
-        # Save user.json (exclude soul_text/user_text, they go to .md files)
+        # Save user.json (exclude text fields that go to .md files)
         data = user.model_dump()
         soul_text = data.pop("soul_text", "")
         user_text = data.pop("user_text", "")
+        checklist_text = data.pop("checklist_text", "")
         _write_json(cdir / "user.json", data)
 
         # Save SOUL.md
@@ -404,6 +414,16 @@ class UserStore:
         elif not user_path.exists():
             user_path.write_text(
                 f"# User\n\n{load_prompt('default_user')}\n",
+                encoding="utf-8",
+            )
+
+        # Save CHECKLIST.md
+        checklist_path = cdir / "CHECKLIST.md"
+        if checklist_text:
+            checklist_path.write_text(f"# Checklist\n\n{checklist_text}\n", encoding="utf-8")
+        elif not checklist_path.exists():
+            checklist_path.write_text(
+                f"# Checklist\n\n{load_prompt('default_checklist')}\n",
                 encoding="utf-8",
             )
 
