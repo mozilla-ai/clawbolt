@@ -6,6 +6,7 @@ import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import { useAuth } from '@/contexts/AuthContext';
 import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
+import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import type { UserProfile } from '@/types';
 
 /** Context value provided to child routes via useOutletContext(). */
@@ -31,6 +32,11 @@ export default function AppShell() {
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [profileError, setProfileError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
+
+  const openSidebar = useCallback(() => setSidebarOpen(true), []);
+  const closeSidebar = useCallback(() => setSidebarOpen(false), []);
+
+  useSwipeSidebar({ isOpen: sidebarOpen, onOpen: openSidebar, onClose: closeSidebar });
 
   const loadProfile = useCallback(() => {
     setProfileError(false);
@@ -83,7 +89,7 @@ export default function AppShell() {
       {sidebarOpen && (
         <div
           className="fixed inset-0 z-40 bg-black/40 md:hidden"
-          onClick={() => setSidebarOpen(false)}
+          onClick={closeSidebar}
         />
       )}
 
@@ -106,7 +112,7 @@ export default function AppShell() {
               key={to}
               to={to}
               end={end}
-              onClick={() => setSidebarOpen(false)}
+              onClick={closeSidebar}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
@@ -160,7 +166,7 @@ export default function AppShell() {
           <Button
             variant="ghost"
             size="icon"
-            onClick={() => setSidebarOpen(true)}
+            onClick={openSidebar}
             aria-label="Open menu"
           >
             <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
