@@ -113,25 +113,6 @@ def _summarize_dropped_messages(dropped: list[AgentMessage]) -> str:
     return summary[:_SUMMARY_MAX_CHARS]
 
 
-def _total_content_length(messages: list[AgentMessage]) -> int:
-    """Return total character count of all message content.
-
-    Used for rough content-size comparisons in context trimming.
-    For accurate token counts, use response.usage.input_tokens from the API.
-    """
-    total = 0
-    for m in messages:
-        if isinstance(m, (SystemMessage, UserMessage)):
-            total += len(m.content or "")
-        elif isinstance(m, AssistantMessage):
-            total += len(m.content or "")
-            for tc in m.tool_calls:
-                total += len(tc.name) + len(str(tc.arguments))
-        elif isinstance(m, ToolResultMessage):
-            total += len(m.content or "")
-    return total
-
-
 def _format_validation_error(tool_name: str, exc: ValidationError, tool: Tool | None = None) -> str:
     """Format a Pydantic ValidationError into a structured message for the LLM."""
     error_lines: list[str] = [f"Validation error for {tool_name}:"]
@@ -488,7 +469,10 @@ class ClawboltAgent:
                 ),
             )
         except ContextLengthExceededError:
-            trimmed = self._trim_messages(messages)
+            trimmed = self._trim_messages(
+                messages,
+                input_tokens=self._last_input_tokens or MAX_INPUT_TOKENS,
+            )
             logger.warning(
                 "Context length exceeded, trimmed from %d to %d messages and retrying",
                 len(messages),
@@ -523,10 +507,11 @@ class ClawboltAgent:
     ) -> list[AgentMessage]:
         """Trim conversation messages to fit within a token budget.
 
-        When *input_tokens* (from ``response.usage.input_tokens``) is provided
-        the budget check uses the actual API-reported token count.  Otherwise
-        falls back to a conservative content-length approximation (4 chars per
-        token).
+        Requires *input_tokens* (from ``response.usage.input_tokens``) to
+        make accurate trimming decisions using the API-reported token count.
+        When *input_tokens* is ``None`` (e.g. first call in a session),
+        returns messages unchanged and relies on the provider raising
+        ``ContextLengthExceededError`` to trigger reactive trimming.
 
         Keeps the system prompt (first message) and removes the oldest
         conversation messages until the content fits within *target_tokens*.
@@ -538,18 +523,27 @@ class ClawboltAgent:
         Dropped messages are summarized and injected as a context note so
         the LLM retains awareness of what was discussed.
         """
-        if len(messages) <= 2:
+        if input_tokens is None or len(messages) <= 2:
             return messages
 
+        def _content_length(msgs: list[AgentMessage]) -> int:
+            """Return total character count (used only for proportional scaling)."""
+            total = 0
+            for m in msgs:
+                if isinstance(m, (SystemMessage, UserMessage)):
+                    total += len(m.content or "")
+                elif isinstance(m, AssistantMessage):
+                    total += len(m.content or "")
+                    for tc in m.tool_calls:
+                        total += len(tc.name) + len(str(tc.arguments))
+                elif isinstance(m, ToolResultMessage):
+                    total += len(m.content or "")
+            return total
+
         def _tokens_for(msgs: list[AgentMessage]) -> int:
-            """Return actual or approximate token count for *msgs*."""
-            if input_tokens is not None:
-                # Scale the known input_tokens by the content-length ratio
-                # between *msgs* and the original *messages*.
-                orig_len = _total_content_length(messages) or 1
-                return int(input_tokens * _total_content_length(msgs) / orig_len)
-            # Fallback: conservative 4 chars/token approximation.
-            return _total_content_length(msgs) // 4
+            """Scale the known input_tokens by the content-length ratio."""
+            orig_len = _content_length(messages) or 1
+            return int(input_tokens * _content_length(msgs) / orig_len)
 
         if _tokens_for(messages) <= target_tokens:
             return messages
