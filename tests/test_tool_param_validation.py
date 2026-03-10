@@ -26,7 +26,7 @@ from backend.app.agent.tools.memory_tools import (
     SaveFactParams,
 )
 from backend.app.agent.tools.messaging_tools import SendMediaReplyParams, SendReplyParams
-from backend.app.agent.tools.profile_tools import UpdateProfileParams
+from backend.app.agent.tools.workspace_tools import DeleteFileParams
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -96,9 +96,9 @@ def test_checklist_tool_param_models_exist() -> None:
     assert issubclass(RemoveChecklistItemParams, BaseModel)
 
 
-def test_profile_tool_param_models_exist() -> None:
-    """Profile tool param models should be importable and valid BaseModels."""
-    assert issubclass(UpdateProfileParams, BaseModel)
+def test_delete_file_param_model_exists() -> None:
+    """DeleteFileParams should be importable and a valid BaseModel."""
+    assert issubclass(DeleteFileParams, BaseModel)
 
 
 def test_file_tool_param_models_exist() -> None:
@@ -344,21 +344,10 @@ async def test_agent_validation_wrong_type_returns_field_error(
     assert "Validation error for typed_tool" in error_result
 
 
-def test_update_profile_params_accepts_partial_update() -> None:
-    """UpdateProfileParams should accept partial updates with all fields optional."""
-    p = UpdateProfileParams(name="Jane Doe")
-    assert p.name == "Jane Doe"
-    assert p.assistant_name is None
-
-
-def test_update_profile_params_accepts_all_fields() -> None:
-    """UpdateProfileParams should accept all fields together."""
-    p = UpdateProfileParams(
-        name="Jane Doe",
-        assistant_name="Bolt",
-    )
-    assert p.name == "Jane Doe"
-    assert p.assistant_name == "Bolt"
+def test_delete_file_params_accepts_valid_path() -> None:
+    """DeleteFileParams should accept a valid path."""
+    p = DeleteFileParams(path="BOOTSTRAP.md")
+    assert p.path == "BOOTSTRAP.md"
 
 
 # ---------------------------------------------------------------------------

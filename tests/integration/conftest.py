@@ -34,7 +34,6 @@ def integration_user() -> UserData:
     return asyncio.get_event_loop().run_until_complete(
         store.create(
             user_id="integration-test-user",
-            name="Integration Test User",
             phone="+15559999999",
         )
     )
@@ -47,7 +46,6 @@ def onboarded_user() -> UserData:
     return asyncio.get_event_loop().run_until_complete(
         store.create(
             user_id="heartbeat-integration-user",
-            name="Mike the Plumber",
             phone="+15559990000",
             onboarding_complete=True,
         )

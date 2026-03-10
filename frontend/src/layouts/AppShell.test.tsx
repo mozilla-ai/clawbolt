@@ -20,11 +20,11 @@ beforeEach(() => {
     new Response(JSON.stringify({
       id: 1,
       user_id: 'local@clawbolt.local',
-      name: 'Test User',
       phone: '555-0100',
       timezone: 'America/Los_Angeles',
-      assistant_name: 'Claw',
       soul_text: '',
+      user_text: '',
+      checklist_text: '',
       preferred_channel: 'telegram',
       channel_identifier: '',
       heartbeat_opt_in: true,

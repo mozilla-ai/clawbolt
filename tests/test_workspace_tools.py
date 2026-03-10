@@ -180,10 +180,74 @@ async def test_edit_file_not_found(test_user: UserData) -> None:
 
 
 def test_workspace_tools_registered(test_user: UserData) -> None:
-    """create_workspace_tools should return read, write, and edit tools."""
+    """create_workspace_tools should return read, write, edit, and delete tools."""
     tools = create_workspace_tools(test_user.id)
     names = [t.name for t in tools]
     assert "read_file" in names
     assert "write_file" in names
     assert "edit_file" in names
-    assert len(tools) == 3
+    assert "delete_file" in names
+    assert len(tools) == 4
+
+
+# --- delete_file tests ---
+
+
+@pytest.mark.asyncio()
+async def test_delete_file_success(test_user: UserData) -> None:
+    """delete_file should remove the file."""
+    cdir = _user_dir(test_user)
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "BOOTSTRAP.md").write_text("bootstrap content\n", encoding="utf-8")
+
+    delete_fn = _get_tool_fn(test_user.id, "delete_file")
+    result = await delete_fn(path="BOOTSTRAP.md")
+    assert result.is_error is False
+    assert "Deleted" in result.content
+    assert not (cdir / "BOOTSTRAP.md").exists()
+
+
+@pytest.mark.asyncio()
+async def test_delete_file_not_found(test_user: UserData) -> None:
+    """delete_file should return error for missing file."""
+    delete_fn = _get_tool_fn(test_user.id, "delete_file")
+    result = await delete_fn(path="NONEXISTENT.md")
+    assert result.is_error is True
+    assert "not found" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_delete_file_protected(test_user: UserData) -> None:
+    """delete_file should reject protected files."""
+    delete_fn = _get_tool_fn(test_user.id, "delete_file")
+    for protected in ("USER.md", "SOUL.md", "HEARTBEAT.md"):
+        result = await delete_fn(path=protected)
+        assert result.is_error is True
+        assert "protected" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_delete_file_protected_via_path_variant(test_user: UserData) -> None:
+    """delete_file should catch protected files even with path variations like ./USER.md."""
+    delete_fn = _get_tool_fn(test_user.id, "delete_file")
+    for variant in ("./USER.md", "subdir/../SOUL.md"):
+        result = await delete_fn(path=variant)
+        assert result.is_error is True
+        assert "protected" in result.content.lower()
+
+
+@pytest.mark.asyncio()
+async def test_delete_file_rejects_non_markdown(test_user: UserData) -> None:
+    """delete_file should reject non-markdown files."""
+    delete_fn = _get_tool_fn(test_user.id, "delete_file")
+    result = await delete_fn(path="user.json")
+    assert result.is_error is True
+    assert ".md" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_delete_file_rejects_path_traversal(test_user: UserData) -> None:
+    """delete_file should reject paths that escape the user directory."""
+    delete_fn = _get_tool_fn(test_user.id, "delete_file")
+    result = await delete_fn(path="../../etc/hack.md")
+    assert result.is_error is True

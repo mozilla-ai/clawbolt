@@ -28,13 +28,14 @@ def _isolate_file_stores(tmp_path: object) -> Generator[None]:
 async def test_user(tmp_path: object) -> UserData:
     """Create a test user via the file store."""
     store = get_user_store()
-    return await store.create(
+    user = await store.create(
         user_id="test-user-001",
-        name="Test User",
         phone="+15551234567",
         channel_identifier="123456789",
         preferred_channel="telegram",
+        onboarding_complete=True,
     )
+    return user
 
 
 @pytest.fixture(autouse=True)

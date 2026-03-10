@@ -135,7 +135,6 @@ def test_get_tool_config(client: TestClient) -> None:
     # Verify known factories are present
     names = {t["name"] for t in tools}
     assert "workspace" in names
-    assert "profile" in names
     assert "memory" in names
 
 

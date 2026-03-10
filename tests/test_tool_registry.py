@@ -12,7 +12,6 @@ EXPECTED_TOOL_MODULES: set[str] = {
     "backend.app.agent.tools.messaging_tools",
     "backend.app.agent.tools.estimate_tools",
     "backend.app.agent.tools.checklist_tools",
-    "backend.app.agent.tools.profile_tools",
     "backend.app.agent.tools.file_tools",
     "backend.app.agent.tools.workspace_tools",
 }
