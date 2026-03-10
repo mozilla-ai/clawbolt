@@ -39,7 +39,7 @@ import json
 import logging
 import re
 from pathlib import Path
-from typing import Any
+from typing import Any, Generic, TypeVar
 
 from pydantic import BaseModel, Field
 
@@ -336,6 +336,74 @@ def make_client_slug(
 
 
 # ---------------------------------------------------------------------------
+# Base store classes
+# ---------------------------------------------------------------------------
+
+T = TypeVar("T", bound=BaseModel)
+
+
+class PerUserStore:
+    """Base for per-user file-backed stores. Provides user_id and an asyncio lock."""
+
+    def __init__(self, user_id: int) -> None:
+        self.user_id = user_id
+        self._lock = asyncio.Lock()
+
+
+class JsonListStore(PerUserStore, Generic[T]):
+    """Base for stores backed by a single JSON list file.
+
+    Subclasses must set ``_model_class`` and define the ``_path`` property.
+    """
+
+    _model_class: type[T]
+    _id_field: str = "id"
+
+    @property
+    def _path(self) -> Path:
+        raise NotImplementedError
+
+    def _load_all(self) -> list[dict[str, Any]]:
+        return _read_json(self._path, [])
+
+    async def list_all(self) -> list[T]:
+        """List all records."""
+        return [self._model_class.model_validate(item) for item in self._load_all()]
+
+    async def get(self, item_id: str) -> T | None:
+        """Get a record by ID."""
+        for item in self._load_all():
+            if str(item.get(self._id_field, "")) == item_id:
+                return self._model_class.model_validate(item)
+        return None
+
+    async def update(self, item_id: str, **fields: Any) -> T | None:
+        """Update a record by ID. Returns the updated record or None."""
+        async with self._lock:
+            items = self._load_all()
+            for i, item in enumerate(items):
+                if str(item.get(self._id_field, "")) == item_id:
+                    for k, v in fields.items():
+                        if v is not None:
+                            item[k] = v
+                    items[i] = item
+                    _write_json(self._path, items)
+                    return self._model_class.model_validate(item)
+            return None
+
+    async def delete(self, item_id: str) -> bool:
+        """Delete a record by ID. Returns True if found and deleted."""
+        async with self._lock:
+            items = self._load_all()
+            original_len = len(items)
+            items = [i for i in items if str(i.get(self._id_field, "")) != item_id]
+            if len(items) == original_len:
+                return False
+            _write_json(self._path, items)
+            return True
+
+
+# ---------------------------------------------------------------------------
 # UserStore
 # ---------------------------------------------------------------------------
 
@@ -552,12 +620,8 @@ _MEMORY_LINE_RE = re.compile(r"^-\s+(.+?):\s+(.+)\s+\(confidence:\s+([\d.]+)\)\s
 _CATEGORY_RE = re.compile(r"^##\s+(.+)$")
 
 
-class FileMemoryStore:
+class FileMemoryStore(PerUserStore):
     """File-based memory storage using MEMORY.md. Replaces Memory model."""
-
-    def __init__(self, user_id: int) -> None:
-        self.user_id = user_id
-        self._lock = asyncio.Lock()
 
     @property
     def _memory_path(self) -> Path:
@@ -748,12 +812,8 @@ class FileMemoryStore:
 # ---------------------------------------------------------------------------
 
 
-class FileSessionStore:
+class FileSessionStore(PerUserStore):
     """File-based session storage using JSONL files. Replaces Conversation + Message models."""
-
-    def __init__(self, user_id: int) -> None:
-        self.user_id = user_id
-        self._lock = asyncio.Lock()
 
     @property
     def _sessions_dir(self) -> Path:
@@ -935,14 +995,14 @@ class FileSessionStore:
                             setattr(msg, k, v)
                     break
 
-    def get_last_inbound_timestamp(self) -> datetime.datetime | None:
-        """Scan sessions for the most recent inbound message timestamp."""
+    def _get_last_timestamp(self, direction: str) -> datetime.datetime | None:
+        """Scan sessions for the most recent message timestamp in *direction*."""
         latest: datetime.datetime | None = None
         for path in self._list_session_files():
             for line in _read_jsonl(path):
                 if line.get("_type") == "metadata":
                     continue
-                if line.get("direction") != "inbound":
+                if line.get("direction") != direction:
                     continue
                 try:
                     ts = datetime.datetime.fromisoformat(line["timestamp"])
@@ -954,54 +1014,28 @@ class FileSessionStore:
                     pass
         return latest
 
+    def get_last_inbound_timestamp(self) -> datetime.datetime | None:
+        """Scan sessions for the most recent inbound message timestamp."""
+        return self._get_last_timestamp("inbound")
+
     def get_last_outbound_timestamp(self) -> datetime.datetime | None:
         """Scan sessions for the most recent outbound message timestamp."""
-        latest: datetime.datetime | None = None
-        for path in self._list_session_files():
-            for line in _read_jsonl(path):
-                if line.get("_type") == "metadata":
-                    continue
-                if line.get("direction") != "outbound":
-                    continue
-                try:
-                    ts = datetime.datetime.fromisoformat(line["timestamp"])
-                    if ts.tzinfo is None:
-                        ts = ts.replace(tzinfo=datetime.UTC)
-                    if latest is None or ts > latest:
-                        latest = ts
-                except (ValueError, KeyError, TypeError):
-                    pass
-        return latest
+        return self._get_last_timestamp("outbound")
 
     async def update_compaction_seq(self, session: SessionState, seq: int) -> None:
         """Update the last_compacted_seq in session metadata."""
         self._write_metadata(session.session_id, {"last_compacted_seq": seq})
         session.last_compacted_seq = seq
 
-    def get_recent_messages(self, count: int = 5) -> list[StoredMessage]:
-        """Get the most recent messages across all sessions."""
-        all_msgs: list[StoredMessage] = []
-        for path in reversed(self._list_session_files()):
-            lines = _read_jsonl(path)
-            for line in lines:
-                if line.get("_type") == "metadata":
-                    continue
-                all_msgs.append(StoredMessage.model_validate(line))
-            if len(all_msgs) >= count:
-                break
-        # Sort by timestamp descending, take the most recent
-        all_msgs.sort(key=lambda m: m.timestamp, reverse=True)
-        return list(reversed(all_msgs[:count]))
-
-    def get_other_session_messages(
+    def _collect_messages(
         self,
-        exclude_session_id: str,
         count: int = 5,
+        exclude_session_id: str | None = None,
     ) -> list[StoredMessage]:
-        """Get recent messages from sessions other than *exclude_session_id*."""
+        """Collect the most recent messages, optionally excluding a session."""
         all_msgs: list[StoredMessage] = []
         for path in reversed(self._list_session_files()):
-            if path.stem == exclude_session_id:
+            if exclude_session_id and path.stem == exclude_session_id:
                 continue
             lines = _read_jsonl(path)
             for line in lines:
@@ -1013,37 +1047,32 @@ class FileSessionStore:
         all_msgs.sort(key=lambda m: m.timestamp, reverse=True)
         return list(reversed(all_msgs[:count]))
 
+    def get_recent_messages(self, count: int = 5) -> list[StoredMessage]:
+        """Get the most recent messages across all sessions."""
+        return self._collect_messages(count)
+
+    def get_other_session_messages(
+        self,
+        exclude_session_id: str,
+        count: int = 5,
+    ) -> list[StoredMessage]:
+        """Get recent messages from sessions other than *exclude_session_id*."""
+        return self._collect_messages(count, exclude_session_id)
+
 
 # ---------------------------------------------------------------------------
 # ClientStore
 # ---------------------------------------------------------------------------
 
 
-class ClientStore:
+class ClientStore(JsonListStore[ClientData]):
     """File-based client storage. Replaces Client model."""
 
-    def __init__(self, user_id: int) -> None:
-        self.user_id = user_id
-        self._lock = asyncio.Lock()
+    _model_class = ClientData
 
     @property
     def _path(self) -> Path:
         return _user_dir(self.user_id) / "clients.json"
-
-    def _load_all(self) -> list[dict[str, Any]]:
-        return _read_json(self._path, [])
-
-    async def list_all(self) -> list[ClientData]:
-        """List all clients."""
-        items = self._load_all()
-        return [ClientData.model_validate(item) for item in items]
-
-    async def get(self, client_id: str) -> ClientData | None:
-        """Get a client by ID (slug)."""
-        for item in self._load_all():
-            if item.get("id") == client_id:
-                return ClientData.model_validate(item)
-        return None
 
     async def create(
         self,
@@ -1074,38 +1103,13 @@ class ClientStore:
             _write_json(self._path, items)
             return client
 
-    async def update(self, client_id: str, **fields: Any) -> ClientData | None:
-        """Update a client's fields."""
-        async with self._lock:
-            items = self._load_all()
-            for i, item in enumerate(items):
-                if item.get("id") == client_id:
-                    for k, v in fields.items():
-                        if v is not None:
-                            item[k] = v
-                    items[i] = item
-                    _write_json(self._path, items)
-                    return ClientData.model_validate(item)
-            return None
-
-    async def delete(self, client_id: str) -> bool:
-        """Delete a client. Returns True if found and deleted."""
-        async with self._lock:
-            items = self._load_all()
-            original_len = len(items)
-            items = [i for i in items if i.get("id") != client_id]
-            if len(items) == original_len:
-                return False
-            _write_json(self._path, items)
-            return True
-
 
 # ---------------------------------------------------------------------------
 # EstimateStore
 # ---------------------------------------------------------------------------
 
 
-class EstimateStore:
+class EstimateStore(PerUserStore):
     """File-based estimate storage. Replaces Estimate + EstimateLineItem models.
 
     Estimates are organized under client subdirectories::
@@ -1116,10 +1120,6 @@ class EstimateStore:
           unsorted/
             EST-0003.json
     """
-
-    def __init__(self, user_id: int) -> None:
-        self.user_id = user_id
-        self._lock = asyncio.Lock()
 
     @property
     def _estimates_dir(self) -> Path:
@@ -1239,23 +1239,14 @@ class EstimateStore:
 # ---------------------------------------------------------------------------
 
 
-class MediaStore:
+class MediaStore(JsonListStore[MediaData]):
     """File-based media file manifest. Replaces MediaFile model."""
 
-    def __init__(self, user_id: int) -> None:
-        self.user_id = user_id
-        self._lock = asyncio.Lock()
+    _model_class = MediaData
 
     @property
     def _path(self) -> Path:
         return _user_dir(self.user_id) / "media.json"
-
-    def _load_all(self) -> list[dict[str, Any]]:
-        return _read_json(self._path, [])
-
-    async def list_all(self) -> list[MediaData]:
-        """List all media files."""
-        return [MediaData.model_validate(item) for item in self._load_all()]
 
     def _next_media_id(self, items: list[dict[str, Any]]) -> str:
         """Generate the next sequential media ID string."""
@@ -1304,20 +1295,6 @@ class MediaStore:
                 return MediaData.model_validate(item)
         return None
 
-    async def update(self, media_id: str, **fields: Any) -> MediaData | None:
-        """Update a media file record."""
-        async with self._lock:
-            items = self._load_all()
-            for i, item in enumerate(items):
-                if str(item.get("id", "")) == media_id:
-                    for k, v in fields.items():
-                        if v is not None:
-                            item[k] = v
-                    items[i] = item
-                    _write_json(self._path, items)
-                    return MediaData.model_validate(item)
-            return None
-
     async def count_by_path_prefix(self, prefix: str) -> int:
         """Count media files whose storage_path starts with prefix."""
         return sum(
@@ -1330,17 +1307,13 @@ class MediaStore:
 # ---------------------------------------------------------------------------
 
 
-class HeartbeatStore:
+class HeartbeatStore(PerUserStore):
     """File-based heartbeat storage.
 
     Checklist items are stored in ``HEARTBEAT.md`` (the user's markdown
     checklist file), making it the single source of truth for both the
     heartbeat engine and the UI editor.
     """
-
-    def __init__(self, user_id: int) -> None:
-        self.user_id = user_id
-        self._lock = asyncio.Lock()
 
     @property
     def _checklist_md_path(self) -> Path:
@@ -1580,11 +1553,8 @@ class IdempotencyStore:
 # ---------------------------------------------------------------------------
 
 
-class LLMUsageStore:
+class LLMUsageStore(PerUserStore):
     """Append-only LLM usage log. Replaces LLMUsageLog model."""
-
-    def __init__(self, user_id: int) -> None:
-        self.user_id = user_id
 
     @property
     def _path(self) -> Path:
@@ -1615,16 +1585,12 @@ class LLMUsageStore:
 # ---------------------------------------------------------------------------
 
 
-class ToolConfigStore:
+class ToolConfigStore(PerUserStore):
     """File-based storage for per-user tool configuration.
 
     Stores a list of ``ToolConfigEntry`` objects in
     ``data/users/{id}/tool_config.json``.
     """
-
-    def __init__(self, user_id: int) -> None:
-        self.user_id = user_id
-        self._lock = asyncio.Lock()
 
     @property
     def _path(self) -> Path:
