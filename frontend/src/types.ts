@@ -35,6 +35,7 @@ export interface SessionSummary {
   start_time: string;
   message_count: number;
   last_message_preview: string;
+  channel: string;
 }
 
 export interface SessionListResponse {
@@ -62,6 +63,7 @@ export interface SessionDetail {
   created_at: string;
   last_message_at: string;
   is_active: boolean;
+  channel: string;
   messages: SessionMessage[];
 }
 

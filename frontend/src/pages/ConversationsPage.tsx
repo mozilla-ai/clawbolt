@@ -7,6 +7,15 @@ import Spinner from '@/components/ui/spinner';
 import api from '@/api';
 import type { SessionSummary, SessionDetail, SessionMessage } from '@/types';
 
+/** Map internal channel identifiers to user-friendly labels. */
+function channelLabel(channel: string): string {
+  switch (channel) {
+    case 'telegram': return 'Telegram';
+    case 'webchat': return 'Web Chat';
+    default: return channel;
+  }
+}
+
 export default function ConversationsPage() {
   const { sessionId } = useParams<{ sessionId: string }>();
 
@@ -83,7 +92,10 @@ function SessionListView() {
                       {new Date(s.start_time).toLocaleString()}
                     </p>
                   </div>
-                  <Badge className="ml-3 shrink-0">{s.message_count} msgs</Badge>
+                  <div className="ml-3 flex items-center gap-2 shrink-0">
+                    {s.channel && <Badge variant="outline">{channelLabel(s.channel)}</Badge>}
+                    <Badge>{s.message_count} msgs</Badge>
+                  </div>
                 </div>
               </Card>
             ))}
@@ -157,6 +169,7 @@ function SessionDetailView({ sessionId }: { sessionId: string }) {
         <>
           <div className="mb-4 flex items-center gap-3">
             <h2 className="text-xl font-semibold">Conversation</h2>
+            {session.channel && <Badge variant="outline">{channelLabel(session.channel)}</Badge>}
             {session.is_active && <Badge>Active</Badge>}
             <Button
               variant="secondary"
