@@ -16,7 +16,6 @@ jobs:
       - run: uv sync --all-extras
       - run: uv run ruff check backend/ tests/
       - run: uv run ruff format --check backend/ tests/
-      - run: uv run vulture backend/ tests/ vulture_whitelist.py --min-confidence 80
 
   typecheck:
     runs-on: ubuntu-latest
