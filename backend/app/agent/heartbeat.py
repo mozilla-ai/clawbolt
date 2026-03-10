@@ -34,7 +34,7 @@ from backend.app.agent.file_store import (
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt
 from backend.app.agent.tools.names import ToolName
-from backend.app.channels import get_channel, get_default_channel
+from backend.app.channels import get_channel, get_default_channel, get_manager
 from backend.app.config import settings
 from backend.app.enums import (
     ChecklistSchedule,
@@ -584,6 +584,56 @@ async def run_heartbeat_for_user(
 
 
 # ---------------------------------------------------------------------------
+# Channel selection for proactive messages
+# ---------------------------------------------------------------------------
+
+# Channels that cannot deliver proactive (push) messages because the user
+# must be actively connected to receive them.  Heartbeat messages sent via
+# these channels would silently vanish.  Inspired by nanobot's
+# ``_pick_heartbeat_target()`` which skips internal/non-routable channels.
+_NON_PUSHABLE_CHANNELS: frozenset[str] = frozenset({"webchat"})
+
+
+def _pick_heartbeat_channel(user: UserData) -> MessagingService:
+    """Select the best channel for delivering a heartbeat message.
+
+    Prefers the user's ``preferred_channel`` when it can actually push
+    messages.  When the preferred channel is non-pushable (e.g. webchat),
+    falls back to the first registered pushable channel.  If no pushable
+    channel is available at all, returns the default channel as a last
+    resort (matching the previous behavior).
+    """
+    preferred = user.preferred_channel
+
+    # Happy path: preferred channel is pushable
+    if preferred not in _NON_PUSHABLE_CHANNELS:
+        try:
+            return get_channel(preferred)
+        except KeyError:
+            pass
+
+    # Preferred channel is non-pushable or not registered: find the
+    # first registered channel that can deliver proactive messages.
+    manager = get_manager()
+    for name, channel in manager.channels.items():
+        if name not in _NON_PUSHABLE_CHANNELS:
+            logger.debug(
+                "Heartbeat for user %d: preferred channel %r is non-pushable, falling back to %r",
+                user.id,
+                preferred,
+                name,
+            )
+            return channel
+
+    # No pushable channels registered at all: fall back to default
+    logger.warning(
+        "Heartbeat for user %d: no pushable channels registered, using default channel",
+        user.id,
+    )
+    return get_default_channel()
+
+
+# ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
 
@@ -645,12 +695,11 @@ class HeartbeatScheduler:
             """Process a single user."""
             async with semaphore:
                 try:
-                    # Route to the user's preferred channel, falling
-                    # back to the first registered channel.
-                    try:
-                        messaging_service: MessagingService = get_channel(user.preferred_channel)
-                    except KeyError:
-                        messaging_service = get_default_channel()
+                    # Pick a channel that can actually push messages to
+                    # the user (e.g. Telegram), skipping non-pushable
+                    # channels like webchat where the user must be
+                    # actively connected to receive anything.
+                    messaging_service = _pick_heartbeat_channel(user)
 
                     await run_heartbeat_for_user(
                         user=user,
