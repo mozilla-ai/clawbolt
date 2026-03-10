@@ -118,6 +118,7 @@ class SessionSummary(BaseModel):
     start_time: str
     message_count: int
     last_message_preview: str = ""
+    channel: str = ""
 
 
 class SessionListResponse(BaseModel):
@@ -141,6 +142,7 @@ class SessionDetailResponse(BaseModel):
     created_at: str
     last_message_at: str
     is_active: bool
+    channel: str = ""
     messages: list[SessionMessage]
 
 

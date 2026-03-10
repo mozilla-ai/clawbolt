@@ -269,6 +269,7 @@ async def process_inbound_from_bus(
                 body=inbound.text,
                 external_message_id=inbound.external_message_id or "",
                 media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
+                channel=inbound.channel,
             )
             return
 
@@ -283,6 +284,7 @@ async def process_inbound_from_bus(
         body=inbound.text,
         external_message_id=inbound.external_message_id or "",
         media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
+        channel=inbound.channel,
     )
 
     if settings.message_batch_window_ms > 0:

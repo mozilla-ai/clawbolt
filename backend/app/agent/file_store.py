@@ -108,6 +108,7 @@ class SessionMetadata(BaseModel):
     last_message_at: str = ""
     is_active: bool = True
     last_compacted_seq: int = 0
+    channel: str = ""
 
 
 class SessionState(BaseModel):
@@ -120,6 +121,7 @@ class SessionState(BaseModel):
     created_at: str = ""
     last_message_at: str = ""
     last_compacted_seq: int = 0
+    channel: str = ""
 
 
 class ClientData(BaseModel):
@@ -772,6 +774,7 @@ class FileSessionStore:
             created_at=metadata.get("created_at", ""),
             last_message_at=metadata.get("last_message_at", ""),
             last_compacted_seq=metadata.get("last_compacted_seq", 0),
+            channel=metadata.get("channel", ""),
         )
 
     def _write_metadata(self, session_id: str, meta: dict[str, Any]) -> None:
@@ -854,6 +857,7 @@ class FileSessionStore:
         media_urls_json: str = "[]",
         processed_context: str = "",
         tool_interactions_json: str = "",
+        channel: str = "",
     ) -> StoredMessage:
         """Append a message to the session JSONL file."""
         async with self._lock:
@@ -871,8 +875,12 @@ class FileSessionStore:
             )
             _append_jsonl(self._session_path(session.session_id), msg.model_dump())
             session.messages.append(msg)
-            # Update last_message_at
-            self._write_metadata(session.session_id, {"last_message_at": now})
+            # Update last_message_at and channel (if provided)
+            meta_update: dict[str, str] = {"last_message_at": now}
+            if channel:
+                meta_update["channel"] = channel
+                session.channel = channel
+            self._write_metadata(session.session_id, meta_update)
             session.last_message_at = now
             return msg
 

@@ -9,24 +9,28 @@ from backend.app.agent.file_store import UserData
 from backend.app.config import settings
 
 
-def _create_session(user: UserData, session_id: str, messages: list[dict[str, object]]) -> None:
+def _create_session(
+    user: UserData,
+    session_id: str,
+    messages: list[dict[str, object]],
+    channel: str = "",
+) -> None:
     """Create a test session JSONL file."""
     base = Path(settings.data_dir) / str(user.id) / "sessions"
     base.mkdir(parents=True, exist_ok=True)
     path = base / f"{session_id}.jsonl"
-    lines = [
-        json.dumps(
-            {
-                "_type": "metadata",
-                "session_id": session_id,
-                "user_id": user.id,
-                "created_at": "2025-01-15T10:00:00+00:00",
-                "last_message_at": "2025-01-15T10:05:00+00:00",
-                "is_active": True,
-                "last_compacted_seq": 0,
-            }
-        )
-    ]
+    metadata: dict[str, object] = {
+        "_type": "metadata",
+        "session_id": session_id,
+        "user_id": user.id,
+        "created_at": "2025-01-15T10:00:00+00:00",
+        "last_message_at": "2025-01-15T10:05:00+00:00",
+        "is_active": True,
+        "last_compacted_seq": 0,
+    }
+    if channel:
+        metadata["channel"] = channel
+    lines = [json.dumps(metadata)]
     for msg in messages:
         lines.append(json.dumps(msg))
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -139,3 +143,49 @@ def test_list_sessions_pagination(client: TestClient, test_user: UserData) -> No
     data = resp.json()
     assert data["total"] == 5
     assert len(data["sessions"]) == 2
+
+
+def test_session_list_includes_channel(client: TestClient, test_user: UserData) -> None:
+    """Session list should include the channel field when present in metadata."""
+    _create_session(
+        test_user,
+        "1_400",
+        [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+        channel="telegram",
+    )
+    resp = client.get("/api/user/sessions")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sessions"][0]["channel"] == "telegram"
+
+
+def test_session_detail_includes_channel(client: TestClient, test_user: UserData) -> None:
+    """Session detail should include the channel field when present in metadata."""
+    _create_session(
+        test_user,
+        "1_500",
+        [{"direction": "inbound", "body": "Hello", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+        channel="webchat",
+    )
+    resp = client.get("/api/user/sessions/1_500")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["channel"] == "webchat"
+
+
+def test_session_channel_defaults_empty(client: TestClient, test_user: UserData) -> None:
+    """Sessions without channel metadata should return an empty string."""
+    _create_session(
+        test_user,
+        "1_600",
+        [{"direction": "inbound", "body": "Hey", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+    )
+    resp = client.get("/api/user/sessions")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["sessions"][0]["channel"] == ""
+
+    resp = client.get("/api/user/sessions/1_600")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["channel"] == ""

@@ -46,6 +46,7 @@ async def list_sessions(
                 start_time=session.created_at or session.last_message_at,
                 message_count=len(session.messages),
                 last_message_preview=preview,
+                channel=session.channel,
             )
         )
 
@@ -90,5 +91,6 @@ async def get_session(
         created_at=session.created_at,
         last_message_at=session.last_message_at,
         is_active=session.is_active,
+        channel=session.channel,
         messages=messages,
     )
