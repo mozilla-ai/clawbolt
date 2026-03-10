@@ -41,7 +41,6 @@ from backend.app.enums import (
     MessageDirection,
 )
 from backend.app.services.llm_usage import log_llm_usage
-from backend.app.services.messaging import MessagingService
 
 logger = logging.getLogger(__name__)
 
@@ -407,24 +406,32 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
 async def evaluate_heartbeat_need(
     user: UserData,
     flags: list[str],
-    messaging_service: MessagingService | None = None,
+    channel: str = "",
+    chat_id: str = "",
 ) -> HeartbeatAction:
     """Ask the LLM to compose a message based on flagged items.
 
     Uses the compose_message tool calling protocol instead of raw JSON parsing.
     If the LLM does not call the tool, defaults to no_action.
-    Sends a typing indicator before the LLM call when a messaging_service is provided.
+    Sends a typing indicator before the LLM call when a channel is provided.
     """
     prompt = await build_heartbeat_context(user, flags)
 
-    # Send typing indicator before LLM call
-    if messaging_service:
-        to_address = user.channel_identifier or user.phone
-        if to_address:
-            try:
-                await messaging_service.send_typing_indicator(to=to_address)
-            except Exception:
-                logger.debug("Failed to send heartbeat typing indicator to %s", to_address)
+    # Send typing indicator before LLM call via the bus
+    if channel and chat_id:
+        try:
+            from backend.app.bus import OutboundMessage, message_bus
+
+            await message_bus.publish_outbound(
+                OutboundMessage(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content="",
+                    is_typing_indicator=True,
+                )
+            )
+        except Exception:
+            logger.debug("Failed to send heartbeat typing indicator to %s", chat_id)
 
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
@@ -474,7 +481,8 @@ async def get_daily_heartbeat_count(user_id: int) -> int:
 
 async def run_heartbeat_for_user(
     user: UserData,
-    messaging_service: MessagingService,
+    channel: str,
+    chat_id: str,
     max_daily: int,
 ) -> HeartbeatAction | None:
     """Full heartbeat pipeline for a single user.
@@ -520,16 +528,23 @@ async def run_heartbeat_for_user(
 
     # Something was flagged -- escalate to LLM for message composition
     action = await evaluate_heartbeat_need(
-        user, check_result.flags, messaging_service=messaging_service
+        user, check_result.flags, channel=channel, chat_id=chat_id
     )
 
     if action.action_type != "send_message" or not action.message:
         return action
 
-    # Send message
-    to_address = user.channel_identifier or user.phone
+    # Send message via the bus
     try:
-        await messaging_service.send_text(to=to_address, body=action.message)
+        from backend.app.bus import OutboundMessage, message_bus
+
+        await message_bus.publish_outbound(
+            OutboundMessage(
+                channel=channel,
+                chat_id=chat_id,
+                content=action.message,
+            )
+        )
     except Exception:
         logger.exception("Heartbeat message failed for user %d", user.id)
         return action
@@ -561,28 +576,29 @@ async def run_heartbeat_for_user(
 _NON_PUSHABLE_CHANNELS: frozenset[str] = frozenset({"webchat"})
 
 
-def _pick_heartbeat_channel(user: UserData) -> MessagingService:
-    """Select the best channel for delivering a heartbeat message.
+def _pick_heartbeat_channel(user: UserData) -> str:
+    """Select the best channel name for delivering a heartbeat message.
 
     Prefers the user's ``preferred_channel`` when it can actually push
     messages.  When the preferred channel is non-pushable (e.g. webchat),
     falls back to the first registered pushable channel.  If no pushable
-    channel is available at all, returns the default channel as a last
-    resort (matching the previous behavior).
+    channel is available at all, returns the default channel's name as a
+    last resort (matching the previous behavior).
     """
     preferred = user.preferred_channel
 
     # Happy path: preferred channel is pushable
     if preferred not in _NON_PUSHABLE_CHANNELS:
         try:
-            return get_channel(preferred)
+            get_channel(preferred)
+            return preferred
         except KeyError:
             pass
 
     # Preferred channel is non-pushable or not registered: find the
     # first registered channel that can deliver proactive messages.
     manager = get_manager()
-    for name, channel in manager.channels.items():
+    for name in manager.channels:
         if name not in _NON_PUSHABLE_CHANNELS:
             logger.debug(
                 "Heartbeat for user %d: preferred channel %r is non-pushable, falling back to %r",
@@ -590,14 +606,14 @@ def _pick_heartbeat_channel(user: UserData) -> MessagingService:
                 preferred,
                 name,
             )
-            return channel
+            return name
 
     # No pushable channels registered at all: fall back to default
     logger.warning(
         "Heartbeat for user %d: no pushable channels registered, using default channel",
         user.id,
     )
-    return get_default_channel()
+    return get_default_channel().name
 
 
 # ---------------------------------------------------------------------------
@@ -666,11 +682,13 @@ class HeartbeatScheduler:
                     # the user (e.g. Telegram), skipping non-pushable
                     # channels like webchat where the user must be
                     # actively connected to receive anything.
-                    messaging_service = _pick_heartbeat_channel(user)
+                    channel_name = _pick_heartbeat_channel(user)
+                    chat_id = user.channel_identifier or user.phone
 
                     await run_heartbeat_for_user(
                         user=user,
-                        messaging_service=messaging_service,
+                        channel=channel_name,
+                        chat_id=chat_id,
                         max_daily=settings.heartbeat_max_daily_messages,
                     )
                 except Exception:

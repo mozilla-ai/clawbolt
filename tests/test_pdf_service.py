@@ -5,7 +5,7 @@ from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_
 
 def _make_estimate_data(**kwargs: object) -> EstimatePDFData:
     """Create test estimate data with defaults."""
-    defaults = {
+    defaults: dict[str, object] = {
         "owner_name": "Mike Chen",
         "owner_phone": "(555) 123-4567",
         "owner_trade": "General User",

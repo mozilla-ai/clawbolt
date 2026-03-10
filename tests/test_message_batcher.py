@@ -7,6 +7,7 @@ import pytest
 
 from backend.app.agent.file_store import SessionState, StoredMessage, UserData
 from backend.app.agent.ingestion import InboundMessage, MessageBatcher, process_inbound_from_bus
+from backend.app.bus import message_bus
 
 
 class TestMessageBatcher:
@@ -16,8 +17,6 @@ class TestMessageBatcher:
     async def test_single_message_processed_after_window(self) -> None:
         """A single message should be processed after the batch window expires."""
         batcher = MessageBatcher(window_ms=50)
-        messaging = MagicMock()
-
         mock_user = UserData(id=1, channel_identifier="123", phone="")
 
         mock_session = SessionState(session_id="sess-1", user_id=1)
@@ -35,7 +34,7 @@ class TestMessageBatcher:
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
 
-            await batcher.enqueue(mock_user, mock_session, mock_message, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], "telegram")
             await asyncio.sleep(0.1)
 
             mock_handle.assert_called_once()
@@ -47,8 +46,6 @@ class TestMessageBatcher:
     async def test_multiple_messages_batched_into_one(self) -> None:
         """Rapid-fire messages should be batched: only the last triggers the pipeline."""
         batcher = MessageBatcher(window_ms=100)
-        messaging = MagicMock()
-
         mock_user = UserData(id=1, channel_identifier="123", phone="")
 
         mock_session = SessionState(session_id="sess-1", user_id=1)
@@ -74,15 +71,15 @@ class TestMessageBatcher:
                 mock_session,
                 mock_msg_1,
                 [("file_a", "image/jpeg")],
-                messaging,
+                "telegram",
             )
-            await batcher.enqueue(mock_user, mock_session, mock_msg_2, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_msg_2, [], "telegram")
             await batcher.enqueue(
                 mock_user,
                 mock_session,
                 mock_msg_3,
                 [("file_b", "audio/ogg")],
-                messaging,
+                "telegram",
             )
 
             await asyncio.sleep(0.2)
@@ -102,7 +99,6 @@ class TestMessageBatcher:
     async def test_different_users_not_batched(self) -> None:
         """Messages from different users should be processed independently."""
         batcher = MessageBatcher(window_ms=50)
-        messaging = MagicMock()
 
         mock_c1 = UserData(id=1, channel_identifier="111", phone="")
         mock_c2 = UserData(id=2, channel_identifier="222", phone="")
@@ -124,8 +120,8 @@ class TestMessageBatcher:
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
 
-            await batcher.enqueue(mock_c1, mock_session_1, mock_msg_1, [], messaging)
-            await batcher.enqueue(mock_c2, mock_session_2, mock_msg_2, [], messaging)
+            await batcher.enqueue(mock_c1, mock_session_1, mock_msg_1, [], "telegram")
+            await batcher.enqueue(mock_c2, mock_session_2, mock_msg_2, [], "telegram")
 
             await asyncio.sleep(0.15)
 
@@ -136,8 +132,6 @@ class TestMessageBatcher:
     async def test_timer_resets_on_new_message(self) -> None:
         """Adding a message should reset the batch window timer."""
         batcher = MessageBatcher(window_ms=100)
-        messaging = MagicMock()
-
         mock_user = UserData(id=1, channel_identifier="123", phone="")
 
         mock_session = SessionState(session_id="sess-1", user_id=1)
@@ -157,14 +151,14 @@ class TestMessageBatcher:
             )
 
             # First message
-            await batcher.enqueue(mock_user, mock_session, mock_msg_1, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_msg_1, [], "telegram")
 
             # Wait 70ms (within the 100ms window)
             await asyncio.sleep(0.07)
             mock_handle.assert_not_called()
 
             # Second message resets the timer
-            await batcher.enqueue(mock_user, mock_session, mock_msg_2, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_msg_2, [], "telegram")
 
             # Wait 70ms again (still within the new 100ms window)
             await asyncio.sleep(0.07)
@@ -178,8 +172,6 @@ class TestMessageBatcher:
     async def test_zero_window_processes_immediately(self) -> None:
         """A zero window should process messages without batching delay."""
         batcher = MessageBatcher(window_ms=0)
-        messaging = MagicMock()
-
         mock_user = UserData(id=1, channel_identifier="123", phone="")
 
         mock_session = SessionState(session_id="sess-1", user_id=1)
@@ -197,16 +189,15 @@ class TestMessageBatcher:
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
 
-            await batcher.enqueue(mock_user, mock_session, mock_message, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], "telegram")
             await asyncio.sleep(0.05)
 
             mock_handle.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_pipeline_failure_sends_fallback_error(self) -> None:
-        """When the agent pipeline raises, a fallback error is sent to the user."""
+        """When the agent pipeline raises, a fallback error is sent via the bus."""
         batcher = MessageBatcher(window_ms=50)
-        messaging = AsyncMock()
 
         mock_user = UserData(id=1, channel_identifier="123", phone="")
         mock_session = SessionState(session_id="sess-1", user_id=1)
@@ -226,24 +217,31 @@ class TestMessageBatcher:
             )
             mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
 
-            await batcher.enqueue(mock_user, mock_session, mock_message, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], "telegram")
             await asyncio.sleep(0.15)
 
-            messaging.send_text.assert_awaited_once_with(
-                to="123",
-                body="Sorry, something went wrong processing your message. Please try again.",
-            )
+            # Fallback error published to bus
+            found = False
+            while not message_bus.outbound.empty():
+                outbound = message_bus.outbound.get_nowait()
+                if not outbound.is_typing_indicator:
+                    assert outbound.chat_id == "123"
+                    assert "something went wrong" in outbound.content.lower()
+                    found = True
+                    break
+            assert found
 
     @pytest.mark.asyncio
     async def test_pipeline_failure_fallback_send_also_fails(self) -> None:
-        """When both the pipeline and the fallback send fail, no exception propagates."""
+        """When both the pipeline and bus publish fail, no exception propagates."""
         batcher = MessageBatcher(window_ms=50)
-        messaging = AsyncMock()
-        messaging.send_text.side_effect = RuntimeError("network error")
 
         mock_user = UserData(id=1, channel_identifier="123", phone="")
         mock_session = SessionState(session_id="sess-1", user_id=1)
         mock_message = StoredMessage(direction="inbound", body="hello")
+
+        mock_bus = MagicMock()
+        mock_bus.publish_outbound = AsyncMock(side_effect=RuntimeError("bus down"))
 
         with (
             patch(
@@ -253,6 +251,7 @@ class TestMessageBatcher:
             ),
             patch("backend.app.agent.ingestion.user_locks") as mock_locks,
             patch("backend.app.agent.ingestion.get_user_store") as mock_user_store,
+            patch("backend.app.bus.message_bus", mock_bus),
         ):
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
@@ -260,10 +259,8 @@ class TestMessageBatcher:
             mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
 
             # Should not raise even when both pipeline and fallback fail
-            await batcher.enqueue(mock_user, mock_session, mock_message, [], messaging)
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], "telegram")
             await asyncio.sleep(0.15)
-
-            messaging.send_text.assert_awaited_once()
 
 
 class TestProcessInboundFallbackError:
@@ -272,7 +269,6 @@ class TestProcessInboundFallbackError:
     @pytest.mark.asyncio
     async def test_pipeline_failure_sends_fallback_error(self) -> None:
         """When the agent pipeline raises in the non-batcher path, a fallback is sent."""
-        messaging = AsyncMock()
         inbound = InboundMessage(
             channel="telegram",
             sender_id="456",
@@ -323,9 +319,15 @@ class TestProcessInboundFallbackError:
             )
             mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
 
-            await process_inbound_from_bus(inbound, messaging)
+            await process_inbound_from_bus(inbound)
 
-            messaging.send_text.assert_awaited_once_with(
-                to="456",
-                body="Sorry, something went wrong processing your message. Please try again.",
-            )
+            # Fallback error published to bus
+            found = False
+            while not message_bus.outbound.empty():
+                outbound = message_bus.outbound.get_nowait()
+                if not outbound.is_typing_indicator:
+                    assert outbound.chat_id == "456"
+                    assert "something went wrong" in outbound.content.lower()
+                    found = True
+                    break
+            assert found

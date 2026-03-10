@@ -3,7 +3,7 @@
 import asyncio
 import time
 from collections.abc import Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException, Request
@@ -13,7 +13,6 @@ from backend.app.agent.file_store import UserData, get_user_store, reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
 from backend.app.main import app
-from backend.app.services.messaging import MessagingService, get_messaging_service
 from backend.app.services.rate_limiter import InMemoryRateLimiter, check_webhook_rate_limit
 from tests.mocks.telegram import make_telegram_update_payload
 
@@ -56,23 +55,12 @@ def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
         def _override_get_current_user() -> UserData:
             return user
 
-        mock_messaging = MagicMock(spec=MessagingService)
-        mock_messaging.send_text = AsyncMock(return_value="mock_msg_id")
-        mock_messaging.send_media = AsyncMock(return_value="mock_msg_id")
-        mock_messaging.send_message = AsyncMock(return_value="mock_msg_id")
-        mock_messaging.send_typing_indicator = AsyncMock()
-        mock_messaging.download_media = AsyncMock()
-
-        def _override_get_messaging_service() -> Generator[MessagingService]:
-            yield mock_messaging
-
         # Reset the rate limiter before each test that uses this fixture
         from backend.app.services.rate_limiter import webhook_rate_limiter
 
         webhook_rate_limiter.reset()
 
         app.dependency_overrides[get_current_user] = _override_get_current_user
-        app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
         # Explicitly remove rate limiter override so the real one is used
         app.dependency_overrides.pop(check_webhook_rate_limit, None)
 

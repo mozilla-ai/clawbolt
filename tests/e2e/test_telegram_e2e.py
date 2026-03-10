@@ -17,7 +17,6 @@ from backend.app.agent.file_store import reset_stores
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.config import settings
 from backend.app.main import app
-from backend.app.services.messaging import MessagingService, get_messaging_service
 from tests.mocks.llm import make_text_response
 from tests.mocks.telegram import make_telegram_update_payload
 
@@ -43,11 +42,6 @@ def e2e_client(
     telegram_service: TelegramChannel,
 ) -> Generator[TestClient]:
     """FastAPI TestClient wired to real Telegram but file-based storage."""
-
-    def _override_get_messaging_service() -> Generator[MessagingService]:
-        yield telegram_service
-
-    app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),

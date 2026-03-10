@@ -1,6 +1,5 @@
-import asyncio
 from collections.abc import Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -11,7 +10,6 @@ from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
 from backend.app.config import settings
 from backend.app.main import app
-from backend.app.services.messaging import MessagingService, get_messaging_service
 from backend.app.services.rate_limiter import webhook_rate_limiter
 
 
@@ -39,43 +37,23 @@ async def test_user(tmp_path: object) -> UserData:
     )
 
 
-@pytest.fixture()
-def mock_messaging_service() -> MessagingService:
-    """Mock MessagingService that doesn't hit real APIs."""
-    service = MagicMock(spec=MessagingService)
-    service.send_text = AsyncMock(return_value="mock_msg_id")
-    service.send_media = AsyncMock(return_value="mock_msg_id")
-    service.send_message = AsyncMock(return_value="mock_msg_id")
-    service.send_typing_indicator = AsyncMock()
-    service.download_media = AsyncMock()
-    return service
-
-
 @pytest.fixture(autouse=True)
 def _reset_bus_queues() -> Generator[None]:
     """Reset bus queues between tests so messages don't leak."""
-    message_bus.inbound = asyncio.Queue()
-    message_bus.outbound = asyncio.Queue()
-    message_bus._response_futures.clear()
+    message_bus.reset()
     yield
-    message_bus.inbound = asyncio.Queue()
-    message_bus.outbound = asyncio.Queue()
-    message_bus._response_futures.clear()
+    message_bus.reset()
 
 
 @pytest.fixture()
-def client(test_user: UserData, mock_messaging_service: MessagingService) -> Generator[TestClient]:
-    """FastAPI test client with overridden auth and messaging."""
+def client(test_user: UserData) -> Generator[TestClient]:
+    """FastAPI test client with overridden auth."""
 
     def _override_get_current_user() -> UserData:
         return test_user
 
-    def _override_get_messaging_service() -> Generator[MessagingService]:
-        yield mock_messaging_service
-
     webhook_rate_limiter.reset()
     app.dependency_overrides[get_current_user] = _override_get_current_user
-    app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),

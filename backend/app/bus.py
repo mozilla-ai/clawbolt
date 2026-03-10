@@ -31,6 +31,7 @@ class OutboundMessage:
     content: str
     media: list[str] = field(default_factory=list)
     request_id: str = ""
+    is_typing_indicator: bool = False
 
 
 class MessageBus:
@@ -108,6 +109,12 @@ class MessageBus:
             return await asyncio.wait_for(fut, timeout=timeout)
         finally:
             self._response_futures.pop(request_id, None)
+
+    def reset(self) -> None:
+        """Clear all queues and pending futures (used by test fixtures)."""
+        self.inbound = asyncio.Queue()
+        self.outbound = asyncio.Queue()
+        self._response_futures.clear()
 
     @property
     def inbound_size(self) -> int:

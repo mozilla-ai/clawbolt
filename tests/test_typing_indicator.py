@@ -10,7 +10,7 @@ from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.file_store import UserData
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
 from backend.app.agent.tools.base import Tool, ToolResult
-from backend.app.services.messaging import MessagingService
+from backend.app.bus import OutboundMessage
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -33,17 +33,25 @@ async def test_agent_sends_typing_indicator_before_llm_call(
     """Agent should send a typing indicator before each acompletion call."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
-    mock_messaging = MagicMock(spec=MessagingService)
-    mock_messaging.send_typing_indicator = AsyncMock()
+    mock_publish = AsyncMock()
 
     agent = ClawboltAgent(
         user=test_user,
-        messaging_service=mock_messaging,
+        channel="telegram",
+        publish_outbound=mock_publish,
         chat_id="123456789",
     )
     await agent.process_message("Hi there")
 
-    mock_messaging.send_typing_indicator.assert_called_once_with(to="123456789")
+    # Check that a typing indicator OutboundMessage was published
+    mock_publish.assert_called()
+    typing_calls = [
+        c
+        for c in mock_publish.call_args_list
+        if isinstance(c.args[0], OutboundMessage) and c.args[0].is_typing_indicator
+    ]
+    assert len(typing_calls) == 1
+    assert typing_calls[0].args[0].chat_id == "123456789"
 
 
 @pytest.mark.asyncio()
@@ -73,12 +81,12 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
         make_text_response("Done!"),
     ]
 
-    mock_messaging = MagicMock(spec=MessagingService)
-    mock_messaging.send_typing_indicator = AsyncMock()
+    mock_publish = AsyncMock()
 
     agent = ClawboltAgent(
         user=test_user,
-        messaging_service=mock_messaging,
+        channel="telegram",
+        publish_outbound=mock_publish,
         chat_id="123456789",
     )
     agent.register_tools([tool])
@@ -86,16 +94,21 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
 
     assert response.reply_text == "Done!"
     # Called twice: once before initial LLM call, once before second LLM call after tool execution
-    assert mock_messaging.send_typing_indicator.call_count == 2
-    mock_messaging.send_typing_indicator.assert_called_with(to="123456789")
+    typing_calls = [
+        c
+        for c in mock_publish.call_args_list
+        if isinstance(c.args[0], OutboundMessage) and c.args[0].is_typing_indicator
+    ]
+    assert len(typing_calls) == 2
+    assert typing_calls[0].args[0].chat_id == "123456789"
 
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-async def test_agent_works_without_messaging_service(
+async def test_agent_works_without_publish_outbound(
     mock_amessages: object, test_user: UserData
 ) -> None:
-    """Agent should work correctly when no messaging_service is provided."""
+    """Agent should work correctly when no publish_outbound is provided."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
     agent = ClawboltAgent(user=test_user)
@@ -113,18 +126,18 @@ async def test_agent_typing_indicator_failure_does_not_break_agent(
     """Agent should continue processing even if typing indicator fails."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
-    mock_messaging = MagicMock(spec=MessagingService)
-    mock_messaging.send_typing_indicator = AsyncMock(side_effect=RuntimeError("API down"))
+    mock_publish = AsyncMock(side_effect=RuntimeError("API down"))
 
     agent = ClawboltAgent(
         user=test_user,
-        messaging_service=mock_messaging,
+        channel="telegram",
+        publish_outbound=mock_publish,
         chat_id="123456789",
     )
     response = await agent.process_message("Hi there")
 
     assert response.reply_text == "Hello!"
-    mock_messaging.send_typing_indicator.assert_called_once_with(to="123456789")
+    mock_publish.assert_called()
 
 
 @pytest.mark.asyncio()
@@ -135,17 +148,23 @@ async def test_agent_no_typing_indicator_without_chat_id(
     """Agent should not send typing indicator when chat_id is not provided."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
 
-    mock_messaging = MagicMock(spec=MessagingService)
-    mock_messaging.send_typing_indicator = AsyncMock()
+    mock_publish = AsyncMock()
 
     agent = ClawboltAgent(
         user=test_user,
-        messaging_service=mock_messaging,
+        channel="telegram",
+        publish_outbound=mock_publish,
         chat_id=None,
     )
     await agent.process_message("Hi there")
 
-    mock_messaging.send_typing_indicator.assert_not_called()
+    # No typing indicator should be published (no chat_id)
+    typing_calls = [
+        c
+        for c in mock_publish.call_args_list
+        if c.args and isinstance(c.args[0], OutboundMessage) and c.args[0].is_typing_indicator
+    ]
+    assert len(typing_calls) == 0
 
 
 # ---------------------------------------------------------------------------
@@ -156,7 +175,9 @@ async def test_agent_no_typing_indicator_without_chat_id(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.settings")
 @patch("backend.app.agent.heartbeat.amessages")
+@patch("backend.app.bus.message_bus")
 async def test_heartbeat_sends_typing_indicator_before_llm_call(
+    mock_bus: MagicMock,
     mock_llm: AsyncMock,
     mock_settings: MagicMock,
     test_user: UserData,
@@ -185,27 +206,35 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
         ],
     )
 
-    mock_messaging = MagicMock(spec=MessagingService)
-    mock_messaging.send_typing_indicator = AsyncMock()
+    mock_bus.publish_outbound = AsyncMock()
 
     await evaluate_heartbeat_need(
         test_user,
         ["Stale draft estimate"],
-        messaging_service=mock_messaging,
+        channel="telegram",
+        chat_id=test_user.channel_identifier,
     )
 
-    mock_messaging.send_typing_indicator.assert_called_once_with(to=test_user.channel_identifier)
+    # Check that a typing indicator was published to the bus
+    mock_bus.publish_outbound.assert_called()
+    typing_calls = [
+        c
+        for c in mock_bus.publish_outbound.call_args_list
+        if isinstance(c.args[0], OutboundMessage) and c.args[0].is_typing_indicator
+    ]
+    assert len(typing_calls) == 1
+    assert typing_calls[0].args[0].chat_id == test_user.channel_identifier
 
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.settings")
 @patch("backend.app.agent.heartbeat.amessages")
-async def test_heartbeat_works_without_messaging_service(
+async def test_heartbeat_works_without_channel(
     mock_llm: AsyncMock,
     mock_settings: MagicMock,
     test_user: UserData,
 ) -> None:
-    """Heartbeat should work when no messaging_service is provided."""
+    """Heartbeat should work when no channel is provided."""
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
     mock_settings.llm_api_base = None
@@ -229,7 +258,7 @@ async def test_heartbeat_works_without_messaging_service(
         ],
     )
 
-    # Should not raise when no messaging_service is provided
+    # Should not raise when no channel is provided
     action = await evaluate_heartbeat_need(
         test_user,
         ["Stale draft estimate"],

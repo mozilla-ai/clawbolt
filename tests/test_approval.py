@@ -1,7 +1,7 @@
 """Tests for the progressive approval system."""
 
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -22,7 +22,7 @@ from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.file_store import UserData
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.tools.base import Tool, ToolResult
-from backend.app.services.messaging import MessagingService
+from backend.app.bus import OutboundMessage
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -174,8 +174,7 @@ class TestApprovalGate:
     @pytest.mark.asyncio()
     async def test_resolve_sets_event_and_decision(self) -> None:
         gate = ApprovalGate()
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
+        mock_publish = AsyncMock()
 
         async def _resolve_soon() -> None:
             await asyncio.sleep(0.01)
@@ -186,7 +185,8 @@ class TestApprovalGate:
             user_id=1,
             tool_name="test_tool",
             description="test description",
-            messaging_service=mock_service,
+            publish_outbound=mock_publish,
+            channel="telegram",
             chat_id="chat_1",
             timeout=5.0,
         )
@@ -197,14 +197,14 @@ class TestApprovalGate:
     @pytest.mark.asyncio()
     async def test_timeout_returns_denied(self) -> None:
         gate = ApprovalGate()
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
+        mock_publish = AsyncMock()
 
         decision = await gate.request_approval(
             user_id=1,
             tool_name="test_tool",
             description="test description",
-            messaging_service=mock_service,
+            publish_outbound=mock_publish,
+            channel="telegram",
             chat_id="chat_1",
             timeout=0.01,
         )
@@ -220,8 +220,7 @@ class TestApprovalGate:
         gate = ApprovalGate()
         assert not gate.has_pending(1)
 
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
+        mock_publish = AsyncMock()
 
         async def _check_and_resolve() -> None:
             await asyncio.sleep(0.01)
@@ -233,7 +232,8 @@ class TestApprovalGate:
             user_id=1,
             tool_name="t",
             description="d",
-            messaging_service=mock_service,
+            publish_outbound=mock_publish,
+            channel="telegram",
             chat_id="c",
             timeout=5.0,
         )
@@ -318,9 +318,7 @@ class TestAgentApproval:
         self, mock_amessages: object, test_user: UserData
     ) -> None:
         """Tool with ASK that gets approved executes."""
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
-        mock_service.send_typing_indicator = AsyncMock()
+        mock_publish = AsyncMock()
 
         tool = Tool(
             name="fetcher",
@@ -346,7 +344,12 @@ class TestAgentApproval:
                 await asyncio.sleep(0.005)
             gate.resolve(test_user.id, ApprovalDecision.APPROVED)
 
-        agent = ClawboltAgent(user=test_user, messaging_service=mock_service, chat_id="chat_1")
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
         agent.register_tools([tool])
 
         task = asyncio.create_task(_approve_soon())
@@ -354,7 +357,7 @@ class TestAgentApproval:
         await task
 
         assert any(tc.name == "fetcher" and not tc.is_error for tc in response.tool_calls)
-        mock_service.send_text.assert_called()
+        mock_publish.assert_called()
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -362,9 +365,7 @@ class TestAgentApproval:
         self, mock_amessages: object, test_user: UserData
     ) -> None:
         """Tool with ASK that gets denied returns an error."""
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
-        mock_service.send_typing_indicator = AsyncMock()
+        mock_publish = AsyncMock()
 
         tool = Tool(
             name="fetcher",
@@ -387,7 +388,12 @@ class TestAgentApproval:
                 await asyncio.sleep(0.005)
             gate.resolve(test_user.id, ApprovalDecision.DENIED)
 
-        agent = ClawboltAgent(user=test_user, messaging_service=mock_service, chat_id="chat_1")
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
         agent.register_tools([tool])
 
         task = asyncio.create_task(_deny_soon())
@@ -402,9 +408,7 @@ class TestAgentApproval:
         self, mock_amessages: object, test_user: UserData
     ) -> None:
         """'always' decision persists AUTO to the approval store."""
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
-        mock_service.send_typing_indicator = AsyncMock()
+        mock_publish = AsyncMock()
 
         tool = Tool(
             name="fetcher",
@@ -427,7 +431,12 @@ class TestAgentApproval:
                 await asyncio.sleep(0.005)
             gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
 
-        agent = ClawboltAgent(user=test_user, messaging_service=mock_service, chat_id="chat_1")
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
         agent.register_tools([tool])
 
         task = asyncio.create_task(_always_soon())
@@ -444,9 +453,7 @@ class TestAgentApproval:
         self, mock_amessages: object, test_user: UserData
     ) -> None:
         """'never' decision persists DENY to the approval store."""
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
-        mock_service.send_typing_indicator = AsyncMock()
+        mock_publish = AsyncMock()
 
         tool = Tool(
             name="fetcher",
@@ -469,7 +476,12 @@ class TestAgentApproval:
                 await asyncio.sleep(0.005)
             gate.resolve(test_user.id, ApprovalDecision.ALWAYS_DENY)
 
-        agent = ClawboltAgent(user=test_user, messaging_service=mock_service, chat_id="chat_1")
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
         agent.register_tools([tool])
 
         task = asyncio.create_task(_never_soon())
@@ -486,9 +498,7 @@ class TestAgentApproval:
         self, mock_amessages: object, test_user: UserData
     ) -> None:
         """A stored AUTO permission skips the approval prompt entirely."""
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
-        mock_service.send_typing_indicator = AsyncMock()
+        mock_publish = AsyncMock()
 
         store = get_approval_store()
         store.set_permission(test_user.id, "fetcher", PermissionLevel.AUTO)
@@ -507,14 +517,21 @@ class TestAgentApproval:
             make_text_response("Done!"),
         ]
 
-        agent = ClawboltAgent(user=test_user, messaging_service=mock_service, chat_id="chat_1")
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
         agent.register_tools([tool])
 
         response = await agent.process_message("fetch example.com")
         assert any(tc.name == "fetcher" and not tc.is_error for tc in response.tool_calls)
-        # send_text should only be called for typing indicator, not approval prompt
-        for call in mock_service.send_text.call_args_list:
-            assert "wants to use" not in str(call)
+        # publish_outbound should only be called for typing indicator, not approval prompt
+        for call in mock_publish.call_args_list:
+            msg = call.args[0] if call.args else call.kwargs.get("msg")
+            if isinstance(msg, OutboundMessage):
+                assert "wants to use" not in msg.content
 
 
 # ---------------------------------------------------------------------------
@@ -528,8 +545,7 @@ class TestIngestionIntercept:
         """An approval response resolves the gate and skips normal processing."""
         gate = get_approval_gate()
 
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
+        mock_publish = AsyncMock()
 
         # Start a pending approval
         async def _start_approval() -> ApprovalDecision:
@@ -537,7 +553,8 @@ class TestIngestionIntercept:
                 user_id=test_user.id,
                 tool_name="test_tool",
                 description="test",
-                messaging_service=mock_service,
+                publish_outbound=mock_publish,
+                channel="telegram",
                 chat_id="chat_1",
                 timeout=5.0,
             )
@@ -558,7 +575,7 @@ class TestIngestionIntercept:
             new_callable=AsyncMock,
             return_value=test_user,
         ):
-            await process_inbound_from_bus(inbound, mock_service)
+            await process_inbound_from_bus(inbound)
 
         decision = await approval_task
         assert decision == ApprovalDecision.APPROVED
@@ -571,9 +588,7 @@ class TestIngestionIntercept:
         """Unrecognized text while pending falls through to normal processing."""
         gate = get_approval_gate()
 
-        mock_service = MagicMock(spec=MessagingService)
-        mock_service.send_text = AsyncMock(return_value="msg_id")
-        mock_service.send_typing_indicator = AsyncMock()
+        mock_publish = AsyncMock()
 
         # Start a pending approval
         async def _start_approval() -> ApprovalDecision:
@@ -581,7 +596,8 @@ class TestIngestionIntercept:
                 user_id=test_user.id,
                 tool_name="test_tool",
                 description="test",
-                messaging_service=mock_service,
+                publish_outbound=mock_publish,
+                channel="telegram",
                 chat_id="chat_1",
                 timeout=5.0,
             )
@@ -611,7 +627,7 @@ class TestIngestionIntercept:
                 0,
             ),
         ):
-            await process_inbound_from_bus(inbound, mock_service)
+            await process_inbound_from_bus(inbound)
 
         # The gate should still be pending (text was not a valid response)
         assert gate.has_pending(test_user.id)

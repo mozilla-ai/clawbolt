@@ -13,7 +13,7 @@ import pytest
 
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.file_store import UserData
-from backend.app.agent.messages import AssistantMessage, UserMessage
+from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
@@ -52,7 +52,7 @@ async def test_agent_message_format_accepted(
         mock_settings.llm_max_tokens_agent = 500
 
         agent = ClawboltAgent(user=integration_user)
-        history = [
+        history: list[AgentMessage] = [
             UserMessage(content="Hi there"),
             AssistantMessage(content="Hello! How can I help?"),
         ]

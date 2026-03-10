@@ -1,7 +1,7 @@
 """Tests for the ToolTags metadata system on the Tool dataclass."""
 
 import json
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel
@@ -131,16 +131,16 @@ def test_memory_tools_recall_and_forget_have_no_special_tags() -> None:
 
 def test_messaging_tools_have_sends_reply_tag() -> None:
     """send_reply and send_media_reply should have SENDS_REPLY tag."""
-    messaging = MagicMock()
-    tools = create_messaging_tools(messaging, to_address="+15550001234")
+    publish_outbound = AsyncMock()
+    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="+15550001234")
     for tool in tools:
         assert ToolTags.SENDS_REPLY in tool.tags, f"{tool.name} missing SENDS_REPLY tag"
 
 
 def test_messaging_tools_do_not_have_saves_memory_tag() -> None:
     """Messaging tools should not have SAVES_MEMORY tag."""
-    messaging = MagicMock()
-    tools = create_messaging_tools(messaging, to_address="+15550001234")
+    publish_outbound = AsyncMock()
+    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="+15550001234")
     for tool in tools:
         assert ToolTags.SAVES_MEMORY not in tool.tags
 

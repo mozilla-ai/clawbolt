@@ -98,7 +98,7 @@ Data classes (Pydantic BaseModel, replace ORM models):
 - **File-based storage**: all data in JSON/JSONL/Markdown files under `data/users/`. No database. See `backend/app/agent/file_store.py`.
 - **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). OSS is single-tenant; premium adds multi-tenant auth via plugin.
 - **`user_id` scoping** on every data class and endpoint from day one
-- **MessagingService protocol**: channel-agnostic interface in `services/messaging.py` with Telegram implementation in `channels/telegram.py`
+- **Message bus**: async inbound/outbound queues in `bus.py`. Channels publish inbound messages; the agent publishes outbound replies. The ``ChannelManager`` dispatches outbound messages to the correct channel.
 - **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `acompletion`) -> tool execution -> reply
 - **Memory**: MEMORY.md key-value facts + clients.json client records per user
 - **Services**: External services abstracted behind service classes in `backend/app/services/`

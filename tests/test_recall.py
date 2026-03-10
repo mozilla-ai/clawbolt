@@ -1,4 +1,4 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -9,7 +9,6 @@ from backend.app.agent.file_store import (
 )
 from backend.app.agent.memory import recall_memories, save_memory
 from backend.app.agent.router import handle_inbound_message
-from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -21,17 +20,6 @@ def session(test_user: UserData) -> SessionState:
         messages=[],
         is_active=True,
     )
-
-
-@pytest.fixture()
-def mock_messaging() -> MessagingService:
-    service = MagicMock(spec=MessagingService)
-    service.send_text = AsyncMock(return_value="msg_42")
-    service.send_media = AsyncMock(return_value="msg_43")
-    service.send_message = AsyncMock(return_value="msg_42")
-    service.send_typing_indicator = AsyncMock()
-    service.download_media = AsyncMock()
-    return service
 
 
 @pytest.mark.asyncio()
@@ -105,7 +93,6 @@ async def test_recall_end_to_end_save_then_query(
     mock_amessages: object,
     test_user: UserData,
     session: SessionState,
-    mock_messaging: MessagingService,
 ) -> None:
     """End-to-end: save a memory, then verify it's in context for next message."""
     # Step 1: Save a memory directly (simulating a previous conversation)
@@ -136,7 +123,7 @@ async def test_recall_end_to_end_save_then_query(
         session=session,
         message=recall_msg,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     assert "4,500" in response.reply_text
@@ -149,7 +136,6 @@ async def test_system_prompt_includes_recall_guidance(
     mock_amessages: object,
     test_user: UserData,
     session: SessionState,
-    mock_messaging: MessagingService,
 ) -> None:
     """System prompt should include recall behavior guidance."""
     msg = StoredMessage(
@@ -166,7 +152,7 @@ async def test_system_prompt_includes_recall_guidance(
         session=session,
         message=msg,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]

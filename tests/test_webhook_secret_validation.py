@@ -3,7 +3,7 @@
 import asyncio
 from collections.abc import Generator
 from contextlib import contextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
@@ -16,7 +16,6 @@ from backend.app.config import (
     settings,
 )
 from backend.app.main import app
-from backend.app.services.messaging import MessagingService, get_messaging_service
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from tests.mocks.telegram import make_telegram_update_payload
 
@@ -49,17 +48,7 @@ def _make_client(
         def _override_get_current_user() -> UserData:
             return user
 
-        mock_messaging = MagicMock(spec=MessagingService)
-        mock_messaging.send_text = AsyncMock(return_value="mock_msg_id")
-        mock_messaging.send_media = AsyncMock(return_value="mock_msg_id")
-        mock_messaging.send_message = AsyncMock(return_value="mock_msg_id")
-        mock_messaging.send_typing_indicator = AsyncMock()
-
-        def _override_get_messaging_service() -> Generator[MessagingService]:
-            yield mock_messaging
-
         app.dependency_overrides[get_current_user] = _override_get_current_user
-        app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
         app.dependency_overrides[check_webhook_rate_limit] = lambda: None
 
         with (

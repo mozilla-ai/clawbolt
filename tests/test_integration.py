@@ -15,7 +15,6 @@ from backend.app.agent.file_store import (
 )
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.bus import message_bus
-from backend.app.services.messaging import MessagingService
 from tests.mocks.llm import make_text_response
 
 
@@ -29,7 +28,6 @@ async def _get_all_messages(user_id: int) -> list[StoredMessage]:
 @pytest.mark.asyncio
 async def test_full_message_round_trip(
     test_user: UserData,
-    mock_messaging_service: MessagingService,
 ) -> None:
     """End-to-end: inbound message -> agent processes -> outbound reply stored."""
     inbound = InboundMessage(
@@ -46,7 +44,7 @@ async def test_full_message_round_trip(
         ),
         patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
     ):
-        await process_inbound_from_bus(inbound, mock_messaging_service)
+        await process_inbound_from_bus(inbound)
 
     # Verify inbound message stored
     messages = await _get_all_messages(test_user.id)
@@ -64,15 +62,20 @@ async def test_full_message_round_trip(
 
     # Verify outbound reply published to bus (for outbound dispatcher)
     assert not message_bus.outbound.empty()
-    outbound = await message_bus.consume_outbound()
-    assert outbound.channel == "telegram"
-    assert outbound.content == "I can help with that deck estimate!"
+    found_reply = False
+    while not message_bus.outbound.empty():
+        outbound = await message_bus.consume_outbound()
+        if outbound.is_typing_indicator:
+            continue
+        assert outbound.channel == "telegram"
+        assert outbound.content == "I can help with that deck estimate!"
+        found_reply = True
+        break
+    assert found_reply
 
 
 @pytest.mark.asyncio
-async def test_full_message_round_trip_new_user(
-    mock_messaging_service: MessagingService,
-) -> None:
+async def test_full_message_round_trip_new_user() -> None:
     """New user sends message -> auto-created -> agent replies."""
     inbound = InboundMessage(
         channel="telegram",
@@ -88,7 +91,7 @@ async def test_full_message_round_trip_new_user(
         ),
         patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
     ):
-        await process_inbound_from_bus(inbound, mock_messaging_service)
+        await process_inbound_from_bus(inbound)
 
     # User was auto-created
     store = get_user_store()
@@ -105,7 +108,6 @@ async def test_full_message_round_trip_new_user(
 @pytest.mark.asyncio
 async def test_full_message_agent_failure_still_stores_inbound(
     test_user: UserData,
-    mock_messaging_service: MessagingService,
 ) -> None:
     """If the agent pipeline fails, inbound is stored but fallback is not."""
     inbound = InboundMessage(
@@ -122,7 +124,7 @@ async def test_full_message_agent_failure_still_stores_inbound(
         ),
         patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
     ):
-        await process_inbound_from_bus(inbound, mock_messaging_service)
+        await process_inbound_from_bus(inbound)
 
     # Inbound message still stored
     messages = await _get_all_messages(test_user.id)

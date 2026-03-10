@@ -321,7 +321,7 @@ class TelegramChannel(BaseChannel):
 
         return router
 
-    # -- Outbound (MessagingService protocol) ----------------------------------
+    # -- Outbound --------------------------------------------------------------
 
     @staticmethod
     def _parse_chat_id(to: str) -> int:

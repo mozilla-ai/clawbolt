@@ -43,7 +43,6 @@ from backend.app.config import settings
 from backend.app.enums import MessageDirection
 from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
-from backend.app.services.messaging import MessagingService
 from backend.app.services.storage_service import StorageBackend, get_storage_service
 
 logger = logging.getLogger(__name__)
@@ -82,9 +81,10 @@ class PipelineContext:
     session: SessionState
     message: StoredMessage
     media_urls: list[tuple[str, str]]
-    messaging_service: MessagingService
+    channel: str = ""
     to_address: str = ""
     downloaded_media: list[DownloadedMedia] = field(default_factory=list)
+    download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None
     storage: StorageBackend | None = None
     combined_context: str = ""
     conversation_history: list[AgentMessage] = field(default_factory=list)
@@ -92,7 +92,6 @@ class PipelineContext:
     event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = field(default_factory=list)
     response: AgentResponse | None = None
     _onboarding_sub: OnboardingSubscriber | None = None
-    channel: str = ""
     request_id: str = ""
 
 
@@ -129,7 +128,7 @@ async def prepare_media(
     user: UserData,
     message: StoredMessage,
     media_urls: list[tuple[str, str]],
-    messaging_service: MessagingService,
+    download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None,
 ) -> tuple[list[DownloadedMedia], StorageBackend | None]:
     """Download media and initialize storage backend.
 
@@ -143,13 +142,14 @@ async def prepare_media(
         message.seq,
         len(media_urls),
     )
-    for file_id, _mime_type in media_urls:
-        try:
-            media = await messaging_service.download_media(file_id)
-            downloaded_media.append(media)
-            logger.debug("Downloaded media %s (%s)", file_id, _mime_type)
-        except Exception:
-            logger.exception("Failed to download media: %s", file_id)
+    if download_media is not None:
+        for file_id, _mime_type in media_urls:
+            try:
+                media = await download_media(file_id)
+                downloaded_media.append(media)
+                logger.debug("Downloaded media %s (%s)", file_id, _mime_type)
+            except Exception:
+                logger.exception("Failed to download media: %s", file_id)
 
     storage = init_storage(user)
 
@@ -208,9 +208,9 @@ async def run_agent(
     combined_context: str,
     conversation_history: list[AgentMessage],
     storage: StorageBackend | None,
-    messaging_service: MessagingService,
     to_address: str,
     downloaded_media: list[DownloadedMedia],
+    channel: str = "",
     system_prompt_override: str | None = None,
     event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] | None = None,
     session_id: str = "",
@@ -220,17 +220,23 @@ async def run_agent(
     Handles LLM-level errors (content filter, auth, unexpected) by returning
     an error fallback AgentResponse.
     """
+    from backend.app.bus import message_bus
+
+    publish_outbound = message_bus.publish_outbound if channel else None
+
     tool_context = ToolContext(
         user=user,
         storage=storage,
-        messaging_service=messaging_service,
+        publish_outbound=publish_outbound,
+        channel=channel,
         to_address=to_address,
         downloaded_media=downloaded_media,
     )
 
     agent = ClawboltAgent(
         user=user,
-        messaging_service=messaging_service,
+        channel=channel,
+        publish_outbound=publish_outbound,
         chat_id=to_address,
         tool_context=tool_context,
         registry=default_registry,
@@ -294,37 +300,6 @@ async def run_agent(
         return AgentResponse(reply_text=AGENT_ERROR_FALLBACK, is_error_fallback=True)
 
 
-async def dispatch_reply(
-    response: AgentResponse,
-    messaging_service: MessagingService,
-    to_address: str,
-    message_seq: int,
-) -> None:
-    """Send reply to the user unless the agent already sent one via a tool."""
-    sent_reply = any(
-        ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in response.tool_calls
-    )
-    if sent_reply:
-        logger.debug("Reply already sent via tool, skipping dispatch for message %d", message_seq)
-    elif not response.reply_text:
-        logger.debug("No reply text to dispatch for message %d", message_seq)
-    if not sent_reply and response.reply_text:
-        logger.debug(
-            "Dispatching reply to %s for message %d (length=%d)",
-            to_address,
-            message_seq,
-            len(response.reply_text),
-        )
-        try:
-            await messaging_service.send_text(to=to_address, body=response.reply_text)
-        except Exception:
-            logger.exception(
-                "Failed to send reply to %s for message seq %d",
-                to_address,
-                message_seq,
-            )
-
-
 async def persist_outbound(
     session: SessionState,
     user_id: int,
@@ -360,7 +335,7 @@ async def persist_outbound(
 async def prepare_media_step(ctx: PipelineContext) -> PipelineContext:
     """Download media and initialize storage backend."""
     ctx.downloaded_media, ctx.storage = await prepare_media(
-        ctx.user, ctx.message, ctx.media_urls, ctx.messaging_service
+        ctx.user, ctx.message, ctx.media_urls, download_media=ctx.download_media
     )
     return ctx
 
@@ -393,9 +368,9 @@ async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
         combined_context=ctx.combined_context,
         conversation_history=ctx.conversation_history,
         storage=ctx.storage,
-        messaging_service=ctx.messaging_service,
         to_address=ctx.to_address,
         downloaded_media=ctx.downloaded_media,
+        channel=ctx.channel,
         system_prompt_override=ctx.system_prompt_override,
         event_subscribers=ctx.event_subscribers,
         session_id=ctx.session.session_id,
@@ -411,35 +386,25 @@ async def finalize_onboarding_step(ctx: PipelineContext) -> PipelineContext:
 
 
 async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
-    """Send reply: via bus when routed through a channel, or directly otherwise.
+    """Send reply via the message bus.
 
-    Messages that arrive through the message bus have ``ctx.channel`` set and
-    are dispatched via the bus so the outbound dispatcher can route them to the
-    correct channel or resolve a web chat SSE future.
-
-    Direct pipeline calls (heartbeat, tests) have no ``ctx.channel`` and use
-    the legacy ``dispatch_reply`` path for backward compatibility.
+    Messages are dispatched via the bus so the outbound dispatcher can route
+    them to the correct channel or resolve a web chat SSE future.
     """
-    if ctx.response:
-        if ctx.channel:
-            from backend.app.bus import OutboundMessage, message_bus
+    if ctx.response and ctx.channel:
+        from backend.app.bus import OutboundMessage, message_bus
 
-            sent_reply = any(
-                ToolTags.SENDS_REPLY in tc.tags and not tc.is_error
-                for tc in ctx.response.tool_calls
+        sent_reply = any(
+            ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in ctx.response.tool_calls
+        )
+        if not sent_reply and ctx.response.reply_text:
+            outbound = OutboundMessage(
+                channel=ctx.channel,
+                chat_id=ctx.to_address,
+                content=ctx.response.reply_text,
+                request_id=ctx.request_id,
             )
-            if not sent_reply and ctx.response.reply_text:
-                outbound = OutboundMessage(
-                    channel=ctx.channel,
-                    chat_id=ctx.to_address,
-                    content=ctx.response.reply_text,
-                    request_id=ctx.request_id,
-                )
-                await message_bus.publish_outbound(outbound)
-        else:
-            await dispatch_reply(
-                ctx.response, ctx.messaging_service, ctx.to_address, ctx.message.seq
-            )
+            await message_bus.publish_outbound(outbound)
     return ctx
 
 
@@ -486,11 +451,11 @@ async def handle_inbound_message(
     session: SessionState,
     message: StoredMessage,
     media_urls: list[tuple[str, str]],
-    messaging_service: MessagingService,
     pipeline: list[PipelineStep] | None = None,
     downloaded_media: list[DownloadedMedia] | None = None,
     channel: str = "",
     request_id: str = "",
+    download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None,
 ) -> AgentResponse:
     """Full message processing pipeline.
 
@@ -517,10 +482,10 @@ async def handle_inbound_message(
         session=session,
         message=message,
         media_urls=media_urls,
-        messaging_service=messaging_service,
+        channel=channel,
         to_address=to_address,
         downloaded_media=downloaded_media or [],
-        channel=channel,
+        download_media=download_media,
         request_id=request_id,
     )
     ctx = await run_pipeline(ctx, pipeline or DEFAULT_PIPELINE)

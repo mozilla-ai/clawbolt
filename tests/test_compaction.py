@@ -19,7 +19,7 @@ from backend.app.agent.file_store import (
     UserData,
 )
 from backend.app.agent.memory import get_all_memories
-from backend.app.agent.messages import AssistantMessage, UserMessage
+from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from tests.mocks.llm import make_text_response
 
 
@@ -51,7 +51,7 @@ def _add_messages(session: SessionState, count: int) -> None:
 
 def test_format_messages_basic() -> None:
     """Format should produce readable User/Assistant lines."""
-    messages = [
+    messages: list[AgentMessage] = [
         UserMessage(content="I charge $45/sqft for composite decks"),
         AssistantMessage(content="Got it, I'll remember that pricing."),
         UserMessage(content="My supplier is ABC Lumber on 5th Ave"),
@@ -69,7 +69,7 @@ def test_format_messages_empty() -> None:
 
 def test_format_messages_skips_empty_assistant() -> None:
     """Assistant messages with no content should be skipped."""
-    messages = [
+    messages: list[AgentMessage] = [
         UserMessage(content="Hello"),
         AssistantMessage(content=None),
         UserMessage(content="World"),
@@ -194,7 +194,7 @@ async def test_compact_session_extracts_and_saves_facts(
 
     mock_response = make_text_response(llm_response_content)
 
-    messages = [
+    messages: list[AgentMessage] = [
         UserMessage(content="I usually charge $45 per square foot for composite decks"),
         AssistantMessage(content="Got it, I'll remember that."),
         UserMessage(content="Oh and Mr. Smith's number is 555-0123"),
@@ -235,7 +235,7 @@ async def test_compact_session_returns_max_message_seq(
         json.dumps([{"key": "fact", "value": "val", "category": "general"}])
     )
 
-    messages = [UserMessage(content="test")]
+    messages: list[AgentMessage] = [UserMessage(content="test")]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         saved, max_seq = await compact_session(test_user.id, messages, max_message_seq=42)
@@ -260,7 +260,7 @@ async def test_compact_session_empty_messages(
 @pytest.mark.asyncio()
 async def test_compact_session_disabled(test_user: UserData) -> None:
     """compact_session should skip when compaction_enabled is False."""
-    messages = [UserMessage(content="Some content")]
+    messages: list[AgentMessage] = [UserMessage(content="Some content")]
 
     with (
         patch("backend.app.agent.compaction.settings") as mock_settings,
@@ -279,7 +279,7 @@ async def test_compact_session_llm_failure_returns_empty(
     test_user: UserData,
 ) -> None:
     """compact_session should return empty list if LLM call fails."""
-    messages = [UserMessage(content="Some content")]
+    messages: list[AgentMessage] = [UserMessage(content="Some content")]
 
     with patch(
         "backend.app.agent.compaction.amessages",
@@ -298,7 +298,7 @@ async def test_compact_session_invalid_llm_response(
     """compact_session should handle unparseable LLM responses gracefully."""
     mock_response = make_text_response("Sorry, I can't do that.")
 
-    messages = [UserMessage(content="Some content")]
+    messages: list[AgentMessage] = [UserMessage(content="Some content")]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         saved, max_seq = await compact_session(test_user.id, messages)
@@ -314,7 +314,7 @@ async def test_compact_session_no_durable_facts(
     """compact_session should handle LLM returning empty array (no facts)."""
     mock_response = make_text_response("[]")
 
-    messages = [
+    messages: list[AgentMessage] = [
         UserMessage(content="Hey there"),
         AssistantMessage(content="Hello! How can I help?"),
     ]
@@ -335,7 +335,7 @@ async def test_compact_session_uses_configured_model(
     """compact_session should use compaction_model/provider when configured."""
     mock_response = make_text_response("[]")
 
-    messages = [UserMessage(content="test")]
+    messages: list[AgentMessage] = [UserMessage(content="test")]
 
     with (
         patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm,
@@ -362,7 +362,7 @@ async def test_compact_session_falls_back_to_llm_model(
     """compact_session should fall back to llm_model when compaction_model is empty."""
     mock_response = make_text_response("[]")
 
-    messages = [UserMessage(content="test")]
+    messages: list[AgentMessage] = [UserMessage(content="test")]
 
     with (
         patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm,
