@@ -55,6 +55,27 @@ def make_tool_call_response(
     )
 
 
+def make_error_response(
+    stop_reason: str = "error",
+    content: str = "",
+) -> MessageResponse:
+    """Build a mock MessageResponse with an error stop_reason.
+
+    Simulates an LLM response that completed but with an error status,
+    such as ``stop_reason="error"`` from certain providers.
+    """
+    blocks: list[MessageContentBlock] = []
+    if content:
+        blocks.append(MessageContentBlock(type="text", text=content))
+    return MessageResponse(
+        id="msg_mock",
+        content=blocks,
+        model="mock-model",
+        stop_reason=stop_reason,
+        usage=MessageUsage(input_tokens=0, output_tokens=0),
+    )
+
+
 def _make_text_message_response(content: str) -> MessageResponse:
     """Build a mock MessageResponse with a single text block."""
     return MessageResponse(
