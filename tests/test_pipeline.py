@@ -42,7 +42,7 @@ async def test_run_pipeline_executes_steps_in_order() -> None:
         session=None,  # type: ignore[arg-type]
         message=None,  # type: ignore[arg-type]
         media_urls=[],
-        messaging_service=None,  # type: ignore[arg-type]
+        channel="telegram",
     )
 
     await run_pipeline(ctx, [step_a, step_b, step_c])
@@ -63,7 +63,7 @@ async def test_run_pipeline_passes_context_through() -> None:
         session=None,  # type: ignore[arg-type]
         message=None,  # type: ignore[arg-type]
         media_urls=[],
-        messaging_service=None,  # type: ignore[arg-type]
+        channel="telegram",
     )
 
     result = await run_pipeline(ctx, [tracking_step, tracking_step])
@@ -79,7 +79,7 @@ async def test_run_pipeline_empty_steps() -> None:
         session=None,  # type: ignore[arg-type]
         message=None,  # type: ignore[arg-type]
         media_urls=[],
-        messaging_service=None,  # type: ignore[arg-type]
+        channel="telegram",
     )
     result = await run_pipeline(ctx, [])
     assert result is ctx
@@ -122,7 +122,7 @@ async def test_custom_pipeline_can_skip_steps() -> None:
         session=None,  # type: ignore[arg-type]
         message=None,  # type: ignore[arg-type]
         media_urls=[],
-        messaging_service=None,  # type: ignore[arg-type]
+        channel="telegram",
     )
 
     await run_pipeline(ctx, [mock_prepare, mock_agent])
@@ -147,7 +147,7 @@ async def test_custom_pipeline_can_add_steps() -> None:
         session=None,  # type: ignore[arg-type]
         message=None,  # type: ignore[arg-type]
         media_urls=[],
-        messaging_service=None,  # type: ignore[arg-type]
+        channel="telegram",
     )
 
     await run_pipeline(ctx, [step_default, step_custom, step_default])
@@ -176,7 +176,7 @@ async def test_custom_pipeline_can_reorder_steps() -> None:
         session=None,  # type: ignore[arg-type]
         message=None,  # type: ignore[arg-type]
         media_urls=[],
-        messaging_service=None,  # type: ignore[arg-type]
+        channel="telegram",
     )
 
     # Reverse order
@@ -201,7 +201,7 @@ async def test_pipeline_step_can_mutate_context() -> None:
         session=None,  # type: ignore[arg-type]
         message=None,  # type: ignore[arg-type]
         media_urls=[],
-        messaging_service=None,  # type: ignore[arg-type]
+        channel="telegram",
     )
 
     await run_pipeline(ctx, [set_context, check_context])

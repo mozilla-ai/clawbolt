@@ -55,7 +55,6 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.config import settings
 from backend.app.services.llm_usage import log_llm_usage
-from backend.app.services.messaging import MessagingService
 
 logger = logging.getLogger(__name__)
 
@@ -223,14 +222,16 @@ class ClawboltAgent:
     def __init__(
         self,
         user: UserData,
-        messaging_service: MessagingService | None = None,
+        channel: str = "",
+        publish_outbound: Callable[[Any], Awaitable[None]] | None = None,
         chat_id: str | None = None,
         tool_context: ToolContext | None = None,
         registry: ToolRegistry | None = None,
         session_id: str = "",
     ) -> None:
         self.user = user
-        self._messaging_service = messaging_service
+        self._channel = channel
+        self._publish_outbound = publish_outbound
         self._chat_id = chat_id
         self.tools: list[Tool] = []
         self._tools_by_name: dict[str, Tool] = {}
@@ -258,10 +259,19 @@ class ClawboltAgent:
                 logger.exception("Event subscriber error for %s", type(event).__name__)
 
     async def _send_typing_indicator(self) -> None:
-        """Send a typing indicator if a messaging service and chat_id are available."""
-        if self._messaging_service and self._chat_id:
+        """Send a typing indicator via the bus if a publish callback and chat_id are available."""
+        if self._publish_outbound and self._chat_id and self._channel:
             try:
-                await self._messaging_service.send_typing_indicator(to=self._chat_id)
+                from backend.app.bus import OutboundMessage
+
+                await self._publish_outbound(
+                    OutboundMessage(
+                        channel=self._channel,
+                        chat_id=self._chat_id,
+                        content="",
+                        is_typing_indicator=True,
+                    )
+                )
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", self._chat_id)
 
@@ -293,10 +303,10 @@ class ClawboltAgent:
         if level == PermissionLevel.DENY:
             return PermissionLevel.DENY
 
-        # ASK: prompt the user.  When no messaging channel is available
+        # ASK: prompt the user.  When no outbound channel is available
         # (e.g. headless/API usage, dashboard without WebSocket reply path)
         # we fall through to AUTO so the agent is not permanently blocked.
-        if self._messaging_service is None or self._chat_id is None:
+        if self._publish_outbound is None or self._chat_id is None:
             return PermissionLevel.AUTO
 
         gate = get_approval_gate()
@@ -315,7 +325,8 @@ class ClawboltAgent:
             user_id=self.user.id,
             tool_name=tool_obj.name,
             description=description,
-            messaging_service=self._messaging_service,
+            publish_outbound=self._publish_outbound,
+            channel=self._channel,
             chat_id=self._chat_id,
         )
 

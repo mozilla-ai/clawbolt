@@ -1,80 +1,81 @@
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock
 
 import pytest
 
 from backend.app.agent.tools.messaging_tools import create_messaging_tools
-from backend.app.services.messaging import MessagingService
+from backend.app.bus import OutboundMessage
 
 
 @pytest.fixture()
-def mock_messaging_service() -> MessagingService:
-    service = MagicMock(spec=MessagingService)
-    service.send_text = AsyncMock(return_value="msg_42")
-    service.send_media = AsyncMock(return_value="msg_43")
-    service.download_media = AsyncMock()
-    return service
+def publish_outbound() -> AsyncMock:
+    return AsyncMock()
 
 
 @pytest.mark.asyncio()
-async def test_send_reply_tool(mock_messaging_service: MessagingService) -> None:
-    """send_reply tool should send text and return message ID."""
-    tools = create_messaging_tools(mock_messaging_service, to_address="123456789")
+async def test_send_reply_tool(publish_outbound: AsyncMock) -> None:
+    """send_reply tool should publish an OutboundMessage and return confirmation."""
+    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
     send_reply = tools[0].function
     result = await send_reply(message="Your estimate is ready!")
-    assert "msg_42" in result.content
+    assert "Sent message" in result.content
     assert result.is_error is False
-    mock_messaging_service.send_text.assert_called_once_with(  # type: ignore[union-attr]
-        to="123456789", body="Your estimate is ready!"
-    )
+    publish_outbound.assert_called_once()
+    msg: OutboundMessage = publish_outbound.call_args[0][0]
+    assert msg.chat_id == "123456789"
+    assert msg.content == "Your estimate is ready!"
+    assert msg.channel == "telegram"
 
 
 @pytest.mark.asyncio()
-async def test_send_reply_rejects_empty_message(mock_messaging_service: MessagingService) -> None:
+async def test_send_reply_rejects_empty_message(publish_outbound: AsyncMock) -> None:
     """send_reply should return error for empty messages."""
-    tools = create_messaging_tools(mock_messaging_service, to_address="123456789")
+    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
     send_reply = tools[0].function
     result = await send_reply(message="")
     assert "Error" in result.content
     assert result.is_error is True
-    mock_messaging_service.send_text.assert_not_called()  # type: ignore[union-attr]
+    publish_outbound.assert_not_called()
 
 
 @pytest.mark.asyncio()
 async def test_send_reply_rejects_whitespace_message(
-    mock_messaging_service: MessagingService,
+    publish_outbound: AsyncMock,
 ) -> None:
     """send_reply should return error for whitespace-only messages."""
-    tools = create_messaging_tools(mock_messaging_service, to_address="123456789")
+    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
     send_reply = tools[0].function
     result = await send_reply(message="   ")
     assert "Error" in result.content
     assert result.is_error is True
-    mock_messaging_service.send_text.assert_not_called()  # type: ignore[union-attr]
+    publish_outbound.assert_not_called()
 
 
 @pytest.mark.asyncio()
 async def test_send_media_reply_rejects_empty_url(
-    mock_messaging_service: MessagingService,
+    publish_outbound: AsyncMock,
 ) -> None:
     """send_media_reply should return error for empty media_url."""
-    tools = create_messaging_tools(mock_messaging_service, to_address="123456789")
+    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
     send_media_reply = tools[1].function
     result = await send_media_reply(message="Here's your file", media_url="")
     assert "Error" in result.content
     assert result.is_error is True
-    mock_messaging_service.send_media.assert_not_called()  # type: ignore[union-attr]
+    publish_outbound.assert_not_called()
 
 
 @pytest.mark.asyncio()
-async def test_send_media_reply_tool(mock_messaging_service: MessagingService) -> None:
-    """send_media_reply tool should send media with message."""
-    tools = create_messaging_tools(mock_messaging_service, to_address="123456789")
+async def test_send_media_reply_tool(publish_outbound: AsyncMock) -> None:
+    """send_media_reply tool should publish an OutboundMessage with media."""
+    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
     send_media_reply = tools[1].function
     result = await send_media_reply(
         message="Here's your estimate", media_url="https://example.com/estimate.pdf"
     )
-    assert "msg_43" in result.content
+    assert "Sent media message" in result.content
     assert result.is_error is False
-    mock_messaging_service.send_media.assert_called_once_with(  # type: ignore[union-attr]
-        to="123456789", body="Here's your estimate", media_url="https://example.com/estimate.pdf"
-    )
+    publish_outbound.assert_called_once()
+    msg: OutboundMessage = publish_outbound.call_args[0][0]
+    assert msg.chat_id == "123456789"
+    assert msg.content == "Here's your estimate"
+    assert msg.media == ["https://example.com/estimate.pdf"]
+    assert msg.channel == "telegram"

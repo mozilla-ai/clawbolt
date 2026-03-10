@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from fnmatch import fnmatch
@@ -24,7 +24,7 @@ from backend.app.agent.file_store import _read_json, _user_dir, _write_json
 from backend.app.config import settings
 
 if TYPE_CHECKING:
-    from backend.app.services.messaging import MessagingService
+    from backend.app.bus import OutboundMessage
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +192,8 @@ class ApprovalGate:
         user_id: int,
         tool_name: str,
         description: str,
-        messaging_service: MessagingService,
+        publish_outbound: Callable[[OutboundMessage], Awaitable[None]],
+        channel: str,
         chat_id: str,
         timeout: float | None = None,
     ) -> ApprovalDecision:
@@ -208,7 +209,9 @@ class ApprovalGate:
 
         prompt = _format_approval_message(tool_name, description)
         try:
-            await messaging_service.send_text(chat_id, prompt)
+            from backend.app.bus import OutboundMessage as OMsg
+
+            await publish_outbound(OMsg(channel=channel, chat_id=chat_id, content=prompt))
         except Exception:
             logger.exception("Failed to send approval prompt to user %d", user_id)
             self._pending.pop(user_id, None)

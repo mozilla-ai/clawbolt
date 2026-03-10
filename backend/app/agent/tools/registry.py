@@ -16,8 +16,9 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -25,8 +26,10 @@ from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
-from backend.app.services.messaging import MessagingService
 from backend.app.services.storage_service import StorageBackend
+
+if TYPE_CHECKING:
+    from backend.app.bus import OutboundMessage
 
 logger = logging.getLogger(__name__)
 
@@ -37,7 +40,8 @@ class ToolContext:
 
     user: UserData
     storage: StorageBackend | None = None
-    messaging_service: MessagingService | None = None
+    publish_outbound: Callable[[OutboundMessage], Awaitable[None]] | None = None
+    channel: str = ""
     to_address: str = ""
     downloaded_media: list[DownloadedMedia] = field(default_factory=list)
 
@@ -48,7 +52,7 @@ class ToolFactory:
 
     create: Callable[[ToolContext], list[Tool]]
     requires_storage: bool = False
-    requires_messaging: bool = False
+    requires_outbound: bool = False
     core: bool = True
     summary: str = ""
 
@@ -125,7 +129,7 @@ class ToolRegistry:
         create: Callable[[ToolContext], list[Tool]],
         *,
         requires_storage: bool = False,
-        requires_messaging: bool = False,
+        requires_outbound: bool = False,
         core: bool = True,
         summary: str = "",
     ) -> None:
@@ -135,7 +139,7 @@ class ToolRegistry:
             name: Unique factory name.
             create: Callable that produces a list of ``Tool`` objects.
             requires_storage: Skip this factory when no storage backend exists.
-            requires_messaging: Skip this factory when no messaging service exists.
+            requires_outbound: Skip this factory when no publish_outbound callback exists.
             core: If ``True`` the factory's tools are always registered.
                 If ``False`` the factory is a specialist, discoverable via
                 ``list_capabilities``.
@@ -147,7 +151,7 @@ class ToolRegistry:
         self._factories[name] = ToolFactory(
             create=create,
             requires_storage=requires_storage,
-            requires_messaging=requires_messaging,
+            requires_outbound=requires_outbound,
             core=core,
             summary=summary,
         )
@@ -174,8 +178,8 @@ class ToolRegistry:
             if factory.requires_storage and context.storage is None:
                 logger.debug("Skipping %s: no storage backend", name)
                 continue
-            if factory.requires_messaging and context.messaging_service is None:
-                logger.debug("Skipping %s: no messaging service", name)
+            if factory.requires_outbound and context.publish_outbound is None:
+                logger.debug("Skipping %s: no publish_outbound callback", name)
                 continue
             created = factory.create(context)
             tools.extend(created)
@@ -219,7 +223,7 @@ class ToolRegistry:
                 continue
             if factory.requires_storage and context.storage is None:
                 continue
-            if factory.requires_messaging and context.messaging_service is None:
+            if factory.requires_outbound and context.publish_outbound is None:
                 continue
             summaries[name] = factory.summary
         return summaries

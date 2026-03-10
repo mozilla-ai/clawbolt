@@ -13,6 +13,7 @@ inspired by nanobot's Mochat delay-based batching pattern.
 import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from backend.app.agent.approval import (
@@ -32,7 +33,6 @@ from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
 from backend.app.media.download import DownloadedMedia
-from backend.app.services.messaging import MessagingService
 
 logger = logging.getLogger(__name__)
 
@@ -57,21 +57,26 @@ class InboundMessage:
 
 
 async def _send_error_fallback(
-    messaging_service: MessagingService,
+    channel: str,
     user: UserData,
     user_id: int,
 ) -> None:
-    """Send a fallback error message to the user.
+    """Send a fallback error message to the user via the bus.
 
     Swallows any exception so this never propagates.
     """
     to_address = user.channel_identifier or user.phone
-    if not to_address:
+    if not to_address or not channel:
         return
     try:
-        await messaging_service.send_text(
-            to=to_address,
-            body="Sorry, something went wrong processing your message. Please try again.",
+        from backend.app.bus import OutboundMessage, message_bus
+
+        await message_bus.publish_outbound(
+            OutboundMessage(
+                channel=channel,
+                chat_id=to_address,
+                content="Sorry, something went wrong processing your message. Please try again.",
+            )
         )
     except Exception:
         logger.exception("Failed to send error fallback to user %d", user_id)
@@ -131,7 +136,7 @@ class _BatchState:
 
     entries: list[_BatchEntry] = field(default_factory=list)
     timer: asyncio.Task[None] | None = None
-    messaging_service: MessagingService | None = None
+    download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None
     user: UserData | None = None
     channel: str = ""
     request_id: str = ""
@@ -162,10 +167,10 @@ class MessageBatcher:
         session: SessionState,
         message: StoredMessage,
         media_urls: list[tuple[str, str]],
-        messaging_service: MessagingService,
         channel: str = "",
         request_id: str = "",
         downloaded_media: list[DownloadedMedia] | None = None,
+        download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None,
     ) -> None:
         """Add a message to the batch for the user.
 
@@ -182,7 +187,7 @@ class MessageBatcher:
                     downloaded_media=downloaded_media or [],
                 )
             )
-            state.messaging_service = messaging_service
+            state.download_media = download_media
             state.user = user
             state.channel = channel
             state.request_id = request_id
@@ -203,13 +208,12 @@ class MessageBatcher:
         """
         async with self._lock:
             state = self._states.pop(user_id, None)
-        if state is None or not state.entries or state.messaging_service is None:
+        if state is None or not state.entries:
             return
         if state.user is None:
             return
 
         last_entry = state.entries[-1]
-        messaging_service = state.messaging_service
         user = state.user
 
         # Merge media from all batched messages so attachments are not lost.
@@ -239,10 +243,10 @@ class MessageBatcher:
                     session=last_entry.session,
                     message=last_entry.message,
                     media_urls=all_media,
-                    messaging_service=messaging_service,
                     downloaded_media=all_downloaded or None,
                     channel=state.channel,
                     request_id=state.request_id,
+                    download_media=state.download_media,
                 )
             except Exception:
                 logger.exception(
@@ -250,7 +254,7 @@ class MessageBatcher:
                     last_entry.message.seq,
                     user_id,
                 )
-                await _send_error_fallback(messaging_service, user, user_id)
+                await _send_error_fallback(state.channel, user, user_id)
 
 
 # Module-level singleton
@@ -264,7 +268,7 @@ message_batcher = MessageBatcher(window_ms=settings.message_batch_window_ms)
 
 async def process_inbound_from_bus(
     inbound: "InboundMessage",
-    messaging_service: MessagingService,
+    download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None,
 ) -> None:
     """Process an inbound message consumed from the bus.
 
@@ -315,10 +319,10 @@ async def process_inbound_from_bus(
             session=session,
             message=message,
             media_urls=inbound.media_refs,
-            messaging_service=messaging_service,
             channel=inbound.channel,
             request_id=inbound.request_id,
             downloaded_media=inbound.downloaded_media or None,
+            download_media=download_media,
         )
     else:
         async with user_locks.acquire(user.id):
@@ -332,10 +336,10 @@ async def process_inbound_from_bus(
                     session=session,
                     message=message,
                     media_urls=inbound.media_refs,
-                    messaging_service=messaging_service,
                     downloaded_media=inbound.downloaded_media,
                     channel=inbound.channel,
                     request_id=inbound.request_id,
+                    download_media=download_media,
                 )
             except Exception:
                 logger.exception(
@@ -343,4 +347,4 @@ async def process_inbound_from_bus(
                     message.seq,
                     user.id,
                 )
-                await _send_error_fallback(messaging_service, user, user.id)
+                await _send_error_fallback(inbound.channel, user, user.id)
