@@ -72,7 +72,7 @@ async def test_agent_includes_conversation_history(
     mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
 
     agent = ClawboltAgent(user=test_user)
-    history = [
+    history: list[AgentMessage] = [
         UserMessage(content="Hi, I need help"),
         AssistantMessage(content="Hello! How can I help?"),
     ]
@@ -735,7 +735,7 @@ def test_trim_messages_skips_without_input_tokens() -> None:
 
 def test_trim_messages_preserves_short_conversation() -> None:
     """Messages shorter than the threshold should be returned unchanged."""
-    messages = [
+    messages: list[AgentMessage] = [
         SystemMessage(content="System prompt"),
         UserMessage(content="Hello"),
         AssistantMessage(content="Hi there!"),
@@ -748,7 +748,7 @@ def test_trim_messages_preserves_short_conversation() -> None:
 def test_trim_messages_keeps_system_and_recent() -> None:
     """Long conversations should be trimmed to fit within the token budget."""
     big_content = "x" * 4000
-    messages = [
+    messages: list[AgentMessage] = [
         SystemMessage(content="System prompt"),
         *[
             UserMessage(content=big_content)
@@ -835,7 +835,7 @@ def test_summarize_dropped_messages_includes_user_topics() -> None:
     """Summary should include first lines from dropped user messages."""
     from backend.app.agent.core import _summarize_dropped_messages
 
-    dropped = [
+    dropped: list[AgentMessage] = [
         UserMessage(content="What did I quote for the Johnson deck?"),
         AssistantMessage(content="You quoted $4,500 for the 12x12 composite deck."),
     ]
@@ -848,7 +848,7 @@ def test_summarize_dropped_messages_includes_tool_calls() -> None:
     """Summary should mention tools that were called in dropped messages."""
     from backend.app.agent.core import _summarize_dropped_messages
 
-    dropped = [
+    dropped: list[AgentMessage] = [
         UserMessage(content="Save my rate"),
         AssistantMessage(
             content=None,

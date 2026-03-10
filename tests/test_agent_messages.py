@@ -1,6 +1,7 @@
 """Tests for typed agent message dataclasses and Messages API serialization."""
 
 from backend.app.agent.messages import (
+    AgentMessage,
     AssistantMessage,
     SystemMessage,
     ToolCallRequest,
@@ -95,7 +96,7 @@ def test_messages_to_messages_api_extracts_system() -> None:
 
 def test_messages_to_messages_api_merges_consecutive_tool_results() -> None:
     """Consecutive ToolResultMessages should be merged into one user message."""
-    messages = [
+    messages: list[AgentMessage] = [
         AssistantMessage(
             content=None,
             tool_calls=[
