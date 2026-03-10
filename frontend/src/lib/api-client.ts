@@ -25,10 +25,6 @@ export function setAccessToken(token: string | null): void {
   _accessToken = token;
 }
 
-export function getRefreshToken(): string | null {
-  return _getRefreshToken();
-}
-
 export function setRefreshToken(token: string | null): void {
   _setRefreshToken(token);
 }
