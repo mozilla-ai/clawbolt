@@ -34,8 +34,9 @@ async def test_heartbeat_evaluate_returns_valid_action(
         mock_settings.heartbeat_provider = None
         mock_settings.heartbeat_model = None
         mock_settings.llm_max_tokens_heartbeat = 300
+        mock_settings.heartbeat_recent_messages_count = 5
 
-        action = await evaluate_heartbeat_need(onboarded_user, ["Test flag: check-in needed"])
+        action = await evaluate_heartbeat_need(onboarded_user)
 
     assert action.action_type in ("send_message", "no_action")
     assert isinstance(action.reasoning, str)
@@ -79,11 +80,9 @@ async def test_heartbeat_evaluate_with_context(
         mock_settings.heartbeat_provider = None
         mock_settings.heartbeat_model = None
         mock_settings.llm_max_tokens_heartbeat = 300
+        mock_settings.heartbeat_recent_messages_count = 5
 
-        action = await evaluate_heartbeat_need(
-            onboarded_user,
-            ["Stale draft estimate: 12x12 composite deck build"],
-        )
+        action = await evaluate_heartbeat_need(onboarded_user)
 
     assert action.action_type in ("send_message", "no_action")
     # If LLM decides to send, the message should be non-empty
