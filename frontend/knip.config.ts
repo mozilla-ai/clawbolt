@@ -10,6 +10,7 @@ const config: KnipConfig = {
   ],
   project: ['src/**/*.{ts,tsx}'],
   ignore: ['src/generated/**'], // Created by generate:api script
+  ignoreDependencies: ['tailwind-merge'], // Peer dep of tailwind-variants (HeroUI)
   vite: { config: ['vite.config.ts'] },
 };
 
