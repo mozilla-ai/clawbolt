@@ -134,13 +134,13 @@ async def test_partial_media_success(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-async def test_messaging_send_failure_still_stores_message(
+async def test_outbound_stored_and_published_to_bus(
     mock_amessages: object,
     test_user: UserData,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
-    """When messaging send fails, outbound message should still be stored."""
+    """Outbound reply should be both persisted in the session and published to the bus."""
     mock_amessages.return_value = make_text_response("Here's your answer!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(

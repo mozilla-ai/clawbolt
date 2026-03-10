@@ -1,4 +1,3 @@
-import asyncio
 from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
@@ -41,13 +40,9 @@ async def test_user(tmp_path: object) -> UserData:
 @pytest.fixture(autouse=True)
 def _reset_bus_queues() -> Generator[None]:
     """Reset bus queues between tests so messages don't leak."""
-    message_bus.inbound = asyncio.Queue()
-    message_bus.outbound = asyncio.Queue()
-    message_bus._response_futures.clear()
+    message_bus.reset()
     yield
-    message_bus.inbound = asyncio.Queue()
-    message_bus.outbound = asyncio.Queue()
-    message_bus._response_futures.clear()
+    message_bus.reset()
 
 
 @pytest.fixture()

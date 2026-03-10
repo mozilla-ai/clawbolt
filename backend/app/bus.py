@@ -110,6 +110,12 @@ class MessageBus:
         finally:
             self._response_futures.pop(request_id, None)
 
+    def reset(self) -> None:
+        """Clear all queues and pending futures (used by test fixtures)."""
+        self.inbound = asyncio.Queue()
+        self.outbound = asyncio.Queue()
+        self._response_futures.clear()
+
     @property
     def inbound_size(self) -> int:
         """Number of pending inbound messages."""
