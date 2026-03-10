@@ -65,7 +65,6 @@ from backend.app.services.llm_usage import log_llm_usage
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = settings.max_tool_rounds
-RATE_LIMIT_RETRY_DELAY = settings.rate_limit_retry_delay
 LLM_MAX_RETRIES = settings.llm_max_retries
 
 # Conservative default; most models support 128K+ but we leave room for output

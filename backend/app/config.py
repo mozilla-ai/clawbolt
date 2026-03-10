@@ -77,7 +77,6 @@ class Settings(BaseSettings):
     max_tool_rounds: int = Field(default=10, ge=1)
     max_input_tokens: int = Field(default=120_000, ge=1)
     context_trim_target_tokens: int = Field(default=80_000, ge=1)
-    rate_limit_retry_delay: float = Field(default=2.0, gt=0)
     llm_max_retries: int = Field(default=3, ge=1)
 
     # Conversation & memory
