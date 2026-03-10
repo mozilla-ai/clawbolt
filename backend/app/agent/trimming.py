@@ -6,8 +6,6 @@ trimming that preserves tool-call / tool-result pairing.
 
 from __future__ import annotations
 
-import logging
-
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -16,8 +14,6 @@ from backend.app.agent.messages import (
     UserMessage,
 )
 from backend.app.config import settings
-
-logger = logging.getLogger(__name__)
 
 _SUMMARY_MAX_CHARS = 500
 
@@ -108,12 +104,12 @@ def trim_messages(
     if input_tokens is None or len(messages) <= 2:
         return messages
 
+    actual_input_tokens: int = input_tokens
+
     def _tokens_for(msgs: list[AgentMessage]) -> int:
         """Scale the known input_tokens by the content-length ratio."""
         orig_len = _content_length(messages) or 1
-        return int(cast_input_tokens * _content_length(msgs) / orig_len)
-
-    cast_input_tokens: int = input_tokens
+        return int(actual_input_tokens * _content_length(msgs) / orig_len)
 
     if _tokens_for(messages) <= target_tokens:
         return messages
