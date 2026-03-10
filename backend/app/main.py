@@ -196,6 +196,7 @@ if _FRONTEND_DIST.is_dir():
     async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
         """Serve the SPA index.html for all non-API routes."""
         file_path = _FRONTEND_DIST / full_path
-        if file_path.is_file() and ".." not in full_path:
-            return FileResponse(file_path)
+        resolved = file_path.resolve()
+        if resolved.is_file() and resolved.is_relative_to(_FRONTEND_DIST.resolve()):
+            return FileResponse(resolved)
         return FileResponse(_FRONTEND_DIST / "index.html")
