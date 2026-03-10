@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -65,6 +66,7 @@ logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = settings.max_tool_rounds
 RATE_LIMIT_RETRY_DELAY = settings.rate_limit_retry_delay
+LLM_MAX_RETRIES = settings.llm_max_retries
 
 # Conservative default; most models support 128K+ but we leave room for output
 MAX_INPUT_TOKENS = settings.max_input_tokens
@@ -296,8 +298,9 @@ class ClawboltAgent:
 
         Accepts typed ``AgentMessage`` objects and serializes them to
         Anthropic Messages API format at the LLM boundary.  Handles
-        RateLimitError (retry once after delay) and
-        ContextLengthExceededError (trim history and retry once).
+        RateLimitError (exponential backoff with jitter, up to
+        ``LLM_MAX_RETRIES`` attempts) and ContextLengthExceededError
+        (trim history and retry once).
         ContentFilterError and AuthenticationError are re-raised with
         appropriate logging so the caller can produce a user-facing message.
         """
@@ -312,66 +315,64 @@ class ClawboltAgent:
             tool_count,
             settings.llm_max_tokens_agent,
         )
-        try:
-            return cast(
-                MessageResponse,
-                await amessages(
-                    model=settings.llm_model,
-                    provider=settings.llm_provider,
-                    api_base=settings.llm_api_base,
-                    system=system,
-                    messages=msg_dicts,
-                    tools=tool_schemas,
-                    max_tokens=settings.llm_max_tokens_agent,
-                    **llm_kwargs,
-                ),
-            )
-        except RateLimitError:
-            logger.warning("Rate limit hit, retrying after %.1fs delay", RATE_LIMIT_RETRY_DELAY)
-            await asyncio.sleep(RATE_LIMIT_RETRY_DELAY)
-            return cast(
-                MessageResponse,
-                await amessages(
-                    model=settings.llm_model,
-                    provider=settings.llm_provider,
-                    api_base=settings.llm_api_base,
-                    system=system,
-                    messages=msg_dicts,
-                    tools=tool_schemas,
-                    max_tokens=settings.llm_max_tokens_agent,
-                    **llm_kwargs,
-                ),
-            )
-        except ContextLengthExceededError:
-            trimmed = trim_messages(
-                messages,
-                input_tokens=self._last_input_tokens or MAX_INPUT_TOKENS,
-            )
-            logger.warning(
-                "Context length exceeded, trimmed from %d to %d messages and retrying",
-                len(messages),
-                len(trimmed),
-            )
-            system, trimmed_dicts = messages_to_messages_api(trimmed)
-            return cast(
-                MessageResponse,
-                await amessages(
-                    model=settings.llm_model,
-                    provider=settings.llm_provider,
-                    api_base=settings.llm_api_base,
-                    system=system,
-                    messages=trimmed_dicts,
-                    tools=tool_schemas,
-                    max_tokens=settings.llm_max_tokens_agent,
-                    **llm_kwargs,
-                ),
-            )
-        except ContentFilterError:
-            logger.warning("Content blocked by provider safety filter")
-            raise
-        except AuthenticationError:
-            logger.critical("LLM authentication failed -- check API key configuration")
-            raise
+        for attempt in range(LLM_MAX_RETRIES):
+            try:
+                return cast(
+                    MessageResponse,
+                    await amessages(
+                        model=settings.llm_model,
+                        provider=settings.llm_provider,
+                        api_base=settings.llm_api_base,
+                        system=system,
+                        messages=msg_dicts,
+                        tools=tool_schemas,
+                        max_tokens=settings.llm_max_tokens_agent,
+                        **llm_kwargs,
+                    ),
+                )
+            except RateLimitError:
+                if attempt == LLM_MAX_RETRIES - 1:
+                    raise
+                delay = (2**attempt) + random.uniform(0, 1)
+                logger.warning(
+                    "Rate limited, retrying in %.1fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    LLM_MAX_RETRIES,
+                )
+                await asyncio.sleep(delay)
+            except ContextLengthExceededError:
+                trimmed = trim_messages(
+                    messages,
+                    input_tokens=self._last_input_tokens or MAX_INPUT_TOKENS,
+                )
+                logger.warning(
+                    "Context length exceeded, trimmed from %d to %d messages and retrying",
+                    len(messages),
+                    len(trimmed),
+                )
+                system, trimmed_dicts = messages_to_messages_api(trimmed)
+                return cast(
+                    MessageResponse,
+                    await amessages(
+                        model=settings.llm_model,
+                        provider=settings.llm_provider,
+                        api_base=settings.llm_api_base,
+                        system=system,
+                        messages=trimmed_dicts,
+                        tools=tool_schemas,
+                        max_tokens=settings.llm_max_tokens_agent,
+                        **llm_kwargs,
+                    ),
+                )
+            except ContentFilterError:
+                logger.warning("Content blocked by provider safety filter")
+                raise
+            except AuthenticationError:
+                logger.critical("LLM authentication failed -- check API key configuration")
+                raise
+        # This should be unreachable, but satisfies the type checker.
+        raise RuntimeError("LLM retry loop exited without returning")
 
     def _validate_tool_args(
         self, tool: Tool, tool_args: dict[str, Any]
