@@ -3,10 +3,13 @@
 from fastapi.testclient import TestClient
 
 
-def test_list_checklist_empty(client: TestClient) -> None:
+def test_list_checklist_defaults(client: TestClient) -> None:
+    """Default CHECKLIST.md items should appear in the listing."""
     resp = client.get("/api/user/checklist")
     assert resp.status_code == 200
-    assert resp.json() == []
+    items = resp.json()
+    # Default CHECKLIST.md is seeded with items
+    assert len(items) >= 1
 
 
 def test_create_checklist_item(client: TestClient) -> None:
@@ -36,7 +39,9 @@ def test_list_after_create(client: TestClient) -> None:
     client.post("/api/user/checklist", json={"description": "Item 2"})
     resp = client.get("/api/user/checklist")
     assert resp.status_code == 200
-    assert len(resp.json()) == 2
+    descriptions = [i["description"] for i in resp.json()]
+    assert "Item 1" in descriptions
+    assert "Item 2" in descriptions
 
 
 def test_delete_checklist_item(client: TestClient) -> None:
@@ -46,7 +51,8 @@ def test_delete_checklist_item(client: TestClient) -> None:
     assert resp.status_code == 204
     # Verify it's gone
     resp = client.get("/api/user/checklist")
-    assert len(resp.json()) == 0
+    descriptions = [i["description"] for i in resp.json()]
+    assert "To delete" not in descriptions
 
 
 def test_delete_checklist_item_not_found(client: TestClient) -> None:

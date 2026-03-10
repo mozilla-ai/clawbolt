@@ -44,7 +44,7 @@ data/
       user.json                      # Profile data
       SOUL.md                        # Personality/behavioral guidance
       USER.md                        # User info and preferences
-      CHECKLIST.md                   # General-purpose task checklist
+      CHECKLIST.md                   # Heartbeat checklist (single source of truth)
       memory/
         MEMORY.md                    # Structured facts by category
         HISTORY.md                   # Compaction log
@@ -55,7 +55,6 @@ data/
         {estimate_id}.json           # Estimates with line items
       media.json                     # Media file manifest
       heartbeat/
-        checklist.json               # Scheduled checklist items
         log.jsonl                    # Heartbeat send log
       llm_usage.jsonl                # Token usage log
 ```
