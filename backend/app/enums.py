@@ -20,11 +20,6 @@ class ChecklistStatus(StrEnum):
     COMPLETED = "completed"
 
 
-class QBEntityType(StrEnum):
-    INVOICE = "invoice"
-    ESTIMATE = "estimate"
-
-
 class ChecklistSchedule(StrEnum):
     DAILY = "daily"
     WEEKDAYS = "weekdays"

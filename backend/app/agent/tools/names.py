@@ -35,10 +35,8 @@ class ToolName:
     DELETE_FILE = "delete_file"
 
     # QuickBooks
-    QB_SEARCH_ITEMS = "qb_search_items"
-    QB_SEARCH_CUSTOMERS = "qb_search_customers"
-    QB_CREATE_INVOICE = "qb_create_invoice"
-    QB_SEND_INVOICE = "qb_send_invoice"
+    QB_SEARCH_INVOICES = "qb_search_invoices"
+    QB_SEARCH_ESTIMATES = "qb_search_estimates"
 
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"

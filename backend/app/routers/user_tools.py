@@ -63,7 +63,7 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         domain_group_order=1,
     ),
     "quickbooks": _FactoryMeta(
-        "Look up pricing and customers, create and send invoices via QuickBooks Online",
+        "View invoices and estimates from QuickBooks Online",
         domain_group="Integrations",
         domain_group_order=2,
     ),

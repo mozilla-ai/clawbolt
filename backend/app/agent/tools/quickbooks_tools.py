@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
@@ -17,40 +17,20 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-class QBSearchItemsParams(BaseModel):
-    """Parameters for the qb_search_items tool."""
+class QBSearchInvoicesParams(BaseModel):
+    """Parameters for the qb_search_invoices tool."""
 
-    query: str = Field(description="Search term to find items/services by name")
-
-
-class QBSearchCustomersParams(BaseModel):
-    """Parameters for the qb_search_customers tool."""
-
-    query: str = Field(description="Search term to find customers by display name")
-
-
-class QBCreateInvoiceLineItem(BaseModel):
-    """A single line item for a QuickBooks invoice."""
-
-    description: str = Field(description="Description of the line item")
-    quantity: float = Field(default=1, ge=0, description="Quantity")
-    unit_price: float = Field(ge=0, description="Price per unit")
-    item_id: str | None = Field(default=None, description="QBO item ID (optional)")
-
-
-class QBCreateInvoiceParams(BaseModel):
-    """Parameters for the qb_create_invoice tool."""
-
-    customer_id: str = Field(description="QuickBooks customer ID")
-    line_items: list[QBCreateInvoiceLineItem] = Field(
-        description="Line items for the invoice",
+    customer_name: str | None = Field(
+        default=None, description="Customer name to filter invoices by (optional)"
     )
 
 
-class QBSendInvoiceParams(BaseModel):
-    """Parameters for the qb_send_invoice tool."""
+class QBSearchEstimatesParams(BaseModel):
+    """Parameters for the qb_search_estimates tool."""
 
-    invoice_id: str = Field(description="QuickBooks invoice ID to send via email")
+    customer_name: str | None = Field(
+        default=None, description="Customer name to filter estimates by (optional)"
+    )
 
 
 def create_quickbooks_tools(
@@ -58,159 +38,81 @@ def create_quickbooks_tools(
 ) -> list[Tool]:
     """Create QuickBooks-related tools for the agent."""
 
-    async def qb_search_items(query: str) -> ToolResult:
-        """Search QuickBooks items/services for pricing info."""
+    async def qb_search_invoices(customer_name: str | None = None) -> ToolResult:
+        """Search QuickBooks invoices, optionally filtered by customer name."""
         try:
-            items = await qb_service.list_items(query)
+            invoices = await qb_service.list_invoices(customer_name)
         except Exception as exc:
-            logger.exception("QuickBooks list_items failed")
+            logger.exception("QuickBooks list_invoices failed")
             return ToolResult(
-                content=f"Error searching QuickBooks items: {exc}",
+                content=f"Error searching QuickBooks invoices: {exc}",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
 
-        if not items:
-            return ToolResult(content=f"No items found matching '{query}'.")
+        if not invoices:
+            label = f" for '{customer_name}'" if customer_name else ""
+            return ToolResult(content=f"No invoices found{label}.")
 
-        lines = [f"Found {len(items)} item(s):"]
-        for item in items:
-            price = f"${item.get('unit_price', 0):,.2f}" if item.get("unit_price") else "N/A"
+        lines = [f"Found {len(invoices)} invoice(s):"]
+        for inv in invoices:
+            paid = float(inv.get("total", 0)) - float(inv.get("balance", 0))
+            status = "Paid" if float(inv.get("balance", 0)) == 0 else "Open"
             lines.append(
-                f"- {item['name']} (ID: {item['id']}, Price: {price})"
-                f" | {item.get('description', '')}"
+                f"- #{inv.get('doc_number', 'N/A')} | {inv.get('customer_name', 'Unknown')}"
+                f" | ${inv.get('total', 0):,.2f} ({status}, ${paid:,.2f} paid)"
+                f" | Date: {inv.get('date', 'N/A')}"
+                f" | Due: {inv.get('due_date', 'N/A')}"
             )
         return ToolResult(content="\n".join(lines))
 
-    async def qb_search_customers(query: str) -> ToolResult:
-        """Search QuickBooks customers."""
+    async def qb_search_estimates(customer_name: str | None = None) -> ToolResult:
+        """Search QuickBooks estimates, optionally filtered by customer name."""
         try:
-            customers = await qb_service.list_customers(query)
+            estimates = await qb_service.list_estimates(customer_name)
         except Exception as exc:
-            logger.exception("QuickBooks list_customers failed")
+            logger.exception("QuickBooks list_estimates failed")
             return ToolResult(
-                content=f"Error searching QuickBooks customers: {exc}",
+                content=f"Error searching QuickBooks estimates: {exc}",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
 
-        if not customers:
-            return ToolResult(content=f"No customers found matching '{query}'.")
+        if not estimates:
+            label = f" for '{customer_name}'" if customer_name else ""
+            return ToolResult(content=f"No estimates found{label}.")
 
-        lines = [f"Found {len(customers)} customer(s):"]
-        for cust in customers:
-            email = cust.get("primary_email", "")
-            phone = cust.get("primary_phone", "")
-            contact = f"Email: {email}" if email else ""
-            if phone:
-                contact = f"{contact}, Phone: {phone}" if contact else f"Phone: {phone}"
-            lines.append(f"- {cust['display_name']} (ID: {cust['id']}) | {contact}")
+        lines = [f"Found {len(estimates)} estimate(s):"]
+        for est in estimates:
+            lines.append(
+                f"- #{est.get('doc_number', 'N/A')} | {est.get('customer_name', 'Unknown')}"
+                f" | ${est.get('total', 0):,.2f}"
+                f" | Status: {est.get('status', 'N/A')}"
+                f" | Date: {est.get('date', 'N/A')}"
+                f" | Expires: {est.get('expiry_date', 'N/A')}"
+            )
         return ToolResult(content="\n".join(lines))
-
-    async def qb_create_invoice(
-        customer_id: str,
-        line_items: list[dict[str, Any]],
-    ) -> ToolResult:
-        """Create a QuickBooks invoice."""
-        if not line_items:
-            return ToolResult(
-                content="Error: at least one line item is required.",
-                is_error=True,
-                error_kind=ToolErrorKind.VALIDATION,
-            )
-
-        # Build line items with computed amounts
-        processed: list[dict[str, Any]] = []
-        for item in line_items:
-            qty = float(item.get("quantity", 1))
-            price = float(item.get("unit_price", 0))
-            processed.append(
-                {
-                    "description": item.get("description", ""),
-                    "quantity": qty,
-                    "unit_price": price,
-                    "amount": qty * price,
-                    "item_id": item.get("item_id"),
-                }
-            )
-
-        try:
-            invoice = await qb_service.create_invoice(customer_id, processed)
-        except Exception as exc:
-            logger.exception("QuickBooks create_invoice failed")
-            return ToolResult(
-                content=f"Error creating QuickBooks invoice: {exc}",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-
-        return ToolResult(
-            content=(
-                f"Invoice created successfully. "
-                f"Invoice ID: {invoice['id']}, "
-                f"Doc Number: {invoice.get('doc_number', 'N/A')}, "
-                f"Total: ${invoice.get('total', 0):,.2f}. "
-                f"Use qb_send_invoice to email it to the customer."
-            )
-        )
-
-    async def qb_send_invoice(invoice_id: str) -> ToolResult:
-        """Email a QuickBooks invoice to the customer."""
-        try:
-            result = await qb_service.send_invoice(invoice_id)
-        except Exception as exc:
-            logger.exception("QuickBooks send_invoice failed")
-            return ToolResult(
-                content=f"Error sending QuickBooks invoice: {exc}",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-
-        return ToolResult(
-            content=(f"Invoice {result.get('id', invoice_id)} sent successfully via email.")
-        )
 
     return [
         Tool(
-            name=ToolName.QB_SEARCH_ITEMS,
+            name=ToolName.QB_SEARCH_INVOICES,
             description=(
-                "Search QuickBooks Online items and services for pricing information. "
-                "Use when the contractor asks about pricing from their QuickBooks catalog."
+                "Search QuickBooks Online invoices. "
+                "Optionally filter by customer name to see their invoice history."
             ),
-            function=qb_search_items,
-            params_model=QBSearchItemsParams,
-            usage_hint="Search for items in QuickBooks to look up pricing.",
+            function=qb_search_invoices,
+            params_model=QBSearchInvoicesParams,
+            usage_hint="Search for invoices in QuickBooks, optionally by customer name.",
         ),
         Tool(
-            name=ToolName.QB_SEARCH_CUSTOMERS,
+            name=ToolName.QB_SEARCH_ESTIMATES,
             description=(
-                "Search QuickBooks Online customers by name. "
-                "Use to find customer IDs needed for creating invoices."
+                "Search QuickBooks Online estimates. "
+                "Optionally filter by customer name to see their estimate history."
             ),
-            function=qb_search_customers,
-            params_model=QBSearchCustomersParams,
-            usage_hint="Search for customers in QuickBooks by name.",
-        ),
-        Tool(
-            name=ToolName.QB_CREATE_INVOICE,
-            description=(
-                "Create an invoice in QuickBooks Online. Requires a customer ID "
-                "(use qb_search_customers to find it) and line items with description, "
-                "quantity, and unit_price."
-            ),
-            function=qb_create_invoice,
-            params_model=QBCreateInvoiceParams,
-            usage_hint="Create an invoice in QuickBooks with customer ID and line items.",
-        ),
-        Tool(
-            name=ToolName.QB_SEND_INVOICE,
-            description=(
-                "Email a QuickBooks invoice to the customer. "
-                "Use after creating an invoice with qb_create_invoice."
-            ),
-            function=qb_send_invoice,
-            params_model=QBSendInvoiceParams,
-            usage_hint="Send a QuickBooks invoice via email after creating it.",
+            function=qb_search_estimates,
+            params_model=QBSearchEstimatesParams,
+            usage_hint="Search for estimates in QuickBooks, optionally by customer name.",
         ),
     ]
 
@@ -230,7 +132,7 @@ def _register() -> None:
         "quickbooks",
         _quickbooks_factory,
         core=False,
-        summary="Look up pricing and customers, create and send invoices via QuickBooks Online",
+        summary="View invoices and estimates from QuickBooks Online",
     )
 
 

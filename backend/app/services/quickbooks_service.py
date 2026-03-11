@@ -25,32 +25,12 @@ class QuickBooksService(ABC):
     """Abstract base for QuickBooks operations."""
 
     @abstractmethod
-    async def list_items(self, query: str | None = None) -> list[dict[str, Any]]:
-        """Search QBO items/services for pricing. Returns list of item dicts."""
+    async def list_invoices(self, customer_name: str | None = None) -> list[dict[str, Any]]:
+        """Search QBO invoices, optionally filtered by customer name."""
 
     @abstractmethod
-    async def list_customers(self, query: str | None = None) -> list[dict[str, Any]]:
-        """Search QBO customers. Returns list of customer dicts."""
-
-    @abstractmethod
-    async def create_invoice(
-        self,
-        customer_id: str,
-        line_items: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Create an invoice in QBO. Returns the created invoice dict."""
-
-    @abstractmethod
-    async def send_invoice(self, invoice_id: str) -> dict[str, Any]:
-        """Email an invoice to the customer via QBO. Returns send result dict."""
-
-    @abstractmethod
-    async def create_estimate(
-        self,
-        customer_id: str,
-        line_items: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        """Create an estimate in QBO. Returns the created estimate dict."""
+    async def list_estimates(self, customer_name: str | None = None) -> list[dict[str, Any]]:
+        """Search QBO estimates, optionally filtered by customer name."""
 
 
 class QuickBooksOnlineService(QuickBooksService):
@@ -127,121 +107,46 @@ class QuickBooksOnlineService(QuickBooksService):
                 return value
         return []
 
-    async def list_items(self, query: str | None = None) -> list[dict[str, Any]]:
-        if query:
-            escaped = query.replace("'", "\\'")
-            qs = f"SELECT * FROM Item WHERE Name LIKE '%{escaped}%'"
+    async def list_invoices(self, customer_name: str | None = None) -> list[dict[str, Any]]:
+        if customer_name:
+            escaped = customer_name.replace("'", "\\'")
+            qs = f"SELECT * FROM Invoice WHERE CustomerRef IN (SELECT Id FROM Customer WHERE DisplayName LIKE '%{escaped}%') MAXRESULTS 50"
         else:
-            qs = "SELECT * FROM Item MAXRESULTS 100"
+            qs = "SELECT * FROM Invoice MAXRESULTS 50"
         raw = await self._query(qs)
         return [
             {
-                "id": item["Id"],
-                "name": item.get("Name", ""),
-                "description": item.get("Description", ""),
-                "unit_price": item.get("UnitPrice", 0),
-                "type": item.get("Type", ""),
+                "id": inv["Id"],
+                "doc_number": inv.get("DocNumber", ""),
+                "customer_name": (inv.get("CustomerRef") or {}).get("name", ""),
+                "total": inv.get("TotalAmt", 0),
+                "balance": inv.get("Balance", 0),
+                "due_date": inv.get("DueDate", ""),
+                "date": inv.get("TxnDate", ""),
+                "email_status": inv.get("EmailStatus", ""),
             }
-            for item in raw
+            for inv in raw
         ]
 
-    async def list_customers(self, query: str | None = None) -> list[dict[str, Any]]:
-        if query:
-            escaped = query.replace("'", "\\'")
-            qs = f"SELECT * FROM Customer WHERE DisplayName LIKE '%{escaped}%'"
+    async def list_estimates(self, customer_name: str | None = None) -> list[dict[str, Any]]:
+        if customer_name:
+            escaped = customer_name.replace("'", "\\'")
+            qs = f"SELECT * FROM Estimate WHERE CustomerRef IN (SELECT Id FROM Customer WHERE DisplayName LIKE '%{escaped}%') MAXRESULTS 50"
         else:
-            qs = "SELECT * FROM Customer MAXRESULTS 100"
+            qs = "SELECT * FROM Estimate MAXRESULTS 50"
         raw = await self._query(qs)
         return [
             {
-                "id": item["Id"],
-                "display_name": item.get("DisplayName", ""),
-                "primary_email": (item.get("PrimaryEmailAddr") or {}).get("Address", ""),
-                "primary_phone": (item.get("PrimaryPhone") or {}).get("FreeFormNumber", ""),
-                "balance": item.get("Balance", 0),
+                "id": est["Id"],
+                "doc_number": est.get("DocNumber", ""),
+                "customer_name": (est.get("CustomerRef") or {}).get("name", ""),
+                "total": est.get("TotalAmt", 0),
+                "date": est.get("TxnDate", ""),
+                "expiry_date": est.get("ExpirationDate", ""),
+                "status": est.get("TxnStatus", ""),
             }
-            for item in raw
+            for est in raw
         ]
-
-    async def create_invoice(
-        self,
-        customer_id: str,
-        line_items: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        qbo_lines = []
-        for i, item in enumerate(line_items, start=1):
-            line: dict[str, Any] = {
-                "LineNum": i,
-                "Amount": float(item.get("amount", 0)),
-                "DetailType": "SalesItemLineDetail",
-                "Description": item.get("description", ""),
-                "SalesItemLineDetail": {
-                    "Qty": float(item.get("quantity", 1)),
-                    "UnitPrice": float(item.get("unit_price", 0)),
-                },
-            }
-            if item.get("item_id"):
-                line["SalesItemLineDetail"]["ItemRef"] = {"value": item["item_id"]}
-            qbo_lines.append(line)
-
-        body = {
-            "CustomerRef": {"value": customer_id},
-            "Line": qbo_lines,
-        }
-
-        data = await self._request("POST", "/invoice", json=body)
-        invoice = data.get("Invoice", data)
-        return {
-            "id": invoice.get("Id", ""),
-            "doc_number": invoice.get("DocNumber", ""),
-            "total": invoice.get("TotalAmt", 0),
-            "balance": invoice.get("Balance", 0),
-            "status": "created",
-        }
-
-    async def send_invoice(self, invoice_id: str) -> dict[str, Any]:
-        data = await self._request("POST", f"/invoice/{invoice_id}/send")
-        invoice = data.get("Invoice", data)
-        return {
-            "id": invoice.get("Id", ""),
-            "email_status": invoice.get("EmailStatus", ""),
-            "status": "sent",
-        }
-
-    async def create_estimate(
-        self,
-        customer_id: str,
-        line_items: list[dict[str, Any]],
-    ) -> dict[str, Any]:
-        qbo_lines = []
-        for i, item in enumerate(line_items, start=1):
-            line: dict[str, Any] = {
-                "LineNum": i,
-                "Amount": float(item.get("amount", 0)),
-                "DetailType": "SalesItemLineDetail",
-                "Description": item.get("description", ""),
-                "SalesItemLineDetail": {
-                    "Qty": float(item.get("quantity", 1)),
-                    "UnitPrice": float(item.get("unit_price", 0)),
-                },
-            }
-            if item.get("item_id"):
-                line["SalesItemLineDetail"]["ItemRef"] = {"value": item["item_id"]}
-            qbo_lines.append(line)
-
-        body = {
-            "CustomerRef": {"value": customer_id},
-            "Line": qbo_lines,
-        }
-
-        data = await self._request("POST", "/estimate", json=body)
-        estimate = data.get("Estimate", data)
-        return {
-            "id": estimate.get("Id", ""),
-            "doc_number": estimate.get("DocNumber", ""),
-            "total": estimate.get("TotalAmt", 0),
-            "status": "created",
-        }
 
 
 def get_quickbooks_service(
