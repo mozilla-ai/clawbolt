@@ -42,6 +42,7 @@ export default defineConfig({
             { label: "Voice", slug: "features/voice" },
             { label: "File Cataloging", slug: "features/file-cataloging" },
             { label: "Heartbeat", slug: "features/heartbeat" },
+            { label: "QuickBooks Online", slug: "features/quickbooks" },
           ],
         },
         {

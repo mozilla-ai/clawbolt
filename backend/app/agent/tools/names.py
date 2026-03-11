@@ -34,6 +34,9 @@ class ToolName:
     EDIT_FILE = "edit_file"
     DELETE_FILE = "delete_file"
 
+    # QuickBooks
+    QB_QUERY = "qb_query"
+
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
 

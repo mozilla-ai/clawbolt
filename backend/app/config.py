@@ -96,6 +96,14 @@ class Settings(BaseSettings):
     # Media
     max_media_size_bytes: int = Field(default=20_971_520, ge=1)  # 20 MB
 
+    # QuickBooks Online
+    quickbooks_client_id: str = ""
+    quickbooks_client_secret: str = ""
+    quickbooks_realm_id: str = ""
+    quickbooks_access_token: str = ""
+    quickbooks_refresh_token: str = ""
+    quickbooks_environment: str = "sandbox"  # "sandbox" or "production"
+
     # HTTP timeouts
     http_timeout_seconds: float = Field(default=30.0, gt=0)
     cloudflared_metrics_timeout_seconds: float = Field(default=5.0, gt=0)
