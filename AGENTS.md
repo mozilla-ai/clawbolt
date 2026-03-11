@@ -121,6 +121,7 @@ cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 
 - Bug fixes include regression tests
 - New features evaluate whether the docs site (`docs/`) needs updates
+- When you manage a pull request, you must always adhere to the pull request template at .github/pull_request_template.md
 - CI green
 
 ## Sandbox Tips
@@ -133,25 +134,3 @@ cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 
 Git auth is pre-configured. Never push directly to main. Always create a branch and open a PR.
 
-### Fixing broken git worktrees
-
-Git worktrees store absolute paths. When a worktree is created on the host and the sandbox mounts the same tree at a different path, the cross-references break. Fix by rewriting the paths:
-
-```bash
-HOST_PREFIX="/Users/you/scm/clawbolt"   # adjust to match your host
-SANDBOX_PREFIX="/workspace/clawbolt"
-
-# Fix main repo -> worktree references
-sed -i "s|$HOST_PREFIX|$SANDBOX_PREFIX|g" .git/worktrees/*/gitdir 2>/dev/null
-
-# Fix worktree -> main repo back-references
-find .claude/worktrees -maxdepth 2 -name ".git" -type f \
-  -exec sed -i "s|$HOST_PREFIX|$SANDBOX_PREFIX|g" {} \; 2>/dev/null
-
-# Verify
-git worktree list
-```
-
-### Multiple repos in workspace
-
-The workspace root `/workspace/clawbolt` is the OSS repo. Premium (`clawbolt-premium/`) and infra (`clawbolt-infra/`) are separate git repos cloned as subdirectories, listed in `.gitignore`. Do not commit files from those repos into the OSS repo.
