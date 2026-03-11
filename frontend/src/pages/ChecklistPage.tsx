@@ -52,7 +52,8 @@ export default function ChecklistPage() {
       <Textarea
         value={checklistText}
         onChange={(e) => setChecklistText(e.target.value)}
-        rows={28}
+        rows={6}
+        classNames={{ input: '!min-h-[65vh]' }}
         placeholder="Track tasks and to-dos in markdown format, e.g. - [ ] Follow up with new leads"
       />
     </div>
