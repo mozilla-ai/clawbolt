@@ -35,8 +35,7 @@ class ToolName:
     DELETE_FILE = "delete_file"
 
     # QuickBooks
-    QB_SEARCH_INVOICES = "qb_search_invoices"
-    QB_SEARCH_ESTIMATES = "qb_search_estimates"
+    QB_QUERY = "qb_query"
 
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"

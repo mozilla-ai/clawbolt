@@ -1,69 +1,109 @@
+import re
 from typing import Any
 
 from backend.app.services.quickbooks_service import QuickBooksService
 
+# Sample data for the mock QBO sandbox.
+_CUSTOMERS: list[dict[str, Any]] = [
+    {
+        "Id": "100",
+        "DisplayName": "John Smith",
+        "PrimaryEmailAddr": {"Address": "john@example.com"},
+        "PrimaryPhone": {"FreeFormNumber": "555-0100"},
+        "Balance": 0,
+    },
+    {
+        "Id": "101",
+        "DisplayName": "Jane Doe",
+        "PrimaryEmailAddr": {"Address": "jane@example.com"},
+        "PrimaryPhone": {"FreeFormNumber": "555-0101"},
+        "Balance": 250.00,
+    },
+]
+
+_INVOICES: list[dict[str, Any]] = [
+    {
+        "Id": "1001",
+        "DocNumber": "INV-1001",
+        "CustomerRef": {"value": "100", "name": "John Smith"},
+        "TotalAmt": 500.00,
+        "Balance": 0,
+        "DueDate": "2026-02-15",
+        "TxnDate": "2026-01-15",
+        "EmailStatus": "EmailSent",
+    },
+    {
+        "Id": "1002",
+        "DocNumber": "INV-1002",
+        "CustomerRef": {"value": "101", "name": "Jane Doe"},
+        "TotalAmt": 1250.00,
+        "Balance": 250.00,
+        "DueDate": "2026-03-01",
+        "TxnDate": "2026-02-01",
+        "EmailStatus": "NotSet",
+    },
+]
+
+_ESTIMATES: list[dict[str, Any]] = [
+    {
+        "Id": "2001",
+        "DocNumber": "EST-2001",
+        "CustomerRef": {"value": "100", "name": "John Smith"},
+        "TotalAmt": 3200.00,
+        "TxnDate": "2026-01-10",
+        "ExpirationDate": "2026-02-10",
+        "TxnStatus": "Accepted",
+    },
+]
+
+_ITEMS: list[dict[str, Any]] = [
+    {
+        "Id": "1",
+        "Name": "Drywall Sheet 4x8",
+        "Description": "Standard 1/2 inch drywall sheet",
+        "UnitPrice": 12.50,
+        "Type": "Inventory",
+    },
+]
+
+_ENTITY_DATA: dict[str, list[dict[str, Any]]] = {
+    "Customer": _CUSTOMERS,
+    "Invoice": _INVOICES,
+    "Estimate": _ESTIMATES,
+    "Item": _ITEMS,
+}
+
 
 class MockQuickBooksService(QuickBooksService):
-    """In-memory mock QuickBooks service for testing."""
+    """In-memory mock QuickBooks service for testing.
 
-    def __init__(self) -> None:
-        self.invoices: list[dict[str, Any]] = [
-            {
-                "id": "1001",
-                "doc_number": "INV-1001",
-                "customer_name": "John Smith",
-                "total": 500.00,
-                "balance": 0,
-                "due_date": "2026-02-15",
-                "date": "2026-01-15",
-                "email_status": "EmailSent",
-            },
-            {
-                "id": "1002",
-                "doc_number": "INV-1002",
-                "customer_name": "Jane Doe",
-                "total": 1250.00,
-                "balance": 250.00,
-                "due_date": "2026-03-01",
-                "date": "2026-02-01",
-                "email_status": "NotSet",
-            },
-        ]
-        self.estimates: list[dict[str, Any]] = [
-            {
-                "id": "2001",
-                "doc_number": "EST-2001",
-                "customer_name": "John Smith",
-                "total": 3200.00,
-                "date": "2026-01-10",
-                "expiry_date": "2026-02-10",
-                "status": "Accepted",
-            },
-            {
-                "id": "2002",
-                "doc_number": "EST-2002",
-                "customer_name": "Jane Doe",
-                "total": 750.00,
-                "date": "2026-02-20",
-                "expiry_date": "2026-03-20",
-                "status": "Pending",
-            },
-        ]
+    Supports a subset of QBO query syntax: entity routing, WHERE with simple
+    conditions (=, LIKE), and MAXRESULTS.
+    """
 
-    async def list_invoices(self, customer_name: str | None = None) -> list[dict[str, Any]]:
-        if customer_name:
-            return [
-                inv
-                for inv in self.invoices
-                if customer_name.lower() in inv["customer_name"].lower()
-            ]
-        return list(self.invoices)
+    async def query(self, query_str: str) -> list[dict[str, Any]]:
+        # Parse entity name from "SELECT ... FROM <Entity> ..."
+        match = re.search(r"FROM\s+(\w+)", query_str, re.IGNORECASE)
+        if not match:
+            return []
+        entity = match.group(1)
+        rows = list(_ENTITY_DATA.get(entity, []))
 
-    async def list_estimates(self, customer_name: str | None = None) -> list[dict[str, Any]]:
-        if customer_name:
-            return [
-                est
-                for est in self.estimates
-                if customer_name.lower() in est["customer_name"].lower()
-            ]
-        return list(self.estimates)
+        # Simple WHERE field = 'value' filter
+        eq_match = re.search(r"WHERE\s+(\w+)\s*=\s*'([^']*)'", query_str, re.IGNORECASE)
+        if eq_match:
+            field, value = eq_match.group(1), eq_match.group(2)
+            rows = [r for r in rows if str(r.get(field, "")) == value]
+
+        # Simple WHERE field LIKE '%value%' filter
+        like_match = re.search(r"WHERE\s+(\w+)\s+LIKE\s+'%([^%]*)%'", query_str, re.IGNORECASE)
+        if like_match:
+            field, value = like_match.group(1), like_match.group(2)
+            rows = [r for r in rows if value.lower() in str(r.get(field, "")).lower()]
+
+        # MAXRESULTS
+        max_match = re.search(r"MAXRESULTS\s+(\d+)", query_str, re.IGNORECASE)
+        if max_match:
+            rows = rows[: int(max_match.group(1))]
+
+        return rows

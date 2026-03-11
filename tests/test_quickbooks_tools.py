@@ -15,152 +15,135 @@ def qb_service() -> MockQuickBooksService:
 
 
 @pytest.fixture()
-def qb_tools(qb_service: MockQuickBooksService) -> dict[str, Tool]:
-    """Create QuickBooks tools and return them keyed by name."""
+def qb_tool(qb_service: MockQuickBooksService) -> Tool:
+    """Create the qb_query tool."""
     tools = create_quickbooks_tools(qb_service)
-    return {t.name: t for t in tools}
+    return tools[0]
 
 
-# -- Search invoices --
+# -- Basic queries --
 
 
 @pytest.mark.asyncio()
-async def test_search_invoices_returns_all(qb_tools: dict[str, Tool]) -> None:
-    """qb_search_invoices with no filter should return all invoices."""
-    tool = qb_tools["qb_search_invoices"]
-    result = await tool.function()
+async def test_query_invoices(qb_tool: Tool) -> None:
+    """Should return all invoices."""
+    result = await qb_tool.function(query="SELECT * FROM Invoice")
 
     assert result.is_error is False
-    assert "2 invoice(s)" in result.content
+    assert "2 result(s)" in result.content
     assert "INV-1001" in result.content
     assert "INV-1002" in result.content
 
 
 @pytest.mark.asyncio()
-async def test_search_invoices_by_customer(qb_tools: dict[str, Tool]) -> None:
-    """qb_search_invoices should filter by customer name."""
-    tool = qb_tools["qb_search_invoices"]
-    result = await tool.function(customer_name="Jane")
+async def test_query_customers(qb_tool: Tool) -> None:
+    """Should return all customers."""
+    result = await qb_tool.function(query="SELECT * FROM Customer")
 
     assert result.is_error is False
-    assert "1 invoice(s)" in result.content
-    assert "Jane Doe" in result.content
-    assert "John Smith" not in result.content
-
-
-@pytest.mark.asyncio()
-async def test_search_invoices_no_match(qb_tools: dict[str, Tool]) -> None:
-    """qb_search_invoices should report when no invoices match."""
-    tool = qb_tools["qb_search_invoices"]
-    result = await tool.function(customer_name="Nobody")
-
-    assert result.is_error is False
-    assert "No invoices found" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_search_invoices_shows_payment_status(qb_tools: dict[str, Tool]) -> None:
-    """qb_search_invoices should indicate paid vs open status."""
-    tool = qb_tools["qb_search_invoices"]
-    result = await tool.function()
-
-    assert "Paid" in result.content
-    assert "Open" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_search_invoices_api_error(qb_service: MockQuickBooksService) -> None:
-    """qb_search_invoices should handle API errors gracefully."""
-
-    async def failing(customer_name: str | None = None) -> list[dict]:
-        raise RuntimeError("API connection failed")
-
-    qb_service.list_invoices = failing  # type: ignore[assignment]
-    tools = create_quickbooks_tools(qb_service)
-    tool = {t.name: t for t in tools}["qb_search_invoices"]
-    result = await tool.function()
-
-    assert result.is_error is True
-    assert "Error" in result.content
-
-
-# -- Search estimates --
-
-
-@pytest.mark.asyncio()
-async def test_search_estimates_returns_all(qb_tools: dict[str, Tool]) -> None:
-    """qb_search_estimates with no filter should return all estimates."""
-    tool = qb_tools["qb_search_estimates"]
-    result = await tool.function()
-
-    assert result.is_error is False
-    assert "2 estimate(s)" in result.content
-    assert "EST-2001" in result.content
-    assert "EST-2002" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_search_estimates_by_customer(qb_tools: dict[str, Tool]) -> None:
-    """qb_search_estimates should filter by customer name."""
-    tool = qb_tools["qb_search_estimates"]
-    result = await tool.function(customer_name="John")
-
-    assert result.is_error is False
-    assert "1 estimate(s)" in result.content
+    assert "2 result(s)" in result.content
     assert "John Smith" in result.content
-    assert "Jane Doe" not in result.content
+    assert "Jane Doe" in result.content
 
 
 @pytest.mark.asyncio()
-async def test_search_estimates_no_match(qb_tools: dict[str, Tool]) -> None:
-    """qb_search_estimates should report when no estimates match."""
-    tool = qb_tools["qb_search_estimates"]
-    result = await tool.function(customer_name="Nobody")
+async def test_query_estimates(qb_tool: Tool) -> None:
+    """Should return estimates."""
+    result = await qb_tool.function(query="SELECT * FROM Estimate")
 
     assert result.is_error is False
-    assert "No estimates found" in result.content
+    assert "1 result(s)" in result.content
+    assert "EST-2001" in result.content
 
 
 @pytest.mark.asyncio()
-async def test_search_estimates_shows_status(qb_tools: dict[str, Tool]) -> None:
-    """qb_search_estimates should show estimate status."""
-    tool = qb_tools["qb_search_estimates"]
-    result = await tool.function()
+async def test_query_items(qb_tool: Tool) -> None:
+    """Should return items."""
+    result = await qb_tool.function(query="SELECT * FROM Item")
 
-    assert "Accepted" in result.content
-    assert "Pending" in result.content
+    assert result.is_error is False
+    assert "Drywall" in result.content
+
+
+# -- Filtering --
 
 
 @pytest.mark.asyncio()
-async def test_search_estimates_api_error(qb_service: MockQuickBooksService) -> None:
-    """qb_search_estimates should handle API errors gracefully."""
+async def test_query_with_like_filter(qb_tool: Tool) -> None:
+    """WHERE LIKE should filter results."""
+    result = await qb_tool.function(query="SELECT * FROM Customer WHERE DisplayName LIKE '%John%'")
 
-    async def failing(customer_name: str | None = None) -> list[dict]:
-        raise RuntimeError("API connection failed")
+    assert result.is_error is False
+    assert "1 result(s)" in result.content
+    assert "John Smith" in result.content
+    assert "Jane" not in result.content
 
-    qb_service.list_estimates = failing  # type: ignore[assignment]
-    tools = create_quickbooks_tools(qb_service)
-    tool = {t.name: t for t in tools}["qb_search_estimates"]
-    result = await tool.function()
+
+@pytest.mark.asyncio()
+async def test_query_with_maxresults(qb_tool: Tool) -> None:
+    """MAXRESULTS should limit rows."""
+    result = await qb_tool.function(query="SELECT * FROM Invoice MAXRESULTS 1")
+
+    assert result.is_error is False
+    assert "1 result(s)" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_query_no_results(qb_tool: Tool) -> None:
+    """Query with no matches should return 0 results message."""
+    result = await qb_tool.function(
+        query="SELECT * FROM Customer WHERE DisplayName LIKE '%Nobody%'"
+    )
+
+    assert result.is_error is False
+    assert "0 results" in result.content
+
+
+# -- Validation --
+
+
+@pytest.mark.asyncio()
+async def test_query_rejects_non_select(qb_tool: Tool) -> None:
+    """Non-SELECT queries should be rejected."""
+    result = await qb_tool.function(query="DELETE FROM Invoice WHERE Id = '1'")
 
     assert result.is_error is True
-    assert "Error" in result.content
+    assert "SELECT" in result.content
+
+
+# -- Error handling --
+
+
+@pytest.mark.asyncio()
+async def test_query_api_error(qb_service: MockQuickBooksService) -> None:
+    """API errors should be returned gracefully."""
+
+    async def failing(query_str: str) -> list[dict]:
+        raise RuntimeError("API connection failed")
+
+    qb_service.query = failing  # type: ignore[assignment]
+    tools = create_quickbooks_tools(qb_service)
+    tool = tools[0]
+    result = await tool.function(query="SELECT * FROM Invoice")
+
+    assert result.is_error is True
+    assert "error" in result.content.lower()
 
 
 # -- Tool registration --
 
 
-def test_quickbooks_tools_have_params_models(qb_service: MockQuickBooksService) -> None:
-    """All QuickBooks tools must have a params_model set."""
+def test_quickbooks_tools_have_params_model(qb_service: MockQuickBooksService) -> None:
+    """The qb_query tool must have a params_model set."""
     tools = create_quickbooks_tools(qb_service)
     for tool in tools:
         assert tool.params_model is not None, f"Tool {tool.name} missing params_model"
 
 
 def test_quickbooks_tools_count(qb_service: MockQuickBooksService) -> None:
-    """create_quickbooks_tools should return 2 tools."""
+    """create_quickbooks_tools should return 1 tool."""
     tools = create_quickbooks_tools(qb_service)
-    assert len(tools) == 2
+    assert len(tools) == 1
 
 
 def test_quickbooks_factory_returns_empty_when_not_configured() -> None:

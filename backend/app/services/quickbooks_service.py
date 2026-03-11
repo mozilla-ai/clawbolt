@@ -25,12 +25,8 @@ class QuickBooksService(ABC):
     """Abstract base for QuickBooks operations."""
 
     @abstractmethod
-    async def list_invoices(self, customer_name: str | None = None) -> list[dict[str, Any]]:
-        """Search QBO invoices, optionally filtered by customer name."""
-
-    @abstractmethod
-    async def list_estimates(self, customer_name: str | None = None) -> list[dict[str, Any]]:
-        """Search QBO estimates, optionally filtered by customer name."""
+    async def query(self, query_str: str) -> list[dict[str, Any]]:
+        """Run a QBO query and return the list of result dicts."""
 
 
 class QuickBooksOnlineService(QuickBooksService):
@@ -97,8 +93,7 @@ class QuickBooksOnlineService(QuickBooksService):
         resp.raise_for_status()
         return resp.json()
 
-    async def _query(self, query_str: str) -> list[dict[str, Any]]:
-        """Run a QBO query and return the list of results."""
+    async def query(self, query_str: str) -> list[dict[str, Any]]:
         data = await self._request("GET", "/query", params={"query": query_str})
         response = data.get("QueryResponse", {})
         # QBO returns results under the entity name key; grab the first list found
@@ -106,60 +101,6 @@ class QuickBooksOnlineService(QuickBooksService):
             if isinstance(value, list):
                 return value
         return []
-
-    async def _resolve_customer_ids(self, customer_name: str) -> list[str]:
-        """Look up customer IDs by display name (fuzzy match)."""
-        escaped = customer_name.replace("'", "\\'")
-        qs = f"SELECT Id FROM Customer WHERE DisplayName LIKE '%{escaped}%'"
-        raw = await self._query(qs)
-        return [c["Id"] for c in raw if "Id" in c]
-
-    async def list_invoices(self, customer_name: str | None = None) -> list[dict[str, Any]]:
-        if customer_name:
-            cust_ids = await self._resolve_customer_ids(customer_name)
-            if not cust_ids:
-                return []
-            id_list = ", ".join(f"'{cid}'" for cid in cust_ids)
-            qs = f"SELECT * FROM Invoice WHERE CustomerRef IN ({id_list}) MAXRESULTS 50"
-        else:
-            qs = "SELECT * FROM Invoice MAXRESULTS 50"
-        raw = await self._query(qs)
-        return [
-            {
-                "id": inv["Id"],
-                "doc_number": inv.get("DocNumber", ""),
-                "customer_name": (inv.get("CustomerRef") or {}).get("name", ""),
-                "total": inv.get("TotalAmt", 0),
-                "balance": inv.get("Balance", 0),
-                "due_date": inv.get("DueDate", ""),
-                "date": inv.get("TxnDate", ""),
-                "email_status": inv.get("EmailStatus", ""),
-            }
-            for inv in raw
-        ]
-
-    async def list_estimates(self, customer_name: str | None = None) -> list[dict[str, Any]]:
-        if customer_name:
-            cust_ids = await self._resolve_customer_ids(customer_name)
-            if not cust_ids:
-                return []
-            id_list = ", ".join(f"'{cid}'" for cid in cust_ids)
-            qs = f"SELECT * FROM Estimate WHERE CustomerRef IN ({id_list}) MAXRESULTS 50"
-        else:
-            qs = "SELECT * FROM Estimate MAXRESULTS 50"
-        raw = await self._query(qs)
-        return [
-            {
-                "id": est["Id"],
-                "doc_number": est.get("DocNumber", ""),
-                "customer_name": (est.get("CustomerRef") or {}).get("name", ""),
-                "total": est.get("TotalAmt", 0),
-                "date": est.get("TxnDate", ""),
-                "expiry_date": est.get("ExpirationDate", ""),
-                "status": est.get("TxnStatus", ""),
-            }
-            for est in raw
-        ]
 
 
 def get_quickbooks_service(
