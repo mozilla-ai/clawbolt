@@ -879,31 +879,26 @@ class FileSessionStore(PerUserStore):
 
     async def get_or_create_session(
         self,
-        timeout_hours: int | None = None,
+        force_new: bool = False,
     ) -> tuple[SessionState, bool]:
-        """Get active session or create new one. Returns (session, is_new)."""
-        timeout = timeout_hours or settings.conversation_timeout_hours
-        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=timeout)
+        """Get active session or create new one. Returns (session, is_new).
 
-        # Find the most recent active session
-        for path in reversed(self._list_session_files()):
-            session_id = path.stem
-            session = self._load_session(session_id)
-            if session is None or not session.is_active:
-                continue
-            if session.last_message_at:
-                try:
-                    last_at = datetime.datetime.fromisoformat(session.last_message_at)
-                    if last_at.tzinfo is None:
-                        last_at = last_at.replace(tzinfo=datetime.UTC)
-                    if last_at >= cutoff:
-                        # Update last_message_at
-                        now = datetime.datetime.now(datetime.UTC).isoformat()
-                        self._write_metadata(session_id, {"last_message_at": now})
-                        session.last_message_at = now
-                        return session, False
-                except (ValueError, TypeError):
-                    pass
+        Sessions are persistent: the most recent active session is always
+        reused regardless of age.  Pass ``force_new=True`` to explicitly
+        start a new conversation (e.g. from a "New Conversation" button).
+        """
+        if not force_new:
+            # Find the most recent active session
+            for path in reversed(self._list_session_files()):
+                session_id = path.stem
+                session = self._load_session(session_id)
+                if session is None or not session.is_active:
+                    continue
+                # Update last_message_at
+                now = datetime.datetime.now(datetime.UTC).isoformat()
+                self._write_metadata(session_id, {"last_message_at": now})
+                session.last_message_at = now
+                return session, False
 
         # Create new session
         now = datetime.datetime.now(datetime.UTC)
@@ -911,6 +906,13 @@ class FileSessionStore(PerUserStore):
         session_id = f"{self.user_id}_{ts}"
         path = self._session_path(session_id)
         path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Ensure uniqueness when multiple sessions are created within the same second
+        suffix = 1
+        while path.exists():
+            session_id = f"{self.user_id}_{ts}_{suffix}"
+            path = self._session_path(session_id)
+            suffix += 1
 
         meta = {
             "_type": "metadata",

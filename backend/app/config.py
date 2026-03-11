@@ -81,7 +81,6 @@ class Settings(BaseSettings):
     llm_max_retries: int = Field(default=3, ge=1)
 
     # Conversation & memory
-    conversation_timeout_hours: int = Field(default=4, ge=1)
     conversation_history_limit: int = Field(default=20, ge=1)
     memory_recall_limit: int = Field(default=20, ge=1)
     compaction_enabled: bool = True

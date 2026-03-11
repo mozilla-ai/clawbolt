@@ -18,7 +18,6 @@ from backend.app.agent.context import (
     load_conversation_history,
 )
 from backend.app.agent.file_store import (
-    FileSessionStore,
     SessionState,
     StoredMessage,
     UserData,
@@ -693,21 +692,10 @@ async def test_compact_session_legacy_format_no_history(test_user: UserData) -> 
 # --- Session-end consolidation tests ---
 
 
-def _backdate_session(session_store: "FileSessionStore", session: SessionState) -> None:
-    """Set the session's last_message_at to 24 hours ago so it times out."""
-    import datetime
-
-    old_time = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=24)).isoformat()
-    session_store._write_metadata(session.session_id, {"last_message_at": old_time})
-    session.last_message_at = old_time
-
-
 @pytest.mark.asyncio()
 async def test_consolidate_previous_session_triggers_compaction() -> None:
     """When a new session starts, unconsolidated messages from the previous
     session should trigger background compaction."""
-    import datetime
-
     user_store = get_user_store()
     user = await user_store.create(
         user_id="consolidation-test",
@@ -719,20 +707,12 @@ async def test_consolidate_previous_session_triggers_compaction() -> None:
 
     session_store = get_session_store(user.id)
 
-    # Manually create two sessions with different timestamps
-    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=24)
-    with patch("backend.app.agent.file_store.datetime") as mock_dt:
-        mock_dt.datetime.now.return_value = past
-        mock_dt.UTC = datetime.UTC
-        mock_dt.timedelta = datetime.timedelta
-        old_session, _ = await session_store.get_or_create_session()
-
+    old_session, _ = await session_store.get_or_create_session()
     await session_store.add_message(old_session, MessageDirection.INBOUND, "My rate is $75/hr")
     await session_store.add_message(old_session, MessageDirection.OUTBOUND, "Got it, saved.")
     assert old_session.last_compacted_seq == 0
 
-    _backdate_session(session_store, old_session)
-    new_session, is_new = await session_store.get_or_create_session()
+    new_session, is_new = await session_store.get_or_create_session(force_new=True)
     assert is_new
     assert new_session.session_id != old_session.session_id
 
@@ -756,8 +736,6 @@ async def test_consolidate_previous_session_triggers_compaction() -> None:
 @pytest.mark.asyncio()
 async def test_consolidate_previous_session_skips_already_compacted() -> None:
     """If the previous session was fully compacted, no compaction should trigger."""
-    import datetime
-
     user_store = get_user_store()
     user = await user_store.create(
         user_id="consolidation-skip",
@@ -769,19 +747,12 @@ async def test_consolidate_previous_session_skips_already_compacted() -> None:
 
     session_store = get_session_store(user.id)
 
-    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=24)
-    with patch("backend.app.agent.file_store.datetime") as mock_dt:
-        mock_dt.datetime.now.return_value = past
-        mock_dt.UTC = datetime.UTC
-        mock_dt.timedelta = datetime.timedelta
-        old_session, _ = await session_store.get_or_create_session()
-
+    old_session, _ = await session_store.get_or_create_session()
     await session_store.add_message(old_session, MessageDirection.INBOUND, "Hello")
     await session_store.add_message(old_session, MessageDirection.OUTBOUND, "Hi!")
     await session_store.update_compaction_seq(old_session, 2)
 
-    _backdate_session(session_store, old_session)
-    new_session, is_new = await session_store.get_or_create_session()
+    new_session, is_new = await session_store.get_or_create_session(force_new=True)
     assert is_new
 
     with patch(
@@ -799,7 +770,7 @@ async def test_consolidate_previous_session_skips_already_compacted() -> None:
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_triggers_consolidation() -> None:
-    """get_or_create_conversation should consolidate previous session on new session."""
+    """get_or_create_conversation should consolidate previous session on force_new."""
     user_store = get_user_store()
     user = await user_store.create(
         user_id="conv-consolidation",
@@ -812,13 +783,12 @@ async def test_get_or_create_conversation_triggers_consolidation() -> None:
     session_store = get_session_store(user.id)
     old_session, _ = await session_store.get_or_create_session()
     await session_store.add_message(old_session, MessageDirection.INBOUND, "Some info")
-    _backdate_session(session_store, old_session)
 
     with patch(
         "backend.app.agent.context._consolidate_previous_session",
         new_callable=AsyncMock,
     ) as mock_consolidate:
-        _, is_new = await get_or_create_conversation(user.id)
+        _, is_new = await get_or_create_conversation(user.id, force_new=True)
 
     assert is_new
     mock_consolidate.assert_called_once()
@@ -839,7 +809,6 @@ async def test_get_or_create_conversation_no_consolidation_when_disabled() -> No
     session_store = get_session_store(user.id)
     old_session, _ = await session_store.get_or_create_session()
     await session_store.add_message(old_session, MessageDirection.INBOUND, "Some info")
-    _backdate_session(session_store, old_session)
 
     with (
         patch(
@@ -849,8 +818,7 @@ async def test_get_or_create_conversation_no_consolidation_when_disabled() -> No
         patch("backend.app.agent.context.settings") as mock_settings,
     ):
         mock_settings.compaction_enabled = False
-        mock_settings.conversation_timeout_hours = 4
-        _, is_new = await get_or_create_conversation(user.id)
+        _, is_new = await get_or_create_conversation(user.id, force_new=True)
 
     assert is_new
     mock_consolidate.assert_not_called()

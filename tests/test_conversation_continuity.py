@@ -4,7 +4,6 @@ import json
 import pytest
 
 from backend.app.agent.context import (
-    CONVERSATION_TIMEOUT_HOURS,
     get_or_create_conversation,
     load_conversation_history,
 )
@@ -137,7 +136,7 @@ async def test_get_or_create_conversation_existing_active(
     test_user: UserData,
     conversation: SessionState,
 ) -> None:
-    """Should return existing active conversation within timeout."""
+    """Should return existing active conversation."""
     # The conversation fixture already created a recent session on disk
     conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is False
@@ -145,18 +144,16 @@ async def test_get_or_create_conversation_existing_active(
 
 
 @pytest.mark.asyncio()
-async def test_get_or_create_conversation_expired(
+async def test_get_or_create_conversation_reuses_old_session(
     test_user: UserData,
 ) -> None:
-    """Should create new conversation when existing one has timed out."""
+    """Should reuse existing session regardless of age (persistent model)."""
     from backend.app.agent.file_store import get_session_store
 
     store = get_session_store(test_user.id)
 
     # Create an old conversation by writing the session file directly
-    old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
-        hours=CONVERSATION_TIMEOUT_HOURS + 1
-    )
+    old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=48)
     old_session_id = "old-conv"
     path = store._session_path(old_session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -172,8 +169,8 @@ async def test_get_or_create_conversation_expired(
     path.write_text(json.dumps(meta, default=str) + "\n", encoding="utf-8")
 
     conv, is_new = await get_or_create_conversation(test_user.id)
-    assert is_new is True
-    assert conv.session_id != old_session_id
+    assert is_new is False
+    assert conv.session_id == old_session_id
 
 
 @pytest.mark.asyncio()
@@ -190,41 +187,20 @@ async def test_get_or_create_conversation_with_external_session_id(
 
 
 @pytest.mark.asyncio()
-async def test_get_or_create_conversation_custom_timeout(
+async def test_get_or_create_conversation_force_new(
     test_user: UserData,
 ) -> None:
-    """Custom timeout should be respected."""
-    from backend.app.agent.file_store import get_session_store
+    """force_new=True should always create a new session."""
+    conv1, _ = await get_or_create_conversation(test_user.id)
 
-    store = get_session_store(test_user.id)
-
-    def _write_session(session_id: str, last_message_at: str) -> None:
-        """Write a session JSONL file with metadata."""
-        path = store._session_path(session_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        meta = {
-            "_type": "metadata",
-            "session_id": session_id,
-            "user_id": test_user.id,
-            "created_at": last_message_at,
-            "last_message_at": last_message_at,
-            "is_active": True,
-            "last_compacted_seq": 0,
-        }
-        path.write_text(json.dumps(meta, default=str) + "\n", encoding="utf-8")
-
-    # Create a conversation 2 hours old
-    old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=2)
-    _write_session("conv-timeout-test", old_time.isoformat())
-
-    # With 1-hour timeout, should create new
-    _conv, is_new = await get_or_create_conversation(test_user.id, timeout_hours=1)
+    conv2, is_new = await get_or_create_conversation(test_user.id, force_new=True)
     assert is_new is True
+    assert conv2.session_id != conv1.session_id
 
-    # With 3-hour timeout, should reuse (re-write old session since a new one was created)
-    _write_session("conv-timeout-test", old_time.isoformat())
-    _conv, is_new = await get_or_create_conversation(test_user.id, timeout_hours=3)
+    # Without force_new, should reuse the newest session
+    conv3, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is False
+    assert conv3.session_id == conv2.session_id
 
 
 def test_webhook_uses_canonical_get_or_create_conversation() -> None:
