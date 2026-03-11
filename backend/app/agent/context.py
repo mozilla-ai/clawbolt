@@ -25,7 +25,6 @@ from backend.app.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
 
-CONVERSATION_TIMEOUT_HOURS = settings.conversation_timeout_hours
 DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 
 # Strong references to fire-and-forget background tasks so they are not
@@ -296,11 +295,13 @@ async def _consolidate_previous_session(
 async def get_or_create_conversation(
     user_id: int,
     external_session_id: str | None = None,
-    timeout_hours: int = CONVERSATION_TIMEOUT_HOURS,
+    force_new: bool = False,
 ) -> tuple[SessionState, bool]:
     """Get active conversation or create new one.
 
-    A conversation is "active" if the last message was within the timeout window.
+    Sessions are persistent: the most recent active session is always reused
+    regardless of age.  Pass ``force_new=True`` to explicitly start a fresh
+    conversation (e.g. from a "New Conversation" button in the web GUI).
     Returns (session, is_new).
 
     When a new session is created, any unconsolidated messages from the
@@ -308,12 +309,12 @@ async def get_or_create_conversation(
     """
     session_store = get_session_store(user_id)
 
-    if external_session_id is not None:
+    if not force_new and external_session_id is not None:
         session = session_store._load_session(external_session_id)
         if session is not None and session.user_id == user_id:
             return session, False
 
-    session, is_new = await session_store.get_or_create_session(timeout_hours=timeout_hours)
+    session, is_new = await session_store.get_or_create_session(force_new=force_new)
 
     if is_new and settings.compaction_enabled:
         await _consolidate_previous_session(

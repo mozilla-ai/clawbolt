@@ -32,7 +32,7 @@ from backend.app.media.download import DEFAULT_MIME_TYPE, DownloadedMedia, gener
 
 logger = logging.getLogger(__name__)
 
-_SESSION_ID_RE = re.compile(r"^\d+_\d+$")
+_SESSION_ID_RE = re.compile(r"^\d+_\d+(_\d+)?$")
 
 
 class _ChatAccepted(BaseModel):
@@ -59,6 +59,7 @@ class WebChatChannel(BaseChannel):
         async def send_chat_message(
             message: str = Form(default=""),
             session_id: str | None = Form(default=None),
+            force_new: bool = Form(default=False),
             files: list[UploadFile] = File(default=[]),
             user: UserData = Depends(get_current_user),
         ) -> _ChatAccepted:
@@ -71,7 +72,7 @@ class WebChatChannel(BaseChannel):
             if session_id is not None and not _SESSION_ID_RE.match(session_id):
                 raise HTTPException(
                     status_code=422,
-                    detail="session_id must match pattern: digits_digits",
+                    detail="session_id must match pattern: digits_digits or digits_digits_digits",
                 )
 
             # Build DownloadedMedia from uploaded files
@@ -98,7 +99,11 @@ class WebChatChannel(BaseChannel):
                 )
 
             # Get/create session so we can return session_id immediately
-            session, _ = await get_or_create_conversation(user.id, external_session_id=session_id)
+            session, _ = await get_or_create_conversation(
+                user.id,
+                external_session_id=session_id,
+                force_new=force_new,
+            )
 
             request_id = str(uuid.uuid4())
 

@@ -141,11 +141,15 @@ const api = {
     sessionId?: string,
     files?: File[],
     onEvent?: (event: { type: string; tool_name?: string; content?: string }) => void,
+    forceNew?: boolean,
   ): Promise<ChatResponse> => {
     const formData = new FormData();
     formData.append('message', message);
     if (sessionId) {
       formData.append('session_id', sessionId);
+    }
+    if (forceNew) {
+      formData.append('force_new', 'true');
     }
     if (files) {
       for (const file of files) {

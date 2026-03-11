@@ -65,6 +65,7 @@ export default function ChatPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
+  const forceNewRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -168,6 +169,7 @@ export default function ChatPage() {
     setActiveSessionId(sessionId);
     setSearchParams({ session: sessionId }, { replace: true });
     setPickerOpen(false);
+    forceNewRef.current = false;
   };
 
   const startNewChat = () => {
@@ -176,6 +178,7 @@ export default function ChatPage() {
     clearLastSession();
     setSearchParams({}, { replace: true });
     setPickerOpen(false);
+    forceNewRef.current = true;
   };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -228,6 +231,7 @@ export default function ChatPage() {
             setCurrentTool(event.tool_name ?? null);
           }
         },
+        forceNewRef.current,
       );
       if (!mountedRef.current) return;
       const assistantMsg: ChatMessage = {
@@ -242,6 +246,7 @@ export default function ChatPage() {
         setActiveSessionId(res.session_id);
         setSearchParams({ session: res.session_id }, { replace: true });
         saveLastSession(res.session_id);
+        forceNewRef.current = false;
         // Invalidate sessions cache so the new session appears in the list
         void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
       }
