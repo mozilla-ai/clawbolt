@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import re
 from dataclasses import dataclass
 from typing import Any, Literal, cast
 
@@ -35,6 +36,44 @@ from backend.app.enums import MessageDirection
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
+
+# ---------------------------------------------------------------------------
+# Frequency parsing
+# ---------------------------------------------------------------------------
+
+_FREQ_RE = re.compile(r"^(\d+)\s*([mhd])$", re.IGNORECASE)
+
+_NAMED_FREQUENCIES: dict[str, int] = {
+    "daily": 1440,
+    "weekdays": 1440,
+    "weekly": 10080,
+}
+
+# Minimum tick resolution: the scheduler wakes up this often.
+_TICK_RESOLUTION_MINUTES = 1
+
+
+def parse_frequency_to_minutes(freq: str) -> int | None:
+    """Convert a frequency string like ``15m``, ``2h``, ``1d`` to minutes.
+
+    Named presets (``daily``, ``weekdays``, ``weekly``) are also supported.
+    Returns *None* if the string cannot be parsed.
+    """
+    freq = freq.strip().lower()
+    if freq in _NAMED_FREQUENCIES:
+        return _NAMED_FREQUENCIES[freq]
+    m = _FREQ_RE.match(freq)
+    if not m:
+        return None
+    value, unit = int(m.group(1)), m.group(2)
+    if unit == "m":
+        return max(value, 1)
+    if unit == "h":
+        return value * 60
+    if unit == "d":
+        return value * 1440
+    return None  # pragma: no cover
+
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -363,10 +402,16 @@ def _pick_heartbeat_channel(user: UserData) -> str:
 
 
 class HeartbeatScheduler:
-    """Manages the periodic heartbeat loop as an asyncio background task."""
+    """Manages the periodic heartbeat loop as an asyncio background task.
+
+    The scheduler wakes up every ``_TICK_RESOLUTION_MINUTES`` and evaluates
+    each user only when their individual ``heartbeat_frequency`` interval has
+    elapsed since their last evaluation.
+    """
 
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
+        self._last_tick: dict[int, datetime.datetime] = {}
 
     # -- public API --
 
@@ -379,8 +424,8 @@ class HeartbeatScheduler:
             return
         self._task = asyncio.get_running_loop().create_task(self._run())
         logger.info(
-            "Heartbeat started (interval=%dm, max_daily=%d)",
-            settings.heartbeat_interval_minutes,
+            "Heartbeat started (tick_resolution=%dm, max_daily=%d)",
+            _TICK_RESOLUTION_MINUTES,
             settings.heartbeat_max_daily_messages,
         )
 
@@ -394,7 +439,7 @@ class HeartbeatScheduler:
     # -- internals --
 
     async def _run(self) -> None:
-        """Loop forever, running one tick per interval."""
+        """Loop forever, running one tick per resolution interval."""
         while True:
             try:
                 await self.tick()
@@ -402,15 +447,36 @@ class HeartbeatScheduler:
                 raise
             except Exception:
                 logger.exception("Heartbeat tick failed")
-            await asyncio.sleep(settings.heartbeat_interval_minutes * 60)
+            await asyncio.sleep(_TICK_RESOLUTION_MINUTES * 60)
+
+    def _user_interval_minutes(self, user: UserData) -> int:
+        """Return the heartbeat interval in minutes for a given user."""
+        parsed = parse_frequency_to_minutes(user.heartbeat_frequency)
+        if parsed is not None:
+            return parsed
+        return settings.heartbeat_interval_minutes
+
+    def _is_user_due(self, user: UserData, now: datetime.datetime) -> bool:
+        """Return True if enough time has elapsed since the last tick for this user."""
+        last = self._last_tick.get(user.id)
+        if last is None:
+            return True
+        interval = self._user_interval_minutes(user)
+        return (now - last).total_seconds() >= interval * 60
 
     async def tick(self) -> None:
-        """Single heartbeat pass: evaluate every onboarded user concurrently."""
+        """Single heartbeat pass: evaluate due users concurrently."""
         store = get_user_store()
         all_users = await store.list_all()
         users = [c for c in all_users if c.onboarding_complete]
 
         if not users:
+            return
+
+        now = datetime.datetime.now(datetime.UTC)
+        due_users = [u for u in users if self._is_user_due(u, now)]
+
+        if not due_users:
             return
 
         semaphore = asyncio.Semaphore(settings.heartbeat_concurrency)
@@ -428,11 +494,12 @@ class HeartbeatScheduler:
                         chat_id=chat_id,
                         max_daily=settings.heartbeat_max_daily_messages,
                     )
+                    self._last_tick[user.id] = now
                 except Exception:
                     logger.exception("Heartbeat failed for user %d", user.id)
 
         results = await asyncio.gather(
-            *[_process_one(c) for c in users],
+            *[_process_one(c) for c in due_users],
             return_exceptions=True,
         )
 
@@ -441,7 +508,7 @@ class HeartbeatScheduler:
             if isinstance(result, BaseException):
                 logger.error(
                     "Unhandled error in heartbeat for user %d: %s",
-                    users[i].id,
+                    due_users[i].id,
                     result,
                     exc_info=result if isinstance(result, Exception) else None,
                 )
