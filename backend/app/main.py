@@ -19,6 +19,7 @@ from backend.app.routers import (
     auth,
     estimates,
     health,
+    search,
     user_checklist,
     user_memory,
     user_profile,
@@ -183,6 +184,7 @@ app.include_router(user_memory.router, prefix="/api")
 app.include_router(user_checklist.router, prefix="/api")
 app.include_router(user_stats.router, prefix="/api")
 app.include_router(user_tools.router, prefix="/api")
+app.include_router(search.router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Static file serving (built frontend)
