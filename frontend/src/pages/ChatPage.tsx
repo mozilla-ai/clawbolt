@@ -255,8 +255,10 @@ export default function ChatPage() {
       setCurrentTool(null);
       // Re-focus input on desktop only; on mobile, programmatic focus
       // triggers iOS Safari auto-zoom and forces the keyboard open.
+      // Deferred via requestAnimationFrame so React flushes the
+      // setSending(false) render before we focus the (now enabled) textarea.
       if (window.matchMedia('(min-width: 640px)').matches) {
-        inputRef.current?.focus();
+        requestAnimationFrame(() => inputRef.current?.focus());
       }
     }
   };
