@@ -28,9 +28,11 @@ class ToolName:
     UPLOAD_TO_STORAGE = "upload_to_storage"
     ORGANIZE_FILE = "organize_file"
 
-    # Profile
-    VIEW_PROFILE = "view_profile"
-    UPDATE_PROFILE = "update_profile"
+    # Workspace files
+    READ_FILE = "read_file"
+    WRITE_FILE = "write_file"
+    EDIT_FILE = "edit_file"
+    DELETE_FILE = "delete_file"
 
     # QuickBooks
     QB_SEARCH_ITEMS = "qb_search_items"

@@ -12,7 +12,7 @@ uv sync
 uv run uvicorn backend.app.main:app --reload
 
 # Tests
-DATABASE_URL=sqlite:// uv run pytest -v
+uv run pytest -v
 
 # Lint & format
 uv run ruff check backend/ tests/
@@ -20,27 +20,66 @@ uv run ruff format --check backend/ tests/
 
 # Type checking
 uv run ty check --python .venv backend/ tests/
-
-# Database migrations
-uv run alembic upgrade head
-uv run alembic revision --autogenerate -m "description"
 ```
 
 ## Tech Stack
 
-- Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2
+- Python 3.11+, FastAPI, Pydantic v2
 - any-llm-sdk (LLM provider abstraction via `acompletion`)
 - Telegram Bot API for messaging (via python-telegram-bot), faster-whisper for audio transcription
 - ReportLab for PDF generation, Dropbox/Google Drive for file storage
-- PostgreSQL (production), in-memory SQLite + StaticPool (tests)
+- File-based storage (JSON, JSONL, Markdown): no database required
 - uv + hatchling build system, ruff linting, ty type checking
+
+## Storage
+
+All data is stored as files under `data/users/` (configurable via `DATA_DIR`). No database is required.
+
+```
+data/
+  user_index.json                    # Channel -> user_id routing
+  seen_messages.json                 # Webhook idempotency (capped at 10K)
+  users/
+    {id}/
+      user.json                      # Profile data
+      SOUL.md                        # Personality/behavioral guidance
+      USER.md                        # User info and preferences
+      HEARTBEAT.md                   # Heartbeat checklist (single source of truth)
+      memory/
+        MEMORY.md                    # Structured facts by category
+        HISTORY.md                   # Compaction log
+      sessions/
+        {session_id}.jsonl           # Conversation transcripts
+      clients.json                   # Client records
+      estimates/
+        {estimate_id}.json           # Estimates with line items
+      media.json                     # Media file manifest
+      heartbeat/
+        log.jsonl                    # Heartbeat send log
+      llm_usage.jsonl                # Token usage log
+```
+
+Key store classes in `backend/app/agent/file_store.py`:
+- `UserStore` (singleton via `get_user_store()`)
+- `FileMemoryStore` (per-user via `get_memory_store(id)`)
+- `FileSessionStore` (per-user via `get_session_store(id)`)
+- `ClientStore`, `EstimateStore`, `MediaStore`, `HeartbeatStore` (instantiated per use)
+- `IdempotencyStore` (singleton via `get_idempotency_store()`)
+- `LLMUsageStore` (instantiated per use)
+
+Data classes (Pydantic BaseModel, replace ORM models):
+- `UserData`, `StoredMessage`, `SessionState`, `ClientData`
+- `EstimateData`, `MediaData`, `ChecklistItem`, `HeartbeatLogEntry`, `MemoryFact`
+
+## Backwards Compatibility
+
+Until this project has its first production release, you do not need to be concerned about backwards compatible changes.
 
 ## Coding Standards
 
 - All type annotations required
 - Ruff rules: `E, F, I, UP, B, SIM, ANN, RUF` (line length 100, `E501` and `B008` ignored)
-- SQLAlchemy 2.0 `mapped_column` style
-- Pydantic v2 for all request/response schemas
+- Pydantic v2 for all data classes and request/response schemas
 - All routes `async def`
 - All LLM calls via any-llm `acompletion` (async)
 - Never use `BaseHTTPMiddleware` for streaming endpoints -- use pure ASGI middleware
@@ -52,19 +91,20 @@ uv run alembic revision --autogenerate -m "description"
 ## Testing
 
 - pytest with FastAPI `TestClient`
-- In-memory SQLite + `StaticPool` for all tests
-- Override `get_db` and `get_current_user` via FastAPI dependency injection
+- File stores isolated per test via `tmp_path` + `settings.data_dir` patch
+- `reset_stores()` clears cached store singletons between tests
+- Override `get_current_user` via FastAPI dependency injection
 - Mock ALL external services: Telegram, LLM (any-llm), faster-whisper, Dropbox/Drive
-- Mock factories live in `tests/mocks/`
 - Bug fixes must include regression tests
 
 ## Architecture
 
+- **File-based storage**: all data in JSON/JSONL/Markdown files under `data/users/`. No database. See `backend/app/agent/file_store.py`.
 - **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). OSS is single-tenant; premium adds multi-tenant auth via plugin.
-- **`user_id` scoping** on every model and endpoint from day one
-- **MessagingService protocol**: channel-agnostic interface in `services/messaging.py` with Telegram implementation in `services/telegram_service.py`
+- **`user_id` scoping** on every data class and endpoint from day one
+- **Message bus**: async inbound/outbound queues in `bus.py`. Channels publish inbound messages; the agent publishes outbound replies. The ``ChannelManager`` dispatches outbound messages to the correct channel.
 - **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `acompletion`) -> tool execution -> reply
-- **Memory**: PostgreSQL key-value facts + client records
+- **Memory**: MEMORY.md key-value facts + clients.json client records per user
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
 
 ## Definition of Done
@@ -76,6 +116,7 @@ uv run pytest -v                                  # tests pass
 uv run ruff check backend/ tests/                 # lint passes
 uv run ruff format --check backend/ tests/        # format passes
 uv run ty check --python .venv backend/ tests/    # type checking passes
+cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 ```
 
 - Bug fixes include regression tests

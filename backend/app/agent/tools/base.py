@@ -1,9 +1,14 @@
+from __future__ import annotations
+
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from backend.app.agent.approval import ApprovalPolicy
 
 
 class ToolTags(StrEnum):
@@ -41,10 +46,10 @@ class Tool:
     name: str
     description: str
     function: Callable[..., Awaitable[ToolResult]]
-    parameters: dict[str, Any] = field(default_factory=dict)
-    params_model: type[BaseModel] | None = None
+    params_model: type[BaseModel]
     tags: set[ToolTags] = field(default_factory=set)
     usage_hint: str = ""
+    approval_policy: ApprovalPolicy | None = None
 
 
 def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:
@@ -76,27 +81,18 @@ def _strip_titles(obj: Any) -> Any:
 
 
 def tool_to_function_schema(tool: Tool) -> dict[str, Any]:
-    """Convert a Tool to the function-calling schema expected by LLM providers.
+    """Convert a Tool to the Anthropic Messages API tool schema.
 
     The JSON Schema is generated from the tool's ``params_model``
     (Pydantic BaseModel), which is the single source of truth for
-    parameter definitions.  Falls back to the raw ``parameters`` dict
-    only for backward compatibility with tests that create tools
-    without a ``params_model``.
+    parameter definitions.
     """
-    if tool.params_model is not None:
-        schema = tool.params_model.model_json_schema()
-        schema = _inline_refs(schema)
-        schema = _strip_titles(schema)
-        parameters = schema
-    else:
-        parameters = tool.parameters
+    schema = tool.params_model.model_json_schema()
+    schema = _inline_refs(schema)
+    schema = _strip_titles(schema)
 
     return {
-        "type": "function",
-        "function": {
-            "name": tool.name,
-            "description": tool.description,
-            "parameters": parameters,
-        },
+        "name": tool.name,
+        "description": tool.description,
+        "input_schema": schema,
     }

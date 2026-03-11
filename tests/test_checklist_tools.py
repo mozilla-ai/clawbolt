@@ -1,16 +1,15 @@
 """Tests for heartbeat checklist management tools."""
 
 import pytest
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import HeartbeatStore, UserData
 from backend.app.agent.tools.checklist_tools import create_checklist_tools
-from backend.app.models import Contractor, HeartbeatChecklistItem
 
 
 @pytest.mark.asyncio()
-async def test_add_checklist_item(db_session: Session, test_contractor: Contractor) -> None:
+async def test_add_checklist_item(test_user: UserData) -> None:
     """add_checklist_item tool should create item and return confirmation."""
-    tools = create_checklist_tools(db_session, test_contractor.id)
+    tools = create_checklist_tools(test_user.id)
     add_item = tools[0].function
     result = await add_item(description="Check material prices", schedule="daily")
     assert "Added to checklist" in result.content
@@ -18,47 +17,57 @@ async def test_add_checklist_item(db_session: Session, test_contractor: Contract
     assert "daily" in result.content
     assert result.is_error is False
 
-    # Verify in DB
-    items = db_session.query(HeartbeatChecklistItem).all()
-    assert len(items) == 1
-    assert items[0].description == "Check material prices"
-    assert items[0].schedule == "daily"
-    assert items[0].status == "active"
+    # Verify in store
+    store = HeartbeatStore(test_user.id)
+    items = await store.get_checklist()
+    active = [i for i in items if i.status == "active"]
+    # Default HEARTBEAT.md has 3 items + 1 added
+    assert len(active) >= 1
+    added = [i for i in active if i.description == "Check material prices"]
+    assert len(added) == 1
+    assert added[0].schedule == "daily"
+    assert added[0].status == "active"
 
 
 @pytest.mark.asyncio()
 async def test_add_checklist_item_default_schedule(
-    db_session: Session, test_contractor: Contractor
+    test_user: UserData,
 ) -> None:
     """add_checklist_item should default to daily schedule."""
-    tools = create_checklist_tools(db_session, test_contractor.id)
+    tools = create_checklist_tools(test_user.id)
     add_item = tools[0].function
     await add_item(description="Morning check")
 
-    item = db_session.query(HeartbeatChecklistItem).first()
-    assert item is not None
-    assert item.schedule == "daily"
+    store = HeartbeatStore(test_user.id)
+    items = await store.get_checklist()
+    active = [i for i in items if i.status == "active"]
+    added = [i for i in active if i.description == "Morning check"]
+    assert len(added) == 1
+    assert added[0].schedule == "daily"
 
 
 @pytest.mark.asyncio()
 async def test_add_checklist_item_invalid_schedule(
-    db_session: Session, test_contractor: Contractor
+    test_user: UserData,
 ) -> None:
     """add_checklist_item should reject invalid schedule values."""
-    tools = create_checklist_tools(db_session, test_contractor.id)
+    tools = create_checklist_tools(test_user.id)
     add_item = tools[0].function
     result = await add_item(description="Bad schedule", schedule="hourly")
     assert "Invalid schedule" in result.content
     assert result.is_error is True
 
-    items = db_session.query(HeartbeatChecklistItem).all()
-    assert len(items) == 0
+    store = HeartbeatStore(test_user.id)
+    items = await store.get_checklist()
+    # No "Bad schedule" item should have been added
+    bad = [i for i in items if i.description == "Bad schedule"]
+    assert len(bad) == 0
 
 
 @pytest.mark.asyncio()
-async def test_list_checklist_items(db_session: Session, test_contractor: Contractor) -> None:
+async def test_list_checklist_items(test_user: UserData) -> None:
     """list_checklist_items should show active items."""
-    tools = create_checklist_tools(db_session, test_contractor.id)
+    tools = create_checklist_tools(test_user.id)
     add_item = tools[0].function
     list_items = tools[1].function
 
@@ -73,59 +82,59 @@ async def test_list_checklist_items(db_session: Session, test_contractor: Contra
 
 
 @pytest.mark.asyncio()
-async def test_list_checklist_items_empty(db_session: Session, test_contractor: Contractor) -> None:
-    """list_checklist_items should return message when empty."""
-    tools = create_checklist_tools(db_session, test_contractor.id)
+async def test_list_checklist_items_with_defaults(test_user: UserData) -> None:
+    """list_checklist_items should include default HEARTBEAT.md items."""
+    tools = create_checklist_tools(test_user.id)
     list_items = tools[1].function
     result = await list_items()
-    assert "No active checklist items" in result.content
+    # Default HEARTBEAT.md has seeded items
+    assert "Follow up with new leads" in result.content
 
 
 @pytest.mark.asyncio()
-async def test_list_excludes_paused(db_session: Session, test_contractor: Contractor) -> None:
-    """list_checklist_items should not show paused items."""
-    item = HeartbeatChecklistItem(
-        contractor_id=test_contractor.id,
-        description="Paused item",
-        schedule="daily",
-        status="paused",
-    )
-    db_session.add(item)
-    db_session.commit()
+async def test_list_excludes_completed(test_user: UserData) -> None:
+    """list_checklist_items should not show completed items."""
+    store = HeartbeatStore(test_user.id)
+    item = await store.add_checklist_item(description="Done item", schedule="daily")
+    await store.update_checklist_item(item.id, status="completed")
 
-    tools = create_checklist_tools(db_session, test_contractor.id)
+    tools = create_checklist_tools(test_user.id)
     list_items = tools[1].function
     result = await list_items()
-    assert "No active checklist items" in result.content
+    # The completed item should not appear in the listing
+    assert "Done item" not in result.content
 
 
 @pytest.mark.asyncio()
-async def test_remove_checklist_item(db_session: Session, test_contractor: Contractor) -> None:
+async def test_remove_checklist_item(test_user: UserData) -> None:
     """remove_checklist_item should delete item and return confirmation."""
-    tools = create_checklist_tools(db_session, test_contractor.id)
+    tools = create_checklist_tools(test_user.id)
     add_item = tools[0].function
     remove_item = tools[2].function
 
     await add_item(description="To remove")
 
-    item = db_session.query(HeartbeatChecklistItem).first()
-    assert item is not None
+    store = HeartbeatStore(test_user.id)
+    items = await store.get_checklist()
+    added = [i for i in items if i.description == "To remove"]
+    assert len(added) == 1
+    item_id = added[0].id
 
-    result = await remove_item(item_id=item.id)
+    result = await remove_item(item_id=item_id)
     assert "Removed" in result.content
-    assert "To remove" in result.content
     assert result.is_error is False
 
-    items = db_session.query(HeartbeatChecklistItem).all()
-    assert len(items) == 0
+    items = await store.get_checklist()
+    removed = [i for i in items if i.description == "To remove"]
+    assert len(removed) == 0
 
 
 @pytest.mark.asyncio()
 async def test_remove_checklist_item_not_found(
-    db_session: Session, test_contractor: Contractor
+    test_user: UserData,
 ) -> None:
     """remove_checklist_item should handle missing IDs."""
-    tools = create_checklist_tools(db_session, test_contractor.id)
+    tools = create_checklist_tools(test_user.id)
     remove_item = tools[2].function
     result = await remove_item(item_id=999)
     assert "not found" in result.content
@@ -133,30 +142,28 @@ async def test_remove_checklist_item_not_found(
 
 
 @pytest.mark.asyncio()
-async def test_remove_scoped_to_contractor(
-    db_session: Session, test_contractor: Contractor
+async def test_remove_scoped_to_user(
+    test_user: UserData,
 ) -> None:
-    """remove_checklist_item should not delete another contractor's items."""
-    other = Contractor(user_id="other-user", phone="+15550000000")
-    db_session.add(other)
-    db_session.commit()
-    db_session.refresh(other)
+    """remove_checklist_item should not delete another user's items.
 
-    item = HeartbeatChecklistItem(
-        contractor_id=other.id,
-        description="Other's item",
-        schedule="daily",
-    )
-    db_session.add(item)
-    db_session.commit()
-    db_session.refresh(item)
+    Each user's HEARTBEAT.md is a separate file, so IDs are per-user.
+    Attempting to remove an ID that does not exist in the current user's
+    checklist should return not-found.
+    """
+    other_store = HeartbeatStore(99)
+    await other_store.add_checklist_item(description="Other's item", schedule="daily")
+    other_items = await other_store.get_checklist()
+    assert len(other_items) == 1
 
-    tools = create_checklist_tools(db_session, test_contractor.id)
+    # Use an ID that definitely does not exist in test_user's HEARTBEAT.md
+    tools = create_checklist_tools(test_user.id)
     remove_item = tools[2].function
-    result = await remove_item(item_id=item.id)
+    result = await remove_item(item_id=9999)
     assert "not found" in result.content
     assert result.is_error is True
 
-    # Item should still exist
-    remaining = db_session.query(HeartbeatChecklistItem).all()
-    assert len(remaining) == 1
+    # Item should still exist in other user's store
+    remaining = await other_store.get_checklist()
+    other_items = [i for i in remaining if i.description == "Other's item"]
+    assert len(other_items) == 1

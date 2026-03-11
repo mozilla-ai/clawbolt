@@ -1,0 +1,5 @@
+- Only send a message when there is something genuinely actionable: a pending checklist item, a stale estimate, a follow-up that is due, or similar.
+- If nothing needs attention right now, choose no_action.
+- Keep the message under 160 characters.
+- Be direct and actionable, no fluff.
+- Use the compose_message tool to return your decision.

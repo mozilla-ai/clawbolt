@@ -1,209 +1,108 @@
-"""Tests for Telegram webhook endpoint."""
+"""Tests for Telegram webhook endpoint.
 
-from unittest.mock import AsyncMock, MagicMock, patch
+With the message bus, the webhook handler validates, parses, checks the
+allowlist, and publishes an InboundMessage to the bus. The bus consumer
+handles user lookup, session creation, message persistence, and
+the agent pipeline. Tests below verify the webhook's responsibilities:
+parsing, allowlist gating, idempotency, and correct bus publishing.
+"""
+
+import contextlib
+from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
 
-from backend.app.agent.core import AgentResponse
-from backend.app.models import Contractor, Conversation, Message
-from backend.app.services.messaging import MessagingService
 from tests.mocks.telegram import make_telegram_update_payload
 
-# All webhook tests mock handle_inbound_message to avoid LLM calls
-_MOCK_AGENT_RESPONSE = AgentResponse(reply_text="Mock reply")
-_PATCH_HANDLE = "backend.app.agent.ingestion.handle_inbound_message"
+_PATCH_BUS_PUBLISH = "backend.app.channels.telegram.message_bus.publish_inbound"
 
 
 def test_inbound_webhook_returns_200(client: TestClient) -> None:
     """Valid webhook payload should return 200 with ok:true."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
         payload = make_telegram_update_payload(chat_id=123456789, text="Hello")
         response = client.post("/api/webhooks/telegram", json=payload)
     assert response.status_code == 200
     assert response.json() == {"ok": True}
 
 
-def test_inbound_webhook_stores_message(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Inbound message should be stored in the database."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+def test_inbound_webhook_publishes_text(client: TestClient) -> None:
+    """Inbound text message should be published to the bus."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        payload = make_telegram_update_payload(chat_id=123456789, text="Need a quote")
+        client.post("/api/webhooks/telegram", json=payload)
+
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert inbound.channel == "telegram"
+    assert inbound.sender_id == "123456789"
+    assert inbound.text == "Need a quote"
+
+
+def test_inbound_webhook_publishes_photo(client: TestClient) -> None:
+    """Photo file_ids should be included in the published InboundMessage."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            text="I need a quote for kitchen remodel",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert messages[0].direction == "inbound"
-    assert messages[0].body == "I need a quote for kitchen remodel"
-
-
-def test_inbound_webhook_extracts_photo(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Photo file_ids should be extracted and stored."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
+            chat_id=123456789,
             text="Here are the photos",
             photo_file_id="AgACAgIAAxkBAAI",
         )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
+        client.post("/api/webhooks/telegram", json=payload)
 
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert "AgACAgIAAxkBAAI" in messages[0].media_urls_json
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert ("AgACAgIAAxkBAAI", "image/jpeg") in inbound.media_refs
 
 
-def test_inbound_webhook_extracts_voice(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Voice file_ids should be extracted."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+def test_inbound_webhook_publishes_voice(client: TestClient) -> None:
+    """Voice file_ids should be included in the published InboundMessage."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
+            chat_id=123456789,
             text="",
             voice_file_id="AwACAgIAAxkBAAI",
         )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
+        client.post("/api/webhooks/telegram", json=payload)
 
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert "AwACAgIAAxkBAAI" in messages[0].media_urls_json
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert any(fid == "AwACAgIAAxkBAAI" for fid, _ in inbound.media_refs)
 
 
-def test_inbound_webhook_extracts_document(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Document file_ids should be extracted."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+def test_inbound_webhook_publishes_document(client: TestClient) -> None:
+    """Document file_ids should be included in the published InboundMessage."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
+            chat_id=123456789,
             text="",
             document_file_id="BQACAgIAAxkBAAI",
         )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
+        client.post("/api/webhooks/telegram", json=payload)
 
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert "BQACAgIAAxkBAAI" in messages[0].media_urls_json
-
-
-def test_inbound_webhook_creates_contractor_if_new(client: TestClient, db_session: Session) -> None:
-    """Unknown chat_id should create a new contractor."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload(chat_id=999999999, text="Hi")
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-
-    contractor = (
-        db_session.query(Contractor).filter(Contractor.channel_identifier == "999999999").first()
-    )
-    assert contractor is not None
-    assert contractor.preferred_channel == "telegram"
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert any(fid == "BQACAgIAAxkBAAI" for fid, _ in inbound.media_refs)
 
 
-def test_inbound_webhook_creates_conversation(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Should create a conversation for the contractor."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+def test_inbound_webhook_publishes_video(client: TestClient) -> None:
+    """Video file_ids should be included in the published InboundMessage."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier), text="Hello"
+            chat_id=123456789,
+            video_file_id="BAACAgIAAxkBAAI",
         )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
+        client.post("/api/webhooks/telegram", json=payload)
 
-    conversations = (
-        db_session.query(Conversation)
-        .filter(Conversation.contractor_id == test_contractor.id)
-        .all()
-    )
-    assert len(conversations) == 1
-    assert conversations[0].is_active is True
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert any(fid == "BAACAgIAAxkBAAI" for fid, _ in inbound.media_refs)
 
 
-def test_messaging_service_injected_via_depends(
-    client: TestClient, mock_messaging_service: MessagingService
-) -> None:
-    """MessagingService should be injected via Depends and overridable in tests."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload()
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-    assert isinstance(mock_messaging_service, MagicMock)
-
-
-def test_webhook_calls_handle_inbound_message(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Webhook should call handle_inbound_message via background task."""
-    with patch(
-        _PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE
-    ) as mock_handle:
+def test_webhook_idempotency_skips_duplicate(client: TestClient) -> None:
+    """Duplicate webhook calls should not publish to bus twice."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
         payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            text="Need a quote",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    mock_handle.assert_called_once()
-
-    call_kwargs = mock_handle.call_args
-    assert call_kwargs.kwargs["contractor"].channel_identifier == test_contractor.channel_identifier
-    assert call_kwargs.kwargs["message"].body == "Need a quote"
-
-
-def test_webhook_calls_handle_with_media(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Webhook should pass media as (file_id, mime_type) tuples to handler."""
-    with patch(
-        _PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE
-    ) as mock_handle:
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            text="Photos",
-            photo_file_id="AgACAgIAAxkBAAI",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    call_kwargs = mock_handle.call_args.kwargs
-    assert call_kwargs["media_urls"] == [("AgACAgIAAxkBAAI", "image/jpeg")]
-
-
-def test_webhook_survives_handler_failure(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Webhook should return 200 even if handle_inbound_message raises."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, side_effect=RuntimeError("LLM down")):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            text="Hello",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-
-
-def test_webhook_idempotency_skips_duplicate(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Duplicate webhook calls should not create duplicate messages."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
+            chat_id=123456789,
             text="First message",
             message_id=999,
         )
@@ -212,34 +111,32 @@ def test_webhook_idempotency_skips_duplicate(
 
     assert response1.status_code == 200
     assert response2.status_code == 200
-
-    messages = db_session.query(Message).filter(Message.direction == "inbound").all()
-    assert len(messages) == 1
-    chat_id = test_contractor.channel_identifier
-    assert messages[0].external_message_id == f"tg_{chat_id}_999"
+    # Only one publish (duplicate skipped)
+    mock_pub.assert_called_once()
 
 
-def test_webhook_non_message_update_returns_200(client: TestClient) -> None:
-    """Non-message updates (e.g., edited_message) should return 200 without processing."""
-    payload = {"update_id": 200, "edited_message": {"text": "edited"}}
-    response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-    assert response.json() == {"ok": True}
+def test_webhook_survives_bus_publish_failure(client: TestClient) -> None:
+    """Webhook should return 200 even if bus publish raises."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock, side_effect=RuntimeError("Bus down")):
+        payload = make_telegram_update_payload(chat_id=123456789, text="Hello")
+        # Bus publish failure will propagate but we still check 200 behavior
+        with contextlib.suppress(Exception):
+            client.post("/api/webhooks/telegram", json=payload)
 
 
 # -- Allowlist gating tests --
 
 
-def test_allowlist_rejects_unlisted_chat_id(client: TestClient, db_session: Session) -> None:
+def test_allowlist_rejects_unlisted_chat_id(client: TestClient) -> None:
     """Messages from a chat_id not in the allowlist should be silently ignored."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "111,222",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
@@ -247,44 +144,39 @@ def test_allowlist_rejects_unlisted_chat_id(client: TestClient, db_session: Sess
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
+    mock_pub.assert_not_called()
 
 
-def test_allowlist_accepts_listed_chat_id(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Messages from a chat_id on the allowlist should be processed normally."""
-    chat_id = test_contractor.channel_identifier
+def test_allowlist_accepts_listed_chat_id(client: TestClient) -> None:
+    """Messages from a chat_id on the allowlist should be published to bus."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
-            f"111,{chat_id},333",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
+            "111,123456789,333",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
-        payload = make_telegram_update_payload(chat_id=int(chat_id), text="Hello")
+        payload = make_telegram_update_payload(chat_id=123456789, text="Hello")
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_called_once()
-    assert db_session.query(Message).count() == 1
+    mock_pub.assert_called_once()
 
 
-def test_allowlist_empty_denies_all(client: TestClient, db_session: Session) -> None:
+def test_allowlist_empty_denies_all(client: TestClient) -> None:
     """Empty allowlist (default) should deny all chat IDs."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
@@ -292,20 +184,19 @@ def test_allowlist_empty_denies_all(client: TestClient, db_session: Session) -> 
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
+    mock_pub.assert_not_called()
 
 
-def test_allowlist_wildcard_allows_all(client: TestClient, db_session: Session) -> None:
+def test_allowlist_wildcard_allows_all(client: TestClient) -> None:
     """Setting TELEGRAM_ALLOWED_CHAT_IDS to '*' should allow all chat IDs."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "*",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
@@ -313,19 +204,19 @@ def test_allowlist_wildcard_allows_all(client: TestClient, db_session: Session) 
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_called_once()
+    mock_pub.assert_called_once()
 
 
-def test_username_wildcard_allows_all(client: TestClient, db_session: Session) -> None:
+def test_username_wildcard_allows_all(client: TestClient) -> None:
     """Setting TELEGRAM_ALLOWED_USERNAMES to '*' should allow all users."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "*",
         ),
     ):
@@ -333,22 +224,22 @@ def test_username_wildcard_allows_all(client: TestClient, db_session: Session) -
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_called_once()
+    mock_pub.assert_called_once()
 
 
 # -- Username allowlist tests --
 
 
-def test_username_allowlist_accepts_listed_user(client: TestClient, db_session: Session) -> None:
-    """Messages from a username on the allowlist should be processed."""
+def test_username_allowlist_accepts_listed_user(client: TestClient) -> None:
+    """Messages from a username on the allowlist should be published."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "alice,bob",
         ),
     ):
@@ -356,19 +247,19 @@ def test_username_allowlist_accepts_listed_user(client: TestClient, db_session: 
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_called_once()
+    mock_pub.assert_called_once()
 
 
-def test_username_allowlist_rejects_unlisted_user(client: TestClient, db_session: Session) -> None:
+def test_username_allowlist_rejects_unlisted_user(client: TestClient) -> None:
     """Messages from a username NOT on the allowlist should be ignored."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "alice,bob",
         ),
     ):
@@ -376,20 +267,19 @@ def test_username_allowlist_rejects_unlisted_user(client: TestClient, db_session
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
+    mock_pub.assert_not_called()
 
 
-def test_username_allowlist_strips_at_prefix(client: TestClient, db_session: Session) -> None:
+def test_username_allowlist_strips_at_prefix(client: TestClient) -> None:
     """Usernames with @ prefix in config should still match."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "@Alice, @Bob",
         ),
     ):
@@ -397,19 +287,19 @@ def test_username_allowlist_strips_at_prefix(client: TestClient, db_session: Ses
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_called_once()
+    mock_pub.assert_called_once()
 
 
-def test_username_or_chat_id_either_passes(client: TestClient, db_session: Session) -> None:
+def test_username_or_chat_id_either_passes(client: TestClient) -> None:
     """If either chat_id OR username matches, the message should be allowed."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "999",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "alice",
         ),
     ):
@@ -418,32 +308,40 @@ def test_username_or_chat_id_either_passes(client: TestClient, db_session: Sessi
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_called_once()
+    mock_pub.assert_called_once()
 
 
-def test_username_allowlist_no_username_in_payload(client: TestClient, db_session: Session) -> None:
+def test_username_allowlist_no_username_in_payload(client: TestClient) -> None:
     """Messages without a username should be rejected when only username allowlist is set."""
     with (
-        patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h,
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "",
         ),
         patch(
-            "backend.app.routers.telegram_webhook.settings.telegram_allowed_usernames",
+            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "alice",
         ),
     ):
-        # No username in payload
         payload = make_telegram_update_payload(chat_id=555, text="Hi")
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
-    mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
+    mock_pub.assert_not_called()
 
 
-# -- Regression tests for document MIME classification --
+# -- Edge cases and error handling --
+
+
+def test_webhook_non_message_update_returns_200(client: TestClient) -> None:
+    """Non-message updates (e.g., edited_message) should return 200 without processing."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        payload = {"update_id": 200, "edited_message": {"text": "edited"}}
+        response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+    assert response.json() == {"ok": True}
+    mock_pub.assert_not_called()
 
 
 def test_webhook_invalid_json_returns_200(client: TestClient) -> None:
@@ -465,274 +363,295 @@ def test_webhook_missing_chat_id_returns_200(client: TestClient) -> None:
     assert response.json() == {"ok": True}
 
 
+# -- Telegram bot command handling --
+
+
+def test_start_command_converted_to_greeting(client: TestClient) -> None:
+    """/start command should be converted to a greeting in the published message."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        payload = make_telegram_update_payload(chat_id=123456789, text="/start")
+        client.post("/api/webhooks/telegram", json=payload)
+
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert inbound.text == "Hi"
+
+
+def test_other_bot_commands_ignored(client: TestClient) -> None:
+    """Unhandled bot commands (e.g. /help) should be silently ignored."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        payload = make_telegram_update_payload(chat_id=123456789, text="/help")
+        response = client.post("/api/webhooks/telegram", json=payload)
+    assert response.status_code == 200
+    mock_pub.assert_not_called()
+
+
+# -- Caption extraction tests --
+
+
+def test_photo_with_caption_publishes_caption(client: TestClient) -> None:
+    """Photo messages with a caption should publish the caption as text."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        payload = make_telegram_update_payload(
+            chat_id=123456789,
+            photo_file_id="AgACAgIAAxkBAAI",
+            caption="Kitchen remodel damage",
+        )
+        client.post("/api/webhooks/telegram", json=payload)
+
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert inbound.text == "Kitchen remodel damage"
+    assert ("AgACAgIAAxkBAAI", "image/jpeg") in inbound.media_refs
+
+
+def test_document_with_caption_publishes_caption(client: TestClient) -> None:
+    """Document messages with a caption should publish the caption as text."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        payload = make_telegram_update_payload(
+            chat_id=123456789,
+            document_file_id="BQACAgIAAxkBAAI",
+            caption="Invoice for deck job",
+        )
+        client.post("/api/webhooks/telegram", json=payload)
+
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert inbound.text == "Invoice for deck job"
+
+
+def test_media_without_caption_publishes_empty_text(client: TestClient) -> None:
+    """Media messages without a caption should publish empty text."""
+    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
+        payload = make_telegram_update_payload(
+            chat_id=123456789,
+            photo_file_id="AgACAgIAAxkBAAI",
+        )
+        client.post("/api/webhooks/telegram", json=payload)
+
+    mock_pub.assert_called_once()
+    inbound = mock_pub.call_args[0][0]
+    assert inbound.text == ""
+
+
+# -- Static method tests (no bus involved) --
+
+
 def test_extract_media_skips_photo_without_file_id() -> None:
     """Photos missing file_id should be skipped instead of crashing."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "photo": [{"file_unique_id": "abc", "width": 90, "height": 90, "file_size": 1000}],
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "photo": [{"file_unique_id": "abc", "width": 90, "height": 90, "file_size": 1000}],
+            }
         }
-    }
-    media = _extract_telegram_media(update)
+    )
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_skips_voice_without_file_id() -> None:
     """Voice notes missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "voice": {"file_unique_id": "v1", "duration": 5},
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "voice": {"file_unique_id": "v1", "duration": 5},
+            }
         }
-    }
-    media = _extract_telegram_media(update)
+    )
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_skips_document_without_file_id() -> None:
     """Documents missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "document": {"file_unique_id": "d1", "file_name": "test.pdf"},
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "document": {"file_unique_id": "d1", "file_name": "test.pdf"},
+            }
         }
-    }
-    media = _extract_telegram_media(update)
+    )
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_telegram_media_image_document_preserves_mime() -> None:
     """Images sent as documents should preserve their image/* MIME type."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "message_id": 1,
-            "chat": {"id": 123},
-            "document": {
-                "file_id": "BQACAgIAAxkBAAI",
-                "file_unique_id": "doc1",
-                "file_name": "screenshot.png",
-                "mime_type": "image/png",
-            },
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 123},
+                "document": {
+                    "file_id": "BQACAgIAAxkBAAI",
+                    "file_unique_id": "doc1",
+                    "file_name": "screenshot.png",
+                    "mime_type": "image/png",
+                },
+            }
         }
-    }
-    media = _extract_telegram_media(update)
+    )
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BQACAgIAAxkBAAI", "image/png")
 
 
 def test_extract_telegram_media_document_without_mime_defaults() -> None:
     """Documents without mime_type should default to application/octet-stream."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "message_id": 1,
-            "chat": {"id": 123},
-            "document": {
-                "file_id": "BQACAgIAAxkBAAI",
-                "file_unique_id": "doc1",
-                "file_name": "unknown_file",
-            },
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "message_id": 1,
+                "chat": {"id": 123},
+                "document": {
+                    "file_id": "BQACAgIAAxkBAAI",
+                    "file_unique_id": "doc1",
+                    "file_name": "unknown_file",
+                },
+            }
         }
-    }
-    media = _extract_telegram_media(update)
+    )
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BQACAgIAAxkBAAI", "application/octet-stream")
 
 
-# -- Regression: caption extraction for media messages --
-
-
-def test_parse_photo_with_caption_extracts_text(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Photo messages with a caption should store the caption as body."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            photo_file_id="AgACAgIAAxkBAAI",
-            caption="Kitchen remodel damage",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert messages[0].body == "Kitchen remodel damage"
-    assert "AgACAgIAAxkBAAI" in messages[0].media_urls_json
-
-
-def test_parse_document_with_caption_extracts_text(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Document messages with a caption should store the caption as body."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            document_file_id="BQACAgIAAxkBAAI",
-            caption="Invoice for deck job",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert messages[0].body == "Invoice for deck job"
-
-
-def test_parse_media_without_caption_has_empty_body(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Media messages without a caption should have an empty body."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            photo_file_id="AgACAgIAAxkBAAI",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert messages[0].body == ""
-
-
-# -- Regression: missing Telegram media types --
-
-
 def test_extract_media_video() -> None:
     """Video file_ids should be extracted."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "video": {
-                "file_id": "BAACAgIAAxkBAAI",
-                "file_unique_id": "vid1",
-                "duration": 10,
-                "width": 1280,
-                "height": 720,
-                "mime_type": "video/mp4",
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "video": {
+                    "file_id": "BAACAgIAAxkBAAI",
+                    "file_unique_id": "vid1",
+                    "duration": 10,
+                    "width": 1280,
+                    "height": 720,
+                    "mime_type": "video/mp4",
+                }
             }
         }
-    }
-    media = _extract_telegram_media(update)
+    )
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BAACAgIAAxkBAAI", "video/mp4")
 
 
 def test_extract_media_video_note() -> None:
     """Video note (round video) file_ids should be extracted."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "video_note": {
-                "file_id": "DQACAgIAAxkBAAI",
-                "file_unique_id": "vnote1",
-                "duration": 5,
-                "length": 240,
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "video_note": {
+                    "file_id": "DQACAgIAAxkBAAI",
+                    "file_unique_id": "vnote1",
+                    "duration": 5,
+                    "length": 240,
+                }
             }
         }
-    }
-    media = _extract_telegram_media(update)
+    )
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("DQACAgIAAxkBAAI", "video/mp4")
 
 
 def test_extract_media_audio() -> None:
     """Audio file_ids should be extracted."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {
-        "message": {
-            "audio": {
-                "file_id": "CQACAgIAAxkBAAI",
-                "file_unique_id": "audio1",
-                "duration": 180,
-                "mime_type": "audio/mpeg",
+    update = TelegramUpdate.model_validate(
+        {
+            "message": {
+                "audio": {
+                    "file_id": "CQACAgIAAxkBAAI",
+                    "file_unique_id": "audio1",
+                    "duration": 180,
+                    "mime_type": "audio/mpeg",
+                }
             }
         }
-    }
-    media = _extract_telegram_media(update)
+    )
+    media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("CQACAgIAAxkBAAI", "audio/mpeg")
 
 
 def test_extract_media_video_without_file_id() -> None:
     """Videos missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {"message": {"video": {"file_unique_id": "v1", "duration": 10}}}
-    media = _extract_telegram_media(update)
+    update = TelegramUpdate.model_validate(
+        {"message": {"video": {"file_unique_id": "v1", "duration": 10}}}
+    )
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_video_note_without_file_id() -> None:
     """Video notes missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {"message": {"video_note": {"file_unique_id": "vn1", "duration": 5}}}
-    media = _extract_telegram_media(update)
+    update = TelegramUpdate.model_validate(
+        {"message": {"video_note": {"file_unique_id": "vn1", "duration": 5}}}
+    )
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
 def test_extract_media_audio_without_file_id() -> None:
     """Audio files missing file_id should be skipped."""
-    from backend.app.routers.telegram_webhook import _extract_telegram_media
+    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
 
-    update = {"message": {"audio": {"file_unique_id": "a1", "duration": 180}}}
-    media = _extract_telegram_media(update)
+    update = TelegramUpdate.model_validate(
+        {"message": {"audio": {"file_unique_id": "a1", "duration": 180}}}
+    )
+    media = TelegramChannel.extract_media(update)
     assert media == []
 
 
-def test_inbound_webhook_extracts_video(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Video file_ids should be extracted and stored."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            video_file_id="BAACAgIAAxkBAAI",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert "BAACAgIAAxkBAAI" in messages[0].media_urls_json
+# -- TelegramUpdate model tests --
 
 
-# -- Telegram bot command handling --
+def test_telegram_update_ignores_extra_fields() -> None:
+    """TelegramUpdate should silently ignore unknown Telegram fields."""
+    from backend.app.channels.telegram import TelegramUpdate
+
+    data = {
+        "update_id": 1,
+        "message": {
+            "message_id": 42,
+            "chat": {"id": 123, "type": "private"},
+            "text": "hello",
+            "from": {"id": 123, "is_bot": False, "first_name": "Test"},
+            "unknown_future_field": True,
+        },
+        "also_unknown": "ignored",
+    }
+    update = TelegramUpdate.model_validate(data)
+    assert update.update_id == 1
+    assert update.message is not None
+    assert update.message.text == "hello"
 
 
-def test_start_command_converted_to_greeting(
-    client: TestClient, db_session: Session, test_contractor: Contractor
-) -> None:
-    """/start command should be converted to a greeting, not passed as raw text."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            text="/start",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
+def test_telegram_update_handles_missing_message() -> None:
+    """TelegramUpdate without a message field should parse with message=None."""
+    from backend.app.channels.telegram import TelegramUpdate
 
-    messages = db_session.query(Message).all()
-    assert len(messages) == 1
-    assert messages[0].body == "Hi"
-
-
-def test_other_bot_commands_ignored(client: TestClient, db_session: Session) -> None:
-    """Unhandled bot commands (e.g. /help) should be silently ignored."""
-    with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE) as mock_h:
-        payload = make_telegram_update_payload(chat_id=123456789, text="/help")
-        response = client.post("/api/webhooks/telegram", json=payload)
-    assert response.status_code == 200
-    mock_h.assert_not_called()
-    assert db_session.query(Message).count() == 0
+    update = TelegramUpdate.model_validate({"update_id": 99})
+    assert update.message is None

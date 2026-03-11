@@ -1,20 +1,4 @@
 services:
-  db:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_DB: clawbolt
-      POSTGRES_USER: clawbolt
-      POSTGRES_PASSWORD: clawbolt
-    ports:
-      - "5432:5432"
-    volumes:
-      - pgdata:/var/lib/postgresql/data
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U clawbolt"]
-      interval: 5s
-      timeout: 5s
-      retries: 5
-
   app:
     build: .
     ports:
@@ -23,24 +7,17 @@ services:
       - 8.8.8.8
       - 1.1.1.1
     environment:
-      DATABASE_URL: postgresql://clawbolt:clawbolt@db:5432/clawbolt
       LOG_LEVEL: debug
     env_file:
       - path: .env
         required: false
-    depends_on:
-      db:
-        condition: service_healthy
-    command: >
-      sh -c "uv run alembic upgrade head &&
-             uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000
-             --log-level $${LOG_LEVEL:-info}"
+    volumes:
+      - ${CLAWBOLT_DATA_DIR:-./data}:/app/data
+    command: ["sh", "-c", "uv run uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --log-level $${LOG_LEVEL:-info}"]
 
   tunnel:
     image: cloudflare/cloudflared:latest
     command: tunnel --no-autoupdate --url http://app:8000 --metrics 0.0.0.0:2000
+    restart: on-failure:5
     depends_on:
       - app
-
-volumes:
-  pgdata:

@@ -1,21 +1,14 @@
-"""Tests for typed agent message dataclasses (issue #311)."""
-
-import json
+"""Tests for typed agent message dataclasses and Messages API serialization."""
 
 from backend.app.agent.messages import (
+    AgentMessage,
     AssistantMessage,
     SystemMessage,
     ToolCallRequest,
     ToolResultMessage,
     UserMessage,
-    messages_to_dicts,
+    messages_to_messages_api,
 )
-
-
-def test_system_message_to_dict() -> None:
-    msg = SystemMessage(content="You are helpful.")
-    d = msg.to_dict()
-    assert d == {"role": "system", "content": "You are helpful."}
 
 
 def test_user_message_to_dict() -> None:
@@ -27,8 +20,8 @@ def test_user_message_to_dict() -> None:
 def test_assistant_message_text_only_to_dict() -> None:
     msg = AssistantMessage(content="Sure, I can help.")
     d = msg.to_dict()
-    assert d == {"role": "assistant", "content": "Sure, I can help."}
-    assert "tool_calls" not in d
+    assert d["role"] == "assistant"
+    assert d["content"] == [{"type": "text", "text": "Sure, I can help."}]
 
 
 def test_assistant_message_with_tool_calls_to_dict() -> None:
@@ -44,29 +37,39 @@ def test_assistant_message_with_tool_calls_to_dict() -> None:
     )
     d = msg.to_dict()
     assert d["role"] == "assistant"
-    assert d["content"] is None
-    assert len(d["tool_calls"]) == 1
+    assert len(d["content"]) == 1
 
-    tc = d["tool_calls"][0]
+    tc = d["content"][0]
+    assert tc["type"] == "tool_use"
     assert tc["id"] == "call_1"
-    assert tc["type"] == "function"
-    assert tc["function"]["name"] == "save_fact"
-    args = json.loads(tc["function"]["arguments"])
-    assert args == {"key": "rate", "value": "$75/hr"}
+    assert tc["name"] == "save_fact"
+    assert tc["input"] == {"key": "rate", "value": "$75/hr"}
 
 
-def test_tool_result_message_to_dict() -> None:
-    msg = ToolResultMessage(tool_call_id="call_1", content="Saved successfully.")
+def test_assistant_message_text_and_tool_calls() -> None:
+    msg = AssistantMessage(
+        content="Let me check.",
+        tool_calls=[ToolCallRequest(id="call_1", name="recall", arguments={"q": "test"})],
+    )
     d = msg.to_dict()
-    assert d == {
-        "role": "tool",
-        "tool_call_id": "call_1",
+    assert d["role"] == "assistant"
+    assert len(d["content"]) == 2
+    assert d["content"][0] == {"type": "text", "text": "Let me check."}
+    assert d["content"][1]["type"] == "tool_use"
+
+
+def test_tool_result_message_to_content_block() -> None:
+    msg = ToolResultMessage(tool_call_id="call_1", content="Saved successfully.")
+    block = msg.to_content_block()
+    assert block == {
+        "type": "tool_result",
+        "tool_use_id": "call_1",
         "content": "Saved successfully.",
     }
 
 
-def test_messages_to_dicts_roundtrip() -> None:
-    """messages_to_dicts should serialize a conversation to LLM-compatible dicts."""
+def test_messages_to_messages_api_extracts_system() -> None:
+    """messages_to_messages_api should extract system prompt and serialize messages."""
     messages = [
         SystemMessage(content="System prompt"),
         UserMessage(content="Hi"),
@@ -77,19 +80,45 @@ def test_messages_to_dicts_roundtrip() -> None:
         ToolResultMessage(tool_call_id="call_1", content="Found it"),
         AssistantMessage(content="Here is the result."),
     ]
-    dicts = messages_to_dicts(messages)
-    assert len(dicts) == 5
-    assert dicts[0]["role"] == "system"
+    system, dicts = messages_to_messages_api(messages)
+    assert system == "System prompt"
+    # 4 logical messages (system is extracted):
+    # user, assistant(tool_use), user(tool_result), assistant(text)
+    assert len(dicts) == 4
+    assert dicts[0]["role"] == "user"
+    assert dicts[1]["role"] == "assistant"
+    assert dicts[1]["content"][0]["type"] == "tool_use"
+    # Tool result is wrapped as a user message
+    assert dicts[2]["role"] == "user"
+    assert dicts[2]["content"][0]["type"] == "tool_result"
+    assert dicts[3]["role"] == "assistant"
+
+
+def test_messages_to_messages_api_merges_consecutive_tool_results() -> None:
+    """Consecutive ToolResultMessages should be merged into one user message."""
+    messages: list[AgentMessage] = [
+        AssistantMessage(
+            content=None,
+            tool_calls=[
+                ToolCallRequest(id="call_1", name="tool_a", arguments={}),
+                ToolCallRequest(id="call_2", name="tool_b", arguments={}),
+            ],
+        ),
+        ToolResultMessage(tool_call_id="call_1", content="Result A"),
+        ToolResultMessage(tool_call_id="call_2", content="Result B"),
+    ]
+    _, dicts = messages_to_messages_api(messages)
+    # assistant + user(2 tool_results)
+    assert len(dicts) == 2
     assert dicts[1]["role"] == "user"
-    assert dicts[2]["role"] == "assistant"
-    assert "tool_calls" in dicts[2]
-    assert dicts[3]["role"] == "tool"
-    assert dicts[4]["role"] == "assistant"
-    assert "tool_calls" not in dicts[4]
+    assert len(dicts[1]["content"]) == 2
+    assert dicts[1]["content"][0]["tool_use_id"] == "call_1"
+    assert dicts[1]["content"][1]["tool_use_id"] == "call_2"
 
 
-def test_messages_to_dicts_empty() -> None:
-    assert messages_to_dicts([]) == []
+def test_messages_to_messages_api_empty() -> None:
+    _, dicts = messages_to_messages_api([])
+    assert dicts == []
 
 
 def test_frozen_dataclasses_are_hashable() -> None:

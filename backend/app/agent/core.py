@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import random
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -10,12 +11,18 @@ from any_llm import (
     ContentFilterError,
     ContextLengthExceededError,
     RateLimitError,
-    acompletion,
+    amessages,
 )
-from any_llm.types.completion import ChatCompletion
+from any_llm.types.messages import MessageResponse
 from pydantic import ValidationError
-from sqlalchemy.orm import Session
 
+from backend.app.agent.approval import (
+    ApprovalDecision,
+    PermissionLevel,
+    get_approval_gate,
+    get_approval_store,
+)
+from backend.app.agent.context import StoredToolInteraction
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentEvent,
@@ -25,7 +32,8 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from backend.app.agent.llm_parsing import parse_tool_calls
+from backend.app.agent.file_store import UserData
+from backend.app.agent.llm_parsing import ParsedToolCall, get_response_text, parse_tool_calls
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -33,220 +41,42 @@ from backend.app.agent.messages import (
     ToolCallRequest,
     ToolResultMessage,
     UserMessage,
-    messages_to_dicts,
+    messages_to_messages_api,
 )
 from backend.app.agent.system_prompt import build_agent_system_prompt
+from backend.app.agent.tool_errors import (
+    _DEFAULT_ERROR_HINT,
+    _ERROR_KIND_HINTS,
+    build_error_hint,
+    format_validation_error,
+)
 from backend.app.agent.tools.base import (
     Tool,
     ToolErrorKind,
-    ToolResult,
     ToolTags,
     tool_to_function_schema,
 )
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext, ToolRegistry
+from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
-from backend.app.models import Contractor
 from backend.app.services.llm_usage import log_llm_usage
-from backend.app.services.messaging import MessagingService
 
 logger = logging.getLogger(__name__)
 
 MAX_TOOL_ROUNDS = settings.max_tool_rounds
-RATE_LIMIT_RETRY_DELAY = settings.rate_limit_retry_delay
-# Target token budget when trimming for context length (leave room for output tokens)
-CONTEXT_TRIM_TARGET_TOKENS = settings.context_trim_target_tokens
+LLM_MAX_RETRIES = settings.llm_max_retries
 
 # Conservative default; most models support 128K+ but we leave room for output
 MAX_INPUT_TOKENS = settings.max_input_tokens
 
-# Per-message overhead tokens for role/delimiters/structural framing
-_MESSAGE_OVERHEAD_TOKENS = 4
-# Characters per token ratio for English text (slightly more accurate than 4.0)
-_CHARS_PER_TOKEN = 3.5
+# Stop reasons that represent a valid, non-error LLM response.
+# Anything outside this set indicates a provider-level error and the
+# response should *not* be persisted to session history to avoid
+# context poisoning.
+_VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "stop_sequence", None}
 
-
-_SUMMARY_MAX_CHARS = 500
-
-
-def _summarize_dropped_messages(dropped: list[AgentMessage]) -> str:
-    """Build a deterministic summary of messages that were trimmed from context.
-
-    Extracts message count, tool calls made, and key topics (first line of
-    each user/assistant message). Fast and deterministic: no LLM call needed.
-    """
-    user_snippets: list[str] = []
-    assistant_snippets: list[str] = []
-    tool_calls_made: list[str] = []
-
-    for msg in dropped:
-        if isinstance(msg, UserMessage) and msg.content:
-            first_line = msg.content.split("\n", 1)[0][:80]
-            user_snippets.append(first_line)
-        elif isinstance(msg, AssistantMessage):
-            if msg.tool_calls:
-                for tc in msg.tool_calls:
-                    tool_calls_made.append(tc.name)
-            if msg.content:
-                first_line = msg.content.split("\n", 1)[0][:80]
-                assistant_snippets.append(first_line)
-        # ToolResultMessages are covered by the tool_calls_made list
-
-    parts: list[str] = [f"{len(dropped)} earlier message(s) were trimmed from context."]
-
-    if user_snippets:
-        topics = "; ".join(user_snippets[:5])
-        if len(user_snippets) > 5:
-            topics += f" (and {len(user_snippets) - 5} more)"
-        parts.append(f"User topics: {topics}")
-
-    if assistant_snippets:
-        topics = "; ".join(assistant_snippets[:3])
-        parts.append(f"Assistant discussed: {topics}")
-
-    if tool_calls_made:
-        unique_tools = sorted(set(tool_calls_made))
-        parts.append(f"Tools used: {', '.join(unique_tools)}")
-
-    summary = " ".join(parts)
-    return summary[:_SUMMARY_MAX_CHARS]
-
-
-def _estimate_tokens(messages: list[AgentMessage]) -> int:
-    """Estimate token count from typed messages, including tool call content.
-
-    Counts content and any tool-call function names + serialized arguments.
-    Adds a small per-message overhead for role and delimiter tokens.
-    """
-    total = 0
-    for m in messages:
-        total += _MESSAGE_OVERHEAD_TOKENS
-
-        if isinstance(m, (SystemMessage, UserMessage)):
-            if m.content:
-                total += int(len(m.content) / _CHARS_PER_TOKEN)
-        elif isinstance(m, AssistantMessage):
-            if m.content:
-                total += int(len(m.content) / _CHARS_PER_TOKEN)
-            for tc in m.tool_calls:
-                total += int(len(tc.name) / _CHARS_PER_TOKEN)
-                # Estimate from the dict representation of arguments
-                args_str = str(tc.arguments)
-                total += int(len(args_str) / _CHARS_PER_TOKEN)
-        elif isinstance(m, ToolResultMessage) and m.content:
-            total += int(len(m.content) / _CHARS_PER_TOKEN)
-
-    return total
-
-
-def _log_token_estimation_drift(
-    messages: list[AgentMessage],
-    response: ChatCompletion,
-) -> None:
-    """Log a warning when estimated token count drifts >30% from actual usage.
-
-    Uses ``response.usage.prompt_tokens`` (reported by the LLM provider) to
-    compare against our character-ratio estimate.  Not all providers return
-    usage data, so missing values are silently ignored.
-    """
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        return
-    actual = getattr(usage, "prompt_tokens", None)
-    if not actual:
-        return
-
-    estimated = _estimate_tokens(messages)
-    if abs(estimated - actual) > actual * 0.3:
-        total_chars = sum(
-            len(m.content or "")
-            for m in messages
-            if isinstance(m, (SystemMessage, UserMessage, AssistantMessage, ToolResultMessage))
-            and m.content
-        )
-        observed_ratio = total_chars / actual if actual else 0.0
-        logger.warning(
-            "Token estimate drift: estimated=%d actual=%d ratio=%.2f (configured=%.1f)",
-            estimated,
-            actual,
-            observed_ratio,
-            _CHARS_PER_TOKEN,
-        )
-
-
-def _format_validation_error(tool_name: str, exc: ValidationError, tool: Tool | None = None) -> str:
-    """Format a Pydantic ValidationError into a structured message for the LLM."""
-    error_lines: list[str] = [f"Validation error for {tool_name}:"]
-    for err in exc.errors():
-        loc = " -> ".join(str(part) for part in err["loc"])
-        error_lines.append(f"  {loc}: {err['msg']} (type={err['type']})")
-
-    if tool is not None:
-        schema_summary = _summarize_tool_params(tool)
-        if schema_summary:
-            error_lines.append(f"\nExpected parameters: {schema_summary}")
-
-    return "\n".join(error_lines)
-
-
-def _summarize_tool_params(tool: Tool) -> str:
-    """Build a concise parameter summary string from a tool's schema."""
-    if tool.params_model is not None:
-        schema = tool.params_model.model_json_schema()
-    elif tool.parameters:
-        schema = tool.parameters
-    else:
-        return ""
-
-    props = schema.get("properties", {})
-    required = set(schema.get("required", []))
-    if not props:
-        return ""
-
-    parts: list[str] = []
-    for name, info in props.items():
-        ptype = info.get("type", "any")
-        req = "required" if name in required else "optional"
-        default = info.get("default")
-        if default is not None:
-            parts.append(f'"{name}": {ptype} ({req}, default: {default})')
-        else:
-            parts.append(f'"{name}": {ptype} ({req})')
-    return "{" + ", ".join(parts) + "}"
-
-
-_DEFAULT_ERROR_HINT = "[Analyze the error above and try a different approach.]"
-
-_ERROR_KIND_HINTS: dict[ToolErrorKind, str] = {
-    ToolErrorKind.VALIDATION: (
-        "[Check the expected parameter format and try again with corrected arguments.]"
-    ),
-    ToolErrorKind.NOT_FOUND: (
-        "[The requested resource was not found. Verify the identifier and try again.]"
-    ),
-    ToolErrorKind.SERVICE: (
-        "[An external service is temporarily unavailable."
-        " Try a different approach or inform the user.]"
-    ),
-    ToolErrorKind.PERMISSION: ("[You do not have permission for this operation. Inform the user.]"),
-    ToolErrorKind.INTERNAL: (
-        "[An internal error occurred."
-        " Inform the user that this operation is temporarily unavailable.]"
-    ),
-}
-
-
-def _build_error_hint(result: ToolResult) -> str:
-    """Build the LLM guidance suffix for an error ToolResult.
-
-    Priority: explicit ``hint`` on the result, then ``error_kind`` mapping,
-    then the generic default.
-    """
-    if result.hint:
-        return f"[{result.hint}]" if not result.hint.startswith("[") else result.hint
-    if result.error_kind is not None:
-        return _ERROR_KIND_HINTS.get(result.error_kind, _DEFAULT_ERROR_HINT)
-    return _DEFAULT_ERROR_HINT
+_LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
 
 
 @dataclass
@@ -254,25 +84,26 @@ class AgentResponse:
     reply_text: str
     actions_taken: list[str] = field(default_factory=list)
     memories_saved: list[dict[str, str]] = field(default_factory=list)
-    tool_calls: list[dict[str, Any]] = field(default_factory=list)
+    tool_calls: list[StoredToolInteraction] = field(default_factory=list)
     is_error_fallback: bool = False
 
 
 class ClawboltAgent:
-    """Main agent that processes contractor messages and produces actions."""
+    """Main agent that processes user messages and produces actions."""
 
     def __init__(
         self,
-        db: Session,
-        contractor: Contractor,
-        messaging_service: MessagingService | None = None,
+        user: UserData,
+        channel: str = "",
+        publish_outbound: Callable[[Any], Awaitable[None]] | None = None,
         chat_id: str | None = None,
         tool_context: ToolContext | None = None,
         registry: ToolRegistry | None = None,
+        session_id: str = "",
     ) -> None:
-        self.db = db
-        self.contractor = contractor
-        self._messaging_service = messaging_service
+        self.user = user
+        self._channel = channel
+        self._publish_outbound = publish_outbound
         self._chat_id = chat_id
         self.tools: list[Tool] = []
         self._tools_by_name: dict[str, Tool] = {}
@@ -280,6 +111,8 @@ class ClawboltAgent:
         self._tool_context = tool_context
         self._registry = registry
         self._activated_specialists: set[str] = set()
+        self._last_input_tokens: int = 0
+        self._session_id = session_id
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -298,12 +131,87 @@ class ClawboltAgent:
                 logger.exception("Event subscriber error for %s", type(event).__name__)
 
     async def _send_typing_indicator(self) -> None:
-        """Send a typing indicator if a messaging service and chat_id are available."""
-        if self._messaging_service and self._chat_id:
+        """Send a typing indicator via the bus if a publish callback and chat_id are available."""
+        if self._publish_outbound and self._chat_id and self._channel:
             try:
-                await self._messaging_service.send_typing_indicator(to=self._chat_id)
+                from backend.app.bus import OutboundMessage
+
+                await self._publish_outbound(
+                    OutboundMessage(
+                        channel=self._channel,
+                        chat_id=self._chat_id,
+                        content="",
+                        is_typing_indicator=True,
+                    )
+                )
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", self._chat_id)
+
+    async def _check_approval(
+        self,
+        tool_obj: Tool,
+        validated_args: dict[str, Any],
+    ) -> PermissionLevel:
+        """Check approval for a tool call.
+
+        Returns ``PermissionLevel.AUTO`` when execution should proceed,
+        or ``PermissionLevel.DENY`` when it should be blocked.
+        """
+        policy = tool_obj.approval_policy
+        if policy is None:
+            return PermissionLevel.AUTO
+
+        resource: str | None = None
+        if policy.resource_extractor is not None:
+            resource = policy.resource_extractor(validated_args)
+
+        store = get_approval_store()
+        level = store.check_permission(
+            self.user.id, tool_obj.name, resource=resource, default=policy.default_level
+        )
+
+        if level == PermissionLevel.AUTO:
+            return PermissionLevel.AUTO
+        if level == PermissionLevel.DENY:
+            return PermissionLevel.DENY
+
+        # ASK: prompt the user.  When no outbound channel is available
+        # (e.g. headless/API usage, dashboard without WebSocket reply path)
+        # we fall through to AUTO so the agent is not permanently blocked.
+        if self._publish_outbound is None or self._chat_id is None:
+            return PermissionLevel.AUTO
+
+        gate = get_approval_gate()
+
+        # Only one approval prompt per user at a time.  If a prior tool in
+        # the same round is already waiting, deny this one to avoid
+        # overwriting the pending request.
+        if gate.has_pending(self.user.id):
+            return PermissionLevel.DENY
+
+        description = tool_obj.name
+        if policy.description_builder is not None:
+            description = policy.description_builder(validated_args)
+
+        decision = await gate.request_approval(
+            user_id=self.user.id,
+            tool_name=tool_obj.name,
+            description=description,
+            publish_outbound=self._publish_outbound,
+            channel=self._channel,
+            chat_id=self._chat_id,
+        )
+
+        if decision == ApprovalDecision.ALWAYS_ALLOW:
+            store.set_permission(self.user.id, tool_obj.name, PermissionLevel.AUTO, resource)
+            return PermissionLevel.AUTO
+        if decision == ApprovalDecision.APPROVED:
+            return PermissionLevel.AUTO
+        if decision == ApprovalDecision.ALWAYS_DENY:
+            store.set_permission(self.user.id, tool_obj.name, PermissionLevel.DENY, resource)
+            return PermissionLevel.DENY
+        # DENIED or timeout
+        return PermissionLevel.DENY
 
     def register_tools(self, tools: list[Tool]) -> None:
         """Register available tools for this agent session."""
@@ -313,6 +221,12 @@ class ClawboltAgent:
             if tool.name in self._tools_by_name:
                 logger.warning("Duplicate tool name registered: %s", tool.name)
             self._tools_by_name[tool.name] = tool
+        logger.debug(
+            "Registered %d tools for user %s: %s",
+            len(tools),
+            self.user.id if self.user else "N/A",
+            ", ".join(sorted(self._tools_by_name.keys())),
+        )
 
     def _activate_specialist(self, factory_name: str) -> None:
         """Activate a specialist tool factory, injecting its tools for the next round.
@@ -329,12 +243,22 @@ class ClawboltAgent:
             selected_factories={factory_name},
         )
         if not new_tools:
+            logger.debug(
+                "Specialist factory %r produced no tools (dependencies unmet?)", factory_name
+            )
             return
         self._activated_specialists.add(factory_name)
+        new_names: list[str] = []
         for tool in new_tools:
             if tool.name not in self._tools_by_name:
                 self.tools.append(tool)
                 self._tools_by_name[tool.name] = tool
+                new_names.append(tool.name)
+        logger.debug(
+            "Activated specialist %r, added tools: %s",
+            factory_name,
+            ", ".join(new_names) or "(none new)",
+        )
 
     def _check_specialist_activations(
         self,
@@ -365,7 +289,10 @@ class ClawboltAgent:
     async def _build_system_prompt(self, message_context: str) -> str:
         """Build the full system prompt via the composable builder."""
         return await build_agent_system_prompt(
-            self.db, self.contractor, self.tools, message_context
+            self.user,
+            self.tools,
+            message_context,
+            current_session_id=self._session_id,
         )
 
     async def _call_llm_with_retry(
@@ -373,161 +300,280 @@ class ClawboltAgent:
         messages: list[AgentMessage],
         tool_schemas: list[Any] | None,
         llm_kwargs: dict[str, Any],
-    ) -> ChatCompletion:
-        """Call acompletion with typed exception handling and retry logic.
+    ) -> MessageResponse:
+        """Call amessages with typed exception handling and retry logic.
 
-        Accepts typed ``AgentMessage`` objects and serializes them to dicts
-        at the LLM API boundary.  Handles RateLimitError (retry once after
-        delay) and ContextLengthExceededError (trim history and retry once).
+        Accepts typed ``AgentMessage`` objects and serializes them to
+        Anthropic Messages API format at the LLM boundary.  Handles
+        RateLimitError (exponential backoff with jitter, up to
+        ``LLM_MAX_RETRIES`` attempts) and ContextLengthExceededError
+        (trim history and retry once).
         ContentFilterError and AuthenticationError are re-raised with
         appropriate logging so the caller can produce a user-facing message.
         """
         await self._send_typing_indicator()
-        msg_dicts = messages_to_dicts(messages)
-        try:
-            return cast(
-                ChatCompletion,
-                await acompletion(
-                    model=settings.llm_model,
-                    provider=settings.llm_provider,
-                    api_base=settings.llm_api_base,
-                    messages=msg_dicts,  # type: ignore[arg-type]
-                    tools=tool_schemas,
-                    max_tokens=settings.llm_max_tokens_agent,
-                    **llm_kwargs,
-                ),
-            )
-        except RateLimitError:
-            logger.warning("Rate limit hit, retrying after %.1fs delay", RATE_LIMIT_RETRY_DELAY)
-            await asyncio.sleep(RATE_LIMIT_RETRY_DELAY)
-            return cast(
-                ChatCompletion,
-                await acompletion(
-                    model=settings.llm_model,
-                    provider=settings.llm_provider,
-                    api_base=settings.llm_api_base,
-                    messages=msg_dicts,  # type: ignore[arg-type]
-                    tools=tool_schemas,
-                    max_tokens=settings.llm_max_tokens_agent,
-                    **llm_kwargs,
-                ),
-            )
-        except ContextLengthExceededError:
-            trimmed = self._trim_messages(messages)
-            logger.warning(
-                "Context length exceeded, trimmed from %d to %d messages and retrying",
-                len(messages),
-                len(trimmed),
-            )
-            trimmed_dicts = messages_to_dicts(trimmed)
-            return cast(
-                ChatCompletion,
-                await acompletion(
-                    model=settings.llm_model,
-                    provider=settings.llm_provider,
-                    api_base=settings.llm_api_base,
-                    messages=trimmed_dicts,  # type: ignore[arg-type]
-                    tools=tool_schemas,
-                    max_tokens=settings.llm_max_tokens_agent,
-                    **llm_kwargs,
-                ),
-            )
-        except ContentFilterError:
-            logger.warning("Content blocked by provider safety filter")
-            raise
-        except AuthenticationError:
-            logger.critical("LLM authentication failed -- check API key configuration")
-            raise
-
-    @staticmethod
-    def _trim_messages(
-        messages: list[AgentMessage],
-        target_tokens: int = CONTEXT_TRIM_TARGET_TOKENS,
-    ) -> list[AgentMessage]:
-        """Trim conversation messages to fit within a token budget.
-
-        Keeps the system prompt (first message) and removes the oldest
-        conversation messages until the estimated token count is at or below
-        *target_tokens*. Tool-call / tool-result pairs are treated as atomic
-        units: an ``AssistantMessage`` with ``tool_calls`` is never removed
-        without also removing the ``ToolResultMessage`` entries that follow it
-        (and vice-versa).
-
-        Dropped messages are summarized and injected as a context note so
-        the LLM retains awareness of what was discussed.
-        """
-        if len(messages) <= 2:
-            return messages
-
-        if _estimate_tokens(messages) <= target_tokens:
-            return messages
-
-        system = messages[0]
-        body = list(messages[1:])
-
-        # Group the body into "blocks" that must be removed together.
-        blocks: list[list[AgentMessage]] = []
-        i = 0
-        while i < len(body):
-            msg = body[i]
-            if isinstance(msg, AssistantMessage) and msg.tool_calls:
-                block: list[AgentMessage] = [msg]
-                j = i + 1
-                while j < len(body):
-                    if isinstance(body[j], ToolResultMessage):
-                        block.append(body[j])
-                        j += 1
-                    else:
-                        break
-                blocks.append(block)
-                i = j
-            else:
-                blocks.append([msg])
-                i += 1
-
-        # Remove blocks from the front (oldest) until we fit the budget,
-        # but always keep at least the last block.
-        dropped: list[AgentMessage] = []
-        while len(blocks) > 1:
-            remaining: list[AgentMessage] = [system]
-            for blk in blocks:
-                remaining.extend(blk)
-            if _estimate_tokens(remaining) <= target_tokens:
-                break
-            removed_block = blocks.pop(0)
-            dropped.extend(removed_block)
-
-        result: list[AgentMessage] = [system]
-        if dropped:
-            summary = _summarize_dropped_messages(dropped)
-            result.append(UserMessage(content=f"[Summary of earlier conversation: {summary}]"))
-        for blk in blocks:
-            result.extend(blk)
-        return result
+        system, msg_dicts = messages_to_messages_api(messages)
+        tool_count = len(tool_schemas) if tool_schemas else 0
+        logger.debug(
+            "Calling LLM: model=%s provider=%s messages=%d tools=%d max_tokens=%d",
+            settings.llm_model,
+            settings.llm_provider,
+            len(msg_dicts),
+            tool_count,
+            settings.llm_max_tokens_agent,
+        )
+        for attempt in range(LLM_MAX_RETRIES):
+            try:
+                return cast(
+                    MessageResponse,
+                    await amessages(
+                        model=settings.llm_model,
+                        provider=settings.llm_provider,
+                        api_base=settings.llm_api_base,
+                        system=system,
+                        messages=msg_dicts,
+                        tools=tool_schemas,
+                        max_tokens=settings.llm_max_tokens_agent,
+                        **llm_kwargs,
+                    ),
+                )
+            except RateLimitError:
+                if attempt == LLM_MAX_RETRIES - 1:
+                    raise
+                delay = (2**attempt) + random.uniform(0, 1)
+                logger.warning(
+                    "Rate limited, retrying in %.1fs (attempt %d/%d)",
+                    delay,
+                    attempt + 1,
+                    LLM_MAX_RETRIES,
+                )
+                await asyncio.sleep(delay)
+            except ContextLengthExceededError:
+                trimmed = trim_messages(
+                    messages,
+                    input_tokens=self._last_input_tokens or MAX_INPUT_TOKENS,
+                )
+                logger.warning(
+                    "Context length exceeded, trimmed from %d to %d messages and retrying",
+                    len(messages),
+                    len(trimmed),
+                )
+                system, trimmed_dicts = messages_to_messages_api(trimmed)
+                return cast(
+                    MessageResponse,
+                    await amessages(
+                        model=settings.llm_model,
+                        provider=settings.llm_provider,
+                        api_base=settings.llm_api_base,
+                        system=system,
+                        messages=trimmed_dicts,
+                        tools=tool_schemas,
+                        max_tokens=settings.llm_max_tokens_agent,
+                        **llm_kwargs,
+                    ),
+                )
+            except ContentFilterError:
+                logger.warning("Content blocked by provider safety filter")
+                raise
+            except AuthenticationError:
+                logger.critical("LLM authentication failed -- check API key configuration")
+                raise
+        # This should be unreachable, but satisfies the type checker.
+        raise RuntimeError("LLM retry loop exited without returning")
 
     def _validate_tool_args(
         self, tool: Tool, tool_args: dict[str, Any]
     ) -> tuple[dict[str, Any], str | None]:
-        """Validate tool arguments against the tool's params_model if present.
+        """Validate tool arguments against the tool's params_model.
 
         Returns a tuple of (validated_args, error_message). When validation
         succeeds, error_message is None and validated_args contains the
         coerced values. When validation fails, error_message contains a
         structured description of the field errors.
         """
-        if tool.params_model is None:
-            return tool_args, None
-
         try:
             validated = tool.params_model.model_validate(tool_args)
             return validated.model_dump(), None
         except ValidationError as exc:
-            return tool_args, _format_validation_error(tool.name, exc, tool)
+            return tool_args, format_validation_error(tool.name, exc, tool)
 
     def _get_tool_tags(self, tool_name: str) -> set[ToolTags]:
         """Look up the tags for a registered tool by name."""
         tool = self._tools_by_name.get(tool_name)
         return tool.tags if tool else set()
+
+    async def _execute_tool_round(
+        self,
+        parsed_calls: list[ToolCallRequest],
+        parsed_raw: list[ParsedToolCall],
+        actions_taken: list[str],
+        memories_saved: list[dict[str, str]],
+        tool_call_records: list[StoredToolInteraction],
+    ) -> list[ToolResultMessage]:
+        """Validate and execute a round of tool calls.
+
+        Phase 1 validates all tool calls before executing any.
+        Phase 2 runs approval checks and executes only the validated calls.
+        Returns the list of ``ToolResultMessage`` objects for the round.
+        """
+        # -- Phase 1: validate ALL tool calls before executing any -------
+        pre_validated: list[tuple[int, Tool, dict[str, Any]]] = []
+        tool_results: list[ToolResultMessage] = []
+
+        for i, tc_req in enumerate(parsed_calls):
+            tool_name = tc_req.name
+            tool_args = tc_req.arguments
+
+            # Handle malformed arguments (arguments was None in ParsedToolCall)
+            if not tool_args and parsed_raw[i].arguments is None:
+                logger.warning(
+                    "Malformed tool arguments for %s",
+                    tool_name,
+                )
+                tool_results.append(
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=f"Error: malformed arguments for {tool_name}",
+                    )
+                )
+                actions_taken.append(f"Failed: {tool_name} (bad args)")
+                continue
+
+            tool_obj = self._tools_by_name.get(tool_name)
+            if not tool_obj:
+                logger.debug("Unknown tool %r requested by LLM", tool_name)
+                available = ", ".join(sorted(self._tools_by_name.keys()))
+                result_str = (
+                    f'Error: unknown tool "{tool_name}".'
+                    f" Available tools: {available}"
+                    f"\n\n{_DEFAULT_ERROR_HINT}"
+                )
+                tool_results.append(
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=result_str,
+                    )
+                )
+                continue
+
+            validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
+            if validation_error is not None:
+                logger.warning(
+                    "Validation failed for %s: %s",
+                    tool_name,
+                    validation_error,
+                )
+                tool_tags = self._get_tool_tags(tool_name)
+                hint = _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
+                result_str = validation_error + "\n\n" + hint
+                actions_taken.append(f"Failed: {tool_name} (validation)")
+                tool_call_records.append(
+                    StoredToolInteraction(
+                        tool_call_id=tc_req.id,
+                        name=tool_name,
+                        args=tool_args,
+                        result=result_str,
+                        is_error=True,
+                        tags=set(tool_tags),
+                    )
+                )
+                tool_results.append(
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=result_str,
+                    )
+                )
+                continue
+
+            pre_validated.append((i, tool_obj, validated_args))
+
+        # -- Phase 2: execute only the validated tool calls --------------
+        for i, tool_obj, validated_args in pre_validated:
+            tc_req = parsed_calls[i]
+            tool_name = tc_req.name
+            tool_tags = self._get_tool_tags(tool_name)
+
+            # -- Approval check --
+            approval_result = await self._check_approval(tool_obj, validated_args)
+            if approval_result == PermissionLevel.DENY:
+                hint = _ERROR_KIND_HINTS[ToolErrorKind.PERMISSION]
+                deny_msg = f"Error: permission denied for tool '{tool_name}'\n\n{hint}"
+                actions_taken.append(f"Denied: {tool_name}")
+                tool_call_records.append(
+                    StoredToolInteraction(
+                        tool_call_id=tc_req.id,
+                        name=tool_name,
+                        args=validated_args,
+                        result=deny_msg,
+                        is_error=True,
+                        tags=set(tool_tags),
+                    )
+                )
+                tool_results.append(
+                    ToolResultMessage(
+                        tool_call_id=tc_req.id,
+                        content=deny_msg,
+                    )
+                )
+                continue
+
+            await self._emit(ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args))
+            tool_start = time.monotonic()
+            result_str = ""
+            is_error = False
+            try:
+                result = await tool_obj.function(**validated_args)
+                result_str = result.content
+                is_error = result.is_error
+                if is_error:
+                    hint = build_error_hint(result)
+                    result_str += "\n\n" + hint
+                if is_error:
+                    actions_taken.append(f"Failed: {tool_name}")
+                else:
+                    actions_taken.append(f"Called {tool_name}")
+                tool_call_records.append(
+                    StoredToolInteraction(
+                        tool_call_id=tc_req.id,
+                        name=tool_name,
+                        args=validated_args,
+                        result=result_str,
+                        is_error=is_error,
+                        tags=set(tool_tags),
+                    )
+                )
+                if ToolTags.SAVES_MEMORY in tool_tags:
+                    memories_saved.append(validated_args)
+            except Exception:
+                logger.exception("Tool call failed: %s", tool_name)
+                hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
+                result_str = f"Error: tool {tool_name} failed\n\n{hint}"
+                is_error = True
+                actions_taken.append(f"Failed: {tool_name}")
+            tool_duration = (time.monotonic() - tool_start) * 1000
+            logger.debug(
+                "Tool %s completed in %.1fms, is_error=%s, result_length=%d",
+                tool_name,
+                tool_duration,
+                is_error,
+                len(result_str),
+            )
+            await self._emit(
+                ToolExecutionEndEvent(
+                    tool_name=tool_name,
+                    result=result_str,
+                    is_error=is_error,
+                    duration_ms=tool_duration,
+                )
+            )
+            tool_results.append(
+                ToolResultMessage(
+                    tool_call_id=tc_req.id,
+                    content=result_str,
+                )
+            )
+
+        return tool_results
 
     async def process_message(
         self,
@@ -538,10 +584,16 @@ class ClawboltAgent:
     ) -> AgentResponse:
         """Process a message through the agent loop."""
         agent_start_time = time.monotonic()
+        logger.debug(
+            "Agent starting for user %d, message length=%d, history=%d messages",
+            self.user.id,
+            len(message_context),
+            len(conversation_history) if conversation_history else 0,
+        )
         system_prompt = system_prompt_override or await self._build_system_prompt(message_context)
         await self._emit(
             AgentStartEvent(
-                contractor_id=self.contractor.id,
+                user_id=self.user.id,
                 message_context=message_context,
             )
         )
@@ -553,18 +605,20 @@ class ClawboltAgent:
 
         messages.append(UserMessage(content=message_context))
 
-        # Trim oldest conversation history if estimated tokens exceed the limit.
+        # Trim oldest conversation history if content exceeds the limit.
         # Uses the block-based trimmer which preserves tool-call/result pairing
         # and injects a summary of dropped messages.
         original_count = len(messages)
-        messages = self._trim_messages(messages, target_tokens=MAX_INPUT_TOKENS)
+        messages = trim_messages(
+            messages,
+            target_tokens=MAX_INPUT_TOKENS,
+            input_tokens=self._last_input_tokens or None,
+        )
         trimmed_count = original_count - len(messages)
         if trimmed_count > 0:
             logger.warning(
-                "Trimmed %d message(s) from conversation history, injected summary "
-                "(estimated %d tokens, limit %d)",
+                "Trimmed %d message(s) from conversation history (limit %d tokens)",
                 trimmed_count,
-                _estimate_tokens(messages),
                 MAX_INPUT_TOKENS,
             )
 
@@ -574,23 +628,88 @@ class ClawboltAgent:
 
         actions_taken: list[str] = []
         memories_saved: list[dict[str, str]] = []
-        tool_call_records: list[dict[str, Any]] = []
+        tool_call_records: list[StoredToolInteraction] = []
         reply_text = ""
+        _empty_reply_retried = False
 
         for _round in range(MAX_TOOL_ROUNDS):
+            logger.debug(
+                "Round %d/%d starting, %d messages in context",
+                _round,
+                MAX_TOOL_ROUNDS,
+                len(messages),
+            )
             # Rebuild tool schemas each round so dynamically activated
             # specialist tools are visible to the LLM.
             tool_schemas = [tool_to_function_schema(t) for t in self.tools] if self.tools else None
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
             purpose = "agent_main" if _round == 0 else "agent_followup"
-            log_llm_usage(self.db, self.contractor.id, settings.llm_model, response, purpose)
-            _log_token_estimation_drift(messages, response)
+            log_llm_usage(self.user.id, settings.llm_model, response, purpose)
+            if response.usage and response.usage.input_tokens:
+                self._last_input_tokens = response.usage.input_tokens
+                logger.debug(
+                    "LLM usage: input_tokens=%d output_tokens=%d",
+                    response.usage.input_tokens,
+                    response.usage.output_tokens or 0,
+                )
+
+            # Guard: skip error responses to prevent context poisoning.
+            # The user still sees the error fallback text, but the response
+            # is NOT persisted to session history.
+            if response.stop_reason not in _VALID_STOP_REASONS:
+                logger.warning(
+                    "Round %d: LLM returned error stop_reason=%r, aborting loop",
+                    _round,
+                    response.stop_reason,
+                )
+                total_duration = (time.monotonic() - agent_start_time) * 1000
+                await self._emit(
+                    AgentEndEvent(
+                        reply_text=_LLM_ERROR_FALLBACK,
+                        actions_taken=actions_taken,
+                        total_duration_ms=total_duration,
+                    )
+                )
+                return AgentResponse(
+                    reply_text=_LLM_ERROR_FALLBACK,
+                    actions_taken=actions_taken,
+                    memories_saved=memories_saved,
+                    tool_calls=tool_call_records,
+                    is_error_fallback=True,
+                )
 
             # Parse tool calls via shared parser
             parsed_raw = parse_tool_calls(response)
             if not parsed_raw:
-                reply_text = response.choices[0].message.content or ""
+                reply_text = get_response_text(response)
+
+                # If the LLM returned empty text after executing tools, re-prompt
+                # once. This handles the case where the model performed work
+                # (e.g. read_file during onboarding) but did not produce a
+                # user-facing reply.
+                if not reply_text and actions_taken and not _empty_reply_retried:
+                    _empty_reply_retried = True
+                    logger.debug(
+                        "Round %d: empty reply after tool execution, re-prompting",
+                        _round,
+                    )
+                    messages.append(
+                        UserMessage(
+                            content=(
+                                "[System: you called tools but did not reply. "
+                                "Please respond to the user.]"
+                            )
+                        )
+                    )
+                    await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))
+                    continue
+
+                logger.debug(
+                    "Round %d: no tool calls, final reply length=%d",
+                    _round,
+                    len(reply_text),
+                )
                 await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=False))
                 break
 
@@ -604,141 +723,29 @@ class ClawboltAgent:
                         arguments=ptc.arguments if ptc.arguments is not None else {},
                     )
                 )
+            logger.debug(
+                "Round %d: LLM requested %d tool call(s): %s",
+                _round,
+                len(parsed_calls),
+                ", ".join(tc.name for tc in parsed_calls),
+            )
 
             # Append the assistant message (with tool_calls) to conversation
             messages.append(
                 AssistantMessage(
-                    content=response.choices[0].message.content,
+                    content=get_response_text(response) or None,
                     tool_calls=parsed_calls,
                 )
             )
 
-            # -- Phase 1: validate ALL tool calls before executing any -------
-            pre_validated: list[tuple[int, Tool, dict[str, Any]]] = []
-            tool_results: list[ToolResultMessage] = []
-
-            for i, tc_req in enumerate(parsed_calls):
-                tool_name = tc_req.name
-                tool_args = tc_req.arguments
-
-                # Handle malformed arguments (arguments was None in ParsedToolCall)
-                if not tool_args and parsed_raw[i].arguments is None:
-                    logger.warning(
-                        "Malformed tool arguments for %s",
-                        tool_name,
-                    )
-                    tool_results.append(
-                        ToolResultMessage(
-                            tool_call_id=tc_req.id,
-                            content=f"Error: malformed arguments for {tool_name}",
-                        )
-                    )
-                    actions_taken.append(f"Failed: {tool_name} (bad args)")
-                    continue
-
-                tool_obj = self._tools_by_name.get(tool_name)
-                if not tool_obj:
-                    available = ", ".join(sorted(self._tools_by_name.keys()))
-                    result_str = (
-                        f'Error: unknown tool "{tool_name}".'
-                        f" Available tools: {available}"
-                        f"\n\n{_DEFAULT_ERROR_HINT}"
-                    )
-                    tool_results.append(
-                        ToolResultMessage(
-                            tool_call_id=tc_req.id,
-                            content=result_str,
-                        )
-                    )
-                    continue
-
-                validated_args, validation_error = self._validate_tool_args(tool_obj, tool_args)
-                if validation_error is not None:
-                    logger.warning(
-                        "Validation failed for %s: %s",
-                        tool_name,
-                        validation_error,
-                    )
-                    tool_tags = self._get_tool_tags(tool_name)
-                    hint = _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
-                    result_str = validation_error + "\n\n" + hint
-                    actions_taken.append(f"Failed: {tool_name} (validation)")
-                    tool_call_records.append(
-                        {
-                            "tool_call_id": tc_req.id,
-                            "name": tool_name,
-                            "args": tool_args,
-                            "result": result_str,
-                            "is_error": True,
-                            "tags": tool_tags,
-                        }
-                    )
-                    tool_results.append(
-                        ToolResultMessage(
-                            tool_call_id=tc_req.id,
-                            content=result_str,
-                        )
-                    )
-                    continue
-
-                pre_validated.append((i, tool_obj, validated_args))
-
-            # -- Phase 2: execute only the validated tool calls --------------
-            for i, tool_obj, validated_args in pre_validated:
-                tc_req = parsed_calls[i]
-                tool_name = tc_req.name
-                tool_tags = self._get_tool_tags(tool_name)
-
-                await self._emit(
-                    ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args)
-                )
-                tool_start = time.monotonic()
-                result_str = ""
-                is_error = False
-                try:
-                    result = await tool_obj.function(**validated_args)
-                    result_str = result.content
-                    is_error = result.is_error
-                    if is_error:
-                        hint = _build_error_hint(result)
-                        result_str += "\n\n" + hint
-                    if is_error:
-                        actions_taken.append(f"Failed: {tool_name}")
-                    else:
-                        actions_taken.append(f"Called {tool_name}")
-                    tool_call_records.append(
-                        {
-                            "tool_call_id": tc_req.id,
-                            "name": tool_name,
-                            "args": validated_args,
-                            "result": result_str,
-                            "is_error": is_error,
-                            "tags": tool_tags,
-                        }
-                    )
-                    if ToolTags.SAVES_MEMORY in tool_tags:
-                        memories_saved.append(validated_args)
-                except Exception:
-                    logger.exception("Tool call failed: %s", tool_name)
-                    hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
-                    result_str = f"Error: tool {tool_name} failed\n\n{hint}"
-                    is_error = True
-                    actions_taken.append(f"Failed: {tool_name}")
-                tool_duration = (time.monotonic() - tool_start) * 1000
-                await self._emit(
-                    ToolExecutionEndEvent(
-                        tool_name=tool_name,
-                        result=result_str,
-                        is_error=is_error,
-                        duration_ms=tool_duration,
-                    )
-                )
-                tool_results.append(
-                    ToolResultMessage(
-                        tool_call_id=tc_req.id,
-                        content=result_str,
-                    )
-                )
+            # Execute the tool round (validate, approve, run)
+            tool_results = await self._execute_tool_round(
+                parsed_calls,
+                parsed_raw,
+                actions_taken,
+                memories_saved,
+                tool_call_records,
+            )
 
             # Activate any specialist factories requested via list_capabilities.
             # New tool schemas will be picked up at the top of the next round.
@@ -748,9 +755,17 @@ class ClawboltAgent:
             await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))
         else:
             # Max rounds reached -- use last response content
-            reply_text = response.choices[0].message.content or ""
+            reply_text = get_response_text(response)
+            logger.debug("Max tool rounds (%d) reached, using last response", MAX_TOOL_ROUNDS)
 
         total_duration = (time.monotonic() - agent_start_time) * 1000
+        logger.debug(
+            "Agent finished for user %d in %.1fms, actions=%s, reply_length=%d",
+            self.user.id,
+            total_duration,
+            actions_taken or "(none)",
+            len(reply_text),
+        )
         await self._emit(
             AgentEndEvent(
                 reply_text=reply_text,

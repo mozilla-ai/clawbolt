@@ -1,120 +1,136 @@
-"""Integration test: full message round-trip through the system.
+"""Integration test: full message round-trip through the bus consumer.
 
-Webhook -> media pipeline -> agent -> reply
+InboundMessage -> process_inbound_from_bus -> agent pipeline -> outbound
 """
 
 from unittest.mock import AsyncMock, patch
 
-from fastapi.testclient import TestClient
-from sqlalchemy.orm import Session
+import pytest
 
-from backend.app.models import Contractor, Message
-from backend.app.services.messaging import MessagingService
+from backend.app.agent.file_store import (
+    StoredMessage,
+    UserData,
+    get_session_store,
+    get_user_store,
+)
+from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
+from backend.app.bus import message_bus
 from tests.mocks.llm import make_text_response
-from tests.mocks.telegram import make_telegram_update_payload
 
 
-def test_full_message_round_trip(
-    client: TestClient,
-    db_session: Session,
-    test_contractor: Contractor,
-    mock_messaging_service: MessagingService,
+async def _get_all_messages(user_id: int) -> list[StoredMessage]:
+    """Helper to retrieve all stored messages for a user."""
+    store = get_session_store(user_id)
+    session, _is_new = await store.get_or_create_session()
+    return list(session.messages)
+
+
+@pytest.mark.asyncio
+async def test_full_message_round_trip(
+    test_user: UserData,
 ) -> None:
-    """End-to-end: inbound message -> agent processes -> outbound reply."""
-    with patch(
-        "backend.app.agent.core.acompletion",
-        new_callable=AsyncMock,
-        return_value=make_text_response("I can help with that deck estimate!"),
-    ):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            text="I need a quote for a 12x12 composite deck",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
+    """End-to-end: inbound message -> agent processes -> outbound reply stored."""
+    inbound = InboundMessage(
+        channel="telegram",
+        sender_id=test_user.channel_identifier,
+        text="I need a quote for a 12x12 composite deck",
+    )
 
-    assert response.status_code == 200
-    assert response.json() == {"ok": True}
+    with (
+        patch(
+            "backend.app.agent.core.amessages",
+            new_callable=AsyncMock,
+            return_value=make_text_response("I can help with that deck estimate!"),
+        ),
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
+    ):
+        await process_inbound_from_bus(inbound)
 
     # Verify inbound message stored
-    inbound = db_session.query(Message).filter(Message.direction == "inbound").first()
-    assert inbound is not None
-    assert inbound.body == "I need a quote for a 12x12 composite deck"
+    messages = await _get_all_messages(test_user.id)
+    inbound_msgs = [m for m in messages if m.direction == "inbound"]
+    assert len(inbound_msgs) == 1
+    assert inbound_msgs[0].body == "I need a quote for a 12x12 composite deck"
 
     # Verify processed_context was saved
-    assert inbound.processed_context is not None
+    assert inbound_msgs[0].processed_context is not None
 
     # Verify outbound message stored
-    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
-    assert outbound is not None
-    assert outbound.body == "I can help with that deck estimate!"
+    outbound_msgs = [m for m in messages if m.direction == "outbound"]
+    assert len(outbound_msgs) == 1
+    assert outbound_msgs[0].body == "I can help with that deck estimate!"
 
-    # Verify reply was sent via MessagingService
-    mock_messaging_service.send_text.assert_called_once_with(  # type: ignore[union-attr]
-        to=test_contractor.channel_identifier,
-        body="I can help with that deck estimate!",
+    # Verify outbound reply published to bus (for outbound dispatcher)
+    assert not message_bus.outbound.empty()
+    found_reply = False
+    while not message_bus.outbound.empty():
+        outbound = await message_bus.consume_outbound()
+        if outbound.is_typing_indicator:
+            continue
+        assert outbound.channel == "telegram"
+        assert outbound.content == "I can help with that deck estimate!"
+        found_reply = True
+        break
+    assert found_reply
+
+
+@pytest.mark.asyncio
+async def test_full_message_round_trip_new_user() -> None:
+    """New user sends message -> auto-created -> agent replies."""
+    inbound = InboundMessage(
+        channel="telegram",
+        sender_id="777888999",
+        text="Hi, I'm a plumber",
     )
 
-
-def test_full_message_round_trip_new_contractor(
-    client: TestClient,
-    db_session: Session,
-    mock_messaging_service: MessagingService,
-) -> None:
-    """New contractor sends message -> auto-created -> agent replies."""
-    with patch(
-        "backend.app.agent.core.acompletion",
-        new_callable=AsyncMock,
-        return_value=make_text_response("Welcome to Clawbolt! What's your name?"),
+    with (
+        patch(
+            "backend.app.agent.core.amessages",
+            new_callable=AsyncMock,
+            return_value=make_text_response("Welcome to Clawbolt! What's your name?"),
+        ),
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
     ):
-        payload = make_telegram_update_payload(
-            chat_id=777888999,
-            text="Hi, I'm a plumber",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
+        await process_inbound_from_bus(inbound)
 
-    assert response.status_code == 200
-
-    # Contractor was auto-created
-    contractor = (
-        db_session.query(Contractor).filter(Contractor.channel_identifier == "777888999").first()
-    )
-    assert contractor is not None
+    # User was auto-created
+    store = get_user_store()
+    user = await store.get_by_channel("777888999")
+    assert user is not None
 
     # Messages stored
-    messages = db_session.query(Message).all()
+    messages = await _get_all_messages(user.id)
     assert len(messages) == 2  # inbound + outbound
     directions = {m.direction for m in messages}
     assert directions == {"inbound", "outbound"}
 
-    # Reply sent
-    mock_messaging_service.send_text.assert_called_once()  # type: ignore[union-attr]
 
-
-def test_full_message_agent_failure_still_returns_200(
-    client: TestClient,
-    db_session: Session,
-    test_contractor: Contractor,
-    mock_messaging_service: MessagingService,
+@pytest.mark.asyncio
+async def test_full_message_agent_failure_still_stores_inbound(
+    test_user: UserData,
 ) -> None:
-    """If the entire agent pipeline fails, webhook still returns 200."""
-    with patch(
-        "backend.app.agent.core.acompletion",
-        new_callable=AsyncMock,
-        side_effect=RuntimeError("LLM service down"),
-    ):
-        payload = make_telegram_update_payload(
-            chat_id=int(test_contractor.channel_identifier),
-            text="Hello",
-        )
-        response = client.post("/api/webhooks/telegram", json=payload)
+    """If the agent pipeline fails, inbound is stored but fallback is not."""
+    inbound = InboundMessage(
+        channel="telegram",
+        sender_id=test_user.channel_identifier,
+        text="Hello",
+    )
 
-    # Webhook returns 200 even on agent failure
-    assert response.status_code == 200
+    with (
+        patch(
+            "backend.app.agent.core.amessages",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("LLM service down"),
+        ),
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
+    ):
+        await process_inbound_from_bus(inbound)
 
     # Inbound message still stored
-    inbound = db_session.query(Message).filter(Message.direction == "inbound").first()
-    assert inbound is not None
+    messages = await _get_all_messages(test_user.id)
+    inbound_msgs = [m for m in messages if m.direction == "inbound"]
+    assert len(inbound_msgs) == 1
 
     # Fallback reply is NOT stored (avoids poisoning conversation context)
-    outbound = db_session.query(Message).filter(Message.direction == "outbound").first()
-    assert outbound is None
+    outbound_msgs = [m for m in messages if m.direction == "outbound"]
+    assert len(outbound_msgs) == 0

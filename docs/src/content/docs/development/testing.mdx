@@ -3,13 +3,13 @@ title: Testing
 description: Run tests and understand the test infrastructure.
 ---
 
-Clawbolt uses pytest with FastAPI's TestClient. Tests run against in-memory SQLite, so no database setup is needed.
+Clawbolt uses pytest with FastAPI's TestClient. Tests use temporary directories for file-based storage, so no external services are needed.
 
 ## Run all tests
 
 ```bash
 uv sync --all-extras
-DATABASE_URL=sqlite:// uv run pytest -v
+uv run pytest -v
 ```
 
 ## Lint and format
@@ -27,9 +27,9 @@ uv run ty check --python .venv backend/ tests/
 
 ## Test infrastructure
 
-### Database
+### File store isolation
 
-Tests use in-memory SQLite with `StaticPool`. The `get_db` dependency is overridden via FastAPI dependency injection to use the test database.
+Tests use `tmp_path` fixtures to point file stores at a temporary directory. The `_isolate_file_stores` autouse fixture patches `settings.data_dir` and calls `reset_stores()` to clear cached store singletons between tests.
 
 ### Mock factories
 

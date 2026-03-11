@@ -5,10 +5,10 @@ from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_
 
 def _make_estimate_data(**kwargs: object) -> EstimatePDFData:
     """Create test estimate data with defaults."""
-    defaults = {
-        "contractor_name": "Mike Chen",
-        "contractor_phone": "(555) 123-4567",
-        "contractor_trade": "General Contractor",
+    defaults: dict[str, object] = {
+        "owner_name": "Mike Chen",
+        "owner_phone": "(555) 123-4567",
+        "owner_trade": "General User",
         "description": "Deck construction and repair",
         "line_items": [
             {"description": "Deck framing", "quantity": 1, "unit_price": 2400, "total": 2400},

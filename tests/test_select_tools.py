@@ -3,6 +3,7 @@
 import pytest
 from pydantic import BaseModel
 
+from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import (
@@ -35,7 +36,7 @@ def _build_test_registry() -> ToolRegistry:
     # Core factories
     registry.register("memory", lambda ctx: [_make_tool("save_fact"), _make_tool("recall_facts")])
     registry.register("messaging", lambda ctx: [_make_tool("send_reply")])
-    registry.register("profile", lambda ctx: [_make_tool("view_profile")])
+    registry.register("workspace", lambda ctx: [_make_tool("read_file")])
     # Specialist factories
     registry.register(
         "estimate",
@@ -64,7 +65,7 @@ class TestCoreSpecialistClassification:
 
     def test_core_factory_names(self) -> None:
         registry = _build_test_registry()
-        assert registry.core_factory_names == {"memory", "messaging", "profile"}
+        assert registry.core_factory_names == {"memory", "messaging", "workspace"}
 
     def test_specialist_factory_names(self) -> None:
         registry = _build_test_registry()
@@ -82,14 +83,14 @@ class TestCreateCoreTools:
 
     def test_only_core_tools_returned(self) -> None:
         registry = _build_test_registry()
-        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        ctx = ToolContext(user=UserData(id=1))
         tools = registry.create_core_tools(ctx)
         names = {t.name for t in tools}
-        assert names == {"save_fact", "recall_facts", "send_reply", "view_profile"}
+        assert names == {"save_fact", "recall_facts", "send_reply", "read_file"}
 
     def test_specialist_tools_excluded(self) -> None:
         registry = _build_test_registry()
-        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        ctx = ToolContext(user=UserData(id=1))
         tools = registry.create_core_tools(ctx)
         names = {t.name for t in tools}
         assert "generate_estimate" not in names
@@ -105,8 +106,7 @@ class TestAvailableSpecialistSummaries:
 
         registry = _build_test_registry()
         ctx = ToolContext(
-            db=None,  # type: ignore[arg-type]
-            contractor=None,  # type: ignore[arg-type]
+            user=UserData(id=1),
             storage=MagicMock(),
         )
         summaries = registry.get_available_specialist_summaries(ctx)
@@ -116,7 +116,7 @@ class TestAvailableSpecialistSummaries:
 
     def test_excludes_file_when_no_storage(self) -> None:
         registry = _build_test_registry()
-        ctx = ToolContext(db=None, contractor=None, storage=None)  # type: ignore[arg-type]
+        ctx = ToolContext(user=UserData(id=1), storage=None)
         summaries = registry.get_available_specialist_summaries(ctx)
         assert "estimate" in summaries
         assert "checklist" in summaries
@@ -124,11 +124,11 @@ class TestAvailableSpecialistSummaries:
 
     def test_excludes_core_factories(self) -> None:
         registry = _build_test_registry()
-        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        ctx = ToolContext(user=UserData(id=1))
         summaries = registry.get_available_specialist_summaries(ctx)
         assert "memory" not in summaries
         assert "messaging" not in summaries
-        assert "profile" not in summaries
+        assert "workspace" not in summaries
 
 
 class TestListCapabilitiesTool:
@@ -193,7 +193,7 @@ class TestDefaultRegistryCoreSpecialistSplit:
         core = default_registry.core_factory_names
         assert "memory" in core
         assert "messaging" in core
-        assert "profile" in core
+        assert "workspace" in core
 
     def test_specialist_factories(self) -> None:
         from backend.app.agent.tools.registry import default_registry
@@ -219,10 +219,9 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         registry = _build_test_registry()
-        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        ctx = ToolContext(user=UserData(id=1))
         agent = ClawboltAgent(
-            db=None,  # type: ignore[arg-type]
-            contractor=None,  # type: ignore[arg-type]
+            user=UserData(id=1),
             tool_context=ctx,
             registry=registry,
         )
@@ -249,10 +248,9 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         registry = _build_test_registry()
-        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        ctx = ToolContext(user=UserData(id=1))
         agent = ClawboltAgent(
-            db=None,  # type: ignore[arg-type]
-            contractor=None,  # type: ignore[arg-type]
+            user=UserData(id=1),
             tool_context=ctx,
             registry=registry,
         )
@@ -278,10 +276,9 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         registry = _build_test_registry()
-        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        ctx = ToolContext(user=UserData(id=1))
         agent = ClawboltAgent(
-            db=None,  # type: ignore[arg-type]
-            contractor=None,  # type: ignore[arg-type]
+            user=UserData(id=1),
             tool_context=ctx,
             registry=registry,
         )
@@ -298,10 +295,9 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         registry = _build_test_registry()
-        ctx = ToolContext(db=None, contractor=None)  # type: ignore[arg-type]
+        ctx = ToolContext(user=UserData(id=1))
         agent = ClawboltAgent(
-            db=None,  # type: ignore[arg-type]
-            contractor=None,  # type: ignore[arg-type]
+            user=UserData(id=1),
             tool_context=ctx,
             registry=registry,
         )
@@ -324,8 +320,7 @@ class TestDynamicToolActivation:
         from backend.app.agent.messages import ToolCallRequest
 
         agent = ClawboltAgent(
-            db=None,  # type: ignore[arg-type]
-            contractor=None,  # type: ignore[arg-type]
+            user=UserData(id=1),
         )
         calls = [
             ToolCallRequest(

@@ -4,16 +4,15 @@ from __future__ import annotations
 
 import datetime
 import logging
-import re
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import MediaStore, UserData
+from backend.app.agent.file_store import slugify as _store_slugify
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
-from backend.app.models import Contractor, MediaFile
 from backend.app.services.storage_service import StorageBackend
 
 if TYPE_CHECKING:
@@ -86,14 +85,6 @@ class OrganizeFileParams(BaseModel):
     )
 
 
-def _slugify(text: str, max_length: int = DESCRIPTION_SLUG_MAX_LENGTH) -> str:
-    """Convert text to a filesystem-safe slug."""
-    slug = text.lower().strip()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s_]+", "_", slug)
-    return slug[:max_length].rstrip("_")
-
-
 def _build_client_folder(
     client_name: str | None = None,
     client_address: str | None = None,
@@ -149,7 +140,7 @@ def _build_filename(
     base = fallback_names.get(category, "file")
 
     if description and description.strip():
-        base = _slugify(description, max_length=FILENAME_SLUG_MAX_LENGTH)
+        base = _store_slugify(description, max_length=FILENAME_SLUG_MAX_LENGTH)
 
     return f"{base}_{index:03d}.{extension}"
 
@@ -161,17 +152,17 @@ def _extension_from_mime(mime_type: str) -> str:
 
 
 async def auto_save_media(
-    db: Session,
-    contractor: Contractor,
+    user: UserData,
     storage: StorageBackend,
     downloaded_media: list[DownloadedMedia],
-    message_id: int | None = None,
-) -> list[MediaFile]:
+) -> list[str]:
     """Auto-save downloaded media to storage before the agent loop.
 
     Persists all inbound media to /Unsorted/{date}/ immediately after
     download. This ensures files are never lost regardless of whether the
     agent calls upload_to_storage.
+
+    Returns a list of storage URLs for saved files.
     """
     if not downloaded_media:
         return []
@@ -180,48 +171,36 @@ async def auto_save_media(
     folder_path = f"/Unsorted/{today}"
     await storage.create_folder(folder_path)
 
-    saved: list[MediaFile] = []
+    media_store = MediaStore(user.id)
+    saved_urls: list[str] = []
     for media in downloaded_media:
         extension = _extension_from_mime(media.mime_type)
 
-        existing = (
-            db.query(MediaFile)
-            .filter(
-                MediaFile.contractor_id == contractor.id,
-                MediaFile.storage_path.like(f"{folder_path}%"),
-            )
-            .count()
-        )
+        existing_count = await media_store.count_by_path_prefix(folder_path)
 
-        filename = f"file_{existing + 1:03d}.{extension}"
+        filename = f"file_{existing_count + 1:03d}.{extension}"
         storage_url = await storage.upload_file(media.content, folder_path, filename)
 
-        media_file = MediaFile(
-            contractor_id=contractor.id,
-            message_id=message_id,
+        await media_store.create(
             original_url=media.original_url,
             mime_type=media.mime_type,
             storage_url=storage_url,
             storage_path=f"{folder_path}/{filename}",
         )
-        db.add(media_file)
-        saved.append(media_file)
+        saved_urls.append(storage_url)
 
-    db.commit()
-    return saved
+    return saved_urls
 
 
 def create_file_tools(
-    db: Session,
-    contractor: Contractor,
+    user: UserData,
     storage: StorageBackend,
     pending_media: dict[str, bytes] | None = None,
 ) -> list[Tool]:
     """Create file cataloging tools for the agent.
 
     Args:
-        db: Database session
-        contractor: The contractor
+        user: The user
         storage: Storage backend (Dropbox, Google Drive, or mock)
         pending_media: Dict of original_url -> file bytes for media in the current message
     """
@@ -235,7 +214,7 @@ def create_file_tools(
         original_url: str | None = None,
         mime_type: str = "image/jpeg",
     ) -> ToolResult:
-        """Upload a file to the contractor's cloud storage."""
+        """Upload a file to the user's cloud storage."""
         # Determine file content
         file_bytes = b""
         if original_url and original_url in media_map:
@@ -271,14 +250,8 @@ def create_file_tools(
         extension = _extension_from_mime(mime_type)
 
         # Count existing files to get index
-        existing = (
-            db.query(MediaFile)
-            .filter(
-                MediaFile.contractor_id == contractor.id,
-                MediaFile.storage_path.like(f"{folder_path}%"),
-            )
-            .count()
-        )
+        media_store = MediaStore(user.id)
+        existing = await media_store.count_by_path_prefix(folder_path)
 
         filename = _build_filename(
             description, file_category, index=existing + 1, extension=extension
@@ -288,17 +261,14 @@ def create_file_tools(
         await storage.create_folder(folder_path)
         storage_url = await storage.upload_file(file_bytes, folder_path, filename)
 
-        # Create MediaFile record
-        media_file = MediaFile(
-            contractor_id=contractor.id,
+        # Create media file record
+        await media_store.create(
             original_url=original_url or "",
             mime_type=mime_type,
             processed_text=description,
             storage_url=storage_url,
             storage_path=f"{folder_path}/{filename}",
         )
-        db.add(media_file)
-        db.commit()
 
         logger.info("File cataloged: %s/%s -> %s", folder_path, filename, storage_url)
         return ToolResult(content=f"Uploaded {filename} to {folder_path}/ ({storage_url})")
@@ -311,15 +281,9 @@ def create_file_tools(
         description: str = "",
     ) -> ToolResult:
         """Move an auto-saved file from Unsorted into the correct client folder."""
-        # Look up the MediaFile record
-        media_file = (
-            db.query(MediaFile)
-            .filter(
-                MediaFile.contractor_id == contractor.id,
-                MediaFile.original_url == original_url,
-            )
-            .first()
-        )
+        # Look up the media record
+        media_store = MediaStore(user.id)
+        media_file = await media_store.get_by_url(original_url)
         if media_file is None:
             return ToolResult(
                 content=f"File not found for URL: {original_url}",
@@ -357,14 +321,7 @@ def create_file_tools(
 
         # Build new filename
         extension = old_filename.rsplit(".", 1)[-1] if "." in old_filename else "bin"
-        existing = (
-            db.query(MediaFile)
-            .filter(
-                MediaFile.contractor_id == contractor.id,
-                MediaFile.storage_path.like(f"{new_folder}%"),
-            )
-            .count()
-        )
+        existing = await media_store.count_by_path_prefix(new_folder)
         new_filename = _build_filename(
             description, file_category, index=existing + 1, extension=extension
         )
@@ -373,12 +330,14 @@ def create_file_tools(
         await storage.create_folder(new_folder)
         new_url = await storage.move_file(old_folder, old_filename, new_folder, new_filename)
 
-        # Update the DB record
-        media_file.storage_path = f"{new_folder}/{new_filename}"
-        media_file.storage_url = new_url
+        # Update the record
+        update_fields: dict[str, str] = {
+            "storage_path": f"{new_folder}/{new_filename}",
+            "storage_url": new_url,
+        }
         if description:
-            media_file.processed_text = description
-        db.commit()
+            update_fields["processed_text"] = description
+        await media_store.update(media_file.id, **update_fields)
 
         logger.info(
             "File organized: %s -> %s/%s",
@@ -392,8 +351,8 @@ def create_file_tools(
         Tool(
             name=ToolName.UPLOAD_TO_STORAGE,
             description=(
-                "Upload a file attached to the CURRENT message to the contractor's "
-                "cloud storage. Only works when the contractor sent media in this "
+                "Upload a file attached to the CURRENT message to the user's "
+                "cloud storage. Only works when the user sent media in this "
                 "message. Files are organized by client: provide client_name or "
                 "client_address to file under their folder, otherwise files go to "
                 "Unsorted. For files received in previous messages, use "
@@ -423,7 +382,7 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for file tools, used by the registry."""
     assert ctx.storage is not None
     pending_media = {m.original_url: m.content for m in ctx.downloaded_media if m.content}
-    return create_file_tools(ctx.db, ctx.contractor, ctx.storage, pending_media)
+    return create_file_tools(ctx.user, ctx.storage, pending_media)
 
 
 def _register() -> None:

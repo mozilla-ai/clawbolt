@@ -1,19 +1,31 @@
-import asyncio
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
-from any_llm import acompletion
-from fastapi import FastAPI
+from any_llm import amessages
+from dotenv import load_dotenv
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from backend.app.agent.heartbeat import heartbeat_scheduler
-from backend.app.config import get_effective_webhook_secret, settings
-from backend.app.routers import auth, estimates, health, telegram_webhook
-from backend.app.services.webhook import (
-    discover_tunnel_url,
-    register_telegram_webhook,
-    wait_for_dns,
+from backend.app.channels import get_manager, register_channel
+from backend.app.channels.telegram import TelegramChannel
+from backend.app.channels.webchat import WebChatChannel
+from backend.app.config import load_persistent_config, log_config_warnings, settings
+from backend.app.routers import (
+    auth,
+    estimates,
+    health,
+    search,
+    user_checklist,
+    user_memory,
+    user_profile,
+    user_sessions,
+    user_stats,
+    user_tools,
 )
 
 logging.basicConfig(
@@ -25,39 +37,11 @@ logging.basicConfig(
 logging.getLogger("backend").setLevel(settings.log_level.upper())
 logger = logging.getLogger(__name__)
 
-STARTUP_DELAY_SECONDS = 3
 
+# -- Build and register channels at module scope ----------------------------
 
-async def _auto_register_webhook() -> None:
-    """Discover Cloudflare Tunnel URL and register Telegram webhook.
-
-    Runs as a background task after the server is listening so that Telegram
-    can reach the webhook URL during its validation check.  Registration is
-    retried several times because quick-tunnel hostnames are brand-new and
-    Telegram's DNS may not resolve them immediately.
-    """
-    # Small delay to ensure Uvicorn is accepting connections.
-    await asyncio.sleep(STARTUP_DELAY_SECONDS)
-    tunnel_url = await discover_tunnel_url()
-    if not tunnel_url:
-        logger.debug("Cloudflare tunnel not detected — skipping webhook auto-registration")
-        return
-
-    webhook_url = f"{tunnel_url}/api/webhooks/telegram"
-    secret = get_effective_webhook_secret(settings) or None
-
-    # Wait for the quick-tunnel hostname to be DNS-resolvable before calling
-    # setWebhook.  If we call too early, Telegram caches the negative DNS
-    # response and all subsequent retries fail.
-    if not await wait_for_dns(tunnel_url):
-        logger.warning("Tunnel hostname never became resolvable — skipping webhook registration")
-        return
-
-    ok = await register_telegram_webhook(settings.telegram_bot_token, webhook_url, secret=secret)
-    if ok:
-        logger.info("Telegram webhook auto-registered: %s", webhook_url)
-    else:
-        logger.warning("Failed to auto-register Telegram webhook")
+register_channel(TelegramChannel(bot_token=settings.telegram_bot_token))
+register_channel(WebChatChannel())
 
 
 async def _verify_llm_settings() -> None:
@@ -100,7 +84,7 @@ async def _verify_llm_settings() -> None:
 
     for label, provider, model in unique:
         try:
-            await acompletion(
+            await amessages(
                 model=model,
                 provider=provider,
                 api_base=settings.llm_api_base,
@@ -126,6 +110,22 @@ async def _verify_llm_settings() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
+    # Load runtime-configurable settings (Telegram token, allowlists, etc.)
+    # from the volume-mounted data/config.json so they survive container
+    # restarts. This runs *before* load_dotenv() so that os.environ only
+    # contains real env vars at this point; .env values have not yet been
+    # injected. Real env vars still take precedence over config.json.
+    load_persistent_config()
+
+    # Pydantic Settings reads .env for its own declared fields only and
+    # does not mutate os.environ. Provider API keys like GROQ_API_KEY are
+    # consumed by the any-llm SDK, which reads them directly from
+    # os.environ, so we ensure .env values are loaded into the process
+    # environment here. Docker Compose already handles this via its
+    # env_file directive; this call covers bare-host / local-dev setups.
+    load_dotenv()
+
+    log_config_warnings()
     await _verify_llm_settings()
     heartbeat_scheduler.start()
 
@@ -146,15 +146,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             'Set to "*" to allow all users, or provide a comma-separated list of IDs/usernames.'
         )
 
-    # Fire-and-forget: register webhook after the server is ready.
-    webhook_task: asyncio.Task[None] | None = None
-    if settings.telegram_bot_token:
-        webhook_task = asyncio.create_task(_auto_register_webhook())
+    # Start all registered channels concurrently.
+    manager = get_manager()
+    channel_tasks = await manager.start_all()
 
     yield
 
-    if webhook_task and not webhook_task.done():
-        webhook_task.cancel()
+    # Cancel any channel start tasks still running.
+    for task in channel_tasks:
+        if not task.done():
+            task.cancel()
+    await manager.stop_all()
     heartbeat_scheduler.stop()
 
 
@@ -170,5 +172,34 @@ app.add_middleware(
 
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
-app.include_router(telegram_webhook.router, prefix="/api")
+
+# Include routers from all registered channels.
+for _channel in get_manager().channels.values():
+    app.include_router(_channel.get_router(), prefix="/api")
+
 app.include_router(estimates.router, prefix="/api")
+app.include_router(user_profile.router, prefix="/api")
+app.include_router(user_sessions.router, prefix="/api")
+app.include_router(user_memory.router, prefix="/api")
+app.include_router(user_checklist.router, prefix="/api")
+app.include_router(user_stats.router, prefix="/api")
+app.include_router(user_tools.router, prefix="/api")
+app.include_router(search.router, prefix="/api")
+
+# ---------------------------------------------------------------------------
+# Static file serving (built frontend)
+# ---------------------------------------------------------------------------
+_FRONTEND_DIST = Path(__file__).resolve().parent.parent.parent / "frontend" / "dist"
+
+if _FRONTEND_DIST.is_dir():
+    # Serve static assets (JS, CSS, images)
+    app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
+
+    @app.get("/{full_path:path}")
+    async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
+        """Serve the SPA index.html for all non-API routes."""
+        file_path = _FRONTEND_DIST / full_path
+        resolved = file_path.resolve()
+        if resolved.is_file() and resolved.is_relative_to(_FRONTEND_DIST.resolve()):
+            return FileResponse(resolved)
+        return FileResponse(_FRONTEND_DIST / "index.html")

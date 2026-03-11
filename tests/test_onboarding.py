@@ -1,928 +1,499 @@
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import (
+    SessionState,
+    StoredMessage,
+    UserData,
+    get_user_store,
+)
 from backend.app.agent.onboarding import (
-    REQUIRED_PROFILE_FIELDS,
     build_onboarding_system_prompt,
     is_onboarding_needed,
 )
-from backend.app.agent.profile import get_missing_optional_fields
 from backend.app.agent.router import handle_inbound_message
-from backend.app.models import Contractor, Conversation, Message
-from backend.app.services.messaging import MessagingService
+from backend.app.config import settings
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
-def test_is_onboarding_needed_new_contractor(db_session: Session) -> None:
-    """New contractor with no name/trade should need onboarding."""
-    contractor = Contractor(user_id="new-user", phone="+15550001111")
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
+def _ensure_session_on_disk(user: UserData, session: SessionState) -> None:
+    """Create the user directory and session file so file-store writes succeed."""
+    cdir = Path(settings.data_dir) / str(user.id)
+    sessions_dir = cdir / "sessions"
+    sessions_dir.mkdir(parents=True, exist_ok=True)
+    session_path = sessions_dir / f"{session.session_id}.jsonl"
+    if not session_path.exists():
+        meta = {
+            "_type": "metadata",
+            "session_id": session.session_id,
+            "user_id": user.id,
+            "is_active": session.is_active,
+        }
+        lines = [json.dumps(meta)]
+        for msg in session.messages:
+            lines.append(json.dumps(msg.model_dump(), default=str))
+        session_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    # Also write user.json so the store can reload the user
+    user_json = cdir / "user.json"
+    if not user_json.exists():
+        data = user.model_dump()
+        data.pop("soul_text", None)
+        user_json.write_text(json.dumps(data, default=str), encoding="utf-8")
 
-    assert is_onboarding_needed(contractor) is True
+
+def _create_bootstrap(user: UserData) -> None:
+    """Create a BOOTSTRAP.md file for the given user from the real template."""
+    from backend.app.agent.prompts import load_prompt
+
+    cdir = Path(settings.data_dir) / str(user.id)
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "BOOTSTRAP.md").write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
 
 
-def test_is_onboarding_needed_partial_profile(db_session: Session) -> None:
-    """Contractor with name but no trade still needs onboarding."""
-    contractor = Contractor(user_id="partial-user", phone="+15550002222", name="Mike")
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    assert is_onboarding_needed(contractor) is True
+def _remove_bootstrap(user: UserData) -> None:
+    """Remove BOOTSTRAP.md for the given user."""
+    path = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
+    if path.exists():
+        path.unlink()
 
 
-def test_is_onboarding_needed_complete_profile(test_contractor: Contractor) -> None:
-    """Contractor with name, trade, and location does not need onboarding."""
-    assert is_onboarding_needed(test_contractor) is False
+def test_is_onboarding_needed_new_user() -> None:
+    """New user with BOOTSTRAP.md should need onboarding."""
+    user = UserData(id=1, user_id="new-user", phone="+15550001111")
+    _create_bootstrap(user)
+    assert is_onboarding_needed(user) is True
 
 
-def test_is_onboarding_needed_respects_flag(db_session: Session) -> None:
-    """Contractor with onboarding_complete=True should not need onboarding."""
-    contractor = Contractor(
+def test_is_onboarding_needed_no_bootstrap() -> None:
+    """User without BOOTSTRAP.md should not need onboarding."""
+    user = UserData(id=2, user_id="no-bootstrap-user", phone="+15550002222")
+    # Ensure user dir exists but no BOOTSTRAP.md
+    cdir = Path(settings.data_dir) / str(user.id)
+    cdir.mkdir(parents=True, exist_ok=True)
+    assert is_onboarding_needed(user) is False
+
+
+def test_is_onboarding_needed_complete_profile(test_user: UserData) -> None:
+    """User with onboarding_complete=True does not need onboarding."""
+    assert is_onboarding_needed(test_user) is False
+
+
+def test_is_onboarding_needed_respects_flag() -> None:
+    """User with onboarding_complete=True should not need onboarding even with BOOTSTRAP.md."""
+    user = UserData(
+        id=3,
         user_id="flagged-user",
         phone="+15550007777",
-        name="",
-        trade="",
         onboarding_complete=True,
     )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    assert is_onboarding_needed(contractor) is False
+    _create_bootstrap(user)
+    assert is_onboarding_needed(user) is False
 
 
-def test_is_onboarding_needed_empty_strings(db_session: Session) -> None:
-    """Empty strings should still trigger onboarding."""
-    contractor = Contractor(user_id="empty-user", phone="+15550003333", name="", trade="")
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    assert is_onboarding_needed(contractor) is True
-
-
-def test_required_profile_fields_includes_location() -> None:
-    """REQUIRED_PROFILE_FIELDS should include location."""
-    assert "location" in REQUIRED_PROFILE_FIELDS
+def test_is_onboarding_needed_bootstrap_deleted() -> None:
+    """After BOOTSTRAP.md is deleted, onboarding is not needed."""
+    user = UserData(id=4, user_id="deleted-bootstrap-user", phone="+15550003333")
+    _create_bootstrap(user)
+    assert is_onboarding_needed(user) is True
+    _remove_bootstrap(user)
+    assert is_onboarding_needed(user) is False
 
 
-def test_is_onboarding_needed_name_trade_but_no_location(db_session: Session) -> None:
-    """Contractor with name and trade but no location still needs onboarding."""
-    contractor = Contractor(
-        user_id="no-location-user",
-        phone="+15550006666",
-        name="Jake",
-        trade="Plumber",
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
+def test_build_onboarding_system_prompt_new_user() -> None:
+    """Onboarding prompt for new user should include bootstrap content."""
+    user = UserData(id=5, user_id="brand-new", phone="+15550004444")
+    _create_bootstrap(user)
 
-    assert is_onboarding_needed(contractor) is True
-
-
-def test_get_missing_optional_fields_all_missing(db_session: Session) -> None:
-    """Should return all optional field labels when none are set."""
-    contractor = Contractor(
-        user_id="missing-optional",
-        phone="+15550008888",
-        name="Test",
-        trade="Electrician",
-        location="Denver, CO",
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    missing = get_missing_optional_fields(contractor)
-    assert "rates" in missing
-    assert "business hours" in missing
-
-
-def test_get_missing_optional_fields_none_missing(db_session: Session) -> None:
-    """Should return empty list when all optional fields are set."""
-    contractor = Contractor(
-        user_id="all-filled",
-        phone="+15550009999",
-        name="Test",
-        trade="Electrician",
-        location="Denver, CO",
-        hourly_rate=85.0,
-        business_hours="Mon-Fri 8-5",
-        timezone="America/Denver",
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    missing = get_missing_optional_fields(contractor)
-    assert missing == []
-
-
-def test_get_missing_optional_fields_partial(db_session: Session) -> None:
-    """Should return only the labels of missing optional fields."""
-    contractor = Contractor(
-        user_id="partial-optional",
-        phone="+15550010000",
-        name="Test",
-        trade="Plumber",
-        location="Portland, OR",
-        hourly_rate=75.0,
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    missing = get_missing_optional_fields(contractor)
-    assert "business hours" in missing
-    assert "timezone" in missing
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_normal_prompt_includes_missing_optional_nudge(
-    mock_acompletion: object,
-    db_session: Session,
-    mock_messaging: MessagingService,
-) -> None:
-    """Normal system prompt should include a nudge for missing optional fields."""
-    contractor = Contractor(
-        user_id="nudge-user",
-        phone="+15550011111",
-        channel_identifier="111111111",
-        name="Sarah",
-        trade="Electrician",
-        location="Austin, TX",
-        onboarding_complete=True,
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    conv = Conversation(contractor_id=contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    msg = Message(conversation_id=conv.id, direction="inbound", body="Hey there")
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
-
-    mock_acompletion.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
-
-    await handle_inbound_message(
-        db=db_session,
-        contractor=contractor,
-        message=msg,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
-    assert "rates" in system_msg
-    assert "business hours" in system_msg
-    assert "opportunity comes up naturally" in system_msg
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_normal_prompt_no_nudge_when_optional_fields_filled(
-    mock_acompletion: object,
-    db_session: Session,
-    mock_messaging: MessagingService,
-) -> None:
-    """Normal system prompt should NOT include nudge when all optional fields filled."""
-    contractor = Contractor(
-        user_id="complete-user",
-        phone="+15550012222",
-        channel_identifier="222222222",
-        name="Bob",
-        trade="Plumber",
-        location="Seattle, WA",
-        hourly_rate=90.0,
-        business_hours="Mon-Fri 7-4",
-        timezone="America/Los_Angeles",
-        onboarding_complete=True,
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    conv = Conversation(contractor_id=contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    msg = Message(conversation_id=conv.id, direction="inbound", body="What's up")
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
-
-    mock_acompletion.return_value = make_text_response("Hey!")  # type: ignore[union-attr]
-
-    await handle_inbound_message(
-        db=db_session,
-        contractor=contractor,
-        message=msg,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
-    assert "opportunity comes up naturally" not in system_msg
-
-
-def test_build_onboarding_system_prompt_new_contractor(db_session: Session) -> None:
-    """Onboarding prompt for new contractor should not include known info."""
-    contractor = Contractor(user_id="brand-new", phone="+15550004444")
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    prompt = build_onboarding_system_prompt(contractor)
-    assert "Clawbolt" in prompt
-    assert "new contractor" in prompt
-    assert "You already know" not in prompt
+    prompt = build_onboarding_system_prompt(user)
     assert "help them with that request FIRST" in prompt
 
 
-def test_build_onboarding_system_prompt_partial_profile(db_session: Session) -> None:
-    """Onboarding prompt should include already-known fields."""
-    contractor = Contractor(
-        user_id="partial-user",
-        phone="+15550005555",
-        name="Sarah",
-        location="Denver, CO",
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
+def test_build_onboarding_system_prompt_includes_tool_capabilities() -> None:
+    """Onboarding system prompt should inject available specialist tool descriptions."""
+    user = UserData(id=6, user_id="new-user", phone="+15550001111")
+    _create_bootstrap(user)
 
-    prompt = build_onboarding_system_prompt(contractor)
-    assert "You already know" in prompt
-    assert "Sarah" in prompt
-    assert "Denver" in prompt
-    assert "Don't re-ask" in prompt
+    prompt = build_onboarding_system_prompt(user)
+    # Should include specialist tool summaries from the registry
+    assert "specialist capabilities" in prompt.lower()
+    assert "estimate" in prompt.lower()
 
 
-def test_build_onboarding_system_prompt_includes_known_communication_style(
-    db_session: Session,
-) -> None:
-    """Onboarding prompt should include known communication style in 'already know' list."""
-    contractor = Contractor(
-        user_id="style-known-user",
-        phone="+15550007777",
-        name="Jake",
-        preferences_json=json.dumps({"communication_style": "casual and brief"}),
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
+def test_build_onboarding_system_prompt_includes_instructions() -> None:
+    """Onboarding prompt should include behavioral instructions and communication guidance.
 
-    prompt = build_onboarding_system_prompt(contractor)
-    assert "You already know" in prompt
-    assert "casual and brief" in prompt
-    assert "Don't re-ask" in prompt
+    Regression: the old onboarding prompt replaced the entire system prompt,
+    stripping away tool guidelines. The model didn't know to reply directly
+    with text and returned empty responses.
+    """
+    from pydantic import BaseModel
 
+    from backend.app.agent.tools.base import Tool, ToolResult
 
-def test_build_onboarding_prompt_mentions_update_profile() -> None:
-    """Onboarding prompt should mention update_profile tool."""
-    from backend.app.agent.profile import build_onboarding_prompt
+    user = UserData(id=7, user_id="instructions-test", phone="+15550005555")
+    _create_bootstrap(user)
 
-    prompt = build_onboarding_prompt()
-    assert "update_profile" in prompt
+    class _SendReplyParams(BaseModel):
+        message: str
+
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    tools = [
+        Tool(
+            name="send_reply",
+            description="Send a text reply to the user.",
+            function=dummy,
+            params_model=_SendReplyParams,
+            usage_hint="Use this to send a text message to the user.",
+        ),
+    ]
+    prompt = build_onboarding_system_prompt(user, tools=tools)
+    # Should include the communication instruction from instructions.md
+    assert "Reply directly with text" in prompt
+    # Should include tool usage hint
+    assert "send a text message" in prompt.lower()
 
 
 # --- Fixtures ---
 
 
 @pytest.fixture()
-def new_contractor(db_session: Session) -> Contractor:
-    """Contractor with no profile -- needs onboarding."""
-    contractor = Contractor(
+def new_user() -> UserData:
+    """User with no profile, needs onboarding."""
+    user = UserData(
+        id=20,
         user_id="new-user-onboard",
         phone="+15559999999",
         channel_identifier="999999999",
     )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-    return contractor
+    _create_bootstrap(user)
+    return user
 
 
 @pytest.fixture()
-def onboarding_conversation(db_session: Session, new_contractor: Contractor) -> Conversation:
-    conv = Conversation(contractor_id=new_contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    return conv
+def onboarding_session(new_user: UserData) -> SessionState:
+    session = SessionState(
+        session_id="onboarding-session",
+        user_id=new_user.id,
+        is_active=True,
+        messages=[
+            StoredMessage(
+                direction="inbound",
+                body="Hey, I heard about Clawbolt",
+                seq=1,
+            ),
+        ],
+    )
+    _ensure_session_on_disk(new_user, session)
+    return session
 
 
 @pytest.fixture()
-def onboarding_message(db_session: Session, onboarding_conversation: Conversation) -> Message:
-    msg = Message(
-        conversation_id=onboarding_conversation.id,
+def onboarding_message() -> StoredMessage:
+    return StoredMessage(
         direction="inbound",
         body="Hey, I heard about Clawbolt",
+        seq=1,
     )
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
-    return msg
 
 
 @pytest.fixture()
-def mock_messaging() -> MessagingService:
-    service = MagicMock(spec=MessagingService)
-    service.send_text = AsyncMock(return_value="msg_42")
-    service.send_media = AsyncMock(return_value="msg_43")
-    service.send_message = AsyncMock(return_value="msg_42")
-    service.send_typing_indicator = AsyncMock()
-    service.download_media = AsyncMock()
-    return service
+def mock_download_media() -> AsyncMock:
+    return AsyncMock()
 
 
 # --- Integration tests ---
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_onboarding_uses_onboarding_prompt(
-    mock_acompletion: object,
-    db_session: Session,
-    new_contractor: Contractor,
-    onboarding_message: Message,
-    mock_messaging: MessagingService,
+    mock_amessages: object,
+    new_user: UserData,
+    onboarding_session: SessionState,
+    onboarding_message: StoredMessage,
 ) -> None:
-    """Router should use onboarding prompt for new contractors."""
-    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+    """Router should use onboarding prompt for new users."""
+    mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
         "Welcome to Clawbolt! What's your name?"
     )
 
     response = await handle_inbound_message(
-        db=db_session,
-        contractor=new_contractor,
+        user=new_user,
+        session=onboarding_session,
         message=onboarding_message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     assert response.reply_text == "Welcome to Clawbolt! What's your name?"
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
-    assert "new contractor" in system_msg
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["system"]
+    assert "new user" in system_msg
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_onboarding_extracts_profile_updates_via_update_profile(
-    mock_acompletion: object,
-    db_session: Session,
-    new_contractor: Contractor,
-    onboarding_message: Message,
-    mock_messaging: MessagingService,
+@patch("backend.app.agent.core.amessages")
+async def test_onboarding_completes_when_bootstrap_deleted(
+    mock_amessages: object,
+    new_user: UserData,
+    onboarding_session: SessionState,
+    onboarding_message: StoredMessage,
 ) -> None:
-    """Profile updates from update_profile tool should be saved to contractor record."""
-    # First call returns update_profile tool call, second returns text reply
+    """Onboarding should complete when BOOTSTRAP.md is deleted via delete_file."""
+    assert is_onboarding_needed(new_user) is True
+
+    # Simulate: agent calls write_file to save USER.md, then delete_file to remove BOOTSTRAP.md
     tool_response = make_tool_call_response(
         tool_calls=[
             {
-                "id": "call_profile",
-                "name": "update_profile",
-                "arguments": json.dumps({"name": "Mike"}),
-            }
+                "id": "call_write",
+                "name": "write_file",
+                "arguments": json.dumps({"path": "USER.md", "content": "# User\n\n- Name: Sarah"}),
+            },
+            {
+                "id": "call_delete",
+                "name": "delete_file",
+                "arguments": json.dumps({"path": "BOOTSTRAP.md"}),
+            },
         ]
     )
-    text_response = make_text_response("Nice to meet you, Mike!")
-    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+    text_response = make_text_response("Welcome Sarah!")
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     await handle_inbound_message(
-        db=db_session,
-        contractor=new_contractor,
+        user=new_user,
+        session=onboarding_session,
         message=onboarding_message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
-    db_session.refresh(new_contractor)
-    assert new_contractor.name == "Mike"
+    store = get_user_store()
+    refreshed = await store.get_by_id(new_user.id)
+    assert refreshed is not None
+    assert refreshed.onboarding_complete is True
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_complete_profile_uses_normal_prompt(
-    mock_acompletion: object,
-    db_session: Session,
-    test_contractor: Contractor,
-    mock_messaging: MessagingService,
+    mock_amessages: object,
+    test_user: UserData,
 ) -> None:
-    """Contractor with complete profile should use normal agent prompt."""
-    conv = Conversation(contractor_id=test_contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    msg = Message(conversation_id=conv.id, direction="inbound", body="How much for a deck?")
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
+    """User with complete profile should use normal agent prompt."""
+    session = SessionState(
+        session_id="test-session",
+        user_id=test_user.id,
+        is_active=True,
+        messages=[
+            StoredMessage(direction="inbound", body="How much for a deck?", seq=1),
+        ],
+    )
+    message = StoredMessage(direction="inbound", body="How much for a deck?", seq=1)
 
-    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
         "Let me help with that estimate!"
     )
 
     response = await handle_inbound_message(
-        db=db_session,
-        contractor=test_contractor,
-        message=msg,
+        user=test_user,
+        session=session,
+        message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     assert response.reply_text == "Let me help with that estimate!"
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["messages"][0]["content"]
-    assert "new contractor" not in system_msg
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_msg = call_args.kwargs["system"]
+    assert "new user" not in system_msg
 
 
 # ---------------------------------------------------------------------------
-# Regression tests for #186 / #183: profile updates post-onboarding
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_profile_updates_post_onboarding_single_field(
-    mock_acompletion: object,
-    db_session: Session,
-    test_contractor: Contractor,
-    mock_messaging: MessagingService,
-) -> None:
-    """Post-onboarding update_profile calls should update Contractor profile fields.
-
-    Regression test for #186: after onboarding, a contractor saying "I moved to
-    Denver" triggers update_profile(location="Denver, CO") which directly updates
-    the Contractor record.
-    """
-    # test_contractor has onboarding complete (name + trade set)
-    assert test_contractor.location == "Portland, OR"
-
-    conv = Conversation(contractor_id=test_contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    msg = Message(conversation_id=conv.id, direction="inbound", body="I moved to Denver")
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
-
-    # First LLM call returns an update_profile tool call, second returns text reply
-    tool_response = make_tool_call_response(
-        tool_calls=[
-            {
-                "id": "call_loc",
-                "name": "update_profile",
-                "arguments": json.dumps({"location": "Denver, CO"}),
-            }
-        ]
-    )
-    text_response = make_text_response("Got it, updated your location to Denver!")
-
-    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
-
-    await handle_inbound_message(
-        db=db_session,
-        contractor=test_contractor,
-        message=msg,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    db_session.refresh(test_contractor)
-    assert test_contractor.location == "Denver, CO"
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_profile_updates_post_onboarding_multiple_fields(
-    mock_acompletion: object,
-    db_session: Session,
-    test_contractor: Contractor,
-    mock_messaging: MessagingService,
-) -> None:
-    """Multiple profile fields updated in a single post-onboarding message.
-
-    When a contractor says "I'm in Denver now and my rate is $100/hr", both
-    location and hourly_rate should be updated on the Contractor record.
-    """
-    assert test_contractor.location == "Portland, OR"
-
-    conv = Conversation(contractor_id=test_contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    msg = Message(
-        conversation_id=conv.id,
-        direction="inbound",
-        body="I moved to Denver and my rate is $100/hr now",
-    )
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
-
-    # LLM updates both fields in one update_profile call, then gives a text reply
-    tool_response = make_tool_call_response(
-        tool_calls=[
-            {
-                "id": "call_profile",
-                "name": "update_profile",
-                "arguments": json.dumps(
-                    {
-                        "location": "Denver, CO",
-                        "hourly_rate": "$100/hr",
-                    }
-                ),
-            },
-        ]
-    )
-    text_response = make_text_response("Updated your location and rate!")
-
-    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
-
-    await handle_inbound_message(
-        db=db_session,
-        contractor=test_contractor,
-        message=msg,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    db_session.refresh(test_contractor)
-    assert test_contractor.location == "Denver, CO"
-    assert test_contractor.hourly_rate == 100.0
-    # Onboarding should remain complete
-    assert (
-        test_contractor.onboarding_complete is not True
-        or is_onboarding_needed(test_contractor) is False
-    )
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_profile_updates_during_onboarding_still_work(
-    mock_acompletion: object,
-    db_session: Session,
-    new_contractor: Contractor,
-    onboarding_message: Message,
-    mock_messaging: MessagingService,
-) -> None:
-    """Profile updates during onboarding still work with update_profile tool.
-
-    When a new contractor provides name, trade, and location via update_profile,
-    onboarding should complete.
-    """
-    assert is_onboarding_needed(new_contractor) is True
-    assert not new_contractor.name  # empty or None
-    assert not new_contractor.trade  # empty or None
-
-    # LLM calls update_profile with all required fields, then gives a text reply
-    tool_response = make_tool_call_response(
-        tool_calls=[
-            {
-                "id": "call_profile",
-                "name": "update_profile",
-                "arguments": json.dumps(
-                    {
-                        "name": "Sarah",
-                        "trade": "Plumber",
-                        "location": "Austin, TX",
-                    }
-                ),
-            },
-        ]
-    )
-    text_response = make_text_response("Welcome Sarah! Great to have a plumber on board.")
-
-    mock_acompletion.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
-
-    await handle_inbound_message(
-        db=db_session,
-        contractor=new_contractor,
-        message=onboarding_message,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    db_session.refresh(new_contractor)
-    assert new_contractor.name == "Sarah"
-    assert new_contractor.trade == "Plumber"
-    assert new_contractor.location == "Austin, TX"
-    assert new_contractor.onboarding_complete is True
-
-
-# ---------------------------------------------------------------------------
-# Regression tests for #180: pre-populated contractors
+# Regression tests for #180: pre-populated users
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_prepopulated_contractor_gets_onboarding_complete(
-    mock_acompletion: object,
-    db_session: Session,
-    mock_messaging: MessagingService,
+@patch("backend.app.agent.core.amessages")
+async def test_prepopulated_user_gets_onboarding_complete(
+    mock_amessages: object,
 ) -> None:
-    """Contractor with pre-populated name and trade should get onboarding_complete=True.
+    """User without BOOTSTRAP.md should get onboarding_complete=True.
 
-    Regression test for #180: when required profile fields are already filled,
+    Regression test for #180: when BOOTSTRAP.md doesn't exist,
     is_onboarding_needed() returns False but onboarding_complete was never set
     because the 'if onboarding:' block was skipped entirely.
     """
-    contractor = Contractor(
+    user = UserData(
+        id=30,
         user_id="prepopulated-user",
-        name="Sarah",
-        trade="Electrician",
-        location="Austin, TX",
         channel_identifier="888888888",
         preferred_channel="telegram",
         onboarding_complete=False,
     )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
+    # No BOOTSTRAP.md created, so not onboarding
 
-    # Sanity: fields are populated but flag is not set
-    assert not contractor.onboarding_complete
-    assert not is_onboarding_needed(contractor)
+    # Sanity: flag is not set but onboarding is not needed
+    assert not user.onboarding_complete
+    assert not is_onboarding_needed(user)
 
-    conv = Conversation(contractor_id=contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-
-    msg = Message(
-        conversation_id=conv.id,
+    session = SessionState(
+        session_id="test-session",
+        user_id=user.id,
+        is_active=True,
+        messages=[
+            StoredMessage(
+                direction="inbound",
+                body="Hey, can you help me with a quote?",
+                seq=1,
+            ),
+        ],
+    )
+    message = StoredMessage(
         direction="inbound",
         body="Hey, can you help me with a quote?",
+        seq=1,
     )
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
 
-    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
-        "Sure thing, Sarah!"
+    mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
+        "Sure thing!"
     )
+    _ensure_session_on_disk(user, session)
 
     await handle_inbound_message(
-        db=db_session,
-        contractor=contractor,
-        message=msg,
+        user=user,
+        session=session,
+        message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
-    db_session.refresh(contractor)
-    assert contractor.onboarding_complete is True
+    store = get_user_store()
+    refreshed = await store.get_by_id(user.id)
+    assert refreshed is not None
+    assert refreshed.onboarding_complete is True
 
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
-@patch("backend.app.agent.heartbeat.run_cheap_checks")
-@patch("backend.app.agent.core.acompletion")
-async def test_prepopulated_contractor_included_in_heartbeat(
-    mock_acompletion: object,
-    mock_cheap_checks: MagicMock,
+@patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+@patch("backend.app.agent.core.amessages")
+async def test_prepopulated_user_included_in_heartbeat(
+    mock_amessages: object,
+    mock_eval: AsyncMock,
     _mock_hours: MagicMock,
-    db_session: Session,
-    mock_messaging: MessagingService,
 ) -> None:
-    """Contractor with pre-populated fields should be eligible for heartbeat after first message.
+    """User without BOOTSTRAP.md should be eligible for heartbeat after first message."""
+    from backend.app.agent.heartbeat import HeartbeatAction, run_heartbeat_for_user
 
-    Regression test for #180: heartbeat queries onboarding_complete=True, so
-    contractors that never got the flag set were permanently excluded.
-    """
-    from backend.app.agent.heartbeat import CheapCheckResult, run_heartbeat_for_contractor
-
-    contractor = Contractor(
+    user = UserData(
+        id=31,
         user_id="prepopulated-hb-user",
-        name="Jake",
-        trade="Plumber",
-        location="Portland, OR",
         phone="+15550009999",
         channel_identifier="777777777",
         preferred_channel="telegram",
         onboarding_complete=False,
     )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
 
-    conv = Conversation(contractor_id=contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-
-    msg = Message(
-        conversation_id=conv.id,
+    session = SessionState(
+        session_id="test-session",
+        user_id=user.id,
+        is_active=True,
+        messages=[
+            StoredMessage(
+                direction="inbound",
+                body="I need help with an estimate",
+                seq=1,
+            ),
+        ],
+    )
+    message = StoredMessage(
         direction="inbound",
         body="I need help with an estimate",
+        seq=1,
     )
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
 
     # Process a message to trigger the onboarding_complete fix
-    mock_acompletion.return_value = make_text_response(  # type: ignore[union-attr]
-        "Happy to help, Jake!"
+    mock_amessages.return_value = make_text_response(  # type: ignore[union-attr]
+        "Happy to help!"
     )
+    _ensure_session_on_disk(user, session)
 
     await handle_inbound_message(
-        db=db_session,
-        contractor=contractor,
-        message=msg,
+        user=user,
+        session=session,
+        message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
-    db_session.refresh(contractor)
-    assert contractor.onboarding_complete is True
+    store = get_user_store()
+    refreshed = await store.get_by_id(user.id)
+    assert refreshed is not None
+    assert refreshed.onboarding_complete is True
 
-    # Now verify heartbeat doesn't skip this contractor
-    mock_cheap_checks.return_value = CheapCheckResult(flags=[])
-    result = await run_heartbeat_for_contractor(
-        db=db_session,
-        contractor=contractor,
-        messaging_service=mock_messaging,
+    # Now verify heartbeat doesn't skip this user
+    mock_eval.return_value = HeartbeatAction(
+        action_type="no_action",
+        message="",
+        reasoning="Nothing actionable",
+        priority=0,
+    )
+    result = await run_heartbeat_for_user(
+        user=refreshed,
+        channel="telegram",
+        chat_id=refreshed.channel_identifier,
         max_daily=5,
     )
     # Should get a result (not None which means skipped)
     assert result is not None
-    assert result.action_type == "no_action"  # Clean checks, no message needed
+    assert result.action_type == "no_action"
 
 
 # ---------------------------------------------------------------------------
-# Regression tests for #184: onboarding completion message
+# No completion message tests (finalize is now a no-op)
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_onboarding_completion_message_appended(
-    mock_acompletion: object,
-    db_session: Session,
-    mock_messaging: MessagingService,
-) -> None:
-    """Completion summary should be appended when onboarding transitions to complete."""
-    # Contractor with no name/trade -- needs onboarding
-    contractor = Contractor(
-        user_id="completing-user",
-        phone="+15550008888",
-        channel_identifier="888888888",
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    conv = Conversation(contractor_id=contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    msg = Message(
-        conversation_id=conv.id,
-        direction="inbound",
-        body="I'm Jake, I'm a plumber in Portland",
-    )
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
-
-    # Simulate agent calling update_profile with all required fields
-    tool_calls = [
-        {
-            "name": "update_profile",
-            "arguments": json.dumps(
-                {
-                    "name": "Jake",
-                    "trade": "Plumber",
-                    "location": "Portland, OR",
-                }
-            ),
-        },
-    ]
-
-    # First call: tool calls to update profile; second call: text reply
-    mock_acompletion.side_effect = [  # type: ignore[union-attr]
-        make_tool_call_response(tool_calls, content=None),
-        make_text_response("Great to meet you, Jake!"),
-    ]
-
-    response = await handle_inbound_message(
-        db=db_session,
-        contractor=contractor,
-        message=msg,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    assert "Setup complete!" in response.reply_text
-    assert "- Name: Jake" in response.reply_text
-    assert "- Trade: Plumber" in response.reply_text
-    assert "- Location: Portland, OR" in response.reply_text
-    assert "You can update any of this anytime" in response.reply_text
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_onboarding_completion_message_includes_optional_fields(
-    mock_acompletion: object,
-    db_session: Session,
-    mock_messaging: MessagingService,
-) -> None:
-    """Completion summary should include location and rate when available."""
-    # Contractor with location already set, still needs name+trade
-    contractor = Contractor(
-        user_id="optional-fields-user",
-        phone="+15550009999",
-        channel_identifier="999999998",
-        location="Portland, OR",
-        hourly_rate=85.0,
-    )
-    db_session.add(contractor)
-    db_session.commit()
-    db_session.refresh(contractor)
-
-    conv = Conversation(contractor_id=contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    msg = Message(conversation_id=conv.id, direction="inbound", body="I'm Sarah, electrician")
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
-
-    tool_calls = [
-        {
-            "name": "update_profile",
-            "arguments": json.dumps({"name": "Sarah", "trade": "Electrician"}),
-        },
-    ]
-
-    mock_acompletion.side_effect = [  # type: ignore[union-attr]
-        make_tool_call_response(tool_calls, content=None),
-        make_text_response("Welcome aboard, Sarah!"),
-    ]
-
-    response = await handle_inbound_message(
-        db=db_session,
-        contractor=contractor,
-        message=msg,
-        media_urls=[],
-        messaging_service=mock_messaging,
-    )
-
-    assert "Setup complete!" in response.reply_text
-    assert "- Name: Sarah" in response.reply_text
-    assert "- Trade: Electrician" in response.reply_text
-    assert "- Location: Portland, OR" in response.reply_text
-    assert "- Rate: $85/hour" in response.reply_text
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_no_completion_message_when_already_onboarded(
-    mock_acompletion: object,
-    db_session: Session,
-    test_contractor: Contractor,
-    mock_messaging: MessagingService,
+    mock_amessages: object,
+    test_user: UserData,
 ) -> None:
-    """Completion message should NOT be appended for already-onboarded contractors."""
-    conv = Conversation(contractor_id=test_contractor.id)
-    db_session.add(conv)
-    db_session.commit()
-    db_session.refresh(conv)
-    msg = Message(
-        conversation_id=conv.id, direction="inbound", body="Can you help me with an estimate?"
+    """No extra text should be appended for already-onboarded users."""
+    session = SessionState(
+        session_id="test-session",
+        user_id=test_user.id,
+        is_active=True,
+        messages=[
+            StoredMessage(
+                direction="inbound",
+                body="Can you help me with an estimate?",
+                seq=1,
+            ),
+        ],
     )
-    db_session.add(msg)
-    db_session.commit()
-    db_session.refresh(msg)
+    message = StoredMessage(
+        direction="inbound",
+        body="Can you help me with an estimate?",
+        seq=1,
+    )
 
-    mock_acompletion.return_value = make_text_response("Sure, I can help!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Sure, I can help!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
-        db=db_session,
-        contractor=test_contractor,
-        message=msg,
+        user=test_user,
+        session=session,
+        message=message,
         media_urls=[],
-        messaging_service=mock_messaging,
+        channel="telegram",
     )
 
     assert response.reply_text == "Sure, I can help!"
-    assert "Setup complete!" not in response.reply_text

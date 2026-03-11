@@ -9,7 +9,6 @@ For development, you can run Clawbolt directly with Python and uv.
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- PostgreSQL (or use SQLite for quick testing)
 
 ## Install dependencies
 
@@ -27,14 +26,7 @@ cp .env.example .env
 Edit `.env` with your credentials. At minimum:
 - `TELEGRAM_BOT_TOKEN`
 - An LLM API key
-- `DATABASE_URL` pointing to your PostgreSQL instance
 - `TELEGRAM_ALLOWED_CHAT_IDS` or `TELEGRAM_ALLOWED_USERNAMES` -- set to `*` to allow everyone, or a comma-separated list. **Messages are rejected by default when both are empty.**
-
-## Run database migrations
-
-```bash
-uv run alembic upgrade head
-```
 
 ## Start the server
 

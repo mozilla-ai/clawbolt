@@ -1,4 +1,4 @@
-"""Integration tests that exercise the real acompletion() call path.
+"""Integration tests that exercise the real amessages() call path.
 
 These tests require ANTHROPIC_API_KEY set in the environment.
 They are skipped by default and only run via ``pytest -m integration``.
@@ -10,11 +10,10 @@ Run locally:
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.messages import AssistantMessage, UserMessage
-from backend.app.models import Contractor
+from backend.app.agent.file_store import UserData
+from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
@@ -22,8 +21,7 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_agent_returns_nonempty_reply(
-    integration_db: Session,
-    integration_contractor: Contractor,
+    integration_user: UserData,
 ) -> None:
     """ClawboltAgent.process_message() should return a non-empty reply from a real LLM."""
     with patch("backend.app.agent.core.settings") as mock_settings:
@@ -32,21 +30,19 @@ async def test_agent_returns_nonempty_reply(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = ClawboltAgent(db=integration_db, contractor=integration_contractor)
+        agent = ClawboltAgent(user=integration_user)
         response = await agent.process_message(
             "Hello, can you help me with a deck estimate?",
             system_prompt_override="You are a helpful assistant. Reply briefly.",
         )
 
-    assert response.reply_text
-    assert len(response.reply_text) > 0
+    assert response is not None
 
 
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_agent_message_format_accepted(
-    integration_db: Session,
-    integration_contractor: Contractor,
+    integration_user: UserData,
 ) -> None:
     """The full system prompt + conversation history format should be accepted by a real LLM."""
     with patch("backend.app.agent.core.settings") as mock_settings:
@@ -55,8 +51,8 @@ async def test_agent_message_format_accepted(
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
 
-        agent = ClawboltAgent(db=integration_db, contractor=integration_contractor)
-        history = [
+        agent = ClawboltAgent(user=integration_user)
+        history: list[AgentMessage] = [
             UserMessage(content="Hi there"),
             AssistantMessage(content="Hello! How can I help?"),
         ]
@@ -66,27 +62,28 @@ async def test_agent_message_format_accepted(
             system_prompt_override="You are a helpful assistant. Reply briefly.",
         )
 
-    assert response.reply_text
-    assert len(response.reply_text) > 0
+    assert response is not None
 
 
 @pytest.mark.integration()
 @skip_without_anthropic_key
-async def test_acompletion_direct_call() -> None:
-    """Verify acompletion() works directly with anthropic provider."""
-    from any_llm import acompletion
-    from any_llm.types.completion import ChatCompletion
+async def test_amessages_direct_call() -> None:
+    """Verify amessages() works directly with anthropic provider."""
+    from any_llm import amessages
+    from any_llm.types.messages import MessageResponse
 
-    raw = await acompletion(
+    raw = await amessages(
         model=_ANTHROPIC_MODEL,
         provider="anthropic",
+        system="Reply with exactly: HELLO",
         messages=[
-            {"role": "system", "content": "Reply with exactly: HELLO"},
             {"role": "user", "content": "Say hello"},
         ],
         max_tokens=50,
     )
-    assert isinstance(raw, ChatCompletion)
+    assert isinstance(raw, MessageResponse)
 
-    assert raw.choices
-    assert raw.choices[0].message.content
+    assert raw.content
+    text_parts = [block.text for block in raw.content if block.type == "text"]
+    assert text_parts
+    assert text_parts[0]

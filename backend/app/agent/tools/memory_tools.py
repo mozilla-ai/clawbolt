@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from backend.app.agent.memory import delete_memory, recall_memories, save_memory
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
@@ -40,17 +39,17 @@ class ForgetFactParams(BaseModel):
     key: str = Field(description="Key of the fact to delete")
 
 
-def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
+def create_memory_tools(user_id: int) -> list[Tool]:
     """Create memory-related tools for the agent."""
 
     async def save_fact(key: str, value: str, category: str = "general") -> ToolResult:
         """Save a fact to memory."""
-        memory = await save_memory(db, contractor_id, key=key, value=value, category=category)
+        memory = await save_memory(user_id, key=key, value=value, category=category)
         return ToolResult(content=f"Saved: {memory.key} = {memory.value}")
 
     async def recall_facts(query: str, category: str | None = None) -> ToolResult:
         """Search memory for facts matching a query."""
-        memories = await recall_memories(db, contractor_id, query=query, category=category)
+        memories = await recall_memories(user_id, query=query, category=category)
         if not memories:
             return ToolResult(content="No matching facts found.")
         lines = [f"- {m.key}: {m.value}" for m in memories]
@@ -58,7 +57,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
 
     async def forget_fact(key: str) -> ToolResult:
         """Delete a fact from memory."""
-        deleted = await delete_memory(db, contractor_id, key=key)
+        deleted = await delete_memory(user_id, key=key)
         if deleted:
             return ToolResult(content=f"Deleted: {key}")
         return ToolResult(
@@ -69,7 +68,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
         Tool(
             name=ToolName.SAVE_FACT,
             description=(
-                "Save a key-value fact to the contractor's memory. "
+                "Save a key-value fact to the user's memory. "
                 "Use for pricing, client info, preferences, etc."
             ),
             function=save_fact,
@@ -79,11 +78,11 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
         ),
         Tool(
             name=ToolName.RECALL_FACTS,
-            description="Search the contractor's memory for facts matching a query.",
+            description="Search the user's memory for facts matching a query.",
             function=recall_facts,
             params_model=RecallFactsParams,
             usage_hint=(
-                "When asked about the contractor's business, clients, or past work,"
+                "When asked about the user's business, clients, or past work,"
                 " search your memory first."
             ),
         ),
@@ -99,7 +98,7 @@ def create_memory_tools(db: Session, contractor_id: int) -> list[Tool]:
 
 def _memory_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for memory tools, used by the registry."""
-    return create_memory_tools(ctx.db, ctx.contractor.id)
+    return create_memory_tools(ctx.user.id)
 
 
 def _register() -> None:

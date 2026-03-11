@@ -1,27 +1,22 @@
 """Tests for webhook rate limiting."""
 
+import asyncio
 import time
 from collections.abc import Generator
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
 
-from backend.app.agent.core import AgentResponse
+from backend.app.agent.file_store import UserData, get_user_store, reset_stores
 from backend.app.auth.dependencies import get_current_user
-from backend.app.database import Base, get_db
+from backend.app.config import settings
 from backend.app.main import app
-from backend.app.models import Contractor
-from backend.app.services.messaging import MessagingService, get_messaging_service
 from backend.app.services.rate_limiter import InMemoryRateLimiter, check_webhook_rate_limit
 from tests.mocks.telegram import make_telegram_update_payload
 
-_MOCK_AGENT_RESPONSE = AgentResponse(reply_text="Mock reply")
-_PATCH_HANDLE = "backend.app.agent.ingestion.handle_inbound_message"
+_PATCH_BUS_PUBLISH = "backend.app.channels.telegram.message_bus.publish_inbound"
 
 
 def _make_scope(
@@ -41,66 +36,43 @@ def _make_scope(
 
 
 @pytest.fixture()
-def _rate_limited_client() -> Generator[TestClient]:
+def _rate_limited_client(tmp_path: object) -> Generator[TestClient]:
     """TestClient that does NOT override the rate limiter, so rate limiting is active."""
-    engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
-    )
-    Base.metadata.create_all(bind=engine)
-    session = sessionmaker(bind=engine)()
+    with patch.object(settings, "data_dir", str(tmp_path)):
+        reset_stores()
 
-    contractor = Contractor(
-        user_id="rl-test-user",
-        name="RL Test",
-        phone="+15559999999",
-        trade="Electrician",
-        location="Seattle, WA",
-        channel_identifier="777777",
-        preferred_channel="telegram",
-    )
-    session.add(contractor)
-    session.commit()
-    session.refresh(contractor)
+        store = get_user_store()
+        user = asyncio.get_event_loop().run_until_complete(
+            store.create(
+                user_id="rl-test-user",
+                phone="+15559999999",
+                channel_identifier="777777",
+                preferred_channel="telegram",
+            )
+        )
 
-    def _override_get_db() -> Generator[Session]:
-        yield session
+        def _override_get_current_user() -> UserData:
+            return user
 
-    def _override_get_current_user() -> Contractor:
-        return contractor
+        # Reset the rate limiter before each test that uses this fixture
+        from backend.app.services.rate_limiter import webhook_rate_limiter
 
-    mock_messaging = MagicMock(spec=MessagingService)
-    mock_messaging.send_text = AsyncMock(return_value="mock_msg_id")
-    mock_messaging.send_media = AsyncMock(return_value="mock_msg_id")
-    mock_messaging.send_message = AsyncMock(return_value="mock_msg_id")
-    mock_messaging.send_typing_indicator = AsyncMock()
-    mock_messaging.download_media = AsyncMock()
+        webhook_rate_limiter.reset()
 
-    def _override_get_messaging_service() -> Generator[MessagingService]:
-        yield mock_messaging
+        app.dependency_overrides[get_current_user] = _override_get_current_user
+        # Explicitly remove rate limiter override so the real one is used
+        app.dependency_overrides.pop(check_webhook_rate_limit, None)
 
-    # Reset the rate limiter before each test that uses this fixture
-    from backend.app.services.rate_limiter import webhook_rate_limiter
+        with (
+            patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
+            patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
+            TestClient(app) as c,
+        ):
+            yield c
 
-    webhook_rate_limiter.reset()
-
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_get_current_user
-    app.dependency_overrides[get_messaging_service] = _override_get_messaging_service
-    # Explicitly remove rate limiter override so the real one is used
-    app.dependency_overrides.pop(check_webhook_rate_limit, None)
-
-    with (
-        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
-        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
-        TestClient(app) as c,
-    ):
-        yield c
-
-    app.dependency_overrides.clear()
-    webhook_rate_limiter.reset()
-    session.close()
+        app.dependency_overrides.clear()
+        webhook_rate_limiter.reset()
+        reset_stores()
 
 
 class TestInMemoryRateLimiter:
@@ -223,7 +195,7 @@ class TestWebhookRateLimiting:
 
     def test_requests_under_limit_succeed(self, _rate_limited_client: TestClient) -> None:
         """Requests under the rate limit should return 200."""
-        with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+        with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
             for i in range(5):
                 payload = make_telegram_update_payload(
                     chat_id=777777,
@@ -242,7 +214,7 @@ class TestWebhookRateLimiting:
         webhook_rate_limiter.max_requests = 3
 
         try:
-            with patch(_PATCH_HANDLE, new_callable=AsyncMock, return_value=_MOCK_AGENT_RESPONSE):
+            with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock):
                 # First 3 should succeed
                 for i in range(3):
                     payload = make_telegram_update_payload(

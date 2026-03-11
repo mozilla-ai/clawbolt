@@ -16,18 +16,20 @@ from __future__ import annotations
 import importlib
 import logging
 import pkgutil
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
-from backend.app.models import Contractor
-from backend.app.services.messaging import MessagingService
 from backend.app.services.storage_service import StorageBackend
+
+if TYPE_CHECKING:
+    from backend.app.bus import OutboundMessage
 
 logger = logging.getLogger(__name__)
 
@@ -36,10 +38,10 @@ logger = logging.getLogger(__name__)
 class ToolContext:
     """Shared context passed to tool factories during creation."""
 
-    db: Session
-    contractor: Contractor
+    user: UserData
     storage: StorageBackend | None = None
-    messaging_service: MessagingService | None = None
+    publish_outbound: Callable[[OutboundMessage], Awaitable[None]] | None = None
+    channel: str = ""
     to_address: str = ""
     downloaded_media: list[DownloadedMedia] = field(default_factory=list)
 
@@ -50,7 +52,7 @@ class ToolFactory:
 
     create: Callable[[ToolContext], list[Tool]]
     requires_storage: bool = False
-    requires_messaging: bool = False
+    requires_outbound: bool = False
     core: bool = True
     summary: str = ""
 
@@ -127,7 +129,7 @@ class ToolRegistry:
         create: Callable[[ToolContext], list[Tool]],
         *,
         requires_storage: bool = False,
-        requires_messaging: bool = False,
+        requires_outbound: bool = False,
         core: bool = True,
         summary: str = "",
     ) -> None:
@@ -137,7 +139,7 @@ class ToolRegistry:
             name: Unique factory name.
             create: Callable that produces a list of ``Tool`` objects.
             requires_storage: Skip this factory when no storage backend exists.
-            requires_messaging: Skip this factory when no messaging service exists.
+            requires_outbound: Skip this factory when no publish_outbound callback exists.
             core: If ``True`` the factory's tools are always registered.
                 If ``False`` the factory is a specialist, discoverable via
                 ``list_capabilities``.
@@ -149,7 +151,7 @@ class ToolRegistry:
         self._factories[name] = ToolFactory(
             create=create,
             requires_storage=requires_storage,
-            requires_messaging=requires_messaging,
+            requires_outbound=requires_outbound,
             core=core,
             summary=summary,
         )
@@ -176,40 +178,52 @@ class ToolRegistry:
             if factory.requires_storage and context.storage is None:
                 logger.debug("Skipping %s: no storage backend", name)
                 continue
-            if factory.requires_messaging and context.messaging_service is None:
-                logger.debug("Skipping %s: no messaging service", name)
+            if factory.requires_outbound and context.publish_outbound is None:
+                logger.debug("Skipping %s: no publish_outbound callback", name)
                 continue
             created = factory.create(context)
-            for tool in created:
-                if tool.params_model is None:
-                    raise ValueError(
-                        f"Tool '{tool.name}' from factory '{name}' is missing "
-                        f"a params_model. All tools must define a Pydantic "
-                        f"BaseModel for parameter validation."
-                    )
             tools.extend(created)
         return tools
 
-    def create_core_tools(self, context: ToolContext) -> list[Tool]:
-        """Create only core (always-available) tools."""
-        return self.create_tools(context, selected_factories=self.core_factory_names)
+    def create_core_tools(
+        self,
+        context: ToolContext,
+        *,
+        excluded_factories: set[str] | None = None,
+    ) -> list[Tool]:
+        """Create only core (always-available) tools.
+
+        When *excluded_factories* is provided, factories in that set are
+        skipped even if they are core factories.
+        """
+        selected = self.core_factory_names
+        if excluded_factories:
+            selected = selected - excluded_factories
+        return self.create_tools(context, selected_factories=selected)
 
     def get_available_specialist_summaries(
         self,
         context: ToolContext,
+        *,
+        excluded_factories: set[str] | None = None,
     ) -> dict[str, str]:
         """Return summaries of specialist factories whose dependencies are met.
 
         Used by the setup code to build the ``list_capabilities`` meta-tool
         with only the categories that are actually usable.
+
+        When *excluded_factories* is provided, factories in that set are
+        skipped.
         """
         summaries: dict[str, str] = {}
         for name, factory in self._factories.items():
             if factory.core:
                 continue
+            if excluded_factories and name in excluded_factories:
+                continue
             if factory.requires_storage and context.storage is None:
                 continue
-            if factory.requires_messaging and context.messaging_service is None:
+            if factory.requires_outbound and context.publish_outbound is None:
                 continue
             summaries[name] = factory.summary
         return summaries
@@ -228,6 +242,16 @@ class ToolRegistry:
     def factory_names(self) -> list[str]:
         """Return sorted list of registered factory names."""
         return sorted(self._factories)
+
+    @property
+    def specialist_summaries(self) -> dict[str, str]:
+        """Return summaries of all specialist factories.
+
+        Unlike ``get_available_specialist_summaries`` this does not require
+        a ``ToolContext`` and does not filter by dependency availability.
+        Useful for prompt building where the full capability list is wanted.
+        """
+        return {name: f.summary for name, f in self._factories.items() if not f.core and f.summary}
 
 
 # Module-level singleton used by tool modules for self-registration.

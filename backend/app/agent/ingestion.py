@@ -1,25 +1,38 @@
 """Channel-agnostic inbound message ingestion.
 
-Defines the ``InboundMessage`` dataclass and ``process_inbound_message()``
+Defines the ``InboundMessage`` dataclass and ``process_inbound_from_bus()``
 which handles the channel-independent steps of receiving a message:
-contractor lookup/creation, conversation management, message persistence,
-and background task dispatch.
+user lookup/creation, conversation management, message persistence,
+and pipeline dispatch.
+
+Includes ``MessageBatcher`` which groups rapid-fire messages from the same
+user (e.g. after a tunnel reconnect) into a single agent pipeline run,
+inspired by nanobot's Mochat delay-based batching pattern.
 """
 
+import asyncio
 import json
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
-from sqlalchemy.orm import Session
-from starlette.background import BackgroundTask
-
-from backend.app.agent.concurrency import contractor_locks
+from backend.app.agent.approval import (
+    _parse_approval_response,
+    get_approval_gate,
+)
+from backend.app.agent.concurrency import user_locks
 from backend.app.agent.context import get_or_create_conversation
+from backend.app.agent.file_store import (
+    SessionState,
+    StoredMessage,
+    UserData,
+    get_session_store,
+    get_user_store,
+)
 from backend.app.agent.router import handle_inbound_message
-from backend.app.database import SessionLocal
+from backend.app.config import settings
 from backend.app.enums import MessageDirection
-from backend.app.models import Contractor, Message
-from backend.app.services.messaging import MessagingService
+from backend.app.media.download import DownloadedMedia
 
 logger = logging.getLogger(__name__)
 
@@ -28,8 +41,8 @@ logger = logging.getLogger(__name__)
 class InboundMessage:
     """Channel-agnostic representation of an incoming message.
 
-    Produced by channel-specific adapters (Telegram webhook, future SMS/web)
-    and consumed by ``process_inbound_message()``.
+    Produced by channel-specific adapters (Telegram webhook, web chat)
+    and consumed by the bus consumer in ``ChannelManager``.
     """
 
     channel: str
@@ -38,97 +51,301 @@ class InboundMessage:
     media_refs: list[tuple[str, str]] = field(default_factory=list)
     external_message_id: str = ""
     sender_username: str | None = None
+    downloaded_media: list[DownloadedMedia] = field(default_factory=list)
+    request_id: str = ""
+    session_id: str | None = None
 
 
-def _get_or_create_contractor(db: Session, channel: str, sender_id: str) -> Contractor:
-    """Look up or create a contractor by channel-specific sender ID."""
-    contractor = db.query(Contractor).filter(Contractor.channel_identifier == sender_id).first()
-    if contractor is None:
-        contractor = Contractor(
-            user_id=f"{channel}_{sender_id}",
+async def _send_error_fallback(
+    channel: str,
+    user: UserData,
+    user_id: int,
+) -> None:
+    """Send a fallback error message to the user via the bus.
+
+    Swallows any exception so this never propagates.
+    """
+    to_address = user.channel_identifier or user.phone
+    if not to_address or not channel:
+        return
+    try:
+        from backend.app.bus import OutboundMessage, message_bus
+
+        await message_bus.publish_outbound(
+            OutboundMessage(
+                channel=channel,
+                chat_id=to_address,
+                content="Sorry, something went wrong processing your message. Please try again.",
+            )
+        )
+    except Exception:
+        logger.exception("Failed to send error fallback to user %d", user_id)
+
+
+async def _get_or_create_user(channel: str, sender_id: str) -> UserData:
+    """Look up or create a user by channel-specific sender ID.
+
+    In single-tenant (OSS) mode there should be exactly one user shared
+    across all channels.  When a new channel arrives and a user already
+    exists, link the channel to that user instead of creating a duplicate.
+    """
+    store = get_user_store()
+    user = await store.get_by_channel(sender_id)
+    if user is not None:
+        return user
+
+    # Reuse the sole existing user (single-tenant OSS) so sessions from
+    # every channel are visible in the dashboard.
+    all_users = await store.list_all()
+    if len(all_users) == 1:
+        user = all_users[0]
+        store.link_channel(channel, sender_id, user.id)
+        user = await store.update(
+            user.id,
             channel_identifier=sender_id,
             preferred_channel=channel,
         )
-        db.add(contractor)
-        db.commit()
-        db.refresh(contractor)
-    return contractor
+        return user  # type: ignore[return-value]
+
+    user = await store.create(
+        user_id=f"{channel}_{sender_id}",
+        channel_identifier=sender_id,
+        preferred_channel=channel,
+    )
+    return user
 
 
-async def _process_message_background(
-    contractor_id: int,
-    message_id: int,
-    media_urls: list[tuple[str, str]],
-    messaging_service: MessagingService,
-) -> None:
-    """Run the agent pipeline as a background task.
+# ---------------------------------------------------------------------------
+# Message batcher
+# ---------------------------------------------------------------------------
 
-    Creates its own DB session rather than sharing the request-scoped one,
-    which would be closed by the time this task executes.
+
+@dataclass
+class _BatchEntry:
+    """A single message pending in a batch."""
+
+    session: SessionState
+    message: StoredMessage
+    media_urls: list[tuple[str, str]]
+    downloaded_media: list[DownloadedMedia] = field(default_factory=list)
+
+
+@dataclass
+class _BatchState:
+    """Per-user batch state: accumulated entries and a flush timer."""
+
+    entries: list[_BatchEntry] = field(default_factory=list)
+    timer: asyncio.Task[None] | None = None
+    download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None
+    user: UserData | None = None
+    channel: str = ""
+    request_id: str = ""
+
+
+class MessageBatcher:
+    """Groups rapid-fire messages from the same user before processing.
+
+    When multiple messages arrive within ``window_ms`` of each other
+    (e.g. after a tunnel reconnect or when a user sends several messages
+    quickly), they are batched together.  Only the last message triggers the
+    agent pipeline; earlier messages are already persisted in the session
+    and appear in conversation history automatically.  Media from all
+    batched messages is combined so nothing is lost.
+
+    Modelled after nanobot's Mochat ``_enqueue_delayed_entry`` /
+    ``_flush_delayed_entries`` pattern.
     """
-    async with contractor_locks.acquire(contractor_id):
-        db: Session = SessionLocal()
-        try:
-            contractor = db.get(Contractor, contractor_id)
-            message = db.get(Message, message_id)
-            if contractor is None or message is None:
-                logger.error(
-                    "Background task: contractor %d or message %d not found",
-                    contractor_id,
-                    message_id,
+
+    def __init__(self, window_ms: int | None = None) -> None:
+        window_ms = window_ms if window_ms is not None else settings.message_batch_window_ms
+        self._window_ms = window_ms
+        self._states: dict[int, _BatchState] = {}
+        self._lock = asyncio.Lock()
+
+    async def enqueue(
+        self,
+        user: UserData,
+        session: SessionState,
+        message: StoredMessage,
+        media_urls: list[tuple[str, str]],
+        channel: str = "",
+        request_id: str = "",
+        downloaded_media: list[DownloadedMedia] | None = None,
+        download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None,
+    ) -> None:
+        """Add a message to the batch for the user.
+
+        Resets the flush timer so that messages arriving within the window
+        are grouped together.
+        """
+        async with self._lock:
+            state = self._states.setdefault(user.id, _BatchState())
+            state.entries.append(
+                _BatchEntry(
+                    session=session,
+                    message=message,
+                    media_urls=media_urls,
+                    downloaded_media=downloaded_media or [],
                 )
-                return
-            await handle_inbound_message(
-                db=db,
-                contractor=contractor,
-                message=message,
-                media_urls=media_urls,
-                messaging_service=messaging_service,
             )
-        except Exception:
-            logger.exception(
-                "Agent pipeline failed for message %d (contractor %d)",
-                message_id,
-                contractor_id,
+            state.download_media = download_media
+            state.user = user
+            state.channel = channel
+            state.request_id = request_id
+            if state.timer is not None:
+                state.timer.cancel()
+            state.timer = asyncio.create_task(self._flush_after(user.id))
+
+    async def _flush_after(self, user_id: int) -> None:
+        """Wait for the batch window then flush."""
+        await asyncio.sleep(self._window_ms / 1000.0)
+        await self._flush(user_id)
+
+    async def _flush(self, user_id: int) -> None:
+        """Process the batched messages for the user.
+
+        Acquires the per-user lock, then runs the agent pipeline for
+        the most recent message.  Media from all batched messages is merged.
+        """
+        async with self._lock:
+            state = self._states.pop(user_id, None)
+        if state is None or not state.entries:
+            return
+        if state.user is None:
+            return
+
+        last_entry = state.entries[-1]
+        user = state.user
+
+        # Merge media from all batched messages so attachments are not lost.
+        all_media: list[tuple[str, str]] = []
+        all_downloaded: list[DownloadedMedia] = []
+        for entry in state.entries:
+            all_media.extend(entry.media_urls)
+            all_downloaded.extend(entry.downloaded_media)
+
+        if len(state.entries) > 1:
+            logger.info(
+                "Batched %d messages for user %d, processing message seq %d",
+                len(state.entries),
+                user_id,
+                last_entry.message.seq,
             )
-        finally:
-            db.close()
+
+        async with user_locks.acquire(user_id):
+            try:
+                # Reload user in case it was updated
+                store = get_user_store()
+                fresh = await store.get_by_id(user_id)
+                if fresh is not None:
+                    user = fresh
+                await handle_inbound_message(
+                    user=user,
+                    session=last_entry.session,
+                    message=last_entry.message,
+                    media_urls=all_media,
+                    downloaded_media=all_downloaded or None,
+                    channel=state.channel,
+                    request_id=state.request_id,
+                    download_media=state.download_media,
+                )
+            except Exception:
+                logger.exception(
+                    "Agent pipeline failed for message seq %d (user %d)",
+                    last_entry.message.seq,
+                    user_id,
+                )
+                await _send_error_fallback(state.channel, user, user_id)
 
 
-async def process_inbound_message(
-    db: Session,
-    inbound: InboundMessage,
-    messaging_service: MessagingService,
-) -> tuple[BackgroundTask, Contractor, Message]:
-    """Channel-agnostic inbound message processing.
+# Module-level singleton
+message_batcher = MessageBatcher(window_ms=settings.message_batch_window_ms)
 
-    1. Look up or create the contractor from ``inbound.sender_id``
-    2. Get or create an active conversation
-    3. Persist the inbound message record
-    4. Return a background task that runs the agent pipeline
 
-    Returns (background_task, contractor, message) so the caller can
-    include the task in its HTTP response.
+# ---------------------------------------------------------------------------
+# Bus consumer entry point
+# ---------------------------------------------------------------------------
+
+
+async def process_inbound_from_bus(
+    inbound: "InboundMessage",
+    download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None,
+) -> None:
+    """Process an inbound message consumed from the bus.
+
+    Handles user lookup/creation, session management, message
+    persistence, and dispatches to the agent pipeline (with optional
+    batching).
     """
-    contractor = _get_or_create_contractor(db, inbound.channel, inbound.sender_id)
-    conversation, _is_new = await get_or_create_conversation(db, contractor.id)
+    user = await _get_or_create_user(inbound.channel, inbound.sender_id)
 
-    message = Message(
-        conversation_id=conversation.id,
+    # -- Intercept approval responses before normal processing --
+    gate = get_approval_gate()
+    if gate.has_pending(user.id) and inbound.text:
+        decision = _parse_approval_response(inbound.text)
+        if decision is not None:
+            gate.resolve(user.id, decision)
+            # Persist the reply to the session so it appears in conversation history
+            session, _is_new = await get_or_create_conversation(
+                user.id, external_session_id=inbound.session_id
+            )
+            session_store = get_session_store(user.id)
+            await session_store.add_message(
+                session=session,
+                direction=MessageDirection.INBOUND,
+                body=inbound.text,
+                external_message_id=inbound.external_message_id or "",
+                media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
+                channel=inbound.channel,
+            )
+            return
+
+    session, _is_new = await get_or_create_conversation(
+        user.id, external_session_id=inbound.session_id
+    )
+
+    session_store = get_session_store(user.id)
+    message = await session_store.add_message(
+        session=session,
         direction=MessageDirection.INBOUND,
-        external_message_id=inbound.external_message_id or None,
         body=inbound.text,
+        external_message_id=inbound.external_message_id or "",
         media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
+        channel=inbound.channel,
     )
-    db.add(message)
-    db.commit()
-    db.refresh(message)
 
-    task = BackgroundTask(
-        _process_message_background,
-        contractor_id=contractor.id,
-        message_id=message.id,
-        media_urls=inbound.media_refs,
-        messaging_service=messaging_service,
-    )
-    return task, contractor, message
+    if settings.message_batch_window_ms > 0:
+        await message_batcher.enqueue(
+            user=user,
+            session=session,
+            message=message,
+            media_urls=inbound.media_refs,
+            channel=inbound.channel,
+            request_id=inbound.request_id,
+            downloaded_media=inbound.downloaded_media or None,
+            download_media=download_media,
+        )
+    else:
+        async with user_locks.acquire(user.id):
+            try:
+                store = get_user_store()
+                fresh = await store.get_by_id(user.id)
+                if fresh is not None:
+                    user = fresh
+                await handle_inbound_message(
+                    user=user,
+                    session=session,
+                    message=message,
+                    media_urls=inbound.media_refs,
+                    downloaded_media=inbound.downloaded_media,
+                    channel=inbound.channel,
+                    request_id=inbound.request_id,
+                    download_media=download_media,
+                )
+            except Exception:
+                logger.exception(
+                    "Agent pipeline failed for message seq %d (user %d)",
+                    message.seq,
+                    user.id,
+                )
+                await _send_error_fallback(inbound.channel, user, user.id)

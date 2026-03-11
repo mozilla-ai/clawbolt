@@ -1,63 +1,45 @@
 """LLM usage tracking helper.
 
-Extracts token counts from acompletion responses and persists them to the
-``llm_usage_logs`` table for cost monitoring per contractor.
+Extracts token counts from amessages responses and persists them to
+the per-user ``llm_usage.jsonl`` file for cost monitoring.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import Any
 
-from sqlalchemy.orm import Session
+from any_llm.types.messages import MessageResponse
 
-from backend.app.models import LLMUsageLog
+from backend.app.agent.file_store import LLMUsageStore
 
 logger = logging.getLogger(__name__)
 
 
 def log_llm_usage(
-    db: Session,
-    contractor_id: int,
+    user_id: int,
     model: str,
-    response: Any,
+    response: MessageResponse,
     purpose: str,
-) -> LLMUsageLog | None:
-    """Extract token usage from an LLM response and save to the database.
+) -> None:
+    """Extract token usage from an LLM response and save to the usage log.
 
-    Returns the created ``LLMUsageLog`` row, or ``None`` if the response
-    did not contain usage information.
+    Appends to the user's ``llm_usage.jsonl`` file.
     """
-    usage = getattr(response, "usage", None)
-    if usage is None:
-        logger.debug("No usage data in LLM response for purpose=%s", purpose)
-        return None
+    prompt_tokens = response.usage.input_tokens
+    completion_tokens = response.usage.output_tokens
+    total_tokens = prompt_tokens + completion_tokens
 
-    prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
-    completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-    total_tokens = getattr(usage, "total_tokens", 0) or (prompt_tokens + completion_tokens)
-
-    log_entry = LLMUsageLog(
-        contractor_id=contractor_id,
-        model=model,
-        prompt_tokens=prompt_tokens,
-        completion_tokens=completion_tokens,
-        total_tokens=total_tokens,
-        purpose=purpose,
-    )
     try:
-        db.add(log_entry)
-        db.flush()
+        store = LLMUsageStore(user_id)
+        store.log(model, prompt_tokens, completion_tokens, purpose)
     except Exception:
-        logger.exception("Failed to log LLM usage for contractor %d", contractor_id)
-        db.rollback()
-        return None
+        logger.exception("Failed to log LLM usage for user %d", user_id)
+        return
 
     logger.info(
-        "LLM usage logged: contractor=%d model=%s purpose=%s tokens=%d",
-        contractor_id,
+        "LLM usage logged: user=%d model=%s purpose=%s tokens=%d",
+        user_id,
         model,
         purpose,
         total_tokens,
     )
-    return log_entry

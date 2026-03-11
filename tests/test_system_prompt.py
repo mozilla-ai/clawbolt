@@ -1,19 +1,24 @@
 """Tests for the composable system prompt builder."""
 
+import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.app.agent.file_store import UserData
 from backend.app.agent.system_prompt import (
     SystemPromptBuilder,
     build_agent_system_prompt,
+    build_cross_session_context,
+    build_date_section,
     build_identity_section,
     build_instructions_section,
+    build_local_datetime_section,
     build_memory_section,
-    build_missing_fields_section,
     build_proactive_section,
     build_recall_section,
     build_tool_guidelines_section,
+    to_local_time,
 )
 
 
@@ -85,19 +90,11 @@ class TestSystemPromptBuilder:
 
 class TestSectionBuilders:
     def test_build_identity_section(self) -> None:
-        """Should include contractor name and trade."""
-        contractor = MagicMock()
-        contractor.name = "Mike"
-        contractor.trade = "plumbing"
-        contractor.location = "Portland"
-        contractor.hourly_rate = 85
-        contractor.business_hours = "7am-5pm"
-        contractor.soul_text = None
-        contractor.preferences_json = None
-        result = build_identity_section(contractor)
+        """Should include soul_text content."""
+        user = MagicMock()
+        user.soul_text = "I'm Bolt, the AI assistant for Mike."
+        result = build_identity_section(user)
         assert "Mike" in result
-        assert "plumbing" in result
-        assert "Portland" in result
 
     @pytest.mark.asyncio
     async def test_build_memory_section_with_content(self) -> None:
@@ -107,7 +104,7 @@ class TestSectionBuilders:
             new_callable=AsyncMock,
             return_value="client: John Doe, deck work",
         ):
-            result = await build_memory_section(MagicMock(), contractor_id=1)
+            result = await build_memory_section(user_id=1)
         assert "John Doe" in result
 
     @pytest.mark.asyncio
@@ -118,7 +115,7 @@ class TestSectionBuilders:
             new_callable=AsyncMock,
             return_value="",
         ):
-            result = await build_memory_section(MagicMock(), contractor_id=1)
+            result = await build_memory_section(user_id=1)
         assert result == "(No memories saved yet)"
 
     def test_build_instructions_section(self) -> None:
@@ -128,7 +125,7 @@ class TestSectionBuilders:
         assert "ONLY communicate via this chat" in result
 
     def test_build_instructions_section_no_trade_guidance(self) -> None:
-        """Instructions section should not contain trade-specific guidance."""
+        """Instructions section should not contain trade-specific guidance (removed from model)."""
         result = build_instructions_section()
         assert "Trade guidance" not in result
 
@@ -151,8 +148,8 @@ class TestSectionBuilders:
     def test_build_proactive_section(self) -> None:
         """Should contain proactive messaging rules."""
         result = build_proactive_section()
-        assert "draft estimate" in result
         assert "checklist" in result
+        assert "reminder" in result
 
     def test_build_recall_section(self) -> None:
         """Should contain recall behavior rules."""
@@ -160,37 +157,16 @@ class TestSectionBuilders:
         assert "Search your memory" in result
         assert "don't make things up" in result
 
-    def test_build_missing_fields_with_gaps(self) -> None:
-        """Should mention missing fields."""
-        contractor = MagicMock()
-        contractor.hourly_rate = None
-        contractor.business_hours = None
-        result = build_missing_fields_section(contractor)
-        assert "rates" in result
-        assert "business hours" in result
-
-    def test_build_missing_fields_none(self) -> None:
-        """Should return empty string when all fields present."""
-        contractor = MagicMock()
-        contractor.hourly_rate = 85
-        contractor.business_hours = "7am-5pm"
-        result = build_missing_fields_section(contractor)
-        assert result == ""
-
 
 class TestBuildAgentSystemPrompt:
     @pytest.mark.asyncio
     async def test_assembles_all_sections(self) -> None:
         """Full agent prompt should contain all key sections."""
-        contractor = MagicMock()
-        contractor.name = "Jake"
-        contractor.trade = "electrician"
-        contractor.location = "Seattle"
-        contractor.hourly_rate = 90
-        contractor.business_hours = "8am-6pm"
-        contractor.soul_text = None
-        contractor.preferences_json = None
-        contractor.id = 1
+        user = MagicMock()
+        user.soul_text = "I'm Bolt, the AI assistant for Jake."
+        user.user_text = ""
+        user.id = 1
+        user.timezone = ""
 
         tool = MagicMock()
         tool.usage_hint = "Use save_fact for memories"
@@ -201,15 +177,13 @@ class TestBuildAgentSystemPrompt:
             return_value="client: Jane, roof repair",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
-                contractor=contractor,
+                user=user,
                 tools=[tool],
                 message_context="how much for a roof repair?",
             )
 
-        assert "Clawbolt" in result
+        assert "AI assistant for solo tradespeople" in result
         assert "Jake" in result
-        assert "electrician" in result
         assert "Jane" in result
         assert "Tool Guidelines" in result
         assert "save_fact" in result
@@ -217,17 +191,13 @@ class TestBuildAgentSystemPrompt:
         assert "Recall Behavior" in result
 
     @pytest.mark.asyncio
-    async def test_trade_guidance_only_in_identity_section(self) -> None:
-        """Trade guidance should appear in the identity section, not instructions."""
-        contractor = MagicMock()
-        contractor.name = "Sparky"
-        contractor.trade = "electrician"
-        contractor.location = None
-        contractor.hourly_rate = None
-        contractor.business_hours = None
-        contractor.soul_text = None
-        contractor.preferences_json = None
-        contractor.id = 1
+    async def test_preamble_is_generic(self) -> None:
+        """Agent prompt preamble should be generic (no assistant_name)."""
+        user = MagicMock()
+        user.soul_text = "I'm Bolt."
+        user.user_text = ""
+        user.id = 1
+        user.timezone = ""
 
         with patch(
             "backend.app.agent.system_prompt.build_memory_context",
@@ -235,29 +205,21 @@ class TestBuildAgentSystemPrompt:
             return_value="",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
-                contractor=contractor,
+                user=user,
                 tools=[],
                 message_context="hello",
             )
 
-        # Trade guidance should appear in the About section (from build_soul_prompt)
-        assert "NEC codes" in result
-        # But not as a "Trade guidance" label in the instructions section
-        assert "Trade guidance" not in result
+        assert "You are an AI assistant for solo tradespeople" in result
 
     @pytest.mark.asyncio
-    async def test_no_trade_guidance_for_unknown_trade(self) -> None:
-        """Agent prompt should omit trade guidance for unrecognized trades."""
-        contractor = MagicMock()
-        contractor.name = "Bob"
-        contractor.trade = "chimney sweep"
-        contractor.location = None
-        contractor.hourly_rate = None
-        contractor.business_hours = None
-        contractor.soul_text = None
-        contractor.preferences_json = None
-        contractor.id = 1
+    async def test_no_trade_guidance_in_prompt(self) -> None:
+        """Agent prompt should not contain trade-specific guidance (removed from model)."""
+        user = MagicMock()
+        user.soul_text = ""
+        user.user_text = ""
+        user.id = 1
+        user.timezone = ""
 
         with patch(
             "backend.app.agent.system_prompt.build_memory_context",
@@ -265,26 +227,23 @@ class TestBuildAgentSystemPrompt:
             return_value="",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
-                contractor=contractor,
+                user=user,
                 tools=[],
                 message_context="hello",
             )
 
+        # Trade guidance removed from model; should not appear
         assert "Trade guidance" not in result
+        assert "NEC codes" not in result
 
     @pytest.mark.asyncio
-    async def test_curly_braces_in_contractor_name(self) -> None:
-        """Contractor name with curly braces should not break the prompt."""
-        contractor = MagicMock()
-        contractor.name = "Mike {The Plumber}"
-        contractor.trade = "plumbing"
-        contractor.location = None
-        contractor.hourly_rate = None
-        contractor.business_hours = None
-        contractor.soul_text = None
-        contractor.preferences_json = None
-        contractor.id = 1
+    async def test_curly_braces_in_soul_text(self) -> None:
+        """Soul text with curly braces should not break the prompt."""
+        user = MagicMock()
+        user.soul_text = "I'm the AI for Mike {The Plumber}."
+        user.user_text = ""
+        user.id = 1
+        user.timezone = ""
 
         with patch(
             "backend.app.agent.system_prompt.build_memory_context",
@@ -292,10 +251,218 @@ class TestBuildAgentSystemPrompt:
             return_value="",
         ):
             result = await build_agent_system_prompt(
-                db=MagicMock(),
-                contractor=contractor,
+                user=user,
                 tools=[],
                 message_context="hello",
             )
 
         assert "Mike {The Plumber}" in result
+
+
+class TestToLocalTime:
+    def test_converts_to_pacific(self) -> None:
+        utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        result = to_local_time(utc, "America/Los_Angeles")
+        # UTC 17:00 in June (PDT, UTC-7) -> 10:00 local
+        assert result.hour == 10
+
+    def test_empty_timezone_returns_utc(self) -> None:
+        utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        result = to_local_time(utc, "")
+        assert result.hour == 17
+
+    def test_invalid_timezone_returns_utc(self) -> None:
+        utc = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
+        result = to_local_time(utc, "Not/A_Real_Zone")
+        assert result.hour == 17
+
+
+class TestBuildDateSection:
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_includes_day_of_week_and_date(self, mock_dt: MagicMock) -> None:
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 16, 15, 30, tzinfo=datetime.UTC
+        )
+        user = MagicMock()
+        user.timezone = ""
+        result = build_date_section(user)
+        # 2025-06-16 is a Monday
+        assert result == "Monday, 2025-06-16"
+
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_converts_to_local_timezone(self, mock_dt: MagicMock) -> None:
+        mock_dt.UTC = datetime.UTC
+        # Saturday 3 AM UTC -> Friday 8 PM Pacific (PDT)
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 14, 3, 0, tzinfo=datetime.UTC
+        )
+        user = MagicMock()
+        user.timezone = "America/Los_Angeles"
+        result = build_date_section(user)
+        # Should show Friday (local), not Saturday (UTC)
+        assert result == "Friday, 2025-06-13"
+
+
+class TestBuildLocalDatetimeSection:
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_includes_time_and_timezone(self, mock_dt: MagicMock) -> None:
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 15, 17, 30, tzinfo=datetime.UTC
+        )
+        user = MagicMock()
+        user.timezone = "America/New_York"
+        result = build_local_datetime_section(user)
+        # UTC 17:30 -> 1:30 PM EDT
+        assert "01:30 PM" in result
+        assert "Sunday" in result
+        assert "2025-06-15" in result
+
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_utc_fallback_when_no_timezone(self, mock_dt: MagicMock) -> None:
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 15, 17, 30, tzinfo=datetime.UTC
+        )
+        user = MagicMock()
+        user.timezone = ""
+        result = build_local_datetime_section(user)
+        assert "05:30 PM" in result
+        assert "Sunday" in result
+
+
+class TestAgentSystemPromptIncludesDate:
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.system_prompt.datetime")
+    async def test_agent_prompt_has_current_date(self, mock_dt: MagicMock) -> None:
+        """Main agent prompt should include a Current date section."""
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 16, 15, 0, tzinfo=datetime.UTC
+        )
+        user = MagicMock()
+        user.soul_text = ""
+        user.user_text = ""
+        user.timezone = "America/Los_Angeles"
+        user.id = 1
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                user=user,
+                tools=[],
+                message_context="hello",
+            )
+
+        assert "## Current date" in result
+        assert "Monday" in result
+        assert "2025-06-16" in result
+
+
+class TestCrossSessionContext:
+    def test_returns_empty_when_no_other_sessions(
+        self,
+        test_user: "UserData",
+    ) -> None:
+        """Should return empty string when no other sessions exist."""
+        result = build_cross_session_context(test_user.id, current_session_id="nonexistent_999")
+        assert result == ""
+
+    @pytest.mark.asyncio()
+    async def test_includes_messages_from_other_session(
+        self,
+        test_user: "UserData",
+    ) -> None:
+        """Should include messages from sessions other than the current one."""
+        from backend.app.agent.file_store import get_session_store
+
+        store = get_session_store(test_user.id)
+
+        # Create session A with messages
+        session_a, _ = await store.get_or_create_session()
+        await store.add_message(session_a, "inbound", "Hello from Telegram")
+        await store.add_message(session_a, "outbound", "Hi! How can I help?")
+
+        result = build_cross_session_context(
+            test_user.id, current_session_id="different_session_999"
+        )
+        assert "Hello from Telegram" in result
+        assert "Hi! How can I help?" in result
+        assert "[User]" in result
+        assert "[You]" in result
+
+    @pytest.mark.asyncio()
+    async def test_excludes_current_session(
+        self,
+        test_user: "UserData",
+    ) -> None:
+        """Should not include messages from the current session."""
+        from backend.app.agent.file_store import get_session_store
+
+        store = get_session_store(test_user.id)
+
+        session_a, _ = await store.get_or_create_session()
+        await store.add_message(session_a, "inbound", "Message in session A")
+
+        # When querying with session A's own ID, nothing should appear
+        result = build_cross_session_context(test_user.id, current_session_id=session_a.session_id)
+        assert result == ""
+
+    @pytest.mark.asyncio()
+    async def test_truncates_long_messages(
+        self,
+        test_user: "UserData",
+    ) -> None:
+        """Long message bodies should be truncated."""
+        from backend.app.agent.file_store import get_session_store
+
+        store = get_session_store(test_user.id)
+        session_a, _ = await store.get_or_create_session()
+        long_body = "x" * 300
+        await store.add_message(session_a, "inbound", long_body)
+
+        result = build_cross_session_context(test_user.id, current_session_id="other_999")
+        assert "..." in result
+        # Should be truncated to ~200 chars + "..."
+        assert "x" * 201 not in result
+
+    @pytest.mark.asyncio()
+    async def test_agent_prompt_includes_cross_session_context(
+        self,
+        test_user: "UserData",
+    ) -> None:
+        """Agent system prompt should include cross-session context when available."""
+        from backend.app.agent.file_store import get_session_store
+
+        store = get_session_store(test_user.id)
+
+        # Create a session with messages (simulates a Telegram conversation)
+        session_a, _ = await store.get_or_create_session()
+        await store.add_message(session_a, "inbound", "Draft estimate for deck")
+        await store.add_message(session_a, "outbound", "Sure, what size deck?")
+
+        user = MagicMock()
+        user.soul_text = ""
+        user.user_text = ""
+        user.id = test_user.id
+        user.timezone = ""
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                user=user,
+                tools=[],
+                message_context="hello",
+                current_session_id="webchat_session_999",
+            )
+
+        assert "## Recent Activity (other channel)" in result
+        assert "Draft estimate for deck" in result
+        assert "Sure, what size deck?" in result

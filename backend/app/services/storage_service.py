@@ -13,8 +13,8 @@ import dropbox
 import dropbox.exceptions
 import dropbox.files
 
+from backend.app.agent.file_store import UserData
 from backend.app.config import Settings, settings
-from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
 
@@ -26,9 +26,9 @@ class StorageBackend(ABC):
     Drive, local filesystem, etc.).  The interface is intentionally minimal so
     that adding new backends is straightforward.
 
-    Per-contractor isolation: when a contractor_id is provided, each backend
-    isolates files into a per-contractor subdirectory (local) or path prefix
-    (cloud).  A future Phase 2 will add shared cloud folders per contractor.
+    Per-user isolation: when a user_id is provided, each backend
+    isolates files into a per-user subdirectory (local) or path prefix
+    (cloud).  A future Phase 2 will add shared cloud folders per user.
     """
 
     @abstractmethod
@@ -51,12 +51,12 @@ class StorageBackend(ABC):
 
 
 class DropboxStorage(StorageBackend):
-    def __init__(self, access_token: str, contractor_id: int | None = None) -> None:
+    def __init__(self, access_token: str, user_id: int | None = None) -> None:
         self.dbx = dropbox.Dropbox(access_token)
-        self._path_prefix = f"/{contractor_id}" if contractor_id is not None else ""
+        self._path_prefix = f"/{user_id}" if user_id is not None else ""
 
     def _prefixed(self, path: str) -> str:
-        """Prepend the per-contractor prefix to a Dropbox path."""
+        """Prepend the per-user prefix to a Dropbox path."""
         return f"{self._path_prefix}{path}" if self._path_prefix else path
 
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
@@ -116,14 +116,14 @@ class DropboxStorage(StorageBackend):
 
 class GoogleDriveStorage(StorageBackend):
     # TODO(Phase 2): Google Drive uses folder IDs, not path strings, so the
-    # _path_prefix approach does not provide real per-contractor isolation.
-    # Proper isolation requires creating a per-contractor root folder on first
+    # _path_prefix approach does not provide real per-user isolation.
+    # Proper isolation requires creating a per-user root folder on first
     # use and passing its folder ID as the parent for all operations.
 
-    def __init__(self, credentials_json: str, contractor_id: int | None = None) -> None:
+    def __init__(self, credentials_json: str, user_id: int | None = None) -> None:
         self.credentials_json = credentials_json
         self._service: Any = None
-        self._path_prefix = f"{contractor_id}/" if contractor_id is not None else ""
+        self._path_prefix = f"{user_id}/" if user_id is not None else ""
 
     def _get_service(self) -> Any:
         if self._service is None:
@@ -135,8 +135,8 @@ class GoogleDriveStorage(StorageBackend):
         return self._service
 
     async def upload_file(self, file_bytes: bytes, path: str, filename: str) -> str:
-        # TODO(Phase 2): Does not apply contractor isolation. Drive needs a
-        # per-contractor root folder ID as the parent. See class-level TODO.
+        # TODO(Phase 2): Does not apply user isolation. Drive needs a
+        # per-user root folder ID as the parent. See class-level TODO.
         from googleapiclient.http import MediaIoBaseUpload
 
         logger.info("Uploading to Google Drive: %s/%s (%d bytes)", path, filename, len(file_bytes))
@@ -154,9 +154,9 @@ class GoogleDriveStorage(StorageBackend):
 
     async def create_folder(self, path: str) -> str:
         # TODO(Phase 2): The prefix logic here does not actually isolate folder
-        # names. For path="/Job Photos" with contractor_id=42, prefixed becomes
+        # names. For path="/Job Photos" with user_id=42, prefixed becomes
         # "42/Job Photos" and split("/")[-1] still yields "Job Photos"
-        # (unchanged). Real isolation needs a per-contractor root folder ID as
+        # (unchanged). Real isolation needs a per-user root folder ID as
         # the parent. See class-level TODO.
         service = self._get_service()
         prefixed = f"{self._path_prefix}{path}" if self._path_prefix else path
@@ -198,7 +198,7 @@ class GoogleDriveStorage(StorageBackend):
         return update_result.get("webViewLink", update_result.get("id", ""))
 
     async def list_folder(self, path: str) -> list[dict[str, str]]:
-        # TODO(Phase 2): Does not apply contractor isolation. Drive queries
+        # TODO(Phase 2): Does not apply user isolation. Drive queries
         # folders by ID, not path. See class-level TODO.
         service = self._get_service()
         query = f"'{path}' in parents and trashed=false"
@@ -217,11 +217,11 @@ class LocalFileStorage(StorageBackend):
     def __init__(
         self,
         base_dir: str = settings.file_storage_base_dir,
-        contractor_id: int | None = None,
+        user_id: int | None = None,
     ) -> None:
         base = Path(base_dir).resolve()
-        if contractor_id is not None:
-            base = base / str(contractor_id)
+        if user_id is not None:
+            base = base / str(user_id)
         self.base_dir = base
         self.base_dir.mkdir(parents=True, exist_ok=True)
 
@@ -270,23 +270,23 @@ class LocalFileStorage(StorageBackend):
 
 def get_storage_service(
     svc_settings: Settings | None = None,
-    contractor: Contractor | None = None,
+    user: UserData | None = None,
 ) -> StorageBackend:
     """Factory: return the configured storage backend.
 
     Args:
         svc_settings: Override the global settings (useful in tests).
-        contractor: When provided, files are isolated into a per-contractor
+        user: When provided, files are isolated into a per-user
             subdirectory (local) or path prefix (cloud).
     """
     s = svc_settings or settings
-    cid = contractor.id if contractor is not None else None
+    cid = user.id if user is not None else None
     if s.storage_provider == "local":
-        return LocalFileStorage(base_dir=s.file_storage_base_dir, contractor_id=cid)
+        return LocalFileStorage(base_dir=s.file_storage_base_dir, user_id=cid)
     elif s.storage_provider == "dropbox":
-        return DropboxStorage(s.dropbox_access_token, contractor_id=cid)
+        return DropboxStorage(s.dropbox_access_token, user_id=cid)
     elif s.storage_provider == "google_drive":
-        return GoogleDriveStorage(s.google_drive_credentials_json, contractor_id=cid)
+        return GoogleDriveStorage(s.google_drive_credentials_json, user_id=cid)
     else:
         msg = f"Unknown storage provider: {s.storage_provider}"
         raise ValueError(msg)

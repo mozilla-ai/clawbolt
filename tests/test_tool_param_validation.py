@@ -5,9 +5,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
 from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.file_store import UserData
+from backend.app.agent.tool_errors import summarize_tool_params
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
 from backend.app.agent.tools.checklist_tools import (
     AddChecklistItemParams,
@@ -25,8 +26,7 @@ from backend.app.agent.tools.memory_tools import (
     SaveFactParams,
 )
 from backend.app.agent.tools.messaging_tools import SendMediaReplyParams, SendReplyParams
-from backend.app.agent.tools.profile_tools import UpdateProfileParams
-from backend.app.models import Contractor
+from backend.app.agent.tools.workspace_tools import DeleteFileParams
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -54,7 +54,7 @@ def test_tool_to_function_schema_uses_params_model() -> None:
         params_model=SampleParams,
     )
     schema = tool_to_function_schema(tool)
-    params = schema["function"]["parameters"]
+    params = schema["input_schema"]
 
     # Should have properties from the Pydantic model
     assert "name" in params["properties"]
@@ -64,23 +64,6 @@ def test_tool_to_function_schema_uses_params_model() -> None:
     # Required fields: only 'name' (count has a default)
     assert "name" in params["required"]
     assert "count" not in params.get("required", [])
-
-
-def test_tool_to_function_schema_falls_back_to_raw_dict() -> None:
-    """When no params_model is set, raw parameters dict should be used."""
-
-    async def dummy(**kwargs: object) -> ToolResult:
-        return ToolResult(content="ok")
-
-    raw_params = {"type": "object", "properties": {"x": {"type": "string"}}}
-    tool = Tool(
-        name="sample",
-        description="A sample tool",
-        function=dummy,
-        parameters=raw_params,
-    )
-    schema = tool_to_function_schema(tool)
-    assert schema["function"]["parameters"] is raw_params
 
 
 # ---------------------------------------------------------------------------
@@ -113,9 +96,9 @@ def test_checklist_tool_param_models_exist() -> None:
     assert issubclass(RemoveChecklistItemParams, BaseModel)
 
 
-def test_profile_tool_param_models_exist() -> None:
-    """Profile tool param models should be importable and valid BaseModels."""
-    assert issubclass(UpdateProfileParams, BaseModel)
+def test_delete_file_param_model_exists() -> None:
+    """DeleteFileParams should be importable and a valid BaseModel."""
+    assert issubclass(DeleteFileParams, BaseModel)
 
 
 def test_file_tool_param_models_exist() -> None:
@@ -196,11 +179,10 @@ def test_add_checklist_item_rejects_invalid_schedule() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_failure_returns_error_result(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """When params_model validation fails, agent should return a structured error."""
     # LLM sends wrong type for 'key' (int instead of string) to save_fact
@@ -214,7 +196,7 @@ async def test_agent_validation_failure_returns_error_result(
         ]
     )
     followup_response = make_text_response("Let me fix that.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -228,7 +210,7 @@ async def test_agent_validation_failure_returns_error_result(
         params_model=TypedParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -237,17 +219,16 @@ async def test_agent_validation_failure_returns_error_result(
 
     # The error should be recorded
     assert any("Failed: typed_tool (validation)" in a for a in response.actions_taken)
-    assert response.tool_calls[0]["is_error"] is True
-    assert "Validation error" in response.tool_calls[0]["result"]
-    assert "name" in response.tool_calls[0]["result"]
+    assert response.tool_calls[0].is_error is True
+    assert "Validation error" in response.tool_calls[0].result
+    assert "name" in response.tool_calls[0].result
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_success_calls_tool(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """When params_model validation passes, agent should call the tool normally."""
     tool_response = make_tool_call_response(
@@ -260,7 +241,7 @@ async def test_agent_validation_success_calls_tool(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -274,7 +255,7 @@ async def test_agent_validation_success_calls_tool(
         params_model=TypedParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -284,11 +265,10 @@ async def test_agent_validation_success_calls_tool(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_coerces_types(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """Pydantic validation should coerce compatible types (e.g., str '42' to int)."""
     tool_response = make_tool_call_response(
@@ -301,7 +281,7 @@ async def test_agent_validation_coerces_types(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A required name")
@@ -315,7 +295,7 @@ async def test_agent_validation_coerces_types(
         params_model=TypedParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     await agent.process_message("test", system_prompt_override="system")
 
@@ -324,11 +304,10 @@ async def test_agent_validation_coerces_types(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_validation_wrong_type_returns_field_error(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """Validation error message should include the specific field that failed."""
     tool_response = make_tool_call_response(
@@ -341,7 +320,7 @@ async def test_agent_validation_wrong_type_returns_field_error(
         ]
     )
     followup_response = make_text_response("Let me fix that.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
     class TypedParams(BaseModel):
         name: str = Field(description="A name")
@@ -355,69 +334,20 @@ async def test_agent_validation_wrong_type_returns_field_error(
         params_model=TypedParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
     mock_func.assert_not_called()
-    error_result = response.tool_calls[0]["result"]
+    error_result = response.tool_calls[0].result
     assert "value" in error_result
     assert "Validation error for typed_tool" in error_result
 
 
-# ---------------------------------------------------------------------------
-# Registry enforcement: tools without params_model are rejected
-# ---------------------------------------------------------------------------
-
-
-def test_registry_rejects_tool_without_params_model() -> None:
-    """Registry should raise ValueError for tools without params_model."""
-    from unittest.mock import MagicMock
-
-    from backend.app.agent.tools.registry import ToolContext, ToolRegistry
-
-    async def dummy(**kwargs: object) -> ToolResult:
-        return ToolResult(content="ok")
-
-    def bad_factory(ctx: ToolContext) -> list[Tool]:
-        return [
-            Tool(
-                name="legacy_tool",
-                description="No params_model",
-                function=dummy,
-                parameters={"type": "object", "properties": {}},
-            )
-        ]
-
-    registry = ToolRegistry()
-    registry.register("bad", bad_factory)
-
-    ctx = ToolContext(db=MagicMock(), contractor=MagicMock())
-    with pytest.raises(ValueError, match="missing a params_model"):
-        registry.create_tools(ctx)
-
-
-def test_update_profile_params_accepts_partial_update() -> None:
-    """UpdateProfileParams should accept partial updates with all fields optional."""
-    p = UpdateProfileParams(name="Jane Doe")
-    assert p.name == "Jane Doe"
-    assert p.trade is None
-    assert p.location is None
-
-
-def test_update_profile_params_accepts_all_fields() -> None:
-    """UpdateProfileParams should accept all fields together."""
-    p = UpdateProfileParams(
-        name="Jane Doe",
-        trade="electrician",
-        location="Portland, OR",
-        hourly_rate="$85/hr",
-        business_hours="Mon-Fri 7am-5pm",
-        communication_style="casual",
-        soul_text="Friendly and efficient",
-    )
-    assert p.name == "Jane Doe"
-    assert p.hourly_rate == "$85/hr"
+def test_delete_file_params_accepts_valid_path() -> None:
+    """DeleteFileParams should accept a valid path."""
+    p = DeleteFileParams(path="BOOTSTRAP.md")
+    assert p.path == "BOOTSTRAP.md"
 
 
 # ---------------------------------------------------------------------------
@@ -426,11 +356,10 @@ def test_update_profile_params_accepts_all_fields() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_batch_validation_reports_all_errors_at_once(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """When multiple tool calls have invalid args, ALL errors should be returned in one round.
 
@@ -467,9 +396,9 @@ async def test_batch_validation_reports_all_errors_at_once(
         ]
     )
     followup_response = make_text_response("I see both errors. Let me fix them.")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -481,18 +410,17 @@ async def test_batch_validation_reports_all_errors_at_once(
     assert len(validation_failures) == 2
 
     # Both errors should appear in tool_calls records
-    error_records = [tc for tc in response.tool_calls if tc["is_error"]]
+    error_records = [tc for tc in response.tool_calls if tc.is_error]
     assert len(error_records) == 2
-    assert error_records[0]["tool_call_id"] == "call_a"
-    assert error_records[1]["tool_call_id"] == "call_b"
+    assert error_records[0].tool_call_id == "call_a"
+    assert error_records[1].tool_call_id == "call_b"
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_batch_validation_executes_valid_calls_alongside_invalid(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """Valid tool calls should still execute even when other calls in the same batch fail."""
 
@@ -529,9 +457,9 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
         ]
     )
     followup_response = make_text_response("Done!")
-    mock_acompletion.side_effect = [tool_response, followup_response]
+    mock_amessages.side_effect = [tool_response, followup_response]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -544,7 +472,90 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
 
     # Verify tool_call_records: 2 errors + 1 success = 3 records
     assert len(response.tool_calls) == 3
-    error_ids = {tc["tool_call_id"] for tc in response.tool_calls if tc["is_error"]}
-    success_ids = {tc["tool_call_id"] for tc in response.tool_calls if not tc["is_error"]}
+    error_ids = {tc.tool_call_id for tc in response.tool_calls if tc.is_error}
+    success_ids = {tc.tool_call_id for tc in response.tool_calls if not tc.is_error}
     assert error_ids == {"call_bad1", "call_bad2"}
     assert success_ids == {"call_good"}
+
+
+# ---------------------------------------------------------------------------
+# Validation error summary tests: nested types in error messages (#434)
+# ---------------------------------------------------------------------------
+
+
+def _make_tool(name: str, params_model: type[BaseModel]) -> Tool:
+    """Helper to build a Tool with a dummy function for summary tests."""
+
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    return Tool(name=name, description="test", function=dummy, params_model=params_model)
+
+
+def test_summarize_tool_params_includes_array_item_structure() -> None:
+    """Validation error summary should describe array item fields, not just 'array'.
+
+    Regression test for #434: when the LLM omits line_items, the error
+    message must show the expected item structure so it can self-correct.
+    """
+    tool = _make_tool("generate_estimate", GenerateEstimateParams)
+    summary = summarize_tool_params(tool)
+
+    # Should show nested item fields, not bare 'array'
+    assert "array of {" in summary
+    assert '"description": string' in summary
+    assert '"quantity": number' in summary
+    assert '"unit_price": number' in summary
+
+
+def test_summarize_tool_params_resolves_anyof_types() -> None:
+    """Optional union fields (str | None) should show the concrete type, not 'any'."""
+    tool = _make_tool("generate_estimate", GenerateEstimateParams)
+    summary = summarize_tool_params(tool)
+
+    assert '"client_name": string (optional)' in summary
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_validation_error_for_missing_line_items_shows_item_structure(
+    mock_amessages: AsyncMock,
+    test_user: UserData,
+) -> None:
+    """When line_items is missing, the error sent to the LLM should describe the item schema.
+
+    Regression test for #434: the LLM needs to know what each line item
+    looks like in order to construct a valid retry.
+    """
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_est",
+                "name": "estimate_tool",
+                "arguments": json.dumps({"description": "Deck repair"}),
+            }
+        ]
+    )
+    followup_response = make_text_response("Let me add line items.")
+    mock_amessages.side_effect = [tool_response, followup_response]
+
+    mock_func = AsyncMock(return_value=ToolResult(content="ok"))
+    tool = Tool(
+        name="estimate_tool",
+        description="Generate an estimate",
+        function=mock_func,
+        params_model=GenerateEstimateParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("test", system_prompt_override="system")
+
+    mock_func.assert_not_called()
+    error_result = response.tool_calls[0].result
+
+    # Error should mention the missing field
+    assert "line_items" in error_result
+    # Error should include the item structure so the LLM can self-correct
+    assert "unit_price" in error_result
+    assert "array of {" in error_result

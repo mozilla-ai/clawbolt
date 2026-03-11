@@ -7,23 +7,25 @@ pip install uv
 uv sync
 cp .env.example .env
 # Edit .env with your credentials
-uv run alembic upgrade head
 uv run uvicorn backend.app.main:app --reload
 ```
 
-You'll need a PostgreSQL instance running locally, or set `DATABASE_URL` accordingly.
+No database is required. All data is stored as files (JSON, JSONL, Markdown) under
+`data/users/` by default. Set the `DATA_DIR` environment variable to change the
+storage location.
 
 ## Running Tests
 
 ```bash
 uv sync --all-extras
-DATABASE_URL=sqlite:// uv run pytest -v
+uv run pytest -v
 uv run ruff check backend/ tests/
 uv run ruff format --check backend/ tests/
 uv run ty check --python .venv backend/ tests/
 ```
 
-Tests use in-memory SQLite, so no database setup is needed.
+Tests use temporary directories for file-based storage, so no external services
+are needed.
 
 ## More
 

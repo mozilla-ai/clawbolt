@@ -1,19 +1,17 @@
 """Shared LLM response parsing utilities.
 
-Centralizes tool call extraction from ``ChatCompletion`` responses so that
-both the main agent loop and the heartbeat engine share the same parsing,
-JSON repair, and validation logic.
+Centralizes tool call extraction from ``MessageResponse`` responses so that
+both the main agent loop and the heartbeat engine share the same parsing
+and validation logic.
 """
 
 from __future__ import annotations
 
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any
 
-import json_repair
-from any_llm.types.completion import ChatCompletion
+from any_llm.types.messages import MessageResponse
 
 logger = logging.getLogger(__name__)
 
@@ -22,8 +20,8 @@ logger = logging.getLogger(__name__)
 class ParsedToolCall:
     """A single tool call extracted from an LLM response.
 
-    ``arguments`` is ``None`` when the raw arguments could not be parsed
-    into a dict (malformed JSON, non-dict result, etc.).
+    ``arguments`` is ``None`` when the input could not be validated
+    as a dict (unexpected type, etc.).
     """
 
     id: str
@@ -31,69 +29,50 @@ class ParsedToolCall:
     arguments: dict[str, Any] | None
 
 
-def parse_tool_calls(response: ChatCompletion) -> list[ParsedToolCall]:
-    """Extract tool calls from a ``ChatCompletion`` response.
+def parse_tool_calls(response: MessageResponse) -> list[ParsedToolCall]:
+    """Extract tool calls from a ``MessageResponse``.
 
-    Returns an empty list when the LLM returned plain text (no tool calls).
-    Each element has its ``arguments`` parsed via ``json_repair`` and
-    validated as a ``dict``.  When parsing fails, ``arguments`` is ``None``
-    so callers can decide how to handle the error.
+    Returns an empty list when the LLM returned plain text (no tool use
+    blocks).  Each ``tool_use`` content block is converted to a
+    ``ParsedToolCall`` with its ``input`` dict as ``arguments``.
     """
-    choice = response.choices[0]
-    raw_tool_calls = getattr(choice.message, "tool_calls", None)
-
-    if not raw_tool_calls:
-        return []
-
     result: list[ParsedToolCall] = []
-    for raw_tc in raw_tool_calls:
-        func = getattr(raw_tc, "function", None)
-        if func is None:
+    for block in response.content:
+        if block.type != "tool_use":
             continue
 
-        arguments = _parse_arguments(func.arguments)
+        block_id = block.id or ""
+        block_name = block.name or ""
+        arguments = block.input
 
         result.append(
             ParsedToolCall(
-                id=raw_tc.id,
-                name=func.name,
+                id=block_id,
+                name=block_name,
                 arguments=arguments,
             )
         )
 
+    if result:
+        logger.debug(
+            "Parsed %d tool call(s) from LLM response: %s",
+            len(result),
+            ", ".join(
+                f"{tc.name}({', '.join(tc.arguments.keys()) if tc.arguments else ''})"
+                for tc in result
+            ),
+        )
     return result
 
 
-def get_response_text(response: ChatCompletion) -> str:
-    """Extract the text content from a ``ChatCompletion`` response.
+def get_response_text(response: MessageResponse) -> str:
+    """Extract the text content from a ``MessageResponse``.
 
-    Returns an empty string when there is no content.
+    Concatenates all ``text`` content blocks.  Returns an empty string
+    when there is no text content.
     """
-    return response.choices[0].message.content or ""
-
-
-def _parse_arguments(raw_arguments: str | None) -> dict[str, Any] | None:
-    """Parse raw JSON arguments string into a dict.
-
-    Returns ``None`` when the input is missing, empty, or cannot be parsed
-    into a dict.  Logs a warning when ``json_repair`` has to fix malformed
-    JSON so we can track LLM output quality.
-    """
-    if not raw_arguments:
-        return None
-
-    try:
-        parsed = json_repair.loads(raw_arguments)
-        if not isinstance(parsed, dict):
-            return None
-        # Detect whether json_repair had to fix the JSON
-        try:
-            json.loads(raw_arguments)
-        except (json.JSONDecodeError, ValueError):
-            logger.warning(
-                "json_repair modified malformed tool arguments: %s",
-                raw_arguments[:200],
-            )
-        return parsed
-    except (ValueError, TypeError):
-        return None
+    parts: list[str] = []
+    for block in response.content:
+        if block.type == "text" and block.text:
+            parts.append(block.text)
+    return "".join(parts)

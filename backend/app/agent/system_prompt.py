@@ -9,16 +9,13 @@ from __future__ import annotations
 
 import datetime
 import logging
+import zoneinfo
 
-from sqlalchemy.orm import Session
-
+from backend.app.agent.file_store import UserData, get_session_store
 from backend.app.agent.memory import build_memory_context
-from backend.app.agent.profile import (
-    build_soul_prompt,
-    get_missing_optional_fields,
-)
+from backend.app.agent.profile import build_soul_prompt
+from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.base import Tool
-from backend.app.models import Contractor
 
 logger = logging.getLogger(__name__)
 
@@ -67,20 +64,23 @@ class SystemPromptBuilder:
 # -----------------------------------------------------------------------
 
 
-def build_identity_section(contractor: Contractor) -> str:
+def build_identity_section(user: UserData) -> str:
     """Build the 'About <name>' section content."""
-    return build_soul_prompt(contractor)
+    return build_soul_prompt(user)
+
+
+def build_user_section(user: UserData) -> str:
+    """Build the user profile section from USER.md content."""
+    return user.user_text or ""
 
 
 async def build_memory_section(
-    db: Session,
-    contractor_id: int,
+    user_id: int,
     query: str | None = None,
 ) -> str:
     """Build the memory context section content."""
     ctx = await build_memory_context(
-        db,
-        contractor_id,
+        user_id,
         query=query[:CONTEXT_QUERY_MAX_LENGTH] if query else None,
     )
     return ctx or "(No memories saved yet)"
@@ -92,13 +92,7 @@ def build_instructions_section() -> str:
     Trade-specific guidance is handled by the soul prompt (identity section),
     so this section only contains universal behavioral rules.
     """
-    return (
-        "- Be concise and practical. Contractors are busy.\n"
-        "- You can ONLY communicate via this chat. You cannot send emails, "
-        "make phone calls, or contact clients directly.\n"
-        "- Always be helpful, friendly, and professional.\n"
-        "- Keep replies concise. Contractors are on the job site."
-    )
+    return load_prompt("instructions")
 
 
 def build_tool_guidelines_section(tools: list[Tool]) -> str:
@@ -111,38 +105,71 @@ def build_tool_guidelines_section(tools: list[Tool]) -> str:
 
 def build_proactive_section() -> str:
     """Build the proactive messaging rules section content."""
-    return (
-        "You will proactively reach out during business hours when something needs attention:\n"
-        "- A draft estimate has been sitting unsent for over 24 hours\n"
-        "- A scheduled checklist item is due\n"
-        "- A follow-up reminder or deadline is approaching\n"
-        "- You haven't heard from the contractor in a few days"
-    )
+    return load_prompt("proactive")
 
 
 def build_recall_section() -> str:
     """Build the recall behavior section content."""
-    return (
-        "When the contractor asks a question about their business, clients, or past work:\n"
-        "1. Search your memory for relevant information.\n"
-        "2. If you find relevant facts, use them to answer clearly and concisely.\n"
-        "3. If you don't find anything, say so honestly -- don't make things up.\n"
-        "4. If the question is about general knowledge (not their specific business), "
-        "answer from your training.\n"
-        '5. For "what do you know about me?" questions, summarize key facts by category.'
-    )
+    return load_prompt("recall")
 
 
-def build_missing_fields_section(contractor: Contractor) -> str:
-    """Build a note about missing optional profile fields, if any."""
-    missing = get_missing_optional_fields(contractor)
-    if not missing:
+def to_local_time(
+    now: datetime.datetime,
+    tz_name: str,
+) -> datetime.datetime:
+    """Convert *now* to the given IANA timezone, returning *now* unchanged on error."""
+    if not tz_name:
+        return now
+    try:
+        return now.astimezone(zoneinfo.ZoneInfo(tz_name))
+    except (zoneinfo.ZoneInfoNotFoundError, KeyError, ValueError):
+        logger.warning("Invalid timezone %r, falling back to UTC", tz_name)
+        return now
+
+
+def build_date_section(user: UserData) -> str:
+    """Build a cache-friendly date string in the user's local timezone.
+
+    Uses date-only granularity (no minutes) to avoid prompt-cache busting.
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    local = to_local_time(now, user.timezone)
+    return local.strftime("%A, %Y-%m-%d")
+
+
+def build_local_datetime_section(user: UserData) -> str:
+    """Build a human-readable local datetime for the heartbeat evaluator."""
+    now = datetime.datetime.now(datetime.UTC)
+    local = to_local_time(now, user.timezone)
+    return local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
+
+
+def build_cross_session_context(
+    user_id: int,
+    current_session_id: str,
+    count: int | None = None,
+) -> str:
+    """Build a summary of recent messages from other sessions.
+
+    Gives the agent awareness of recent conversations that happened on
+    a different channel (e.g. Telegram vs webchat) so it can maintain
+    continuity when the user switches channels.
+    """
+    store = get_session_store(user_id)
+    messages = store.get_other_session_messages(current_session_id, count=count)
+    if not messages:
         return ""
-    missing_str = " and ".join(missing)
+    lines: list[str] = []
+    for msg in messages:
+        label = "You" if msg.direction == "outbound" else "User"
+        body = msg.body[:200].rstrip()
+        if len(msg.body) > 200:
+            body += "..."
+        lines.append(f"- [{label}] {body}")
     return (
-        f"Note: You haven't learned this contractor's {missing_str} yet. "
-        "If the opportunity comes up naturally in conversation, "
-        "try to learn and save these details."
+        "These are your most recent messages from a different conversation session.\n"
+        "Use this context for continuity but do not explicitly mention "
+        '"another session" unless the user asks.\n\n' + "\n".join(lines)
     )
 
 
@@ -152,21 +179,23 @@ def build_missing_fields_section(contractor: Contractor) -> str:
 
 
 async def build_agent_system_prompt(
-    db: Session,
-    contractor: Contractor,
+    user: UserData,
     tools: list[Tool],
     message_context: str,
+    current_session_id: str = "",
 ) -> str:
     """Assemble the full system prompt for the main agent loop."""
     builder = SystemPromptBuilder()
-    builder.set_preamble("You are Clawbolt, an AI assistant for solo contractors.")
+    builder.set_preamble("You are an AI assistant for solo tradespeople.")
 
     builder.add_section(
-        f"About {contractor.name or 'Contractor'}",
-        build_identity_section(contractor),
+        "About You",
+        build_identity_section(user),
     )
 
-    memory = await build_memory_section(db, contractor.id, query=message_context)
+    builder.add_section("About Your User", build_user_section(user))
+
+    memory = await build_memory_section(user.id, query=message_context)
     builder.add_section("Your Memory", memory)
 
     tool_guidelines = build_tool_guidelines_section(tools)
@@ -178,59 +207,52 @@ async def build_agent_system_prompt(
         instructions = build_instructions_section()
     builder.add_section("Instructions", instructions)
 
+    builder.add_section("Current date", build_date_section(user))
+
     builder.add_section("Proactive Messaging", build_proactive_section())
     builder.add_section("Recall Behavior", build_recall_section())
 
-    missing = build_missing_fields_section(contractor)
-    if missing:
-        builder.add_section("Profile Gaps", missing)
+    if current_session_id:
+        cross = build_cross_session_context(user.id, current_session_id)
+        if cross:
+            builder.add_section("Recent Activity (other channel)", cross)
 
     return builder.build()
 
 
 async def build_heartbeat_system_prompt(
-    db: Session,
-    contractor: Contractor,
-    flags: list[str],
+    user: UserData,
     recent_messages: str,
+    checklist_md: str = "",
 ) -> str:
-    """Assemble the system prompt for the heartbeat evaluator."""
+    """Assemble the system prompt for the heartbeat evaluator.
+
+    When *checklist_md* is provided, the raw HEARTBEAT.md content is
+    included as a dedicated section so the LLM can evaluate which tasks
+    need attention.
+    """
     builder = SystemPromptBuilder()
-    builder.set_preamble(
-        "You are Clawbolt's heartbeat evaluator. Your job is to compose a short, "
-        "actionable message for the contractor based on the flags below."
-    )
+    builder.set_preamble(load_prompt("heartbeat_preamble"))
 
-    builder.add_section("About the contractor", build_identity_section(contractor))
+    builder.add_section("About You", build_identity_section(user))
+    builder.add_section("About Your User", build_user_section(user))
 
-    memory = await build_memory_section(db, contractor.id)
-    builder.add_section("Contractor's memory", memory)
+    memory = await build_memory_section(user.id)
+    builder.add_section("User's memory", memory)
 
     builder.add_section(
         "Recent conversation (last 5 messages)",
         recent_messages or "(no recent messages)",
     )
 
-    builder.add_section(
-        "Flags raised by pre-checks",
-        "\n".join(f"- {f}" for f in flags),
-    )
+    if checklist_md:
+        builder.add_section("User's checklist (HEARTBEAT.md)", checklist_md)
 
     builder.add_section(
         "Current time",
-        datetime.datetime.now(datetime.UTC).isoformat(),
+        build_local_datetime_section(user),
     )
 
-    rules = (
-        "- The pre-checks already decided something needs attention. Your job is to "
-        "compose one concise, helpful message.\n"
-        "- Combine multiple flags into a single message when possible.\n"
-        "- Keep the message under 160 characters.\n"
-        "- Be direct and actionable, no fluff.\n"
-        "- If after reviewing the flags you believe none actually warrant a message "
-        'right now, you may still choose "no_action".\n'
-        "- Use the compose_message tool to return your decision."
-    )
-    builder.add_section("Rules", rules)
+    builder.add_section("Rules", load_prompt("heartbeat_rules"))
 
     return builder.build()

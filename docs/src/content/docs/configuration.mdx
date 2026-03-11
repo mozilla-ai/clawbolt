@@ -22,6 +22,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
+| `DATA_DIR` | `data/users` | Directory for file-based user data storage |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated list of allowed CORS origins |
 | `JWT_SECRET` | `change-me-in-production` | Secret key for JWT signing. **Change this in production** |
 | `JWT_EXPIRY_MINUTES` | `15` | JWT token expiry time in minutes |
@@ -44,6 +45,7 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MESSAGING_PROVIDER` | `telegram` | Messaging backend (currently only `telegram` is supported) |
+| `DEFAULT_FOLDER_SCHEME` | `by_client` | Default folder scheme for organizing client files (`by_client`, `by_address`, or `by_client_and_address`) |
 | `TELEGRAM_BOT_TOKEN` | | Bot token from @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | (auto-derived) | Webhook validation secret. Auto-derived from bot token if not set |
 | `TELEGRAM_ALLOWED_CHAT_IDS` | (empty) | Comma-separated allowlist of Telegram chat IDs, or `*` to allow all. Empty = deny all |
@@ -56,19 +58,11 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 | `STORAGE_PROVIDER` | `local` | Storage backend: `local`, `dropbox`, or `google_drive` |
 | `DROPBOX_ACCESS_TOKEN` | | Dropbox access token (when using Dropbox) |
 | `GOOGLE_DRIVE_CREDENTIALS_JSON` | | Google Drive OAuth credentials JSON (when using Google Drive) |
+| `CLAWBOLT_DATA_DIR` | `./data` | Host path bind-mounted to `/app/data` (Docker Compose only) |
 | `PDF_STORAGE_DIR` | `data/estimates` | Directory for generated PDF estimates |
 | `FILE_STORAGE_BASE_DIR` | `data/storage` | Base directory for local file storage |
-| `DEFAULT_ESTIMATE_TERMS` | `Payment due within 30 days of project completion.` | Default terms printed on estimates |
 
 See [Storage Providers](../deployment/storage/) for setup instructions.
-
-## Database
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DATABASE_URL` | | PostgreSQL connection string. Set automatically by Docker Compose |
-
-When running with Docker Compose, the `DATABASE_URL` is set automatically. You don't need to configure it.
 
 ## LLM token limits
 
@@ -90,16 +84,17 @@ When running with Docker Compose, the `DATABASE_URL` is set automatically. You d
 
 | Variable | Default | Description |
 |----------|---------|-------------|
+| `APPROVAL_TIMEOUT_SECONDS` | `120` | Seconds to wait for user approval of a tool call before automatically denying |
+| `MESSAGE_BATCH_WINDOW_MS` | `1500` | Milliseconds to wait for more messages before processing. Groups rapid-fire messages into one agent call. Set to `0` to disable |
 | `MAX_TOOL_ROUNDS` | `10` | Maximum tool-calling rounds per agent invocation |
 | `MAX_INPUT_TOKENS` | `120000` | Max input token budget before context trimming |
 | `CONTEXT_TRIM_TARGET_TOKENS` | `80000` | Target token count after trimming |
-| `RATE_LIMIT_RETRY_DELAY` | `2.0` | Seconds to wait before retrying after a rate limit |
+| `LLM_MAX_RETRIES` | `3` | Maximum number of retry attempts on rate limit errors |
 
 ## Conversation and memory
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CONVERSATION_TIMEOUT_HOURS` | `4` | Hours of inactivity before starting a new conversation |
 | `CONVERSATION_HISTORY_LIMIT` | `20` | Max messages included in LLM context |
 | `MEMORY_RECALL_LIMIT` | `20` | Max memory facts recalled per query |
 | `COMPACTION_ENABLED` | `true` | Enable automatic conversation compaction |
@@ -121,16 +116,16 @@ When running with Docker Compose, the `DATABASE_URL` is set automatically. You d
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `HEARTBEAT_ENABLED` | `true` | Enable proactive check-in messages |
+| `HEARTBEAT_DEFAULT_FREQUENCY` | `30m` | Default check-in frequency shown to new users (e.g. `15m`, `1h`, `daily`) |
 | `HEARTBEAT_INTERVAL_MINUTES` | `30` | Minutes between heartbeat evaluation ticks |
-| `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per contractor per day |
+| `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per user per day |
 | `HEARTBEAT_QUIET_HOURS_START` | `20` | Hour (24h) to stop sending heartbeats |
 | `HEARTBEAT_QUIET_HOURS_END` | `7` | Hour (24h) to resume sending heartbeats |
-| `HEARTBEAT_IDLE_DAYS` | `3` | Days of inactivity before flagging a contractor |
+| `HEARTBEAT_IDLE_DAYS` | `3` | Days of inactivity before flagging a user |
 | `HEARTBEAT_MODEL` | (same as `LLM_MODEL`) | Model used for heartbeat messages |
 | `HEARTBEAT_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for heartbeat messages |
-| `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent contractor evaluations per tick |
+| `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent user evaluations per tick |
 | `HEARTBEAT_RECENT_MESSAGES_COUNT` | `5` | Number of recent messages included in heartbeat context |
-| `CHECKLIST_DAILY_INTERVAL_HOURS` | `20` | Hours between daily checklist heartbeat evaluations |
 
 ## QuickBooks Online
 

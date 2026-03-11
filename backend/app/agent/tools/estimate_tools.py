@@ -2,20 +2,20 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy.orm import Session
 
+from backend.app.agent.file_store import EstimateStore, UserData, make_client_slug
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.enums import EstimateStatus
-from backend.app.models import Contractor, Estimate, EstimateLineItem
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
 from backend.app.services.storage_service import StorageBackend
 
@@ -23,7 +23,6 @@ if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 PDF_BASE_DIR = Path(settings.pdf_storage_dir)
-ESTIMATE_NUMBER_FORMAT = "EST-{:04d}"
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +48,7 @@ class GenerateEstimateParams(BaseModel):
 
 
 def create_estimate_tools(
-    db: Session,
-    contractor: Contractor,
+    user: UserData,
     storage: StorageBackend | None = None,
 ) -> list[Tool]:
     """Create estimate-related tools for the agent."""
@@ -99,36 +97,33 @@ def create_estimate_tools(
 
         total_amount = subtotal
 
-        # Create database records
-        estimate = Estimate(
-            contractor_id=contractor.id,
+        # Build client slug for folder organization
+        client_slug = (
+            make_client_slug(
+                name=client_name or "",
+                address=client_address or "",
+                folder_scheme=user.folder_scheme,
+            )
+            or None
+        )
+
+        # Create estimate via file store
+        estimate_store = EstimateStore(user.id)
+        estimate = await estimate_store.create(
             description=description,
             total_amount=total_amount,
             status=EstimateStatus.DRAFT,
+            client_id=client_slug,
+            line_items=processed_items,
         )
-        db.add(estimate)
-        db.flush()  # Get the ID before adding line items
 
-        estimate_number = ESTIMATE_NUMBER_FORMAT.format(estimate.id)
-
-        for item in processed_items:
-            line_item = EstimateLineItem(
-                estimate_id=estimate.id,
-                description=str(item["description"]),
-                quantity=float(item["quantity"]),
-                unit_price=float(item["unit_price"]),
-                total=float(item["total"]),
-            )
-            db.add(line_item)
-
-        db.commit()
-        db.refresh(estimate)
+        estimate_number = estimate.id  # Already in EST-NNNN format
 
         # Generate PDF
         pdf_data = EstimatePDFData(
-            contractor_name=contractor.name or "Contractor",
-            contractor_phone=contractor.phone or "",
-            contractor_trade=contractor.trade or "",
+            owner_name="User",
+            owner_phone=user.phone or "",
+            owner_trade="",
             description=description,
             line_items=processed_items,
             subtotal=subtotal,
@@ -137,39 +132,43 @@ def create_estimate_tools(
             estimate_number=estimate_number,
             client_name=client_name,
             client_address=client_address,
-            terms=terms or settings.default_estimate_terms,
+            terms=terms,
         )
 
         pdf_bytes = await generate_estimate_pdf(pdf_data)
 
-        # Save PDF to local storage (per-contractor subdirectory)
-        pdf_dir = PDF_BASE_DIR / str(contractor.id)
+        # Save PDF to local storage, organized by client
+        pdf_dir = PDF_BASE_DIR / str(user.id) / (client_slug or "unsorted")
         pdf_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = pdf_dir / f"{estimate.id}.pdf"
-        pdf_path.write_bytes(pdf_bytes)
+        await asyncio.to_thread(pdf_path.write_bytes, pdf_bytes)
 
         # Also upload to cloud storage if available
+        cloud_path = ""
         if storage:
             try:
                 folder_path = build_folder_path("estimate", client_name, client_address)
                 await storage.create_folder(folder_path)
                 await storage.upload_file(pdf_bytes, folder_path, f"{estimate_number}.pdf")
+                cloud_path = f"{folder_path}/{estimate_number}.pdf"
             except Exception:
                 logger.warning(
                     "Cloud upload failed for estimate %s, local PDF saved successfully",
                     estimate_number,
                 )
 
-        # Update estimate with PDF path - stays as DRAFT until actually sent
-        estimate.pdf_url = str(pdf_path)
-        db.commit()
+        # Update estimate with PDF path and cloud storage path
+        update_fields: dict[str, str] = {"pdf_url": str(pdf_path)}
+        if cloud_path:
+            update_fields["storage_path"] = cloud_path
+        await estimate_store.update(estimate.id, **update_fields)
 
         return ToolResult(
             content=(
                 f"Estimate {estimate_number} generated for ${total_amount:,.2f}. "
                 f"{len(processed_items)} line item(s). "
                 f"PDF saved at {pdf_path}. "
-                f"Use send_media_reply to send it to the contractor."
+                f"Use send_media_reply to send it to the user."
             )
         )
 
@@ -177,20 +176,24 @@ def create_estimate_tools(
         Tool(
             name=ToolName.GENERATE_ESTIMATE,
             description=(
-                "Generate a professional estimate PDF. Use when the contractor asks for "
-                "an estimate, quote, or bid. Include line items with description, quantity, "
-                "and unit_price."
+                "Generate a professional estimate PDF. Use when the user asks for "
+                "an estimate, quote, or bid. Requires line_items: each item needs a "
+                "description, quantity, and unit_price. Do NOT call this tool until you "
+                "have at least one concrete line item from the user."
             ),
             function=generate_estimate,
             params_model=GenerateEstimateParams,
-            usage_hint=("When asked for an estimate, gather the details and generate the PDF."),
+            usage_hint=(
+                "Before calling this tool, ask the user for specific line items "
+                "(what work, how much, at what price). Do not guess line items."
+            ),
         ),
     ]
 
 
 def _estimate_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for estimate tools, used by the registry."""
-    return create_estimate_tools(ctx.db, ctx.contractor, ctx.storage)
+    return create_estimate_tools(ctx.user, ctx.storage)
 
 
 def _register() -> None:

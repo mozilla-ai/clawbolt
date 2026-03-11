@@ -11,12 +11,12 @@ The heartbeat runs on a timer and uses a two-stage design: **cheap checks first,
 
 ### Stage 1: Deterministic checks (no LLM cost)
 
-Fast database queries look for actionable items:
+Fast file-based checks look for actionable items:
 
 - **Stale draft estimates**: Estimates in "draft" status for more than 24 hours
 - **Due checklist items**: Items scheduled for today (daily, weekdays, or one-time)
 - **Time-sensitive memory facts**: Facts containing keywords like "remind", "follow-up", "deadline"
-- **Idle contractors**: No inbound messages for a configurable number of days
+- **Idle users**: No inbound messages for a configurable number of days
 
 ### Stage 2: LLM evaluation (only if flags found)
 

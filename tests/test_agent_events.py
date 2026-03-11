@@ -4,7 +4,7 @@ import json
 from unittest.mock import AsyncMock, patch
 
 import pytest
-from sqlalchemy.orm import Session
+from pydantic import BaseModel
 
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.events import (
@@ -15,19 +15,30 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
+from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolResult
-from backend.app.models import Contractor
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
+class _EmptyParams(BaseModel):
+    """Minimal params model for tools with no parameters."""
+
+
+class _KeyValueParams(BaseModel):
+    """Params model for tools accepting key/value pairs."""
+
+    key: str
+    value: str
+
+
 @pytest.fixture()
-def agent(db_session: Session, test_contractor: Contractor) -> ClawboltAgent:
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+def agent(test_user: UserData) -> ClawboltAgent:
+    agent = ClawboltAgent(user=test_user)
     return agent
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_events_emitted_for_text_response(
     mock_prompt: AsyncMock,
@@ -57,7 +68,7 @@ async def test_events_emitted_for_text_response(
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_events_emitted_for_tool_call(
     mock_prompt: AsyncMock,
@@ -76,7 +87,7 @@ async def test_events_emitted_for_tool_call(
                 name="save_fact",
                 description="Save a fact",
                 function=mock_tool,
-                parameters={"type": "object", "properties": {}},
+                params_model=_KeyValueParams,
             )
         ]
     )
@@ -114,7 +125,7 @@ async def test_events_emitted_for_tool_call(
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_no_events_without_subscribers(
     mock_prompt: AsyncMock,
@@ -131,7 +142,7 @@ async def test_no_events_without_subscribers(
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_subscriber_error_does_not_crash_agent(
     mock_prompt: AsyncMock,
@@ -153,7 +164,7 @@ async def test_subscriber_error_does_not_crash_agent(
 
 
 @pytest.mark.asyncio
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.core.build_agent_system_prompt", new_callable=AsyncMock)
 async def test_multiple_subscribers(
     mock_prompt: AsyncMock,
@@ -177,9 +188,9 @@ async def test_multiple_subscribers(
 
 def test_event_dataclasses_are_frozen() -> None:
     """Event dataclasses should be immutable."""
-    event = AgentStartEvent(contractor_id=1, message_context="test")
+    event = AgentStartEvent(user_id=1, message_context="test")
     try:
-        event.contractor_id = 2  # type: ignore[misc]
+        event.user_id = 2  # type: ignore[misc]
         frozen = False
     except AttributeError:
         frozen = True

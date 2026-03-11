@@ -51,7 +51,7 @@ def classify_media(mime_type: str) -> str:
     return "unknown"
 
 
-def _generate_filename(mime_type: str) -> str:
+def generate_filename(mime_type: str) -> str:
     """Generate a filename from MIME type and timestamp."""
     ext = MIME_EXTENSIONS.get(mime_type, ".bin")
     timestamp = datetime.datetime.now(tz=datetime.UTC).strftime("%Y%m%d_%H%M%S")
@@ -113,7 +113,7 @@ async def download_telegram_media(
         mime_type,
         size_bytes,
     )
-    filename = _generate_filename(mime_type)
+    filename = generate_filename(mime_type)
 
     return DownloadedMedia(
         content=download.content,

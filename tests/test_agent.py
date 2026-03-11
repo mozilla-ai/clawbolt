@@ -1,6 +1,6 @@
 import json
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from any_llm import (
@@ -10,15 +10,11 @@ from any_llm import (
     RateLimitError,
 )
 from pydantic import BaseModel
-from sqlalchemy.orm import Session
 
 from backend.app.agent.core import (
-    CONTEXT_TRIM_TARGET_TOKENS,
-    MAX_INPUT_TOKENS,
     ClawboltAgent,
-    _estimate_tokens,
-    _log_token_estimation_drift,
 )
+from backend.app.agent.file_store import UserData
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -28,77 +24,98 @@ from backend.app.agent.messages import (
     UserMessage,
 )
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
-from backend.app.models import Contractor
-from backend.app.services.messaging import MessagingService
-from tests.mocks.llm import make_text_response, make_tool_call_response
+from backend.app.agent.trimming import trim_messages
+from tests.mocks.llm import (
+    make_empty_response,
+    make_error_response,
+    make_text_response,
+    make_tool_call_response,
+)
 
 
 class _EmptyParams(BaseModel):
     """Minimal params model used by registry tests that need a valid tool."""
 
 
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_agent_responds_to_message(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
-) -> None:
-    """Agent should produce a reply from LLM response."""
-    mock_acompletion.return_value = make_text_response("Sure, I can help with that deck estimate!")  # type: ignore[union-attr]
+class _KeyValueParams(BaseModel):
+    """Params model for tools accepting key/value pairs."""
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    key: str
+    value: str
+
+
+class _QueryParams(BaseModel):
+    """Params model for tools accepting a query."""
+
+    query: str
+
+
+class _DescriptionParams(BaseModel):
+    """Params model for tools accepting a description."""
+
+    description: str
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_responds_to_message(mock_amessages: object, test_user: UserData) -> None:
+    """Agent should produce a reply from LLM response."""
+    mock_amessages.return_value = make_text_response("Sure, I can help with that deck estimate!")  # type: ignore[union-attr]
+
+    agent = ClawboltAgent(user=test_user)
     response = await agent.process_message("I need a quote for a 12x12 composite deck")
 
     assert response.reply_text == "Sure, I can help with that deck estimate!"
-    mock_acompletion.assert_called_once()  # type: ignore[union-attr]
+    mock_amessages.assert_called_once()  # type: ignore[union-attr]
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_includes_conversation_history(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """Agent should include conversation history in LLM call."""
-    mock_acompletion.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
-    history = [
+    agent = ClawboltAgent(user=test_user)
+    history: list[AgentMessage] = [
         UserMessage(content="Hi, I need help"),
         AssistantMessage(content="Hello! How can I help?"),
     ]
     await agent.process_message("What about a deck?", conversation_history=history)
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
     messages = call_args.kwargs["messages"]
-    # system + 2 history + 1 current = 4
-    assert len(messages) == 4
-    assert messages[0]["role"] == "system"
-    assert messages[1]["content"] == "Hi, I need help"
-    assert messages[3]["content"] == "What about a deck?"
+    # System is extracted to 'system' kwarg; 2 history + 1 current = 3
+    assert call_args.kwargs["system"] is not None
+    assert len(messages) == 3
+    assert messages[0]["content"] == "Hi, I need help"
+    assert messages[2]["content"] == "What about a deck?"
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_system_prompt_includes_soul(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
-    """Agent system prompt should include contractor profile info."""
-    mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+    """Agent system prompt should include user profile info."""
+    mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     await agent.process_message("Hello")
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["messages"][0]["content"]
-    assert test_contractor.name in system_prompt
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["system"]
+    assert "AI assistant for solo tradespeople" in system_prompt
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_system_prompt_includes_tool_hints(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """System prompt should include usage hints from registered tools."""
-    mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
     async def dummy(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
@@ -108,53 +125,53 @@ async def test_system_prompt_includes_tool_hints(
             name="save_fact",
             description="Save a fact",
             function=dummy,
-            parameters={},
+            params_model=_EmptyParams,
             usage_hint="When you learn new info, save it.",
         ),
         Tool(
             name="recall_facts",
             description="Recall facts",
             function=dummy,
-            parameters={},
+            params_model=_EmptyParams,
             usage_hint="Search memory for relevant information.",
         ),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools(tools)
     await agent.process_message("Hello")
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["messages"][0]["content"]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["system"]
     assert "Tool Guidelines" in system_prompt
     assert "When you learn new info, save it." in system_prompt
     assert "Search memory for relevant information." in system_prompt
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_system_prompt_omits_tool_section_when_no_hints(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """System prompt should not include tool guidelines when no tools have hints."""
-    mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     # No tools registered
     await agent.process_message("Hello")
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["messages"][0]["content"]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["system"]
     assert "Tool Guidelines" not in system_prompt
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_system_prompt_skips_tools_without_hints(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """Tools with empty usage_hint should not appear in the system prompt."""
-    mock_acompletion.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
 
     async def dummy(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
@@ -164,46 +181,44 @@ async def test_system_prompt_skips_tools_without_hints(
             name="tool_with_hint",
             description="Has a hint",
             function=dummy,
-            parameters={},
+            params_model=_EmptyParams,
             usage_hint="This tool does something useful.",
         ),
         Tool(
             name="tool_without_hint",
             description="No hint",
             function=dummy,
-            parameters={},
+            params_model=_EmptyParams,
         ),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools(tools)
     await agent.process_message("Hello")
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["messages"][0]["content"]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["system"]
     assert "This tool does something useful." in system_prompt
     assert "tool_without_hint" not in system_prompt
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_agent_does_not_pass_api_key(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
-) -> None:
+@patch("backend.app.agent.core.amessages")
+async def test_agent_does_not_pass_api_key(mock_amessages: object, test_user: UserData) -> None:
     """acompletion should be called without api_key so the SDK resolves keys from env."""
-    mock_acompletion.return_value = make_text_response("Hi!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Hi!")  # type: ignore[union-attr]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     await agent.process_message("Hello")
 
-    call_args = mock_acompletion.call_args  # type: ignore[union-attr]
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
     assert "api_key" not in call_args.kwargs
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_tool_loop_sends_results_back(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """After tool calls, agent should send results back to LLM for a follow-up response."""
     # First call: LLM requests a tool call
@@ -218,7 +233,7 @@ async def test_agent_tool_loop_sends_results_back(
     # Second call: LLM produces the final reply
     followup_response = make_text_response("Got it, I'll remember your rate is $75/hour!")
 
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     # Register a mock save_fact tool
     mock_save = AsyncMock(return_value=ToolResult(content="Saved hourly_rate = $75/hr"))
@@ -226,10 +241,10 @@ async def test_agent_tool_loop_sends_results_back(
         name="save_fact",
         description="Save a fact",
         function=mock_save,
-        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+        params_model=_KeyValueParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("My rate is $75/hour")
 
@@ -237,18 +252,18 @@ async def test_agent_tool_loop_sends_results_back(
     mock_save.assert_called_once_with(key="hourly_rate", value="$75/hr")
 
     # Verify follow-up LLM call was made (2 calls total)
-    assert mock_acompletion.call_count == 2  # type: ignore[union-attr]
+    assert mock_amessages.call_count == 2  # type: ignore[union-attr]
 
     # Verify the reply comes from the follow-up response, not "Done."
     assert response.reply_text == "Got it, I'll remember your rate is $75/hour!"
     assert len(response.tool_calls) == 1
-    assert response.tool_calls[0]["name"] == "save_fact"
+    assert response.tool_calls[0].name == "save_fact"
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_tool_loop_includes_tool_results_in_followup(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """Follow-up LLM call should include tool result messages."""
     tool_response = make_tool_call_response(
@@ -262,36 +277,38 @@ async def test_agent_tool_loop_includes_tool_results_in_followup(
     )
     followup_response = make_text_response("Your hourly rate is $75.")
 
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_recall = AsyncMock(return_value=ToolResult(content="hourly_rate: $75/hr"))
     tool = Tool(
         name="recall_facts",
         description="Recall facts",
         function=mock_recall,
-        parameters={"type": "object", "properties": {"query": {}}},
+        params_model=_QueryParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     await agent.process_message("What's my rate?")
 
     # Verify the follow-up call includes tool result messages
-    followup_call = mock_acompletion.call_args_list[1]  # type: ignore[union-attr]
+    followup_call = mock_amessages.call_args_list[1]  # type: ignore[union-attr]
     messages = followup_call.kwargs["messages"]
 
-    # Should have: system, user, assistant (with tool_calls), tool result
-    tool_messages = [m for m in messages if m.get("role") == "tool"]
-    assert len(tool_messages) == 1
-    assert tool_messages[0]["tool_call_id"] == "call_abc"
-    assert "hourly_rate: $75/hr" in tool_messages[0]["content"]
+    # Should have: user, assistant (with tool_use), user (with tool_result)
+    # Tool results are sent as user messages with tool_result content blocks
+    tool_result_msgs = [
+        m for m in messages if m.get("role") == "user" and isinstance(m.get("content"), list)
+    ]
+    assert len(tool_result_msgs) == 1
+    tool_result_block = tool_result_msgs[0]["content"][0]
+    assert tool_result_block["tool_use_id"] == "call_abc"
+    assert "hourly_rate: $75/hr" in tool_result_block["content"]
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_agent_multi_round_tool_calls(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
-) -> None:
+@patch("backend.app.agent.core.amessages")
+async def test_agent_multi_round_tool_calls(mock_amessages: object, test_user: UserData) -> None:
     """Agent should support multiple rounds of tool calls, not just one."""
     # Round 1: LLM calls recall_facts
     round1_response = make_tool_call_response(
@@ -316,25 +333,25 @@ async def test_agent_multi_round_tool_calls(
     # Round 3: LLM produces final text reply
     final_response = make_text_response("Here's your estimate for the deck build!")
 
-    mock_acompletion.side_effect = [round1_response, round2_response, final_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [round1_response, round2_response, final_response]  # type: ignore[union-attr]
 
     mock_recall = AsyncMock(return_value=ToolResult(content="deck: $45/sqft"))
     mock_estimate = AsyncMock(return_value=ToolResult(content="Estimate PDF generated"))
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools(
         [
             Tool(
                 name="recall_facts",
                 description="Recall facts",
                 function=mock_recall,
-                parameters={"type": "object", "properties": {"query": {}}},
+                params_model=_QueryParams,
             ),
             Tool(
                 name="generate_estimate",
                 description="Generate estimate",
                 function=mock_estimate,
-                parameters={"type": "object", "properties": {"description": {}}},
+                params_model=_DescriptionParams,
             ),
         ]
     )
@@ -346,21 +363,21 @@ async def test_agent_multi_round_tool_calls(
     mock_estimate.assert_called_once()
 
     # 3 LLM calls total (round 1 + round 2 + final)
-    assert mock_acompletion.call_count == 3  # type: ignore[union-attr]
+    assert mock_amessages.call_count == 3  # type: ignore[union-attr]
 
     # Final reply comes from the text response
     assert response.reply_text == "Here's your estimate for the deck build!"
 
     # Both tool calls should be recorded
     assert len(response.tool_calls) == 2
-    assert response.tool_calls[0]["name"] == "recall_facts"
-    assert response.tool_calls[1]["name"] == "generate_estimate"
+    assert response.tool_calls[0].name == "recall_facts"
+    assert response.tool_calls[1].name == "generate_estimate"
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_tool_loop_respects_max_rounds(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
     """Agent should stop after MAX_TOOL_ROUNDS even if LLM keeps requesting tools."""
     from backend.app.agent.core import MAX_TOOL_ROUNDS
@@ -380,17 +397,17 @@ async def test_agent_tool_loop_respects_max_rounds(
         for i in range(MAX_TOOL_ROUNDS)
     ]
 
-    mock_acompletion.side_effect = tool_responses  # type: ignore[union-attr]
+    mock_amessages.side_effect = tool_responses  # type: ignore[union-attr]
 
     mock_recall = AsyncMock(return_value=ToolResult(content="some result"))
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools(
         [
             Tool(
                 name="recall_facts",
                 description="Recall facts",
                 function=mock_recall,
-                parameters={"type": "object", "properties": {"query": {}}},
+                params_model=_QueryParams,
             ),
         ]
     )
@@ -398,45 +415,52 @@ async def test_agent_tool_loop_respects_max_rounds(
     response = await agent.process_message("Keep going forever")
 
     # Should have made exactly MAX_TOOL_ROUNDS calls, not more
-    assert mock_acompletion.call_count == MAX_TOOL_ROUNDS  # type: ignore[union-attr]
+    assert mock_amessages.call_count == MAX_TOOL_ROUNDS  # type: ignore[union-attr]
 
     # Should still return a reply (from the last response's content)
     assert response.reply_text == "Still thinking..."
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_handles_malformed_tool_arguments(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+    mock_amessages: object, test_user: UserData
 ) -> None:
-    """Agent should gracefully handle malformed JSON in tool call arguments."""
-    # LLM returns a tool call with invalid JSON arguments
-    tool_response = make_tool_call_response(
-        tool_calls=[
-            {
-                "id": "call_bad",
-                "name": "save_fact",
-                "arguments": "{invalid json!!!",
-            }
-        ]
+    """Agent should gracefully handle None/malformed tool call arguments.
+
+    In the Messages API, tool inputs are always dicts. This test verifies
+    the agent handles the edge case where parse_tool_calls returns
+    arguments=None (e.g. from a content block with missing input).
+    """
+    from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
+
+    # Build a response with a tool_use block that has None input
+    tool_response = MessageResponse(
+        id="msg_mock",
+        content=[
+            MessageContentBlock(type="tool_use", id="call_bad", name="save_fact", input=None),
+        ],
+        model="mock-model",
+        stop_reason="tool_use",
+        usage=MessageUsage(input_tokens=0, output_tokens=0),
     )
     followup_response = make_text_response("Sorry, I had trouble with that.")
 
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_save = AsyncMock(return_value=ToolResult(content="saved"))
     tool = Tool(
         name="save_fact",
         description="Save a fact",
         function=mock_save,
-        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+        params_model=_KeyValueParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("My rate is $75/hour")
 
-    # Tool should NOT have been called (args were unparseable)
+    # Tool should NOT have been called (args were None)
     mock_save.assert_not_called()
 
     # Agent should still produce a reply (not crash)
@@ -447,38 +471,36 @@ async def test_agent_handles_malformed_tool_arguments(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
-async def test_agent_repairs_slightly_malformed_json(
-    mock_acompletion: object, db_session: Session, test_contractor: Contractor
+@patch("backend.app.agent.core.amessages")
+async def test_agent_passes_dict_arguments_to_tool(
+    mock_amessages: object, test_user: UserData
 ) -> None:
-    """Agent should repair common LLM JSON mistakes like trailing commas."""
-    # LLM returns a tool call with a trailing comma (common LLM mistake)
+    """Messages API delivers tool inputs as dicts; agent should pass them through."""
     tool_response = make_tool_call_response(
         tool_calls=[
             {
-                "id": "call_repair",
+                "id": "call_dict",
                 "name": "save_fact",
-                "arguments": '{"key": "hourly_rate", "value": "$75/hr",}',
+                "arguments": {"key": "hourly_rate", "value": "$75/hr"},
             }
         ]
     )
     followup_response = make_text_response("Got it!")
 
-    mock_acompletion.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
 
     mock_save = AsyncMock(return_value=ToolResult(content="Saved hourly_rate = $75/hr"))
     tool = Tool(
         name="save_fact",
         description="Save a fact",
         function=mock_save,
-        parameters={"type": "object", "properties": {"key": {}, "value": {}}},
+        params_model=_KeyValueParams,
     )
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("My rate is $75/hour")
 
-    # Tool SHOULD have been called despite the trailing comma
     mock_save.assert_called_once_with(key="hourly_rate", value="$75/hr")
     assert any("Called save_fact" in a for a in response.actions_taken)
 
@@ -489,48 +511,81 @@ async def test_agent_repairs_slightly_malformed_json(
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.agent.core.random.uniform", return_value=0.5)
 @patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_retries_on_rate_limit_error(
-    mock_acompletion: AsyncMock,
+    mock_amessages: AsyncMock,
     mock_sleep: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    _mock_uniform: AsyncMock,
+    test_user: UserData,
 ) -> None:
-    """RateLimitError should trigger one retry after a delay."""
-    mock_acompletion.side_effect = [
+    """RateLimitError should trigger retry with exponential backoff."""
+    mock_amessages.side_effect = [
         RateLimitError("Too many requests"),
         make_text_response("Retry succeeded!"),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     response = await agent.process_message("Hello")
 
     assert response.reply_text == "Retry succeeded!"
-    assert mock_acompletion.call_count == 2
-    mock_sleep.assert_called_once()
+    assert mock_amessages.call_count == 2
+    mock_sleep.assert_called_once_with(1.5)  # 2**0 + 0.5 jitter
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.agent.core.random.uniform", return_value=0.5)
 @patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
-@patch("backend.app.agent.core.acompletion")
-async def test_agent_rate_limit_retry_failure_propagates(
-    mock_acompletion: AsyncMock,
+@patch("backend.app.agent.core.LLM_MAX_RETRIES", 3)
+@patch("backend.app.agent.core.amessages")
+async def test_agent_rate_limit_exponential_backoff(
+    mock_amessages: AsyncMock,
     mock_sleep: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    _mock_uniform: AsyncMock,
+    test_user: UserData,
 ) -> None:
-    """If the retry after RateLimitError also fails, the exception propagates."""
-    mock_acompletion.side_effect = [
+    """Exponential backoff delays should increase with each attempt."""
+    mock_amessages.side_effect = [
         RateLimitError("Too many requests"),
+        RateLimitError("Still rate limited"),
+        make_text_response("Third time's a charm!"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    response = await agent.process_message("Hello")
+
+    assert response.reply_text == "Third time's a charm!"
+    assert mock_amessages.call_count == 3
+    assert mock_sleep.call_count == 2
+    mock_sleep.assert_any_call(1.5)  # 2**0 + 0.5
+    mock_sleep.assert_any_call(2.5)  # 2**1 + 0.5
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.random.uniform", return_value=0.5)
+@patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
+@patch("backend.app.agent.core.LLM_MAX_RETRIES", 3)
+@patch("backend.app.agent.core.amessages")
+async def test_agent_rate_limit_retry_failure_propagates(
+    mock_amessages: AsyncMock,
+    mock_sleep: AsyncMock,
+    _mock_uniform: AsyncMock,
+    test_user: UserData,
+) -> None:
+    """If all retries after RateLimitError fail, the exception propagates."""
+    mock_amessages.side_effect = [
+        RateLimitError("Too many requests"),
+        RateLimitError("Still rate limited"),
         RateLimitError("Still rate limited"),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     with pytest.raises(RateLimitError):
         await agent.process_message("Hello")
 
-    assert mock_acompletion.call_count == 2
+    assert mock_amessages.call_count == 3
+    assert mock_sleep.call_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -538,135 +593,13 @@ async def test_agent_rate_limit_retry_failure_propagates(
 # ---------------------------------------------------------------------------
 
 
-def test_estimate_tokens_returns_reasonable_estimate() -> None:
-    """_estimate_tokens should return a char-based token count with per-message overhead."""
-    messages = [
-        SystemMessage(content="Hello world"),  # 11 chars / 3.5 = 3 + 4 overhead = 7
-        UserMessage(content="How are you?"),  # 12 chars / 3.5 = 3 + 4 overhead = 7
-    ]
-    result = _estimate_tokens(messages)
-    # int(11/3.5) + 4 + int(12/3.5) + 4 = 3 + 4 + 3 + 4 = 14
-    assert result == 14
+def test_removed_token_estimation_helpers() -> None:
+    """Verify legacy token estimation helpers have been removed."""
+    from backend.app.agent import core as agent_core
 
-
-def test_estimate_tokens_handles_empty_messages() -> None:
-    """_estimate_tokens should handle empty content, counting only overhead."""
-    messages = [
-        SystemMessage(content=""),
-        UserMessage(content=""),
-    ]
-    result = _estimate_tokens(messages)
-    # 2 messages x 4 overhead tokens each = 8
-    assert result == 8
-
-
-def test_estimate_tokens_handles_empty_list() -> None:
-    """_estimate_tokens should return 0 for an empty message list."""
-    assert _estimate_tokens([]) == 0
-
-
-def test_estimate_tokens_counts_tool_call_content() -> None:
-    """_estimate_tokens should include tool_calls function names and arguments."""
-    messages = [
-        AssistantMessage(
-            content=None,
-            tool_calls=[
-                ToolCallRequest(
-                    id="call_1",
-                    name="save_fact",
-                    arguments={"key": "rate", "value": "$75/hr"},
-                )
-            ],
-        ),
-    ]
-    result = _estimate_tokens(messages)
-
-    # Overhead: 4 tokens
-    # content is None -> 0
-    # tool_calls: "save_fact" = 9 chars -> int(9/3.5) = 2
-    #   arguments dict str repr has variable length, but should be > 0
-    # Total > 4 (overhead only)
-    assert result > 4
-
-    # Compare with a message that has no tool_calls -- should be less
-    plain = [AssistantMessage(content=None)]
-    assert _estimate_tokens(plain) < result
-
-
-# ---------------------------------------------------------------------------
-# Token estimation drift logging
-# ---------------------------------------------------------------------------
-
-
-def test_log_token_estimation_drift_warns_when_off(caplog: pytest.LogCaptureFixture) -> None:
-    """_log_token_estimation_drift should warn when estimate drifts more than 30 percent."""
-    messages: list[AgentMessage] = [
-        SystemMessage(content="You are a helpful assistant."),
-        UserMessage(content="Hello, how are you today?"),
-    ]
-    # Build a mock response whose actual prompt_tokens differs greatly from our estimate.
-    # Our estimate: ~(35 + 26) / 3.5 + 2*4 = ~25 tokens
-    # Set actual to 100 so the estimate (~25) is far below actual.
-    response = MagicMock()
-    usage = MagicMock()
-    usage.prompt_tokens = 100
-    response.usage = usage
-
-    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
-        _log_token_estimation_drift(messages, response)
-
-    assert any("Token estimate drift" in rec.message for rec in caplog.records)
-    # Verify logged values contain the key details
-    drift_record = next(r for r in caplog.records if "Token estimate drift" in r.message)
-    assert "estimated=" in drift_record.message
-    assert "actual=100" in drift_record.message
-
-
-def test_log_token_estimation_drift_silent_when_close(caplog: pytest.LogCaptureFixture) -> None:
-    """_log_token_estimation_drift should not warn when estimate is within 30 percent."""
-    messages: list[AgentMessage] = [
-        SystemMessage(content="x" * 350),  # ~100 tokens
-    ]
-    # Our estimate: 350/3.5 + 4 = 104 tokens. Set actual to 100 (4% off).
-    response = MagicMock()
-    usage = MagicMock()
-    usage.prompt_tokens = 100
-    response.usage = usage
-
-    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
-        _log_token_estimation_drift(messages, response)
-
-    assert not any("Token estimate drift" in rec.message for rec in caplog.records)
-
-
-def test_log_token_estimation_drift_no_usage(caplog: pytest.LogCaptureFixture) -> None:
-    """_log_token_estimation_drift should be silent when response has no usage."""
-    messages: list[AgentMessage] = [
-        SystemMessage(content="Hello"),
-    ]
-    response = MagicMock()
-    response.usage = None
-
-    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
-        _log_token_estimation_drift(messages, response)
-
-    assert not any("Token estimate drift" in rec.message for rec in caplog.records)
-
-
-def test_log_token_estimation_drift_zero_prompt_tokens(caplog: pytest.LogCaptureFixture) -> None:
-    """_log_token_estimation_drift should be silent when prompt_tokens is 0."""
-    messages: list[AgentMessage] = [
-        SystemMessage(content="Hello"),
-    ]
-    response = MagicMock()
-    usage = MagicMock()
-    usage.prompt_tokens = 0
-    response.usage = usage
-
-    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
-        _log_token_estimation_drift(messages, response)
-
-    assert not any("Token estimate drift" in rec.message for rec in caplog.records)
+    assert not hasattr(agent_core, "_log_token_estimation_drift")
+    assert not hasattr(agent_core, "_estimate_tokens")
+    assert not hasattr(agent_core, "_total_content_length")
 
 
 def test_trim_messages_preserves_tool_call_result_pairs() -> None:
@@ -682,8 +615,9 @@ def test_trim_messages_preserves_tool_call_result_pairs() -> None:
 
     messages = [system, user1, assistant_tc, tool_result, user2]
 
-    # Use a small budget that forces trimming of some messages
-    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000)
+    # Use a small budget that forces trimming. Simulate prior API response
+    # reporting 2625 input tokens for this conversation.
+    trimmed = trim_messages(messages, target_tokens=1000, input_tokens=2625)
 
     # The trimmed result should never contain tool_result without assistant_tc
     has_tool_msg = any(isinstance(m, ToolResultMessage) for m in trimmed)
@@ -696,96 +630,94 @@ def test_trim_messages_preserves_tool_call_result_pairs() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_trims_context_on_context_length_exceeded(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """ContextLengthExceededError should trim messages and retry once."""
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         ContextLengthExceededError("Input too long"),
         make_text_response("Trimmed and retried!"),
     ]
 
-    # Supply a long conversation history to verify trimming
+    # Supply a long conversation history with large messages to trigger trimming
+    big_content = "x" * 4000
     long_history: list[AgentMessage] = [
-        UserMessage(content=f"Message {i}")
+        UserMessage(content=f"Message {i}: {big_content}")
         if i % 2 == 0
-        else AssistantMessage(content=f"Message {i}")
-        for i in range(20)
+        else AssistantMessage(content=f"Message {i}: {big_content}")
+        for i in range(150)
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     response = await agent.process_message("Current message", conversation_history=long_history)
 
     assert response.reply_text == "Trimmed and retried!"
-    assert mock_acompletion.call_count == 2
+    assert mock_amessages.call_count == 2
 
-    # Verify the retry call used trimmed messages within the token budget
-    retry_call = mock_acompletion.call_args_list[1]
+    # Verify the retry call preserves the system prompt
+    retry_call = mock_amessages.call_args_list[1]
+    assert retry_call.kwargs["system"] is not None
     retry_messages = retry_call.kwargs["messages"]
-    assert _estimate_tokens(retry_messages) <= CONTEXT_TRIM_TARGET_TOKENS
-    # System prompt should always be preserved
-    assert retry_messages[0]["role"] == "system"
+    # Messages should have been trimmed (fewer than original 150)
+    assert len(retry_messages) < 150
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_trims_history_when_exceeding_token_limit(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
-    """Messages should be trimmed when estimated tokens exceed MAX_INPUT_TOKENS."""
-    mock_acompletion.return_value = make_text_response("Trimmed reply!")
+    """Messages should be trimmed when provider token counts exceed MAX_INPUT_TOKENS."""
+    mock_amessages.return_value = make_text_response("Trimmed reply!")
 
     # Create a huge conversation history that exceeds MAX_INPUT_TOKENS
-    # Each message ~4000 chars = ~1000 tokens; need >120K tokens = >120 messages
     big_content = "x" * 4000
     long_history: list[AgentMessage] = [
         UserMessage(content=big_content) if i % 2 == 0 else AssistantMessage(content=big_content)
         for i in range(150)
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
+    # Simulate a prior LLM response so the pre-call trimmer has token data.
+    agent._last_input_tokens = 600_000
     response = await agent.process_message("Current message", conversation_history=long_history)
 
     assert response.reply_text == "Trimmed reply!"
 
-    # Verify that the messages sent to acompletion were trimmed
-    call_args = mock_acompletion.call_args
+    # Verify that the messages sent to amessages were trimmed
+    call_args = mock_amessages.call_args
     messages = call_args.kwargs["messages"]
-    total_tokens = _estimate_tokens(messages)
-    assert total_tokens <= MAX_INPUT_TOKENS
+    # Original was 150 history + 1 current; should be significantly trimmed
+    assert len(messages) < 150
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_raises_content_filter_error(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """ContentFilterError should be re-raised (handled by router)."""
-    mock_acompletion.side_effect = ContentFilterError("Blocked by safety filter")
+    mock_amessages.side_effect = ContentFilterError("Blocked by safety filter")
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     with pytest.raises(ContentFilterError):
         await agent.process_message("Something problematic")
 
-    assert mock_acompletion.call_count == 1
+    assert mock_amessages.call_count == 1
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_preserves_system_and_user_during_trimming(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """System prompt and latest user message must survive trimming."""
-    mock_acompletion.return_value = make_text_response("Ok!")
+    mock_amessages.return_value = make_text_response("Ok!")
 
     # Create history that will trigger trimming
     big_content = "x" * 4000
@@ -794,60 +726,70 @@ async def test_agent_preserves_system_and_user_during_trimming(
         for i in range(150)
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     await agent.process_message(
         "My important question",
         conversation_history=long_history,
         system_prompt_override="Custom system prompt",
     )
 
-    call_args = mock_acompletion.call_args
+    call_args = mock_amessages.call_args
     messages = call_args.kwargs["messages"]
 
-    # System prompt is always first
-    assert messages[0]["role"] == "system"
-    assert messages[0]["content"] == "Custom system prompt"
+    # System prompt is passed as 'system' kwarg
+    assert call_args.kwargs["system"] == "Custom system prompt"
 
     # Latest user message is always last
     assert messages[-1]["role"] == "user"
     assert messages[-1]["content"] == "My important question"
 
-    # At least 2 messages: system + user
-    assert len(messages) >= 2
+    # At least 1 message (system is extracted to kwarg)
+    assert len(messages) >= 1
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_raises_authentication_error(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """AuthenticationError should be re-raised (handled by router)."""
-    mock_acompletion.side_effect = AuthenticationError("Invalid API key")
+    mock_amessages.side_effect = AuthenticationError("Invalid API key")
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     with pytest.raises(AuthenticationError):
         await agent.process_message("Hello")
 
-    assert mock_acompletion.call_count == 1
+    assert mock_amessages.call_count == 1
+
+
+def test_trim_messages_skips_without_input_tokens() -> None:
+    """Without input_tokens, _trim_messages returns messages unchanged."""
+    big_content = "x" * 4000
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *[UserMessage(content=big_content) for _ in range(50)],
+    ]
+    trimmed = trim_messages(messages, target_tokens=100)
+    assert trimmed is messages
 
 
 def test_trim_messages_preserves_short_conversation() -> None:
     """Messages shorter than the threshold should be returned unchanged."""
-    messages = [
+    messages: list[AgentMessage] = [
         SystemMessage(content="System prompt"),
         UserMessage(content="Hello"),
         AssistantMessage(content="Hi there!"),
     ]
-    trimmed = ClawboltAgent._trim_messages(messages)
+    # With a small input_tokens count that fits the budget, no trimming occurs.
+    trimmed = trim_messages(messages, input_tokens=50)
     assert trimmed == messages
 
 
 def test_trim_messages_keeps_system_and_recent() -> None:
     """Long conversations should be trimmed to fit within the token budget."""
     big_content = "x" * 4000
-    messages = [
+    messages: list[AgentMessage] = [
         SystemMessage(content="System prompt"),
         *[
             UserMessage(content=big_content)
@@ -856,26 +798,23 @@ def test_trim_messages_keeps_system_and_recent() -> None:
             for i in range(20)
         ],
     ]
-    # Use a small token budget to force trimming
-    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000)
+    # Simulate a prior API response reporting 20_000 input tokens.
+    trimmed = trim_messages(messages, target_tokens=5000, input_tokens=20_000)
     assert isinstance(trimmed[0], SystemMessage)
     # Should have been trimmed significantly
     assert len(trimmed) < len(messages)
     # Last message should be the most recent one
     assert trimmed[-1] == messages[-1]
-    # Should fit within the target budget
-    assert _estimate_tokens(trimmed) <= 5000
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_does_not_trim_normal_conversations(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """Normal-sized conversations should not be trimmed."""
-    mock_acompletion.return_value = make_text_response("Got it!")
+    mock_amessages.return_value = make_text_response("Got it!")
 
     history: list[AgentMessage] = [
         UserMessage(content="Hi, I need help"),
@@ -884,30 +823,29 @@ async def test_agent_does_not_trim_normal_conversations(
         AssistantMessage(content="Sure, what size?"),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     await agent.process_message(
         "12x12 composite deck",
         conversation_history=history,
         system_prompt_override="System prompt",
     )
 
-    call_args = mock_acompletion.call_args
+    call_args = mock_amessages.call_args
     messages = call_args.kwargs["messages"]
 
-    # system + 4 history + 1 current = 6 — nothing trimmed
-    assert len(messages) == 6
+    # 4 history + 1 current = 5 (system is extracted to kwarg)
+    assert len(messages) == 5
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_agent_logs_warning_when_trimming(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """A warning should be logged when conversation history is trimmed."""
-    mock_acompletion.return_value = make_text_response("Ok!")
+    mock_amessages.return_value = make_text_response("Ok!")
 
     big_content = "x" * 4000
     long_history: list[AgentMessage] = [
@@ -915,7 +853,9 @@ async def test_agent_logs_warning_when_trimming(
         for i in range(150)
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
+    # Simulate a prior LLM response so the pre-call trimmer has token data.
+    agent._last_input_tokens = 600_000
 
     with caplog.at_level("WARNING", logger="backend.app.agent.core"):
         await agent.process_message(
@@ -934,22 +874,22 @@ async def test_agent_logs_warning_when_trimming(
 
 def test_summarize_dropped_messages_includes_user_topics() -> None:
     """Summary should include first lines from dropped user messages."""
-    from backend.app.agent.core import _summarize_dropped_messages
+    from backend.app.agent.trimming import summarize_dropped_messages
 
-    dropped = [
+    dropped: list[AgentMessage] = [
         UserMessage(content="What did I quote for the Johnson deck?"),
         AssistantMessage(content="You quoted $4,500 for the 12x12 composite deck."),
     ]
-    summary = _summarize_dropped_messages(dropped)
+    summary = summarize_dropped_messages(dropped)
     assert "2 earlier message(s)" in summary
     assert "Johnson deck" in summary
 
 
 def test_summarize_dropped_messages_includes_tool_calls() -> None:
     """Summary should mention tools that were called in dropped messages."""
-    from backend.app.agent.core import _summarize_dropped_messages
+    from backend.app.agent.trimming import summarize_dropped_messages
 
-    dropped = [
+    dropped: list[AgentMessage] = [
         UserMessage(content="Save my rate"),
         AssistantMessage(
             content=None,
@@ -958,16 +898,16 @@ def test_summarize_dropped_messages_includes_tool_calls() -> None:
         ToolResultMessage(tool_call_id="call_1", content="Saved"),
         AssistantMessage(content="Done!"),
     ]
-    summary = _summarize_dropped_messages(dropped)
+    summary = summarize_dropped_messages(dropped)
     assert "save_fact" in summary
     assert "Tools used:" in summary
 
 
 def test_summarize_dropped_messages_empty_list() -> None:
     """Empty dropped list should produce a zero-count summary."""
-    from backend.app.agent.core import _summarize_dropped_messages
+    from backend.app.agent.trimming import summarize_dropped_messages
 
-    summary = _summarize_dropped_messages([])
+    summary = summarize_dropped_messages([])
     assert "0 earlier message(s)" in summary
 
 
@@ -983,7 +923,7 @@ def test_trim_messages_injects_summary_when_trimming() -> None:
             for i in range(20)
         ],
     ]
-    trimmed = ClawboltAgent._trim_messages(messages, target_tokens=5000)
+    trimmed = trim_messages(messages, target_tokens=5000, input_tokens=20_000)
     assert isinstance(trimmed[0], SystemMessage)
     # Second message should be the summary
     assert isinstance(trimmed[1], UserMessage)
@@ -998,7 +938,7 @@ def test_trim_messages_no_summary_when_not_trimmed() -> None:
         UserMessage(content="Hello"),
         AssistantMessage(content="Hi there!"),
     ]
-    trimmed = ClawboltAgent._trim_messages(messages)
+    trimmed = trim_messages(messages, input_tokens=50)
     assert trimmed == messages
     # No summary message should be present
     for msg in trimmed:
@@ -1007,14 +947,13 @@ def test_trim_messages_no_summary_when_not_trimmed() -> None:
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_process_message_injects_summary_when_trimming(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """process_message should inject a summary when history is trimmed."""
-    mock_acompletion.return_value = make_text_response("Ok!")
+    mock_amessages.return_value = make_text_response("Ok!")
 
     big_content = "x" * 4000
     long_history: list[AgentMessage] = [
@@ -1024,7 +963,9 @@ async def test_process_message_injects_summary_when_trimming(
         for i in range(150)
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
+    # Simulate a prior LLM response so the pre-call trimmer has token data.
+    agent._last_input_tokens = 600_000
 
     await agent.process_message(
         "Current message",
@@ -1033,10 +974,10 @@ async def test_process_message_injects_summary_when_trimming(
     )
 
     # Check the messages sent to the LLM include a summary
-    call_args = mock_acompletion.call_args
+    call_args = mock_amessages.call_args
     sent_messages = call_args.kwargs.get("messages", call_args.args[0] if call_args.args else [])
-    # Second message should be the summary (after system)
-    assert "[Summary of earlier conversation:" in sent_messages[1]["content"]
+    # First message should be the summary (system is extracted to kwarg)
+    assert "[Summary of earlier conversation:" in sent_messages[0]["content"]
 
 
 # ---------------------------------------------------------------------------
@@ -1044,18 +985,16 @@ async def test_process_message_injects_summary_when_trimming(
 # ---------------------------------------------------------------------------
 
 
-def test_register_tools_builds_dict_lookup(
-    db_session: Session, test_contractor: Contractor
-) -> None:
+def test_register_tools_builds_dict_lookup(test_user: UserData) -> None:
     """register_tools should build a dict for O(1) lookup by name."""
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
 
     async def dummy(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
 
     tools = [
-        Tool(name="tool_a", description="A", function=dummy, parameters={}),
-        Tool(name="tool_b", description="B", function=dummy, parameters={}),
+        Tool(name="tool_a", description="A", function=dummy, params_model=_EmptyParams),
+        Tool(name="tool_b", description="B", function=dummy, params_model=_EmptyParams),
     ]
     agent.register_tools(tools)
 
@@ -1065,19 +1004,18 @@ def test_register_tools_builds_dict_lookup(
 
 
 def test_register_tools_warns_on_duplicate_name(
-    db_session: Session,
-    test_contractor: Contractor,
+    test_user: UserData,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     """Registering tools with duplicate names should log a warning."""
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
 
     async def dummy(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
 
     tools = [
-        Tool(name="dupe", description="First", function=dummy, parameters={}),
-        Tool(name="dupe", description="Second", function=dummy, parameters={}),
+        Tool(name="dupe", description="First", function=dummy, params_model=_EmptyParams),
+        Tool(name="dupe", description="Second", function=dummy, params_model=_EmptyParams),
     ]
 
     with caplog.at_level("WARNING", logger="backend.app.agent.core"):
@@ -1092,88 +1030,89 @@ def test_register_tools_warns_on_duplicate_name(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_tool_result_error_appends_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """When a tool returns ToolResult(is_error=True), a hint is appended."""
 
     async def failing_tool(**kwargs: object) -> ToolResult:
         return ToolResult(content="Error: item not found", is_error=True)
 
-    tool = Tool(name="do_thing", description="test", function=failing_tool, parameters={})
+    tool = Tool(
+        name="do_thing", description="test", function=failing_tool, params_model=_EmptyParams
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "do_thing", "arguments": json.dumps({})}]
         ),
         make_text_response("I'll try something else."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
     # The hint should have been appended to the error result
     assert any("Failed: do_thing" in a for a in response.actions_taken)
-    assert response.tool_calls[0]["is_error"] is True
-    assert "[Analyze the error" in response.tool_calls[0]["result"]
+    assert response.tool_calls[0].is_error is True
+    assert "[Analyze the error" in response.tool_calls[0].result
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_tool_result_success_no_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """When a tool returns ToolResult(is_error=False), no hint is appended."""
 
     async def ok_tool(**kwargs: object) -> ToolResult:
         return ToolResult(content="Done!")
 
-    tool = Tool(name="do_thing", description="test", function=ok_tool, parameters={})
+    tool = Tool(name="do_thing", description="test", function=ok_tool, params_model=_EmptyParams)
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "do_thing", "arguments": json.dumps({})}]
         ),
         make_text_response("Great!"),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
     assert any("Called do_thing" in a for a in response.actions_taken)
-    assert response.tool_calls[0]["is_error"] is False
-    assert "[Analyze the error" not in response.tool_calls[0]["result"]
+    assert response.tool_calls[0].is_error is False
+    assert "[Analyze the error" not in response.tool_calls[0].result
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_tool_exception_appends_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """When a tool raises an exception, a self-correction hint is appended."""
 
     async def crashing_tool(**kwargs: object) -> ToolResult:
         raise RuntimeError("Something broke")
 
-    tool = Tool(name="bad_tool", description="test", function=crashing_tool, parameters={})
+    tool = Tool(
+        name="bad_tool", description="test", function=crashing_tool, params_model=_EmptyParams
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "bad_tool", "arguments": json.dumps({})}]
         ),
         make_text_response("Let me try another way."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
@@ -1186,11 +1125,10 @@ async def test_tool_exception_appends_hint(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_unknown_tool_error_lists_available_tools(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """Unknown tool error should list all registered tool names."""
 
@@ -1198,12 +1136,19 @@ async def test_unknown_tool_error_lists_available_tools(
         return ToolResult(content="ok")
 
     tools = [
-        Tool(name="save_fact", description="Save a fact", function=dummy, parameters={}),
-        Tool(name="recall_facts", description="Recall facts", function=dummy, parameters={}),
+        Tool(
+            name="save_fact", description="Save a fact", function=dummy, params_model=_EmptyParams
+        ),
+        Tool(
+            name="recall_facts",
+            description="Recall facts",
+            function=dummy,
+            params_model=_EmptyParams,
+        ),
     ]
 
     # LLM calls a tool that doesn't exist
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[
                 {"id": "call_1", "name": "save_notes", "arguments": json.dumps({"text": "hi"})}
@@ -1212,15 +1157,23 @@ async def test_unknown_tool_error_lists_available_tools(
         make_text_response("Let me try again."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools(tools)
     await agent.process_message("test", system_prompt_override="system")
 
-    # Check the tool result sent back to the LLM
-    followup_call = mock_acompletion.call_args_list[1]
+    # Check the tool result sent back to the LLM (wrapped as user message
+    # with tool_result content blocks in Messages API format)
+    followup_call = mock_amessages.call_args_list[1]
     messages = followup_call.kwargs["messages"]
-    tool_msg = next(m for m in messages if m.get("role") == "tool")
-    content = tool_msg["content"]
+    # Find the user message containing tool_result content blocks
+    tool_msg = next(
+        m
+        for m in messages
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any(b.get("type") == "tool_result" for b in m["content"])
+    )
+    content = tool_msg["content"][0]["content"]
 
     assert 'unknown tool "save_notes"' in content
     assert "save_fact" in content
@@ -1229,11 +1182,10 @@ async def test_unknown_tool_error_lists_available_tools(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_validation_error_includes_expected_schema(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """Validation errors should include the expected parameter schema."""
     from pydantic import BaseModel
@@ -1250,12 +1202,11 @@ async def test_validation_error_includes_expected_schema(
         name="save_fact",
         description="Save a fact",
         function=save_fact,
-        parameters={},
         params_model=FactParams,
     )
 
     # LLM calls save_fact with missing required fields
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[
                 {"id": "call_1", "name": "save_fact", "arguments": json.dumps({"category": "job"})}
@@ -1264,15 +1215,22 @@ async def test_validation_error_includes_expected_schema(
         make_text_response("Let me fix that."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     await agent.process_message("test", system_prompt_override="system")
 
-    # Check the tool result sent back to the LLM
-    followup_call = mock_acompletion.call_args_list[1]
+    # Check the tool result sent back to the LLM (wrapped as user message
+    # with tool_result content blocks in Messages API format)
+    followup_call = mock_amessages.call_args_list[1]
     messages = followup_call.kwargs["messages"]
-    tool_msg = next(m for m in messages if m.get("role") == "tool")
-    content = tool_msg["content"]
+    tool_msg = next(
+        m
+        for m in messages
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any(b.get("type") == "tool_result" for b in m["content"])
+    )
+    content = tool_msg["content"][0]["content"]
 
     assert "Validation error for save_fact" in content
     assert "Expected parameters:" in content
@@ -1288,11 +1246,10 @@ async def test_validation_error_includes_expected_schema(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_error_kind_not_found_produces_specific_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """NOT_FOUND error kind should produce a resource-not-found hint."""
 
@@ -1303,30 +1260,31 @@ async def test_error_kind_not_found_produces_specific_hint(
             error_kind=ToolErrorKind.NOT_FOUND,
         )
 
-    tool = Tool(name="find_item", description="test", function=missing_tool, parameters={})
+    tool = Tool(
+        name="find_item", description="test", function=missing_tool, params_model=_EmptyParams
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "find_item", "arguments": json.dumps({})}]
         ),
         make_text_response("That item doesn't exist."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "not found" in result_content.lower()
     assert "[The requested resource was not found" in result_content
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_error_kind_service_produces_specific_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """SERVICE error kind should produce an external-service hint."""
 
@@ -1337,29 +1295,30 @@ async def test_error_kind_service_produces_specific_hint(
             error_kind=ToolErrorKind.SERVICE,
         )
 
-    tool = Tool(name="upload", description="test", function=failing_service, parameters={})
+    tool = Tool(
+        name="upload", description="test", function=failing_service, params_model=_EmptyParams
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "upload", "arguments": json.dumps({})}]
         ),
         make_text_response("Storage is down."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "[An external service is temporarily unavailable" in result_content
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_error_kind_validation_produces_specific_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """VALIDATION error kind should produce a parameter-check hint."""
 
@@ -1370,29 +1329,30 @@ async def test_error_kind_validation_produces_specific_hint(
             error_kind=ToolErrorKind.VALIDATION,
         )
 
-    tool = Tool(name="create_thing", description="test", function=bad_args_tool, parameters={})
+    tool = Tool(
+        name="create_thing", description="test", function=bad_args_tool, params_model=_EmptyParams
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "create_thing", "arguments": json.dumps({})}]
         ),
         make_text_response("Let me fix that."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "[Check the expected parameter format" in result_content
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_error_kind_internal_produces_specific_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """INTERNAL error kind should produce a do-not-retry hint."""
 
@@ -1403,58 +1363,63 @@ async def test_error_kind_internal_produces_specific_hint(
             error_kind=ToolErrorKind.INTERNAL,
         )
 
-    tool = Tool(name="broken_tool", description="test", function=buggy_tool, parameters={})
+    tool = Tool(
+        name="broken_tool", description="test", function=buggy_tool, params_model=_EmptyParams
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "broken_tool", "arguments": json.dumps({})}]
         ),
         make_text_response("Something went wrong."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "[An internal error occurred" in result_content
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_error_with_no_kind_uses_default_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """ToolResult with is_error=True but no error_kind should use the default hint."""
 
     async def legacy_error_tool(**kwargs: object) -> ToolResult:
         return ToolResult(content="Error: something went wrong", is_error=True)
 
-    tool = Tool(name="legacy_tool", description="test", function=legacy_error_tool, parameters={})
+    tool = Tool(
+        name="legacy_tool",
+        description="test",
+        function=legacy_error_tool,
+        params_model=_EmptyParams,
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "legacy_tool", "arguments": json.dumps({})}]
         ),
         make_text_response("I'll try another way."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     assert "[Analyze the error above and try a different approach.]" in result_content
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_error_with_custom_hint_overrides_kind_default(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """ToolResult with a custom hint should use it instead of the error_kind default."""
 
@@ -1466,31 +1431,35 @@ async def test_error_with_custom_hint_overrides_kind_default(
             hint="Ask the user for the correct estimate number.",
         )
 
-    tool = Tool(name="get_estimate", description="test", function=custom_hint_tool, parameters={})
+    tool = Tool(
+        name="get_estimate",
+        description="test",
+        function=custom_hint_tool,
+        params_model=_EmptyParams,
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "get_estimate", "arguments": json.dumps({})}]
         ),
         make_text_response("Which estimate?"),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     response = await agent.process_message("test", system_prompt_override="system")
 
-    result_content = response.tool_calls[0]["result"]
+    result_content = response.tool_calls[0].result
     # Custom hint should appear, not the default NOT_FOUND hint
     assert "[Ask the user for the correct estimate number.]" in result_content
     assert "requested resource was not found" not in result_content
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_different_error_kinds_produce_different_hints(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """Each error kind should produce a distinct guidance message."""
     collected_hints: dict[str, str] = {}
@@ -1504,21 +1473,23 @@ async def test_different_error_kinds_produce_different_hints(
                 error_kind=error_kind,
             )
 
-        tool = Tool(name="test_tool", description="test", function=make_tool, parameters={})
+        tool = Tool(
+            name="test_tool", description="test", function=make_tool, params_model=_EmptyParams
+        )
 
-        mock_acompletion.reset_mock()
-        mock_acompletion.side_effect = [
+        mock_amessages.reset_mock()
+        mock_amessages.side_effect = [
             make_tool_call_response(
                 tool_calls=[{"id": "call_1", "name": "test_tool", "arguments": json.dumps({})}]
             ),
             make_text_response("ok"),
         ]
 
-        agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+        agent = ClawboltAgent(user=test_user)
         agent.register_tools([tool])
         response = await agent.process_message("test", system_prompt_override="system")
 
-        collected_hints[kind.value] = response.tool_calls[0]["result"]
+        collected_hints[kind.value] = response.tool_calls[0].result
 
     # All hints should be different from each other
     hint_values = list(collected_hints.values())
@@ -1528,35 +1499,43 @@ async def test_different_error_kinds_produce_different_hints(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.core.acompletion")
+@patch("backend.app.agent.core.amessages")
 async def test_unhandled_exception_uses_internal_hint(
-    mock_acompletion: AsyncMock,
-    db_session: Session,
-    test_contractor: Contractor,
+    mock_amessages: AsyncMock,
+    test_user: UserData,
 ) -> None:
     """Unhandled tool exceptions should produce INTERNAL error kind hint."""
 
     async def crashing_tool(**kwargs: object) -> ToolResult:
         raise RuntimeError("Unexpected crash")
 
-    tool = Tool(name="crash_tool", description="test", function=crashing_tool, parameters={})
+    tool = Tool(
+        name="crash_tool", description="test", function=crashing_tool, params_model=_EmptyParams
+    )
 
-    mock_acompletion.side_effect = [
+    mock_amessages.side_effect = [
         make_tool_call_response(
             tool_calls=[{"id": "call_1", "name": "crash_tool", "arguments": json.dumps({})}]
         ),
         make_text_response("Something went wrong."),
     ]
 
-    agent = ClawboltAgent(db=db_session, contractor=test_contractor)
+    agent = ClawboltAgent(user=test_user)
     agent.register_tools([tool])
     await agent.process_message("test", system_prompt_override="system")
 
-    # Check the tool result sent back to the LLM
-    followup_call = mock_acompletion.call_args_list[1]
+    # Check the tool result sent back to the LLM (wrapped as user message
+    # with tool_result content blocks in Messages API format)
+    followup_call = mock_amessages.call_args_list[1]
     messages = followup_call.kwargs["messages"]
-    tool_msg = next(m for m in messages if m.get("role") == "tool")
-    content = tool_msg["content"]
+    tool_msg = next(
+        m
+        for m in messages
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any(b.get("type") == "tool_result" for b in m["content"])
+    )
+    content = tool_msg["content"][0]["content"]
 
     assert "[An internal error occurred" in content
 
@@ -1567,9 +1546,7 @@ async def test_unhandled_exception_uses_internal_hint(
 class TestToolRegistry:
     """Tests for the ToolRegistry and related helpers."""
 
-    def test_register_and_create_tools(
-        self, db_session: Session, test_contractor: Contractor
-    ) -> None:
+    def test_register_and_create_tools(self, test_user: UserData) -> None:
         """Registry should create tools from registered factories."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
@@ -1589,51 +1566,59 @@ class TestToolRegistry:
             ]
 
         registry.register("dummy", dummy_factory)
-        ctx = ToolContext(db=db_session, contractor=test_contractor)
+        ctx = ToolContext(user=test_user)
         tools = registry.create_tools(ctx)
         assert len(tools) == 1
         assert tools[0].name == "dummy"
 
-    def test_skips_factory_when_storage_missing(
-        self, db_session: Session, test_contractor: Contractor
-    ) -> None:
+    def test_skips_factory_when_storage_missing(self, test_user: UserData) -> None:
         """Factories requiring storage should be skipped when storage is None."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
         registry = ToolRegistry()
 
         def storage_factory(ctx: ToolContext) -> list[Tool]:
-            return [Tool(name="needs_storage", description="test", function=lambda: None)]
+            return [
+                Tool(
+                    name="needs_storage",
+                    description="test",
+                    function=lambda: None,
+                    params_model=_EmptyParams,
+                )
+            ]
 
         registry.register("storage_tool", storage_factory, requires_storage=True)
-        ctx = ToolContext(db=db_session, contractor=test_contractor, storage=None)
+        ctx = ToolContext(user=test_user, storage=None)
         tools = registry.create_tools(ctx)
         assert len(tools) == 0
 
-    def test_skips_factory_when_messaging_missing(
-        self, db_session: Session, test_contractor: Contractor
-    ) -> None:
-        """Factories requiring messaging should be skipped when messaging is None."""
+    def test_skips_factory_when_outbound_missing(self, test_user: UserData) -> None:
+        """Factories requiring outbound should be skipped when publish_outbound is None."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
         registry = ToolRegistry()
 
         def msg_factory(ctx: ToolContext) -> list[Tool]:
-            return [Tool(name="needs_messaging", description="test", function=lambda: None)]
+            return [
+                Tool(
+                    name="needs_outbound",
+                    description="test",
+                    function=lambda: None,
+                    params_model=_EmptyParams,
+                )
+            ]
 
-        registry.register("msg_tool", msg_factory, requires_messaging=True)
-        ctx = ToolContext(db=db_session, contractor=test_contractor, messaging_service=None)
+        registry.register("msg_tool", msg_factory, requires_outbound=True)
+        ctx = ToolContext(user=test_user, publish_outbound=None)
         tools = registry.create_tools(ctx)
         assert len(tools) == 0
 
     def test_includes_factory_when_deps_satisfied(
         self,
-        db_session: Session,
-        test_contractor: Contractor,
-        mock_messaging_service: MessagingService,
+        test_user: UserData,
     ) -> None:
         """Factories should produce tools when required dependencies are present."""
-        from unittest.mock import MagicMock
+        from unittest.mock import AsyncMock, MagicMock
 
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
@@ -1660,14 +1645,14 @@ class TestToolRegistry:
             ]
 
         registry.register("s", storage_factory, requires_storage=True)
-        registry.register("m", msg_factory, requires_messaging=True)
+        registry.register("m", msg_factory, requires_outbound=True)
 
         mock_storage = MagicMock()
+        mock_publish = AsyncMock()
         ctx = ToolContext(
-            db=db_session,
-            contractor=test_contractor,
+            user=test_user,
             storage=mock_storage,
-            messaging_service=mock_messaging_service,
+            publish_outbound=mock_publish,
         )
         tools = registry.create_tools(ctx)
         names = {t.name for t in tools}
@@ -1694,8 +1679,8 @@ class TestToolRegistry:
         assert "messaging" in names
         assert "estimate" in names
         assert "checklist" in names
-        assert "profile" in names
         assert "file" in names
+        assert "workspace" in names
 
     def test_ensure_tool_modules_imported_idempotent(self) -> None:
         """Calling ensure_tool_modules_imported() multiple times should be safe."""
@@ -1707,7 +1692,7 @@ class TestToolRegistry:
         count2 = len(default_registry.factory_names)
         assert count1 == count2
 
-    def test_overwrite_warns(self, db_session: Session, test_contractor: Contractor) -> None:
+    def test_overwrite_warns(self, test_user: UserData) -> None:
         """Registering the same name twice should overwrite (with a warning)."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
@@ -1736,8 +1721,257 @@ class TestToolRegistry:
         registry.register("same_name", factory_a)
         registry.register("same_name", factory_b)
 
-        ctx = ToolContext(db=db_session, contractor=test_contractor)
+        ctx = ToolContext(user=test_user)
         tools = registry.create_tools(ctx)
         # The second factory should win
         assert len(tools) == 1
         assert tools[0].name == "b"
+
+
+# ---------------------------------------------------------------------------
+# Debug logging tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_emits_debug_logs_for_full_loop(
+    mock_amessages: AsyncMock,
+    test_user: UserData,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Debug logging should trace the full agent loop lifecycle."""
+    tool_func = AsyncMock(return_value=ToolResult(content="saved"))
+    tool = Tool(
+        name="save_fact",
+        description="save",
+        function=tool_func,
+        params_model=_KeyValueParams,
+    )
+    mock_amessages.side_effect = [
+        make_tool_call_response(
+            [{"name": "save_fact", "arguments": {"key": "color", "value": "blue"}}]
+        ),
+        make_text_response("Done!"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+
+    with caplog.at_level("DEBUG", logger="backend.app.agent.core"):
+        await agent.process_message(
+            "Remember my favorite color is blue",
+            system_prompt_override="You are a helpful assistant.",
+        )
+
+    debug_messages = [r.message for r in caplog.records if r.levelno == logging.DEBUG]
+    # Agent start
+    assert any("Agent starting" in m for m in debug_messages)
+    # Round logging
+    assert any("Round 0" in m and "starting" in m for m in debug_messages)
+    # Tool calls parsed
+    assert any("save_fact" in m and "tool call" in m for m in debug_messages)
+    # Tool execution result
+    assert any("save_fact" in m and "completed" in m for m in debug_messages)
+    # Agent finished
+    assert any("Agent finished" in m for m in debug_messages)
+    # LLM call
+    assert any("Calling LLM" in m for m in debug_messages)
+
+
+# ---------------------------------------------------------------------------
+# Error stop_reason guard (context poisoning prevention)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_error_stop_reason_sets_is_error_fallback(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """LLM response with an error stop_reason should set is_error_fallback."""
+    mock_amessages.return_value = make_error_response(stop_reason="error")  # type: ignore[union-attr]
+
+    agent = ClawboltAgent(user=test_user)
+    response = await agent.process_message("Hello")
+
+    assert response.is_error_fallback is True
+    assert response.reply_text  # should have a fallback message
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_error_stop_reason_mid_loop_preserves_earlier_tool_calls(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """Error stop_reason after a successful tool round should preserve tool records."""
+    tool_func = AsyncMock(return_value=ToolResult(content="saved"))
+    tool = Tool(
+        name="save_fact",
+        description="save",
+        function=tool_func,
+        params_model=_KeyValueParams,
+    )
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(
+            [{"name": "save_fact", "arguments": {"key": "color", "value": "blue"}}]
+        ),
+        # Second LLM call returns an error
+        make_error_response(stop_reason="error"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("Remember blue")
+
+    assert response.is_error_fallback is True
+    # The successful tool call from round 0 should still be in the records
+    assert len(response.tool_calls) == 1
+    assert response.tool_calls[0].name == "save_fact"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_tool_errors_still_returned_to_llm_in_loop(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """Tool-level errors should still be fed back to the LLM for self-correction."""
+    tool_func = AsyncMock(return_value=ToolResult(content="saved"))
+    tool = Tool(
+        name="save_fact",
+        description="save",
+        function=tool_func,
+        params_model=_KeyValueParams,
+    )
+    # Round 0: LLM calls an unknown tool (error result returned)
+    # Round 1: LLM self-corrects and calls the right tool
+    # Round 2: LLM produces final text reply
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_tool_call_response(
+            [{"name": "nonexistent_tool", "arguments": {"key": "a", "value": "b"}}]
+        ),
+        make_tool_call_response(
+            [{"name": "save_fact", "arguments": {"key": "color", "value": "blue"}}]
+        ),
+        make_text_response("Done!"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("Remember blue")
+
+    # The agent should NOT be flagged as error (the loop recovered)
+    assert response.is_error_fallback is False
+    assert response.reply_text == "Done!"
+    # The LLM was called 3 times (error feedback allowed self-correction)
+    assert mock_amessages.call_count == 3  # type: ignore[union-attr]
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_valid_stop_reasons_not_treated_as_error(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """Responses with valid stop_reasons should be processed normally."""
+    for stop_reason in ("end_turn", "max_tokens", "stop_sequence"):
+        from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
+
+        mock_amessages.return_value = MessageResponse(  # type: ignore[union-attr]
+            id="msg_mock",
+            content=[MessageContentBlock(type="text", text="Reply!")],
+            model="mock-model",
+            stop_reason=stop_reason,
+            usage=MessageUsage(input_tokens=0, output_tokens=0),
+        )
+
+        agent = ClawboltAgent(user=test_user)
+        response = await agent.process_message("Hello")
+
+        assert response.is_error_fallback is False, f"stop_reason={stop_reason} was wrongly error"
+        assert response.reply_text == "Reply!"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_empty_reply_after_tool_call_reprompts(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """When the LLM returns no text after tool calls, the loop re-prompts.
+
+    Regression test: an empty reply_text caused the web UI to stay stuck on
+    'thinking' because dispatch_reply_step skipped publishing to the bus.
+    The agent loop should detect the empty reply and give the LLM another
+    chance rather than accepting the empty response.
+    """
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "name": "recall_facts",
+                "arguments": json.dumps({"query": "profile"}),
+            }
+        ]
+    )
+    # Second call: LLM returns end_turn with no text content
+    empty_followup = make_empty_response()
+    # Third call: after re-prompt, LLM responds properly
+    retry_response = make_text_response("Your name is Mike!")
+
+    mock_amessages.side_effect = [tool_response, empty_followup, retry_response]  # type: ignore[union-attr]
+
+    mock_recall = AsyncMock(return_value=ToolResult(content="name: Mike"))
+    tool = Tool(
+        name="recall_facts",
+        description="Recall facts",
+        function=mock_recall,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("What do you know about me?")
+
+    # The tool was called once
+    mock_recall.assert_called_once()
+    # Three LLM calls: tool call, empty reply, re-prompted reply
+    assert mock_amessages.call_count == 3  # type: ignore[union-attr]
+    # The re-prompted LLM call produced the actual response
+    assert response.reply_text == "Your name is Mike!"
+    assert not response.is_error_fallback
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_empty_reply_reprompt_only_once(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """Re-prompt on empty reply happens at most once to avoid infinite loops."""
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "name": "recall_facts",
+                "arguments": json.dumps({"query": "profile"}),
+            }
+        ]
+    )
+    # Both follow-ups return empty
+    empty1 = make_empty_response()
+    empty2 = make_empty_response()
+
+    mock_amessages.side_effect = [tool_response, empty1, empty2]  # type: ignore[union-attr]
+
+    mock_recall = AsyncMock(return_value=ToolResult(content="name: Mike"))
+    tool = Tool(
+        name="recall_facts",
+        description="Recall facts",
+        function=mock_recall,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("What do you know about me?")
+
+    # Three calls: tool call, empty, re-prompted empty (stops here)
+    assert mock_amessages.call_count == 3  # type: ignore[union-attr]
+    # Reply is empty since both attempts produced nothing
+    assert response.reply_text == ""
