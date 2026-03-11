@@ -1,12 +1,14 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
 import Card from '@/components/ui/card';
 import Badge from '@/components/ui/badge';
 import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
 import Spinner from '@/components/ui/spinner';
-import { Modal, ModalContent, ModalHeader, ModalBody } from '@heroui/modal';
+import { ModalContent, ModalHeader, ModalBody } from '@heroui/modal';
 import api from '@/api';
 import type { MemoryFact } from '@/types';
+
+const Modal = lazy(() => import('@heroui/modal').then(m => ({ default: m.Modal })));
 
 export default function MemoryPage() {
   const [facts, setFacts] = useState<MemoryFact[]>([]);
@@ -163,20 +165,22 @@ export default function MemoryPage() {
       )}
 
       {/* Edit modal */}
-      <Modal isOpen={!!editingFact} onOpenChange={(open) => { if (!open) setEditingFact(null); }}>
-        <ModalContent>
-          <ModalHeader>Edit Fact: {editingFact?.key}</ModalHeader>
-          <ModalBody>
-            {editingFact && (
-              <EditFactForm
-                fact={editingFact}
-                onSave={handleSaveEdit}
-                onCancel={() => setEditingFact(null)}
-              />
-            )}
-          </ModalBody>
-        </ModalContent>
-      </Modal>
+      <Suspense fallback={null}>
+        <Modal isOpen={!!editingFact} onOpenChange={(open) => { if (!open) setEditingFact(null); }}>
+          <ModalContent>
+            <ModalHeader>Edit Fact: {editingFact?.key}</ModalHeader>
+            <ModalBody>
+              {editingFact && (
+                <EditFactForm
+                  fact={editingFact}
+                  onSave={handleSaveEdit}
+                  onCancel={() => setEditingFact(null)}
+                />
+              )}
+            </ModalBody>
+          </ModalContent>
+        </Modal>
+      </Suspense>
     </div>
   );
 }
