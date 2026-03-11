@@ -107,10 +107,20 @@ class QuickBooksOnlineService(QuickBooksService):
                 return value
         return []
 
+    async def _resolve_customer_ids(self, customer_name: str) -> list[str]:
+        """Look up customer IDs by display name (fuzzy match)."""
+        escaped = customer_name.replace("'", "\\'")
+        qs = f"SELECT Id FROM Customer WHERE DisplayName LIKE '%{escaped}%'"
+        raw = await self._query(qs)
+        return [c["Id"] for c in raw if "Id" in c]
+
     async def list_invoices(self, customer_name: str | None = None) -> list[dict[str, Any]]:
         if customer_name:
-            escaped = customer_name.replace("'", "\\'")
-            qs = f"SELECT * FROM Invoice WHERE CustomerRef IN (SELECT Id FROM Customer WHERE DisplayName LIKE '%{escaped}%') MAXRESULTS 50"
+            cust_ids = await self._resolve_customer_ids(customer_name)
+            if not cust_ids:
+                return []
+            id_list = ", ".join(f"'{cid}'" for cid in cust_ids)
+            qs = f"SELECT * FROM Invoice WHERE CustomerRef IN ({id_list}) MAXRESULTS 50"
         else:
             qs = "SELECT * FROM Invoice MAXRESULTS 50"
         raw = await self._query(qs)
@@ -130,8 +140,11 @@ class QuickBooksOnlineService(QuickBooksService):
 
     async def list_estimates(self, customer_name: str | None = None) -> list[dict[str, Any]]:
         if customer_name:
-            escaped = customer_name.replace("'", "\\'")
-            qs = f"SELECT * FROM Estimate WHERE CustomerRef IN (SELECT Id FROM Customer WHERE DisplayName LIKE '%{escaped}%') MAXRESULTS 50"
+            cust_ids = await self._resolve_customer_ids(customer_name)
+            if not cust_ids:
+                return []
+            id_list = ", ".join(f"'{cid}'" for cid in cust_ids)
+            qs = f"SELECT * FROM Estimate WHERE CustomerRef IN ({id_list}) MAXRESULTS 50"
         else:
             qs = "SELECT * FROM Estimate MAXRESULTS 50"
         raw = await self._query(qs)
