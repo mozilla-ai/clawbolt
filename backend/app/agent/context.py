@@ -238,6 +238,61 @@ async def load_conversation_history(
     return history
 
 
+async def _consolidate_previous_session(
+    session_store: FileSessionStore,
+    user_id: int,
+    current_session_id: str,
+) -> None:
+    """Consolidate unconsolidated messages from the most recent previous session.
+
+    When a new session is created because the old one timed out, this function
+    finds the previous session and runs compaction on any messages that were
+    never compacted.  This ensures short conversations (that never overflowed
+    the context window) still get their facts extracted and history logged.
+    """
+    for path in reversed(session_store._list_session_files()):
+        sid = path.stem
+        if sid == current_session_id:
+            continue
+        prev = session_store._load_session(sid)
+        if prev is None or not prev.messages:
+            continue
+
+        # Find unconsolidated messages
+        unconsolidated = [m for m in prev.messages if m.seq > prev.last_compacted_seq]
+        if not unconsolidated:
+            break
+
+        trimmed_agent_messages: list[AgentMessage] = []
+        for msg in unconsolidated:
+            content = msg.processed_context if msg.processed_context else msg.body
+            if msg.direction == MessageDirection.INBOUND:
+                trimmed_agent_messages.append(UserMessage(content=content))
+            else:
+                trimmed_agent_messages.append(AssistantMessage(content=content))
+
+        if trimmed_agent_messages:
+            max_seq = max(m.seq for m in unconsolidated)
+            task = asyncio.create_task(
+                _run_compaction_in_background(
+                    session_store,
+                    prev,
+                    user_id,
+                    trimmed_agent_messages,
+                    max_seq,
+                )
+            )
+            _background_tasks.add(task)
+            task.add_done_callback(_background_tasks.discard)
+            logger.info(
+                "Triggered session-end consolidation for user %d: %d messages from session %s",
+                user_id,
+                len(trimmed_agent_messages),
+                sid,
+            )
+        break
+
+
 async def get_or_create_conversation(
     user_id: int,
     external_session_id: str | None = None,
@@ -247,6 +302,9 @@ async def get_or_create_conversation(
 
     A conversation is "active" if the last message was within the timeout window.
     Returns (session, is_new).
+
+    When a new session is created, any unconsolidated messages from the
+    previous session are consolidated in the background.
     """
     session_store = get_session_store(user_id)
 
@@ -255,4 +313,13 @@ async def get_or_create_conversation(
         if session is not None and session.user_id == user_id:
             return session, False
 
-    return await session_store.get_or_create_session(timeout_hours=timeout_hours)
+    session, is_new = await session_store.get_or_create_session(timeout_hours=timeout_hours)
+
+    if is_new and settings.compaction_enabled:
+        await _consolidate_previous_session(
+            session_store,
+            user_id,
+            session.session_id,
+        )
+
+    return session, is_new
