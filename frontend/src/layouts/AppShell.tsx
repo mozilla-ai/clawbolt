@@ -3,6 +3,7 @@ import { Outlet, NavLink, Navigate } from 'react-router-dom';
 import { ToastProvider } from '@heroui/toast';
 import api from '@/api';
 import Button from '@/components/ui/button';
+import OfflineIndicator from '@/components/ui/OfflineIndicator';
 import Spinner from '@/components/ui/spinner';
 import { useAuth } from '@/contexts/AuthContext';
 import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
@@ -182,6 +183,7 @@ export default function AppShell() {
         </main>
       </div>
 
+      <OfflineIndicator />
       <ToastProvider placement="bottom-right" />
     </div>
   );
