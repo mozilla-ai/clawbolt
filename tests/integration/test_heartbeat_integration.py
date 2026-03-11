@@ -26,7 +26,7 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 async def test_heartbeat_evaluate_returns_valid_action(
     onboarded_user: UserData,
 ) -> None:
-    """evaluate_heartbeat_need() should return a valid HeartbeatAction from a real LLM."""
+    """evaluate_heartbeat_need() should return a valid HeartbeatDecision from a real LLM."""
     with patch("backend.app.agent.heartbeat.settings") as mock_settings:
         mock_settings.llm_provider = "anthropic"
         mock_settings.llm_model = _ANTHROPIC_MODEL
@@ -36,12 +36,11 @@ async def test_heartbeat_evaluate_returns_valid_action(
         mock_settings.llm_max_tokens_heartbeat = 300
         mock_settings.heartbeat_recent_messages_count = 5
 
-        action = await evaluate_heartbeat_need(onboarded_user)
+        decision = await evaluate_heartbeat_need(onboarded_user)
 
-    assert action.action_type in ("send_message", "no_action")
-    assert isinstance(action.reasoning, str)
-    assert isinstance(action.priority, int)
-    assert 0 <= action.priority <= 5
+    assert decision.action in ("skip", "run")
+    assert isinstance(decision.reasoning, str)
+    assert isinstance(decision.tasks, str)
 
 
 @pytest.mark.integration()
@@ -82,9 +81,9 @@ async def test_heartbeat_evaluate_with_context(
         mock_settings.llm_max_tokens_heartbeat = 300
         mock_settings.heartbeat_recent_messages_count = 5
 
-        action = await evaluate_heartbeat_need(onboarded_user)
+        decision = await evaluate_heartbeat_need(onboarded_user)
 
-    assert action.action_type in ("send_message", "no_action")
-    # If LLM decides to send, the message should be non-empty
-    if action.action_type == "send_message":
-        assert len(action.message) > 0
+    assert decision.action in ("skip", "run")
+    # If LLM decides to run, the tasks should be non-empty
+    if decision.action == "run":
+        assert len(decision.tasks) > 0

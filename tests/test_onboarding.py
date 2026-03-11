@@ -391,7 +391,7 @@ async def test_prepopulated_user_included_in_heartbeat(
     mock_eval: AsyncMock,
 ) -> None:
     """User without BOOTSTRAP.md should be eligible for heartbeat after first message."""
-    from backend.app.agent.heartbeat import HeartbeatAction, run_heartbeat_for_user
+    from backend.app.agent.heartbeat import HeartbeatDecision, run_heartbeat_for_user
 
     user = UserData(
         id=31,
@@ -440,11 +440,10 @@ async def test_prepopulated_user_included_in_heartbeat(
     assert refreshed.onboarding_complete is True
 
     # Now verify heartbeat doesn't skip this user
-    mock_eval.return_value = HeartbeatAction(
-        action_type="no_action",
-        message="",
+    mock_eval.return_value = HeartbeatDecision(
+        action="skip",
+        tasks="",
         reasoning="Nothing actionable",
-        priority=0,
     )
     result = await run_heartbeat_for_user(
         user=refreshed,
