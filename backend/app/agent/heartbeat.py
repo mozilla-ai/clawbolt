@@ -343,11 +343,6 @@ async def run_heartbeat_for_user(
         logger.debug("Heartbeat skip user %d: heartbeat not opted in", user.id)
         return None
 
-    # Gate: business hours
-    if not is_within_business_hours(user):
-        logger.debug("Heartbeat skip user %d: outside business hours", user.id)
-        return None
-
     # Gate: daily rate limit (persistent via heartbeat log)
     daily_count = await get_daily_heartbeat_count(user.id)
     if daily_count >= max_daily:

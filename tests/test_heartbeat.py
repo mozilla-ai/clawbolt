@@ -723,22 +723,10 @@ class TestRunHeartbeatForUser:
         assert result is None
 
     @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=False)
-    async def test_skip_outside_hours(
-        self,
-        _mock_hours: MagicMock,
-        user: UserData,
-    ) -> None:
-        result = await run_heartbeat_for_user(user, "telegram", user.phone, 5)
-        assert result is None
-
-    @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
     async def test_skip_rate_limited(
         self,
         mock_count: AsyncMock,
-        _mock_hours: MagicMock,
         user: UserData,
     ) -> None:
         mock_count.return_value = 5
@@ -748,10 +736,8 @@ class TestRunHeartbeatForUser:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
-    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
     async def test_no_action_from_llm(
         self,
-        _mock_hours: MagicMock,
         mock_count: AsyncMock,
         mock_eval: AsyncMock,
         user: UserData,
@@ -777,10 +763,8 @@ class TestRunHeartbeatForUser:
     @patch("backend.app.bus.message_bus")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
-    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
     async def test_send_message_and_record(
         self,
-        _mock_hours: MagicMock,
         mock_count: AsyncMock,
         mock_eval: AsyncMock,
         mock_bus: MagicMock,
@@ -830,10 +814,8 @@ class TestRunHeartbeatForUser:
     @patch("backend.app.bus.message_bus")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
-    @patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
     async def test_sms_failure_graceful(
         self,
-        _mock_hours: MagicMock,
         mock_count: AsyncMock,
         mock_eval: AsyncMock,
         mock_bus: MagicMock,
