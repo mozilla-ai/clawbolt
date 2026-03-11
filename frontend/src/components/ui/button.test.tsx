@@ -30,3 +30,22 @@ describe('Button', () => {
     expect(screen.getByRole('button', { name: 'Custom' }).className).toContain('mt-4');
   });
 });
+
+describe('Button isLoading', () => {
+  it('renders spinner when isLoading is true', () => {
+    const { container } = render(<Button isLoading>Save</Button>);
+    // HeroUI adds aria-label="Loading" to the spinner element
+    expect(container.querySelector('[aria-label="Loading"]')).toBeInTheDocument();
+  });
+
+  it('disables the button when isLoading', () => {
+    render(<Button isLoading>Save</Button>);
+    // HeroUI prepends 'Loading' from the spinner's aria-label
+    expect(screen.getByRole('button', { name: 'Loading Save' })).toBeDisabled();
+  });
+
+  it('does not render spinner when isLoading is false', () => {
+    const { container } = render(<Button>Save</Button>);
+    expect(container.querySelector('[aria-label="Loading"]')).not.toBeInTheDocument();
+  });
+});

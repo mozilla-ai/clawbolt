@@ -215,8 +215,8 @@ function EditFactForm({
       </div>
       <div className="flex justify-end gap-2">
         <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving || value === fact.value}>
-          {saving ? 'Saving...' : 'Save'}
+        <Button type="submit" disabled={saving || value === fact.value} isLoading={saving}>
+          Save
         </Button>
       </div>
     </form>

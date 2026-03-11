@@ -26,11 +26,12 @@ function mapSize(s: Size) {
 type ButtonProps = Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'color'> & {
   variant?: Variant;
   size?: Size;
+  isLoading?: boolean;
   children?: ReactNode;
 };
 
 const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ className, variant = 'primary', size = 'md', disabled, onClick, type, children, title, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, ...rest }, ref) => {
+  ({ className, variant = 'primary', size = 'md', isLoading, disabled, onClick, type, children, title, 'aria-label': ariaLabel, 'aria-expanded': ariaExpanded, ...rest }, ref) => {
     const mapped = mapVariant(variant);
     const isIconOnly = size === 'icon' || size === 'icon-sm';
     // Avoid passing rest to prevent incompatible HTML attribute types
@@ -43,6 +44,7 @@ const Button = forwardRef<HTMLButtonElement, ButtonProps>(
         variant={mapped.variant}
         size={mapSize(size)}
         isIconOnly={isIconOnly}
+        isLoading={isLoading}
         isDisabled={disabled}
         onPress={onClick as unknown as undefined}
         type={type}
