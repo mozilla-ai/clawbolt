@@ -244,6 +244,13 @@ async def evaluate_heartbeat_need(
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
 
+    logger.debug(
+        "Heartbeat LLM call for user %d: model=%s, provider=%s",
+        user.id,
+        model,
+        provider,
+    )
+
     response = cast(
         MessageResponse,
         await amessages(
@@ -265,6 +272,12 @@ async def evaluate_heartbeat_need(
     )
 
     log_llm_usage(user.id, model, response, "heartbeat")
+    logger.debug(
+        "Heartbeat LLM raw response for user %d: stop_reason=%s, content_blocks=%d",
+        user.id,
+        getattr(response, "stop_reason", "unknown"),
+        len(response.content),
+    )
     return _parse_tool_call_response(response)
 
 
@@ -296,27 +309,59 @@ async def run_heartbeat_for_user(
     """
     # Gate: onboarding must be complete
     if not user.onboarding_complete:
+        logger.debug("Heartbeat skip user %d: onboarding not complete", user.id)
         return None
 
     # Gate: user heartbeat opt-in
     if not user.heartbeat_opt_in:
+        logger.debug("Heartbeat skip user %d: heartbeat not opted in", user.id)
         return None
 
     # Gate: business hours
     if not is_within_business_hours(user):
+        logger.debug("Heartbeat skip user %d: outside business hours", user.id)
         return None
 
     # Gate: daily rate limit (persistent via heartbeat log)
-    if await get_daily_heartbeat_count(user.id) >= max_daily:
+    daily_count = await get_daily_heartbeat_count(user.id)
+    if daily_count >= max_daily:
+        logger.debug(
+            "Heartbeat skip user %d: daily limit reached (%d/%d)",
+            user.id,
+            daily_count,
+            max_daily,
+        )
         return None
+
+    logger.debug("Heartbeat evaluating user %d via LLM (channel=%s)", user.id, channel)
 
     # Single LLM call: the model evaluates all context holistically
     action = await evaluate_heartbeat_need(user, channel=channel, chat_id=chat_id)
 
+    logger.debug(
+        "Heartbeat LLM decision for user %d: action=%s, priority=%d, reasoning=%s",
+        user.id,
+        action.action_type,
+        action.priority,
+        action.reasoning,
+    )
+
     if action.action_type != "send_message" or not action.message:
+        logger.debug(
+            "Heartbeat no message for user %d: action=%s, message_empty=%s",
+            user.id,
+            action.action_type,
+            not action.message,
+        )
         return action
 
     # Send message via the bus
+    logger.info(
+        "Heartbeat sending message to user %d (priority=%d): %.100s",
+        user.id,
+        action.priority,
+        action.message,
+    )
     try:
         from backend.app.bus import OutboundMessage, message_bus
 
@@ -466,18 +511,30 @@ class HeartbeatScheduler:
 
     async def tick(self) -> None:
         """Single heartbeat pass: evaluate due users concurrently."""
+        logger.debug("Heartbeat tick starting")
         store = get_user_store()
         all_users = await store.list_all()
         users = [c for c in all_users if c.onboarding_complete]
 
         if not users:
+            logger.debug("Heartbeat tick: no onboarded users found")
             return
 
         now = datetime.datetime.now(datetime.UTC)
         due_users = [u for u in users if self._is_user_due(u, now)]
 
         if not due_users:
+            logger.debug(
+                "Heartbeat tick: %d onboarded user(s) but none due yet",
+                len(users),
+            )
             return
+
+        logger.info(
+            "Heartbeat tick: evaluating %d/%d user(s)",
+            len(due_users),
+            len(users),
+        )
 
         semaphore = asyncio.Semaphore(settings.heartbeat_concurrency)
 
