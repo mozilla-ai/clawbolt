@@ -3,10 +3,12 @@ import { Textarea as HeroTextarea } from '@heroui/input';
 
 type TextareaProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'size' | 'color'> & {
   maxRows?: number;
+  /** HeroUI slot classNames, e.g. { input: 'min-h-[65vh]' } */
+  classNames?: Record<string, string>;
 };
 
 const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, disabled, onChange, value, placeholder, rows, maxRows, id, ...rest }, ref) => {
+  ({ className, classNames, disabled, onChange, value, placeholder, rows, maxRows, id, ...rest }, ref) => {
     void rest;
     return (
       <HeroTextarea
@@ -29,6 +31,7 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           }
         }}
         className={className}
+        classNames={classNames}
       />
     );
   },
