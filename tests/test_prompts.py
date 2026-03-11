@@ -39,3 +39,22 @@ def test_load_prompt_content_sanity() -> None:
     assert "concise" in load_prompt("instructions")
     assert "JSON" in load_prompt("compaction")
     assert "new user" in load_prompt("bootstrap") or "user" in load_prompt("bootstrap")
+
+
+def test_bootstrap_defaults_to_clawbolt_name() -> None:
+    """Bootstrap prompt should introduce the assistant as Clawbolt by default."""
+    bootstrap = load_prompt("bootstrap")
+    assert "You are Clawbolt" in bootstrap
+    assert "I'm Clawbolt" in bootstrap
+
+
+def test_bootstrap_offers_rename_option() -> None:
+    """Bootstrap prompt should tell the user they can rename the assistant."""
+    bootstrap = load_prompt("bootstrap")
+    assert "different name" in bootstrap
+
+
+def test_default_soul_includes_clawbolt_name() -> None:
+    """Default soul template should identify as Clawbolt."""
+    soul = load_prompt("default_soul")
+    assert "Clawbolt" in soul
