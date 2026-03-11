@@ -19,8 +19,6 @@ from backend.app.agent.tools.base import Tool
 
 logger = logging.getLogger(__name__)
 
-CONTEXT_QUERY_MAX_LENGTH = 100
-
 
 class SystemPromptBuilder:
     """Build a system prompt from composable sections.
@@ -79,10 +77,7 @@ async def build_memory_section(
     query: str | None = None,
 ) -> str:
     """Build the memory context section content."""
-    ctx = await build_memory_context(
-        user_id,
-        query=query[:CONTEXT_QUERY_MAX_LENGTH] if query else None,
-    )
+    ctx = await build_memory_context(user_id)
     return ctx or "(No memories saved yet)"
 
 

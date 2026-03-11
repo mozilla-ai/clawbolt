@@ -15,7 +15,7 @@ import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import { useProfile } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
-import type { UserProfile, SessionSummary, MemoryFact } from '@/types';
+import type { UserProfile, SessionSummary } from '@/types';
 
 /** Context value provided to child routes via useOutletContext(). */
 export interface AppShellContext {
@@ -48,7 +48,7 @@ export default function AppShell() {
 
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchSessions, setSearchSessions] = useState<SessionSummary[]>([]);
-  const [searchFacts, setSearchFacts] = useState<MemoryFact[]>([]);
+  const [searchMemory, setSearchMemory] = useState('');
 
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
@@ -77,8 +77,8 @@ export default function AppShell() {
     api.listSessions(0, 50)
       .then((res) => setSearchSessions(res.sessions))
       .catch((err: unknown) => console.error('[AppShell] Failed to load sessions for search:', err));
-    api.listMemoryFacts()
-      .then(setSearchFacts)
+    api.getMemory()
+      .then((res) => setSearchMemory(res.content))
       .catch((err: unknown) => console.error('[AppShell] Failed to load memory for search:', err));
   }, [searchOpen]);
 
@@ -225,7 +225,7 @@ export default function AppShell() {
         isOpen={searchOpen}
         onClose={() => setSearchOpen(false)}
         sessions={searchSessions}
-        memoryFacts={searchFacts}
+        memoryContent={searchMemory}
       />
     </div>
   );

@@ -9,19 +9,12 @@ class HealthResponse(BaseModel):
     status: str
 
 
-class MemoryBase(BaseModel):
-    key: str
-    value: str
-    category: str = "general"
+class MemoryResponse(BaseModel):
+    content: str
 
 
-class MemoryCreate(MemoryBase):
-    confidence: float = 1.0
-
-
-class MemoryResponse(MemoryBase):
-    confidence: float
-    user_id: int
+class MemoryUpdate(BaseModel):
+    content: str
 
 
 class MessageBase(BaseModel):
@@ -125,24 +118,6 @@ class SessionDetailResponse(BaseModel):
     is_active: bool
     channel: str = ""
     messages: list[SessionMessage]
-
-
-# ---------------------------------------------------------------------------
-# Memory / facts (dashboard)
-# ---------------------------------------------------------------------------
-
-
-class MemoryFactResponse(BaseModel):
-    key: str
-    value: str
-    category: str
-    confidence: float
-
-
-class MemoryFactUpdate(BaseModel):
-    value: str | None = None
-    category: str | None = None
-    confidence: float | None = None
 
 
 # ---------------------------------------------------------------------------

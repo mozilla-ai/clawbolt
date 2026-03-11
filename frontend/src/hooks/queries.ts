@@ -2,7 +2,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query-keys';
 import api from '@/api';
 import type {
-  MemoryFactUpdate,
+  MemoryUpdate,
   ToolConfigUpdateEntry,
   ChannelConfigUpdate,
 } from '@/types';
@@ -45,28 +45,17 @@ export function useSession(sessionId: string | null) {
 
 // --- Memory ---
 
-export function useMemoryFacts() {
+export function useMemory() {
   return useQuery({
-    queryKey: queryKeys.memory.list(),
-    queryFn: () => api.listMemoryFacts(),
+    queryKey: queryKeys.memory.all,
+    queryFn: () => api.getMemory(),
   });
 }
 
-export function useUpdateMemoryFact() {
+export function useUpdateMemory() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ key, body }: { key: string; body: MemoryFactUpdate }) =>
-      api.updateMemoryFact(key, body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.memory.all });
-    },
-  });
-}
-
-export function useDeleteMemoryFact() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (key: string) => api.deleteMemoryFact(key),
+    mutationFn: (body: MemoryUpdate) => api.updateMemory(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.memory.all });
     },

@@ -52,9 +52,13 @@ async def get_stats(
     checklist = await heartbeat_store.get_checklist()
     active_checklist_items = sum(1 for item in checklist if item.status == ChecklistStatus.ACTIVE)
 
-    # Total memory facts
-    facts = await memory_store.get_all_memories()
-    total_memory_facts = len(facts)
+    # Memory: count non-empty lines as a rough "facts" proxy
+    memory_text = memory_store.read_memory()
+    total_memory_facts = (
+        sum(1 for line in memory_text.splitlines() if line.strip() and not line.startswith("#"))
+        if memory_text
+        else 0
+    )
 
     return UserStatsResponse(
         total_sessions=total_sessions,

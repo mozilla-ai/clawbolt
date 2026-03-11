@@ -8,7 +8,6 @@ export const queryKeys = {
   },
   memory: {
     all: ['memory'] as const,
-    list: (category?: string) => ['memory', 'list', { category }] as const,
   },
   tools: ['tools'] as const,
   channels: ['channels'] as const,

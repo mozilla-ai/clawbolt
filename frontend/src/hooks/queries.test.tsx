@@ -3,7 +3,7 @@ import { QueryClientProvider } from '@tanstack/react-query';
 import { createTestQueryClient } from '@/test/test-utils';
 import {
   useProfile,
-  useMemoryFacts,
+  useMemory,
   useToolConfig,
   useChannelConfig,
   useSessions,
@@ -18,9 +18,8 @@ vi.mock('@/api', () => ({
     updateProfile: vi.fn(),
     listSessions: vi.fn(),
     getSession: vi.fn(),
-    listMemoryFacts: vi.fn(),
-    updateMemoryFact: vi.fn(),
-    deleteMemoryFact: vi.fn(),
+    getMemory: vi.fn(),
+    updateMemory: vi.fn(),
     getToolConfig: vi.fn(),
     updateToolConfig: vi.fn(),
     getChannelConfig: vi.fn(),
@@ -70,16 +69,16 @@ describe('useProfile', () => {
   });
 });
 
-describe('useMemoryFacts', () => {
-  it('fetches and returns memory facts', async () => {
-    const mockFacts = [{ key: 'name', value: 'Bob', category: 'personal', confidence: 1 }];
-    vi.mocked(api.listMemoryFacts).mockResolvedValue(mockFacts as never);
+describe('useMemory', () => {
+  it('fetches and returns memory content', async () => {
+    const mockMemory = { content: '## Pricing\n- Deck: $45/sqft' };
+    vi.mocked(api.getMemory).mockResolvedValue(mockMemory as never);
 
-    const { result } = renderHook(() => useMemoryFacts(), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useMemory(), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.data).toBeDefined());
 
-    expect(result.current.data).toEqual(mockFacts);
+    expect(result.current.data).toEqual(mockMemory);
   });
 });
 

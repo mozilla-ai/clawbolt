@@ -65,17 +65,12 @@ export interface SessionDetail {
   messages: SessionMessage[];
 }
 
-export interface MemoryFact {
-  key: string;
-  value: string;
-  category: string;
-  confidence: number;
+export interface MemoryData {
+  content: string;
 }
 
-export interface MemoryFactUpdate {
-  value?: string;
-  category?: string;
-  confidence?: number;
+export interface MemoryUpdate {
+  content: string;
 }
 
 export interface ChecklistItem {

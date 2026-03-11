@@ -154,7 +154,7 @@ class TestSectionBuilders:
     def test_build_recall_section(self) -> None:
         """Should contain recall behavior rules."""
         result = build_recall_section()
-        assert "Search your memory" in result
+        assert "Check your memory section" in result
         assert "don't make things up" in result
 
 
