@@ -1,10 +1,9 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
-import Tooltip from '@/components/ui/tooltip';
-import Spinner from '@/components/ui/spinner';
+import { Tooltip } from '@heroui/tooltip';
+import { Spinner } from '@heroui/spinner';
 import api from '@/api';
 import { toast } from '@/lib/toast';
 import { useSessions, useSession } from '@/hooks/queries';
@@ -270,14 +269,14 @@ export default function ChatPage() {
       {/* Header */}
       <div className="py-4 sm:py-6 flex items-start justify-between gap-4">
         <div>
-          <h2 className="heading-page">Chat</h2>
-          <p className="page-subtitle">
+          <h2 className="text-xl font-semibold">Chat</h2>
+          <p className="text-sm text-muted-foreground mt-1">
             Talk with your AI assistant directly from the dashboard.
           </p>
         </div>
         <div className="flex items-center gap-2 shrink-0">
           {loadingSessions ? (
-            <Spinner className="w-4 h-4" />
+            <Spinner color="primary" size="sm" aria-label="Loading" />
           ) : (
             <>
               {/* Session picker */}
@@ -352,14 +351,12 @@ export default function ChatPage() {
       {/* Messages area */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 pb-4">
         {loadingHistory && !sessionDetail ? (
-          <div className="flex justify-center py-12"><Spinner /></div>
+          <div className="flex justify-center py-12"><Spinner color="primary" size="md" aria-label="Loading" /></div>
         ) : messages.length === 0 ? (
-          <Card className="text-center py-12">
-            <div className="text-muted-foreground">
-              <ChatBubbleIcon />
-              <p className="text-sm mt-3">Send a message to start chatting.</p>
-            </div>
-          </Card>
+          <div className="text-center py-12 text-muted-foreground">
+            <ChatBubbleIcon />
+            <p className="text-sm mt-3">Send a message to start chatting.</p>
+          </div>
         ) : (
           <div className="space-y-3">
             {messages.map((msg) => (
@@ -478,7 +475,7 @@ export default function ChatPage() {
                       <FileIcon />
                     )}
                     <span className="truncate max-w-[100px]">{file.name}</span>
-                    <Tooltip content={`Remove ${file.name}`}>
+                    <Tooltip content={`Remove ${file.name}`} delay={400} closeDelay={0}>
                       <Button
                         variant="ghost"
                         size="icon-sm"
@@ -496,7 +493,7 @@ export default function ChatPage() {
 
             {/* Toolbar row */}
             <div className="flex items-center justify-between">
-              <Tooltip content="Attach files">
+              <Tooltip content="Attach files" delay={400} closeDelay={0}>
                 <Button
                   variant="ghost"
                   size="icon"
@@ -508,7 +505,7 @@ export default function ChatPage() {
                   <PaperclipIcon />
                 </Button>
               </Tooltip>
-              <Tooltip content="Send message">
+              <Tooltip content="Send message" delay={400} closeDelay={0}>
                 <Button
                   type="submit"
                   size="icon"
@@ -531,7 +528,7 @@ function ToolUseIndicator({ toolName }: { toolName?: string }) {
     <div className="flex justify-start">
       <div className="bg-card border border-border rounded-[12px_12px_12px_4px] px-4 py-3 animate-message-in">
         <div className="flex items-center gap-2">
-          <Spinner className="w-4 h-4" />
+          <Spinner color="primary" size="sm" aria-label="Loading" />
           <span className="text-xs text-muted-foreground">
             {toolName ? `Using ${toolName}...` : 'Thinking...'}
           </span>

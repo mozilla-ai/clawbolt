@@ -64,8 +64,26 @@ export default function SettingsPage() {
   const renderContent = () => {
     if (premiumContent) return premiumContent;
     switch (activeTab) {
-      case 'user': return profile ? <UserTab profile={profile} /> : null;
-      case 'soul': return profile ? <SoulTab profile={profile} /> : null;
+      case 'user': return profile ? (
+        <MarkdownSettingsTab
+          profile={profile}
+          field="user_text"
+          label="About You (USER.md)"
+          description="Updated over time as your assistant learns about you."
+          placeholder="Tell your assistant about yourself: your name, phone, timezone, preferences, what projects you're working on..."
+          successMessage="User info updated"
+        />
+      ) : null;
+      case 'soul': return profile ? (
+        <MarkdownSettingsTab
+          profile={profile}
+          field="soul_text"
+          label="Personality (SOUL.md)"
+          description="Guides your assistant's personality and communication style."
+          placeholder="Describe how your assistant should behave, speak, and interact with clients. Include what it should call itself (e.g. 'Your name is Claw')..."
+          successMessage="Soul settings updated"
+        />
+      ) : null;
       case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
       default: return null;
     }
@@ -73,7 +91,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h2 className="heading-page mb-6">Settings</h2>
+      <h2 className="text-xl font-semibold mb-6">Settings</h2>
       <Tabs
         selectedKey={activeTab}
         onSelectionChange={(key) => handleTabChange(String(key))}
@@ -90,99 +108,58 @@ export default function SettingsPage() {
   );
 }
 
-// --- User Tab (USER.md) ---
+// --- Generic Markdown Settings Tab ---
 
-function UserTab({
+function MarkdownSettingsTab({
   profile,
+  field,
+  label,
+  description,
+  placeholder,
+  successMessage,
 }: {
-  profile: { user_text: string };
+  profile: Record<string, string>;
+  field: string;
+  label: string;
+  description: string;
+  placeholder: string;
+  successMessage: string;
 }) {
-  const [userText, setUserText] = useState(profile.user_text);
+  const [text, setText] = useState(profile[field] ?? '');
   const updateProfile = useUpdateProfile();
 
   useEffect(() => {
-    setUserText(profile.user_text);
-  }, [profile.user_text]);
+    setText(profile[field] ?? '');
+  }, [profile, field]);
 
   const handleSave = () => {
     updateProfile.mutate(
-      { user_text: userText },
+      { [field]: text },
       {
-        onSuccess: () => toast.success('User info updated'),
+        onSuccess: () => toast.success(successMessage),
         onError: (e) => toast.error(e.message),
       },
     );
   };
 
   return (
-    <Card>
-      <div className="grid gap-4">
-        <Field label="About You (USER.md)">
-          <Textarea
-            value={userText}
-            onChange={(e) => setUserText(e.target.value)}
-            rows={12}
-            placeholder="Tell your assistant about yourself: your name, phone, timezone, preferences, what projects you're working on..."
-          />
-          <p className="helper-text">
-            Everything your assistant knows about you lives here. Updated over time as it learns about you.
-          </p>
-        </Field>
-        <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
-            Save
-          </Button>
+    <div className="grid gap-3">
+      <div className="flex items-center justify-between">
+        <div>
+          <label className="text-xs font-medium text-muted-foreground block mb-1">{label}</label>
+          <p className="text-xs text-muted-foreground mt-1">{description}</p>
         </div>
+        <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
+          Save
+        </Button>
       </div>
-    </Card>
-  );
-}
-
-// --- Soul Tab (SOUL.md) ---
-
-function SoulTab({
-  profile,
-}: {
-  profile: { soul_text: string };
-}) {
-  const [soulText, setSoulText] = useState(profile.soul_text);
-  const updateProfile = useUpdateProfile();
-
-  useEffect(() => {
-    setSoulText(profile.soul_text);
-  }, [profile.soul_text]);
-
-  const handleSave = () => {
-    updateProfile.mutate(
-      { soul_text: soulText },
-      {
-        onSuccess: () => toast.success('Soul settings updated'),
-        onError: (e) => toast.error(e.message),
-      },
-    );
-  };
-
-  return (
-    <Card>
-      <div className="grid gap-4">
-        <Field label="Personality (SOUL.md)">
-          <Textarea
-            value={soulText}
-            onChange={(e) => setSoulText(e.target.value)}
-            rows={14}
-            placeholder="Describe how your assistant should behave, speak, and interact with clients. Include what it should call itself (e.g. 'Your name is Claw')..."
-          />
-          <p className="helper-text">
-            This guides your assistant's personality, name, and communication style.
-          </p>
-        </Field>
-        <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
-            Save
-          </Button>
-        </div>
-      </div>
-    </Card>
+      <Textarea
+        value={text}
+        onChange={(e) => setText(e.target.value)}
+        rows={28}
+        placeholder={placeholder}
+      />
+    </div>
   );
 }
 
@@ -275,7 +252,7 @@ function HeartbeatTab({
               disabled={!form.heartbeat_opt_in}
               placeholder="e.g. 45m, 3h, 2d"
             />
-            <p className="helper-text">
+            <p className="text-xs text-muted-foreground mt-1">
               Use a number followed by m (minutes), h (hours), or d (days).
             </p>
           </Field>

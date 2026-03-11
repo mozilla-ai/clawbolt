@@ -1,9 +1,8 @@
 import { useState, lazy, Suspense } from 'react';
-import Card from '@/components/ui/card';
 import Badge from '@/components/ui/badge';
 import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
-import Spinner from '@/components/ui/spinner';
+import { Spinner } from '@heroui/spinner';
 import { ModalContent, ModalHeader, ModalBody } from '@heroui/modal';
 import { toast } from '@/lib/toast';
 import { useMemoryFacts, useUpdateMemoryFact, useDeleteMemoryFact } from '@/hooks/queries';
@@ -34,24 +33,24 @@ export default function MemoryPage() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="heading-page">Memory / Facts</h2>
-        <p className="page-subtitle">
+        <h2 className="text-xl font-semibold">Memory / Facts</h2>
+        <p className="text-sm text-muted-foreground mt-1">
           Review and correct what your AI assistant knows about you and your business.
         </p>
       </div>
 
       {isPending && !facts ? (
-        <div className="flex justify-center py-12"><Spinner /></div>
+        <div className="flex justify-center py-12"><Spinner color="primary" size="md" aria-label="Loading" /></div>
       ) : isError && !facts ? (
-        <Card className="text-center py-8">
+        <div className="text-center py-8">
           <p className="text-sm text-danger">{error.message}</p>
-        </Card>
+        </div>
       ) : allFacts.length === 0 ? (
-        <Card className="text-center py-8">
+        <div className="text-center py-8">
           <p className="text-sm text-muted-foreground">
             No memory facts yet. Chat with your assistant on Telegram to build up knowledge.
           </p>
-        </Card>
+        </div>
       ) : (
         <>
           {/* Category filter */}
@@ -82,9 +81,9 @@ export default function MemoryPage() {
             </div>
           )}
 
-          <div className="space-y-2">
+          <div className="divide-y divide-border">
             {filtered.map((fact) => (
-              <Card key={fact.key} className="group flex items-start justify-between gap-3">
+              <div key={fact.key} className="group flex items-start justify-between gap-3 py-3 px-1">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-sm font-medium">{fact.key}</span>
@@ -134,7 +133,7 @@ export default function MemoryPage() {
                     </Button>
                   )}
                 </div>
-              </Card>
+              </div>
             ))}
           </div>
         </>
@@ -184,7 +183,7 @@ function EditFactForm({
   return (
     <form onSubmit={handleSubmit} className="mt-4 space-y-4">
       <div>
-        <label className="section-label">Value</label>
+        <label className="text-xs font-medium text-muted-foreground block mb-1">Value</label>
         <Input value={value} onChange={(e) => setValue(e.target.value)} />
       </div>
       <div className="flex justify-end gap-2">

@@ -1,6 +1,6 @@
 import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
-import Spinner from '@/components/ui/spinner';
+import { Spinner } from '@heroui/spinner';
 import AppShell from '@/layouts/AppShell';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -24,7 +24,7 @@ export default function App() {
   if (authState === 'loading') {
     return (
       <div className="flex flex-col items-center justify-center min-h-dvh gap-3 text-muted-foreground">
-        <Spinner />
+        <Spinner color="primary" size="md" aria-label="Loading" />
         <span className="text-sm">Loading...</span>
       </div>
     );
@@ -32,7 +32,7 @@ export default function App() {
 
   const suspenseFallback = (
     <div className="flex justify-center items-center py-12">
-      <Spinner />
+      <Spinner color="primary" size="md" aria-label="Loading" />
     </div>
   );
 
