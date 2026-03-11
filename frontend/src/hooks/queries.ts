@@ -92,6 +92,25 @@ export function useUpdateToolConfig() {
   });
 }
 
+// --- OAuth ---
+
+export function useOAuthStatus() {
+  return useQuery({
+    queryKey: queryKeys.oauth,
+    queryFn: () => api.getOAuthStatus(),
+  });
+}
+
+export function useOAuthDisconnect() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (integration: string) => api.disconnectOAuth(integration),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.oauth });
+    },
+  });
+}
+
 // --- Channels ---
 
 export function useChannelConfig() {

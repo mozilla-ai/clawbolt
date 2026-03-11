@@ -127,18 +127,21 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent user evaluations per tick |
 | `HEARTBEAT_RECENT_MESSAGES_COUNT` | `5` | Number of recent messages included in heartbeat context |
 
+## OAuth
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `APP_BASE_URL` | `http://localhost:8000` | Public URL where the server is reachable, used for OAuth callback URLs |
+
 ## QuickBooks Online
 
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `QUICKBOOKS_CLIENT_ID` | | OAuth client ID from the Intuit developer console |
 | `QUICKBOOKS_CLIENT_SECRET` | | OAuth client secret from the Intuit developer console |
-| `QUICKBOOKS_REALM_ID` | | Company realm (company) ID from QuickBooks |
-| `QUICKBOOKS_ACCESS_TOKEN` | | Current OAuth access token (auto-refreshed at runtime) |
-| `QUICKBOOKS_REFRESH_TOKEN` | | OAuth refresh token for access token renewal |
 | `QUICKBOOKS_ENVIRONMENT` | `sandbox` | `sandbox` for testing or `production` for live data |
 
-When configured, the agent gains a specialist `qb_query` tool that can run read-only queries against QuickBooks Online to look up invoices, estimates, customers, items, payments, and more.
+When `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set, users can connect their QuickBooks account via the web dashboard. Once connected, the agent gains a specialist `qb_query` tool for running read-only queries against QuickBooks Online.
 
 ## HTTP timeouts
 

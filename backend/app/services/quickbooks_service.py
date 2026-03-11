@@ -8,11 +8,10 @@ from __future__ import annotations
 
 import logging
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 from typing import Any
 
 import httpx
-
-from backend.app.config import Settings, settings
 
 logger = logging.getLogger(__name__)
 
@@ -40,12 +39,14 @@ class QuickBooksOnlineService(QuickBooksService):
         access_token: str,
         refresh_token: str,
         environment: str = "sandbox",
+        on_token_refresh: Callable[[str, str], None] | None = None,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
         self._realm_id = realm_id
         self._access_token = access_token
         self._refresh_token = refresh_token
+        self._on_token_refresh = on_token_refresh
         base = QBO_PRODUCTION_BASE if environment == "production" else QBO_SANDBOX_BASE
         self._api_base = f"{base}/v3/company/{realm_id}"
         self._http = httpx.AsyncClient(timeout=30.0)
@@ -66,6 +67,8 @@ class QuickBooksOnlineService(QuickBooksService):
         self._access_token = data["access_token"]
         if "refresh_token" in data:
             self._refresh_token = data["refresh_token"]
+        if self._on_token_refresh:
+            self._on_token_refresh(self._access_token, self._refresh_token)
 
     async def _request(
         self,
@@ -101,20 +104,3 @@ class QuickBooksOnlineService(QuickBooksService):
             if isinstance(value, list):
                 return value
         return []
-
-
-def get_quickbooks_service(
-    svc_settings: Settings | None = None,
-) -> QuickBooksService | None:
-    """Factory: return the configured QuickBooks service, or None when not configured."""
-    s = svc_settings or settings
-    if not s.quickbooks_client_id or not s.quickbooks_client_secret:
-        return None
-    return QuickBooksOnlineService(
-        client_id=s.quickbooks_client_id,
-        client_secret=s.quickbooks_client_secret,
-        realm_id=s.quickbooks_realm_id,
-        access_token=s.quickbooks_access_token,
-        refresh_token=s.quickbooks_refresh_token,
-        environment=s.quickbooks_environment,
-    )

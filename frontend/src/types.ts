@@ -142,3 +142,18 @@ export interface ToolConfigUpdateEntry {
   name: string;
   enabled: boolean;
 }
+
+export interface OAuthStatusEntry {
+  integration: string;
+  configured: boolean;
+  connected: boolean;
+}
+
+export interface OAuthStatusResponse {
+  integrations: OAuthStatusEntry[];
+}
+
+export interface OAuthAuthorizeResponse {
+  url: string;
+  integration: string;
+}

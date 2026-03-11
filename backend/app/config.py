@@ -99,10 +99,10 @@ class Settings(BaseSettings):
     # QuickBooks Online
     quickbooks_client_id: str = ""
     quickbooks_client_secret: str = ""
-    quickbooks_realm_id: str = ""
-    quickbooks_access_token: str = ""
-    quickbooks_refresh_token: str = ""
     quickbooks_environment: str = "sandbox"  # "sandbox" or "production"
+
+    # OAuth
+    app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks
 
     # HTTP timeouts
     http_timeout_seconds: float = Field(default=30.0, gt=0)

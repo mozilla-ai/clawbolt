@@ -19,6 +19,7 @@ from backend.app.routers import (
     auth,
     estimates,
     health,
+    oauth,
     search,
     user_checklist,
     user_memory,
@@ -172,6 +173,7 @@ app.add_middleware(
 
 app.include_router(health.router, prefix="/api")
 app.include_router(auth.router, prefix="/api")
+app.include_router(oauth.router, prefix="/api")
 
 # Include routers from all registered channels.
 for _channel in get_manager().channels.values():
