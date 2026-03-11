@@ -519,6 +519,20 @@ class UserStore:
         index[key] = user_id
         _write_json(idx_path, index)
 
+    def get_channel_identifier(self, user_id: int, channel: str) -> str | None:
+        """Look up the channel-specific identifier for a user.
+
+        Searches user_index.json for an entry matching ``channel:<id>``
+        that maps to *user_id*. Returns the identifier or *None*.
+        """
+        idx_path = _index_path()
+        index: dict[str, int] = _read_json(idx_path, {})
+        prefix = f"{channel}:"
+        for key, uid in index.items():
+            if uid == user_id and key.startswith(prefix):
+                return key[len(prefix) :]
+        return None
+
     def _next_user_id(self) -> int:
         """Get the next user ID by scanning existing directories."""
         dirs = self._all_dirs()
