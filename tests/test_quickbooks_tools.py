@@ -2,10 +2,17 @@
 
 from __future__ import annotations
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 
+from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool
-from backend.app.agent.tools.quickbooks_tools import create_quickbooks_tools
+from backend.app.agent.tools.quickbooks_tools import (
+    _quickbooks_factory,
+    create_quickbooks_tools,
+)
+from backend.app.agent.tools.registry import ToolContext
 from tests.mocks.quickbooks import MockQuickBooksService
 
 
@@ -147,17 +154,35 @@ def test_quickbooks_tools_count(qb_service: MockQuickBooksService) -> None:
 
 
 def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
-    """_quickbooks_factory should return [] when QuickBooks is not configured."""
-    from unittest.mock import MagicMock, patch
-
-    from backend.app.agent.tools.quickbooks_tools import _quickbooks_factory
-    from backend.app.agent.tools.registry import ToolContext
-
+    """_quickbooks_factory should return [] when client_id/secret are empty."""
     ctx = MagicMock(spec=ToolContext)
+    user = MagicMock(spec=UserData)
+    user.id = 1
+    ctx.user = user
 
-    with patch(
-        "backend.app.agent.tools.quickbooks_tools.get_quickbooks_service",
-        return_value=None,
+    with (
+        patch("backend.app.agent.tools.quickbooks_tools.settings") as mock_settings,
     ):
+        mock_settings.quickbooks_client_id = ""
+        mock_settings.quickbooks_client_secret = ""
+        assert _quickbooks_factory(ctx) == []
+
+
+def test_quickbooks_factory_returns_empty_when_not_connected() -> None:
+    """_quickbooks_factory should return [] when user has no OAuth token."""
+    ctx = MagicMock(spec=ToolContext)
+    user = MagicMock(spec=UserData)
+    user.id = 1
+    ctx.user = user
+
+    with (
+        patch("backend.app.agent.tools.quickbooks_tools.settings") as mock_settings,
+        patch("backend.app.agent.tools.quickbooks_tools.oauth_service") as mock_oauth,
+    ):
+        mock_settings.quickbooks_client_id = "test-id"
+        mock_settings.quickbooks_client_secret = "test-secret"
+        mock_oauth.load_token.return_value = None
+
         tools = _quickbooks_factory(ctx)
+
     assert tools == []

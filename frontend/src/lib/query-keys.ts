@@ -12,4 +12,5 @@ export const queryKeys = {
   },
   tools: ['tools'] as const,
   channels: ['channels'] as const,
+  oauth: ['oauth'] as const,
 };

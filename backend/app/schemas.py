@@ -222,3 +222,23 @@ class ToolConfigUpdateEntry(BaseModel):
 
 class ToolConfigUpdate(BaseModel):
     tools: list[ToolConfigUpdateEntry]
+
+
+# ---------------------------------------------------------------------------
+# OAuth
+# ---------------------------------------------------------------------------
+
+
+class OAuthStatusEntry(BaseModel):
+    integration: str
+    configured: bool
+    connected: bool
+
+
+class OAuthStatusResponse(BaseModel):
+    integrations: list[OAuthStatusEntry]
+
+
+class OAuthAuthorizeResponse(BaseModel):
+    url: str
+    integration: str

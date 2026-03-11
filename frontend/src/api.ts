@@ -11,6 +11,8 @@ import type {
   UserProfileUpdate,
   MemoryFact,
   MemoryFactUpdate,
+  OAuthAuthorizeResponse,
+  OAuthStatusResponse,
   SessionDetail,
   SessionListResponse,
   ToolConfigResponse,
@@ -134,6 +136,13 @@ const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ tools }),
     }),
+
+  // OAuth
+  getOAuthStatus: () => _fetch<OAuthStatusResponse>('/api/oauth/status'),
+  getOAuthAuthorizeUrl: (integration: string) =>
+    _fetch<OAuthAuthorizeResponse>(`/api/oauth/${encodeURIComponent(integration)}/authorize`),
+  disconnectOAuth: (integration: string) =>
+    _fetchVoid(`/api/oauth/${encodeURIComponent(integration)}`, { method: 'DELETE' }),
 
   // Chat (async: POST submits, SSE delivers reply)
   sendChatMessage: async (

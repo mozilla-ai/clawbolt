@@ -17,6 +17,7 @@ const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const ChecklistPage = lazy(() => import('@/pages/ChecklistPage'));
 const ChannelsPage = lazy(() => import('@/pages/ChannelsPage'));
 const ToolsPage = lazy(() => import('@/pages/ToolsPage'));
+const OAuthCallbackPage = lazy(() => import('@/pages/OAuthCallbackPage'));
 
 export default function App() {
   const { authState, isPremium } = useAuth();
@@ -55,6 +56,7 @@ export default function App() {
           <Route path="checklist" element={<ChecklistPage />} />
           <Route path="channels" element={<ChannelsPage />} />
           <Route path="tools" element={<ToolsPage />} />
+          <Route path="oauth/callback" element={<OAuthCallbackPage />} />
           <Route path="settings/:tab" element={<SettingsPage />} />
           <Route path="settings" element={<Navigate to={`/app/settings/${getDefaultSettingsTab(isPremium)}`} replace />} />
         </Route>
