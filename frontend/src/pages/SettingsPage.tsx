@@ -134,8 +134,8 @@ function UserTab({
           </p>
         </Field>
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save'}
+          <Button onClick={handleSave} disabled={saving} isLoading={saving}>
+            Save
           </Button>
         </div>
       </div>
@@ -187,8 +187,8 @@ function SoulTab({
           </p>
         </Field>
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save'}
+          <Button onClick={handleSave} disabled={saving} isLoading={saving}>
+            Save
           </Button>
         </div>
       </div>
@@ -296,8 +296,8 @@ function HeartbeatTab({
           </Field>
         )}
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving}>
-            {saving ? 'Saving...' : 'Save Heartbeat Settings'}
+          <Button onClick={handleSave} disabled={saving} isLoading={saving}>
+            Save Heartbeat Settings
           </Button>
         </div>
       </div>

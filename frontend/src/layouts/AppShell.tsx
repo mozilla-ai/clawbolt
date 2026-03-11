@@ -5,6 +5,9 @@ import api from '@/api';
 import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import { useAuth } from '@/contexts/AuthContext';
+import { Tooltip } from '@heroui/tooltip';
+import { Link } from '@heroui/link';
+import { Divider } from '@heroui/divider';
 import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import type { UserProfile } from '@/types';
@@ -127,24 +130,27 @@ export default function AppShell() {
           ))}
         </nav>
 
-        <div className="p-2 border-t border-border text-xs text-muted-foreground space-y-1">
+        <div className="p-2 text-xs text-muted-foreground space-y-1">
+          <Divider className="mb-1" />
           <div className="flex gap-2 px-3 py-1">
-            <a
+            <Link
               href={getReportIssueUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-foreground transition-all duration-150"
+              isExternal
+              showAnchorIcon
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-foreground transition-all duration-150"
             >
               Report issue
-            </a>
-            <a
+            </Link>
+            <Link
               href={getFeatureRequestUrl()}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-foreground transition-all duration-150"
+              isExternal
+              showAnchorIcon
+              size="sm"
+              className="text-xs text-muted-foreground hover:text-foreground transition-all duration-150"
             >
               Feature request
-            </a>
+            </Link>
           </div>
           {isPremium && (
             <Button
@@ -163,16 +169,18 @@ export default function AppShell() {
       <div className="flex-1 flex flex-col min-w-0">
         {/* Mobile header */}
         <header className="md:hidden flex items-center gap-3 px-4 py-3 border-b border-border bg-card">
-          <Button
-            variant="ghost"
-            size="icon"
-            onClick={openSidebar}
-            aria-label="Open menu"
-          >
-            <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </Button>
+          <Tooltip content="Open menu" delay={400} closeDelay={0}>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={openSidebar}
+              aria-label="Open menu"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+              </svg>
+            </Button>
+          </Tooltip>
           <img src="/clawbolt.png" alt="" className="w-6 h-6" />
           <h1 className="text-lg font-bold text-foreground">Clawbolt</h1>
         </header>

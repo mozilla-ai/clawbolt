@@ -3,6 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
+import Divider from '@/components/ui/divider';
 import Field from '@/components/ui/field';
 import { toast } from '@/lib/toast';
 import api from '@/api';
@@ -107,11 +108,11 @@ function ChannelsContent({
           </p>
         </Field>
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving || config === null}>
-            {saving ? 'Saving...' : 'Save Channel Config'}
+          <Button onClick={handleSave} disabled={config === null} isLoading={saving}>
+            Save Channel Config
           </Button>
         </div>
-        <hr className="border-border" />
+        <Divider />
         <Field label="User Connection">
           {connected ? (
             <div className="flex items-center gap-2">

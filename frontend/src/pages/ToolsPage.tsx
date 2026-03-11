@@ -2,6 +2,8 @@ import { useState, useCallback, useEffect } from 'react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Checkbox from '@/components/ui/checkbox';
+import { Switch } from '@heroui/switch';
+import Divider from '@/components/ui/divider';
 import { toast } from '@/lib/toast';
 import api from '@/api';
 import type { ToolConfigEntry } from '@/types';
@@ -78,7 +80,7 @@ export default function ToolsPage() {
             <div key={group}>
               <h3 className="text-sm font-medium mb-3">{group}</h3>
               <div className="grid gap-2">
-                {domainGroups[group].map((tool) => (
+                {(domainGroups[group] ?? []).map((tool) => (
                   <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded-md border border-border hover:bg-secondary-hover transition-all duration-150">
                     <div>
                       <span className="text-sm font-medium">{tool.name}</span>
@@ -86,10 +88,12 @@ export default function ToolsPage() {
                         <p className="text-xs text-muted-foreground">{tool.description}</p>
                       )}
                     </div>
-                    <Checkbox
-                      checked={tool.enabled}
-                      disabled={saving === tool.name}
-                      onChange={(e) => handleToggle(tool.name, e.target.checked)}
+                    <Switch
+                      isSelected={tool.enabled}
+                      isDisabled={saving === tool.name}
+                      onValueChange={(val) => handleToggle(tool.name, val)}
+                      size="sm"
+                      aria-label={`Toggle ${tool.name}`}
                     />
                   </div>
                 ))}
@@ -98,7 +102,8 @@ export default function ToolsPage() {
           ))}
 
           {coreTools.length > 0 && (
-            <div className="border-t border-border pt-4">
+            <div className="pt-4">
+              <Divider className="mb-4" />
               <Button
                 variant="ghost"
                 className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground font-medium"
