@@ -156,7 +156,8 @@ function MarkdownSettingsTab({
       <Textarea
         value={text}
         onChange={(e) => setText(e.target.value)}
-        rows={28}
+        rows={6}
+        classNames={{ input: '!min-h-[65vh]' }}
         placeholder={placeholder}
       />
     </div>
