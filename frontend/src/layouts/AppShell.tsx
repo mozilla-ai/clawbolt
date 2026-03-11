@@ -294,7 +294,9 @@ function SettingsIcon() {
 
 /** Format an ISO timestamp as a short relative string (e.g. "5m ago", "2h ago"). */
 export function formatRelativeTime(iso: string): string {
-  const diffMs = Date.now() - new Date(iso).getTime();
+  const parsed = new Date(iso);
+  if (isNaN(parsed.getTime())) return iso || 'Unknown';
+  const diffMs = Date.now() - parsed.getTime();
   const seconds = Math.max(0, Math.floor(diffMs / 1000));
   if (seconds < 60) return 'just now';
   const minutes = Math.floor(seconds / 60);

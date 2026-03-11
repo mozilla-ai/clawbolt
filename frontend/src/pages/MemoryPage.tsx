@@ -97,7 +97,7 @@ export default function MemoryPage() {
                   </div>
                   <p className="text-sm text-muted-foreground">{fact.value}</p>
                 </div>
-                <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
                   <Button
                     variant="ghost"
                     size="sm"

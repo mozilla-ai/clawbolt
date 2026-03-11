@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
+
 import { useParams, useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Badge from '@/components/ui/badge';
@@ -36,6 +37,7 @@ function SessionListView() {
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
   const [loadingMore, setLoadingMore] = useState(false);
+  const loadingMoreRef = useRef(false);
   const [error, setError] = useState<string | null>(null);
   const loaderRef = useRef<HTMLDivElement | null>(null);
 
@@ -58,7 +60,8 @@ function SessionListView() {
 
   // Load next page (append to existing sessions)
   const loadMore = useCallback(() => {
-    if (loadingMore || !hasMore) return;
+    if (loadingMoreRef.current || !hasMore) return;
+    loadingMoreRef.current = true;
     setLoadingMore(true);
     api.listSessions(sessions.length, PAGE_SIZE)
       .then((res) => {
@@ -66,8 +69,11 @@ function SessionListView() {
         setTotal(res.total);
       })
       .catch((e: Error) => setError(e.message))
-      .finally(() => setLoadingMore(false));
-  }, [loadingMore, hasMore, sessions.length]);
+      .finally(() => {
+        loadingMoreRef.current = false;
+        setLoadingMore(false);
+      });
+  }, [hasMore, sessions.length]);
 
   // IntersectionObserver triggers loadMore when sentinel is visible
   useEffect(() => {
@@ -129,7 +135,7 @@ function SessionListView() {
                       {new Date(s.start_time).toLocaleString()}
                     </p>
                   </div>
-                  <div className="ml-3 flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
+                  <div className="ml-3 flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
                     {s.channel && <Badge variant="outline">{channelLabel(s.channel)}</Badge>}
                     <Badge>{s.message_count} msgs</Badge>
                   </div>
