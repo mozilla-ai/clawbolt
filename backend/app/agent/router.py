@@ -89,6 +89,7 @@ class PipelineContext:
     combined_context: str = ""
     conversation_history: list[AgentMessage] = field(default_factory=list)
     system_prompt_override: str | None = None
+    is_onboarding: bool = False
     event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = field(default_factory=list)
     response: AgentResponse | None = None
     _onboarding_sub: OnboardingSubscriber | None = None
@@ -212,6 +213,7 @@ async def run_agent(
     downloaded_media: list[DownloadedMedia],
     channel: str = "",
     system_prompt_override: str | None = None,
+    is_onboarding: bool = False,
     event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] | None = None,
     session_id: str = "",
 ) -> AgentResponse:
@@ -258,6 +260,12 @@ async def run_agent(
     if specialist_summaries:
         tools.append(create_list_capabilities_tool(specialist_summaries))
     agent.register_tools(tools)
+
+    # Build onboarding prompt now that tools are available, so that tool
+    # guidelines (e.g. "reply directly with text") are included.
+    if is_onboarding and not system_prompt_override:
+        system_prompt_override = build_onboarding_system_prompt(user, tools=tools)
+
     logger.debug(
         "Agent initialized for user %d, message seq=%d with %d core tools, "
         "%d specialist categories available",
@@ -351,10 +359,8 @@ async def build_context_step(ctx: PipelineContext) -> PipelineContext:
 async def load_history_step(ctx: PipelineContext) -> PipelineContext:
     """Load conversation history and set up onboarding."""
     ctx.conversation_history = await load_conversation_history(ctx.session, user_id=ctx.user.id)
-    was_onboarding = is_onboarding_needed(ctx.user)
-    if was_onboarding:
-        ctx.system_prompt_override = build_onboarding_system_prompt(ctx.user)
-    onboarding_sub = OnboardingSubscriber(ctx.user, was_onboarding)
+    ctx.is_onboarding = is_onboarding_needed(ctx.user)
+    onboarding_sub = OnboardingSubscriber(ctx.user, ctx.is_onboarding)
     ctx.event_subscribers.append(onboarding_sub)
     ctx._onboarding_sub = onboarding_sub
     return ctx
@@ -372,6 +378,7 @@ async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
         downloaded_media=ctx.downloaded_media,
         channel=ctx.channel,
         system_prompt_override=ctx.system_prompt_override,
+        is_onboarding=ctx.is_onboarding,
         event_subscribers=ctx.event_subscribers,
         session_id=ctx.session.session_id,
     )

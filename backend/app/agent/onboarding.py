@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from backend.app.agent.events import AgentEndEvent, AgentEvent
 from backend.app.agent.file_store import UserData, get_user_store
@@ -45,37 +45,61 @@ def _get_tool_capability_descriptions() -> list[str]:
     return [f"- {name}: {summary}" for name, summary in sorted(summaries.items())]
 
 
-def build_onboarding_system_prompt(user: UserData) -> str:
+def build_onboarding_system_prompt(
+    user: UserData,
+    tools: list[Any] | None = None,
+) -> str:
     """Build system prompt for onboarding mode.
 
-    Loads the user's BOOTSTRAP.md content and injects available
-    tool capabilities so the agent can describe them.
+    Loads the user's BOOTSTRAP.md content and injects tool guidelines
+    and behavioral instructions alongside it.  Earlier versions replaced
+    the entire system prompt with just the bootstrap content, which
+    stripped away communication instructions (e.g. "reply directly with
+    text") and caused the model to return empty responses.
     """
+    from backend.app.agent.system_prompt import (
+        SystemPromptBuilder,
+        build_date_section,
+        build_instructions_section,
+        build_tool_guidelines_section,
+    )
+
     bootstrap = _bootstrap_path(user)
     if bootstrap.exists():
         base = bootstrap.read_text(encoding="utf-8").strip()
     else:
         base = load_prompt("bootstrap")
 
-    parts = [base]
-
-    # Inject available tool capabilities
+    # Inject available specialist capabilities into the bootstrap section
     capability_lines = _get_tool_capability_descriptions()
     if capability_lines:
-        parts.append(
+        base += (
             "\n\nYour available specialist capabilities:\n"
             + "\n".join(capability_lines)
             + "\n\nMention the ones that seem relevant to the user's trade. "
             "Don't list them all at once."
         )
 
-    parts.append(
+    base += (
         "\n\nIMPORTANT: If the user asks about something specific (a quote, a question, "
         "a photo), help them with that request FIRST, then naturally weave in any remaining "
         "onboarding questions. Never ignore their request just to collect profile info."
     )
 
-    return "".join(parts)
+    builder = SystemPromptBuilder()
+    builder.set_preamble("You are an AI assistant for solo tradespeople.")
+    builder.add_section("Onboarding", base)
+
+    # Include tool guidelines and instructions so the model knows how
+    # to communicate (reply with text, when to use send_reply, etc.).
+    tool_guidelines = build_tool_guidelines_section(tools or [])
+    instructions = build_instructions_section()
+    if tool_guidelines:
+        instructions += "\n\n## Tool Guidelines\n" + tool_guidelines
+    builder.add_section("Instructions", instructions)
+    builder.add_section("Current date", build_date_section(user))
+
+    return builder.build()
 
 
 class OnboardingSubscriber:

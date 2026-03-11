@@ -25,7 +25,12 @@ from backend.app.agent.messages import (
 )
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.trimming import trim_messages
-from tests.mocks.llm import make_error_response, make_text_response, make_tool_call_response
+from tests.mocks.llm import (
+    make_empty_response,
+    make_error_response,
+    make_text_response,
+    make_tool_call_response,
+)
 
 
 class _EmptyParams(BaseModel):
@@ -1884,3 +1889,89 @@ async def test_valid_stop_reasons_not_treated_as_error(
 
         assert response.is_error_fallback is False, f"stop_reason={stop_reason} was wrongly error"
         assert response.reply_text == "Reply!"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_empty_reply_after_tool_call_reprompts(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """When the LLM returns no text after tool calls, the loop re-prompts.
+
+    Regression test: an empty reply_text caused the web UI to stay stuck on
+    'thinking' because dispatch_reply_step skipped publishing to the bus.
+    The agent loop should detect the empty reply and give the LLM another
+    chance rather than accepting the empty response.
+    """
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "name": "recall_facts",
+                "arguments": json.dumps({"query": "profile"}),
+            }
+        ]
+    )
+    # Second call: LLM returns end_turn with no text content
+    empty_followup = make_empty_response()
+    # Third call: after re-prompt, LLM responds properly
+    retry_response = make_text_response("Your name is Mike!")
+
+    mock_amessages.side_effect = [tool_response, empty_followup, retry_response]  # type: ignore[union-attr]
+
+    mock_recall = AsyncMock(return_value=ToolResult(content="name: Mike"))
+    tool = Tool(
+        name="recall_facts",
+        description="Recall facts",
+        function=mock_recall,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("What do you know about me?")
+
+    # The tool was called once
+    mock_recall.assert_called_once()
+    # Three LLM calls: tool call, empty reply, re-prompted reply
+    assert mock_amessages.call_count == 3  # type: ignore[union-attr]
+    # The re-prompted LLM call produced the actual response
+    assert response.reply_text == "Your name is Mike!"
+    assert not response.is_error_fallback
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_empty_reply_reprompt_only_once(
+    mock_amessages: object, test_user: UserData
+) -> None:
+    """Re-prompt on empty reply happens at most once to avoid infinite loops."""
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "name": "recall_facts",
+                "arguments": json.dumps({"query": "profile"}),
+            }
+        ]
+    )
+    # Both follow-ups return empty
+    empty1 = make_empty_response()
+    empty2 = make_empty_response()
+
+    mock_amessages.side_effect = [tool_response, empty1, empty2]  # type: ignore[union-attr]
+
+    mock_recall = AsyncMock(return_value=ToolResult(content="name: Mike"))
+    tool = Tool(
+        name="recall_facts",
+        description="Recall facts",
+        function=mock_recall,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("What do you know about me?")
+
+    # Three calls: tool call, empty, re-prompted empty (stops here)
+    assert mock_amessages.call_count == 3  # type: ignore[union-attr]
+    # Reply is empty since both attempts produced nothing
+    assert response.reply_text == ""
