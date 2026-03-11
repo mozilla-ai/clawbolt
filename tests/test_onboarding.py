@@ -1,6 +1,6 @@
 import json
 from pathlib import Path
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -384,13 +384,11 @@ async def test_prepopulated_user_gets_onboarding_complete(
 
 
 @pytest.mark.asyncio()
-@patch("backend.app.agent.heartbeat.is_within_business_hours", return_value=True)
 @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
 @patch("backend.app.agent.core.amessages")
 async def test_prepopulated_user_included_in_heartbeat(
     mock_amessages: object,
     mock_eval: AsyncMock,
-    _mock_hours: MagicMock,
 ) -> None:
     """User without BOOTSTRAP.md should be eligible for heartbeat after first message."""
     from backend.app.agent.heartbeat import HeartbeatAction, run_heartbeat_for_user
