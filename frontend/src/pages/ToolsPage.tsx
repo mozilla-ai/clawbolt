@@ -1,42 +1,29 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState } from 'react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Checkbox from '@/components/ui/checkbox';
 import { Switch } from '@heroui/switch';
 import Divider from '@/components/ui/divider';
 import { toast } from '@/lib/toast';
-import api from '@/api';
+import { useToolConfig, useUpdateToolConfig } from '@/hooks/queries';
 import type { ToolConfigEntry } from '@/types';
 
 export default function ToolsPage() {
-  const [tools, setTools] = useState<ToolConfigEntry[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [saving, setSaving] = useState<string | null>(null);
+  const { data, isPending } = useToolConfig();
+  const updateMutation = useUpdateToolConfig();
   const [coreExpanded, setCoreExpanded] = useState(false);
 
-  useEffect(() => {
-    api.getToolConfig().then((res) => {
-      setTools(res.tools);
-      setLoading(false);
-    }).catch(() => {
-      setLoading(false);
+  const tools = data?.tools ?? [];
+
+  const handleToggle = (name: string, enabled: boolean) => {
+    updateMutation.mutate([{ name, enabled }], {
+      onSuccess: () =>
+        toast.success(`${name} tool group ${enabled ? 'enabled' : 'disabled'}`),
+      onError: (e) => toast.error(e.message),
     });
-  }, []);
+  };
 
-  const handleToggle = useCallback(async (name: string, enabled: boolean) => {
-    setSaving(name);
-    try {
-      const res = await api.updateToolConfig([{ name, enabled }]);
-      setTools(res.tools);
-      toast.success(`${name} tool group ${enabled ? 'enabled' : 'disabled'}`);
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSaving(null);
-    }
-  }, []);
-
-  if (loading) {
+  if (isPending && !data) {
     return (
       <div>
         <h2 className="heading-page mb-6">Tools</h2>
@@ -47,8 +34,8 @@ export default function ToolsPage() {
     );
   }
 
-  const coreTools = tools.filter((t) => t.category === 'core');
-  const domainTools = tools.filter((t) => t.category === 'domain');
+  const coreTools = tools.filter((t: ToolConfigEntry) => t.category === 'core');
+  const domainTools = tools.filter((t: ToolConfigEntry) => t.category === 'domain');
 
   // Group domain tools by domain_group, sorted by domain_group_order
   const domainGroups: Record<string, ToolConfigEntry[]> = {};
@@ -90,7 +77,7 @@ export default function ToolsPage() {
                     </div>
                     <Switch
                       isSelected={tool.enabled}
-                      isDisabled={saving === tool.name}
+                      isDisabled={updateMutation.isPending}
                       onValueChange={(val) => handleToggle(tool.name, val)}
                       size="sm"
                       aria-label={`Toggle ${tool.name}`}

@@ -1,11 +1,14 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useQueryClient } from '@tanstack/react-query';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Tooltip from '@/components/ui/tooltip';
 import Spinner from '@/components/ui/spinner';
 import api from '@/api';
 import { toast } from '@/lib/toast';
+import { useSessions, useSession } from '@/hooks/queries';
+import { queryKeys } from '@/lib/query-keys';
 import type { SessionSummary } from '@/types';
 
 interface FileAttachment {
@@ -52,6 +55,7 @@ function formatSessionTime(dateStr: string): string {
 }
 
 export default function ChatPage() {
+  const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
@@ -59,9 +63,6 @@ export default function ChatPage() {
   const [activeSessionId, setActiveSessionId] = useState<string | null>(
     searchParams.get('session'),
   );
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [loadingSessions, setLoadingSessions] = useState(true);
-  const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -71,6 +72,14 @@ export default function ChatPage() {
   const pickerRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
   const autoAttachDone = useRef(false);
+
+  // Fetch sessions via React Query
+  const { data: sessionsData, isPending: loadingSessions } = useSessions(0, 50);
+  const sessions: SessionSummary[] = sessionsData?.sessions ?? [];
+
+  // Fetch session history via React Query
+  const { data: sessionDetail, isPending: loadingHistoryPending, isError: historyError } = useSession(activeSessionId);
+  const loadingHistory = loadingHistoryPending && !!activeSessionId;
 
   // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
   // bug that occurs when scrollIntoView fires during keyboard dismissal.
@@ -108,51 +117,46 @@ export default function ChatPage() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [pickerOpen]);
 
-  // Load recent sessions, then auto-attach to last active or most recent
+  // Auto-attach to last active or most recent session when sessions load
   useEffect(() => {
-    api.listSessions(0, 50)
-      .then((res) => {
-        setSessions(res.sessions);
-        // Auto-attach: only if no explicit ?session= param and not already done
-        if (!autoAttachDone.current && !searchParams.get('session') && res.sessions.length > 0) {
-          autoAttachDone.current = true;
-          const saved = loadLastSession();
-          const match = saved ? res.sessions.find((s) => s.id === saved) : null;
-          const first = res.sessions[0];
-          const target = match ?? first;
-          if (target) {
-            setActiveSessionId(target.id);
-            setSearchParams({ session: target.id }, { replace: true });
-          }
-        }
-      })
-      .catch(() => {})
-      .finally(() => setLoadingSessions(false));
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+    if (autoAttachDone.current || !sessionsData || searchParams.get('session')) return;
+    autoAttachDone.current = true;
+    if (sessionsData.sessions.length > 0) {
+      const saved = loadLastSession();
+      const match = saved ? sessionsData.sessions.find((s) => s.id === saved) : null;
+      const target = match ?? sessionsData.sessions[0];
+      if (target) {
+        setActiveSessionId(target.id);
+        setSearchParams({ session: target.id }, { replace: true });
+      }
+    }
+  }, [sessionsData, searchParams, setSearchParams]);
 
-  // Load history when activeSessionId is set
+  // Save active session to localStorage
   useEffect(() => {
-    if (!activeSessionId) return;
-    setLoadingHistory(true);
-    saveLastSession(activeSessionId);
-    api.getSession(activeSessionId)
-      .then((detail) => {
-        const loaded: ChatMessage[] = detail.messages.map((m) => ({
-          id: nextId.current++,
-          role: m.direction === 'inbound' ? 'user' : 'assistant',
-          body: m.body,
-          timestamp: new Date(m.timestamp),
-        }));
-        setMessages(loaded);
-      })
-      .catch((err: unknown) => {
-        const msg = err instanceof Error ? err.message : 'Failed to load session';
-        toast.error(msg);
-        setActiveSessionId(null);
-        setSearchParams({}, { replace: true });
-      })
-      .finally(() => setLoadingHistory(false));
-  }, [activeSessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (activeSessionId) saveLastSession(activeSessionId);
+  }, [activeSessionId]);
+
+  // Populate messages from session history when it loads
+  useEffect(() => {
+    if (!sessionDetail) return;
+    const loaded: ChatMessage[] = sessionDetail.messages.map((m) => ({
+      id: nextId.current++,
+      role: m.direction === 'inbound' ? 'user' : 'assistant',
+      body: m.body,
+      timestamp: new Date(m.timestamp),
+    }));
+    setMessages(loaded);
+  }, [sessionDetail]);
+
+  // Handle history load errors
+  useEffect(() => {
+    if (historyError && activeSessionId) {
+      toast.error('Failed to load session');
+      setActiveSessionId(null);
+      setSearchParams({}, { replace: true });
+    }
+  }, [historyError, activeSessionId, setSearchParams]);
 
   const selectSession = (sessionId: string) => {
     setActiveSessionId(sessionId);
@@ -230,10 +234,8 @@ export default function ChatPage() {
         setActiveSessionId(res.session_id);
         setSearchParams({ session: res.session_id }, { replace: true });
         saveLastSession(res.session_id);
-        // Refresh session list to include the new session
-        api.listSessions(0, 50)
-          .then((r) => setSessions(r.sessions))
-          .catch(() => {});
+        // Invalidate sessions cache so the new session appears in the list
+        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : 'Failed to send message';
@@ -338,7 +340,7 @@ export default function ChatPage() {
 
       {/* Messages area */}
       <div ref={scrollContainerRef} className="flex-1 overflow-y-auto min-h-0 pb-4">
-        {loadingHistory ? (
+        {loadingHistory && !sessionDetail ? (
           <div className="flex justify-center py-12"><Spinner /></div>
         ) : messages.length === 0 ? (
           <Card className="text-center py-12">

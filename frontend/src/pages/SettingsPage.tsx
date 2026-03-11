@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { Navigate, useOutletContext, useParams, useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
@@ -9,7 +9,7 @@ import { Tabs, Tab } from '@heroui/tabs';
 import Checkbox from '@/components/ui/checkbox';
 import Field from '@/components/ui/field';
 import { toast } from '@/lib/toast';
-import api from '@/api';
+import { useUpdateProfile } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
   getExtraSettingsTabs,
@@ -29,7 +29,7 @@ export default function SettingsPage() {
   const navigate = useNavigate();
   const { profile, reloadProfile, isPremium, isAdmin } = useOutletContext<AppShellContext>();
 
-  // Fetch the latest profile whenever the settings page is opened.
+  // Refresh profile whenever the settings page is opened.
   useEffect(() => {
     reloadProfile();
   }, [reloadProfile]);
@@ -64,9 +64,9 @@ export default function SettingsPage() {
   const renderContent = () => {
     if (premiumContent) return premiumContent;
     switch (activeTab) {
-      case 'user': return profile ? <UserTab profile={profile} onSaved={reloadProfile} /> : null;
-      case 'soul': return profile ? <SoulTab profile={profile} onSaved={reloadProfile} /> : null;
-      case 'heartbeat': return profile ? <HeartbeatTab profile={profile} onSaved={reloadProfile} /> : null;
+      case 'user': return profile ? <UserTab profile={profile} /> : null;
+      case 'soul': return profile ? <SoulTab profile={profile} /> : null;
+      case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
       default: return null;
     }
   };
@@ -94,30 +94,25 @@ export default function SettingsPage() {
 
 function UserTab({
   profile,
-  onSaved,
 }: {
   profile: { user_text: string };
-  onSaved: () => void;
 }) {
   const [userText, setUserText] = useState(profile.user_text);
-  const [saving, setSaving] = useState(false);
+  const updateProfile = useUpdateProfile();
 
   useEffect(() => {
     setUserText(profile.user_text);
   }, [profile.user_text]);
 
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    try {
-      await api.updateProfile({ user_text: userText });
-      onSaved();
-      toast.success('User info updated');
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }, [userText, onSaved]);
+  const handleSave = () => {
+    updateProfile.mutate(
+      { user_text: userText },
+      {
+        onSuccess: () => toast.success('User info updated'),
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
 
   return (
     <Card>
@@ -134,7 +129,7 @@ function UserTab({
           </p>
         </Field>
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving} isLoading={saving}>
+          <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
             Save
           </Button>
         </div>
@@ -147,30 +142,25 @@ function UserTab({
 
 function SoulTab({
   profile,
-  onSaved,
 }: {
   profile: { soul_text: string };
-  onSaved: () => void;
 }) {
   const [soulText, setSoulText] = useState(profile.soul_text);
-  const [saving, setSaving] = useState(false);
+  const updateProfile = useUpdateProfile();
 
   useEffect(() => {
     setSoulText(profile.soul_text);
   }, [profile.soul_text]);
 
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    try {
-      await api.updateProfile({ soul_text: soulText });
-      onSaved();
-      toast.success('Soul settings updated');
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }, [soulText, onSaved]);
+  const handleSave = () => {
+    updateProfile.mutate(
+      { soul_text: soulText },
+      {
+        onSuccess: () => toast.success('Soul settings updated'),
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
 
   return (
     <Card>
@@ -187,7 +177,7 @@ function SoulTab({
           </p>
         </Field>
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving} isLoading={saving}>
+          <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
             Save
           </Button>
         </div>
@@ -212,10 +202,8 @@ const HEARTBEAT_PRESETS = [
 
 function HeartbeatTab({
   profile,
-  onSaved,
 }: {
   profile: { heartbeat_opt_in: boolean; heartbeat_frequency: string };
-  onSaved: () => void;
 }) {
   const isPreset = HEARTBEAT_PRESETS.some((p) => p.value === profile.heartbeat_frequency);
   const [form, setForm] = useState({
@@ -223,7 +211,7 @@ function HeartbeatTab({
     heartbeat_frequency: isPreset ? profile.heartbeat_frequency : 'custom',
     custom_frequency: isPreset ? '' : profile.heartbeat_frequency,
   });
-  const [saving, setSaving] = useState(false);
+  const updateProfile = useUpdateProfile();
 
   useEffect(() => {
     const preset = HEARTBEAT_PRESETS.some((p) => p.value === profile.heartbeat_frequency);
@@ -238,21 +226,18 @@ function HeartbeatTab({
     ? form.custom_frequency
     : form.heartbeat_frequency;
 
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    try {
-      await api.updateProfile({
+  const handleSave = () => {
+    updateProfile.mutate(
+      {
         heartbeat_opt_in: form.heartbeat_opt_in,
         heartbeat_frequency: effectiveFrequency,
-      });
-      onSaved();
-      toast.success('Heartbeat settings updated');
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }, [form, effectiveFrequency, onSaved]);
+      },
+      {
+        onSuccess: () => toast.success('Heartbeat settings updated'),
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
 
   return (
     <Card>
@@ -296,7 +281,7 @@ function HeartbeatTab({
           </Field>
         )}
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving} isLoading={saving}>
+          <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
             Save Heartbeat Settings
           </Button>
         </div>
@@ -304,4 +289,3 @@ function HeartbeatTab({
     </Card>
   );
 }
-

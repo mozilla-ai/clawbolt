@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
@@ -6,8 +6,7 @@ import Button from '@/components/ui/button';
 import Divider from '@/components/ui/divider';
 import Field from '@/components/ui/field';
 import { toast } from '@/lib/toast';
-import api from '@/api';
-import type { ChannelConfig } from '@/types';
+import { useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
 
 export default function ChannelsPage() {
@@ -29,49 +28,39 @@ function ChannelsContent({
   profile: { channel_identifier: string; preferred_channel: string };
 }) {
   const connected = !!profile.channel_identifier;
-  const [config, setConfig] = useState<ChannelConfig | null>(null);
+  const { data: config } = useChannelConfig();
+  const updateMutation = useUpdateChannelConfig();
   const [botToken, setBotToken] = useState('');
-  const [allowedUsernames, setAllowedUsernames] = useState('');
-  const [saving, setSaving] = useState(false);
+  const [allowedUsernames, setAllowedUsernames] = useState<string | null>(null);
 
-  useEffect(() => {
-    api.getChannelConfig().then((cfg) => {
-      setConfig(cfg);
-      setAllowedUsernames(cfg.telegram_allowed_usernames);
-    }).catch(() => {
-      // ignore fetch errors on mount
-    });
-  }, []);
+  // Use local state if edited, otherwise fall back to server data
+  const displayedUsernames = allowedUsernames ?? config?.telegram_allowed_usernames ?? '';
 
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    try {
-      const body: Record<string, string> = {};
-      if (botToken) body.telegram_bot_token = botToken;
-      if (config && allowedUsernames !== config.telegram_allowed_usernames) {
-        body.telegram_allowed_usernames = allowedUsernames;
-      }
-      if (Object.keys(body).length === 0) {
-        toast.error('No changes to save');
-        setSaving(false);
-        return;
-      }
-      const updated = await api.updateChannelConfig(body);
-      setConfig(updated);
-      setBotToken('');
-      toast.success('Channel config updated');
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSaving(false);
+  const handleSave = () => {
+    const body: Record<string, string> = {};
+    if (botToken) body.telegram_bot_token = botToken;
+    if (config && displayedUsernames !== config.telegram_allowed_usernames) {
+      body.telegram_allowed_usernames = displayedUsernames;
     }
-  }, [botToken, allowedUsernames, config]);
+    if (Object.keys(body).length === 0) {
+      toast.error('No changes to save');
+      return;
+    }
+    updateMutation.mutate(body, {
+      onSuccess: () => {
+        setBotToken('');
+        setAllowedUsernames(null);
+        toast.success('Channel config updated');
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
 
   return (
     <Card>
       <div className="grid gap-4">
         <Field label="Bot Token">
-          {config === null ? (
+          {config === undefined ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
           ) : (
             <>
@@ -99,7 +88,7 @@ function ChannelsContent({
         </Field>
         <Field label="Allowed Usernames">
           <Input
-            value={allowedUsernames}
+            value={displayedUsernames}
             onChange={(e) => setAllowedUsernames(e.target.value)}
             placeholder='Comma-separated @usernames, or * for all'
           />
@@ -108,7 +97,7 @@ function ChannelsContent({
           </p>
         </Field>
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={config === null} isLoading={saving}>
+          <Button onClick={handleSave} disabled={updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
             Save Channel Config
           </Button>
         </div>
@@ -137,4 +126,3 @@ function ChannelsContent({
     </Card>
   );
 }
-
