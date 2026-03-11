@@ -1,9 +1,9 @@
-"""Session compaction: extract durable facts from aging messages.
+"""Session compaction: consolidate aging messages into MEMORY.md.
 
 When conversation history reaches the configured limit, messages about to be
-trimmed are passed through a lightweight LLM call that extracts key facts.
-Those facts are persisted via the existing memory subsystem so they survive
-after the messages leave the context window.
+trimmed are passed through a lightweight LLM call that rewrites MEMORY.md
+with any new durable facts from the conversation.  This replaces the old
+fact-extraction approach with a full-rewrite model (like nanobot).
 
 A timestamped summary is also appended to HISTORY.md so the conversation
 remains searchable after the raw messages are gone.
@@ -19,7 +19,6 @@ from any_llm.types.messages import MessageResponse
 
 from backend.app.agent.file_store import get_memory_store
 from backend.app.agent.llm_parsing import get_response_text
-from backend.app.agent.memory import save_memory
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
@@ -40,13 +39,10 @@ def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
     return "\n".join(lines)
 
 
-def _parse_compaction_response(raw: str) -> tuple[list[dict[str, str]], str]:
-    """Parse the LLM compaction response into facts and a summary.
+def _parse_compaction_response(raw: str) -> tuple[str, str]:
+    """Parse the LLM compaction response into a memory update and summary.
 
-    Accepts both the new object format (``{"facts": [...], "summary": "..."}``)
-    and the legacy array format (``[...]``) for backwards compatibility.
-
-    Returns a tuple of (facts_list, summary_string).
+    Returns a tuple of (memory_update, summary_string).
     """
     text = raw.strip()
     # Strip markdown code fences if present
@@ -61,44 +57,26 @@ def _parse_compaction_response(raw: str) -> tuple[list[dict[str, str]], str]:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         logger.warning("Failed to parse compaction response as JSON: %s", text[:200])
-        return [], ""
+        return "", ""
 
-    # New format: {"facts": [...], "summary": "..."}
-    summary = ""
-    if isinstance(parsed, dict):
-        summary = str(parsed.get("summary", "")).strip()
-        parsed = parsed.get("facts", [])
+    if not isinstance(parsed, dict):
+        logger.warning("Compaction response is not a JSON object")
+        return "", ""
 
-    if not isinstance(parsed, list):
-        logger.warning("Compaction response facts is not a JSON array")
-        return [], summary
-
-    valid_categories = {"pricing", "client", "job", "supplier", "scheduling", "general"}
-    facts: list[dict[str, str]] = []
-    for item in parsed:
-        if not isinstance(item, dict):
-            continue
-        key = item.get("key", "")
-        value = item.get("value", "")
-        category = item.get("category", "general")
-        if not key or not value:
-            continue
-        if category not in valid_categories:
-            category = "general"
-        facts.append({"key": str(key), "value": str(value), "category": str(category)})
-    return facts, summary
+    memory_update = str(parsed.get("memory_update", "")).strip()
+    summary = str(parsed.get("summary", "")).strip()
+    return memory_update, summary
 
 
 async def compact_session(
     user_id: int,
     trimmed_messages: list[AgentMessage],
     max_message_seq: int | None = None,
-) -> tuple[list[dict[str, str]], int | None]:
-    """Extract durable facts from messages about to leave the context window.
+) -> tuple[str, int | None]:
+    """Consolidate messages into an updated MEMORY.md via LLM rewrite.
 
-    Uses a lightweight LLM call to identify facts worth persisting, then saves
-    them via the existing memory subsystem.  A timestamped summary is also
-    appended to HISTORY.md.
+    Passes the current MEMORY.md, USER.md, and the conversation to the LLM,
+    which returns a full rewritten MEMORY.md incorporating any new facts.
 
     Args:
         user_id: The user whose session is being compacted.
@@ -107,25 +85,39 @@ async def compact_session(
             used to track compaction progress. Passed through to the return value.
 
     Returns:
-        A tuple of (saved_facts, max_message_seq) where saved_facts is a list of
-        dicts with "key", "value", and "category" fields, and max_message_seq is
-        the highest compacted message seq (for tracking).
+        A tuple of (memory_update, max_message_seq) where memory_update is the
+        new MEMORY.md content (empty string if nothing changed), and
+        max_message_seq is the highest compacted message seq (for tracking).
     """
     if not trimmed_messages:
-        return [], None
+        return "", None
 
     if not settings.compaction_enabled:
-        return [], None
+        return "", None
 
     conversation_text = _format_messages_for_compaction(trimmed_messages)
     if not conversation_text.strip():
-        return [], None
+        return "", None
+
+    memory_store = get_memory_store(user_id)
+    current_memory = memory_store.read_memory()
+    current_user_profile = memory_store.read_user()
+
+    user_prompt_parts = []
+    user_prompt_parts.append("## Current Long-term Memory")
+    user_prompt_parts.append(current_memory or "(empty)")
+    user_prompt_parts.append("")
+    user_prompt_parts.append("## User Profile (USER.md)")
+    user_prompt_parts.append(current_user_profile or "(empty)")
+    user_prompt_parts.append("")
+    user_prompt_parts.append("## Conversation to Process")
+    user_prompt_parts.append(conversation_text)
 
     model = settings.compaction_model or settings.llm_model
     provider = settings.compaction_provider or settings.llm_provider
 
     messages: list[dict[str, Any]] = [
-        {"role": "user", "content": conversation_text},
+        {"role": "user", "content": "\n".join(user_prompt_parts)},
     ]
 
     try:
@@ -142,44 +134,24 @@ async def compact_session(
         )
     except Exception:
         logger.exception("Compaction LLM call failed for user %d", user_id)
-        return [], None
+        return "", None
 
     raw_content = get_response_text(response)
-    facts, summary = _parse_compaction_response(raw_content)
+    memory_update, summary = _parse_compaction_response(raw_content)
 
-    saved_facts: list[dict[str, str]] = []
-    for fact in facts:
-        try:
-            await save_memory(
-                user_id=user_id,
-                key=fact["key"],
-                value=fact["value"],
-                category=fact["category"],
-                confidence=0.8,
-            )
-            saved_facts.append(fact)
-            logger.info(
-                "Compaction saved fact for user %d: %s = %s",
-                user_id,
-                fact["key"],
-                fact["value"][:80],
-            )
-        except Exception:
-            logger.exception(
-                "Failed to save compacted fact %s for user %d",
-                fact["key"],
-                user_id,
-            )
+    # Write updated MEMORY.md if the LLM produced content
+    if memory_update:
+        memory_store.write_memory(memory_update)
+        logger.info("Compaction rewrote MEMORY.md for user %d", user_id)
 
     # Append summary to HISTORY.md if the LLM produced one
     if summary:
         timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M")
         entry = summary.replace("[TIMESTAMP]", f"[{timestamp}]")
         try:
-            memory_store = get_memory_store(user_id)
             await memory_store.append_history(entry)
             logger.info("Compaction appended history entry for user %d", user_id)
         except Exception:
             logger.exception("Failed to append history for user %d", user_id)
 
-    return saved_facts, max_message_seq
+    return memory_update, max_message_seq

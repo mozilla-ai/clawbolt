@@ -15,7 +15,6 @@ class ToolTags(StrEnum):
     """Cross-cutting tool metadata tags."""
 
     SENDS_REPLY = "sends_reply"
-    SAVES_MEMORY = "saves_memory"
     MODIFIES_PROFILE = "modifies_profile"
 
 

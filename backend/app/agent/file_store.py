@@ -193,15 +193,6 @@ class HeartbeatLogEntry(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
 
 
-class MemoryFact(BaseModel):
-    """A single fact in MEMORY.md."""
-
-    key: str = ""
-    value: str = ""
-    category: str = "general"
-    confidence: float = 1.0
-
-
 class ToolConfigEntry(BaseModel):
     """A single tool group entry in a user's tool_config.json."""
 
@@ -509,7 +500,7 @@ class UserStore:
         # Initialize MEMORY.md if it doesn't exist
         mem_path = cdir / "memory" / "MEMORY.md"
         if not mem_path.exists():
-            mem_path.write_text("# Long-term Memory\n", encoding="utf-8")
+            mem_path.write_text("", encoding="utf-8")
 
     def _update_index(self, user: UserData) -> None:
         """Update user_index.json with channel mapping."""
@@ -619,15 +610,9 @@ class UserStore:
 # FileMemoryStore
 # ---------------------------------------------------------------------------
 
-# Regex to parse MEMORY.md entries: "- key: value (confidence: X.X)"
-# Uses greedy match for value (.+) to handle values containing parentheses,
-# then anchors on the final "(confidence: ...)" suffix.
-_MEMORY_LINE_RE = re.compile(r"^-\s+(.+?):\s+(.+)\s+\(confidence:\s+([\d.]+)\)\s*$")
-_CATEGORY_RE = re.compile(r"^##\s+(.+)$")
-
 
 class FileMemoryStore(PerUserStore):
-    """File-based memory storage using MEMORY.md. Replaces Memory model."""
+    """File-based memory storage using freeform MEMORY.md markdown."""
 
     @property
     def _memory_path(self) -> Path:
@@ -641,124 +626,30 @@ class FileMemoryStore(PerUserStore):
     def _soul_path(self) -> Path:
         return _user_dir(self.user_id) / "SOUL.md"
 
-    def _parse_memory_md(self) -> list[MemoryFact]:
-        """Parse MEMORY.md into a list of MemoryFact objects."""
+    def read_memory(self) -> str:
+        """Read MEMORY.md content as plain text."""
         if not self._memory_path.exists():
-            return []
-        content = self._memory_path.read_text(encoding="utf-8")
-        facts: list[MemoryFact] = []
-        current_category = "general"
-        for line in content.splitlines():
-            cat_match = _CATEGORY_RE.match(line)
-            if cat_match:
-                heading = cat_match.group(1).strip()
-                # Normalize known headings
-                if heading == "Long-term Memory":
-                    continue
-                current_category = heading.lower()
-                continue
-            fact_match = _MEMORY_LINE_RE.match(line)
-            if fact_match:
-                facts.append(
-                    MemoryFact(
-                        key=fact_match.group(1).strip(),
-                        value=fact_match.group(2).strip(),
-                        confidence=float(fact_match.group(3)),
-                        category=current_category,
-                    )
-                )
-        return facts
+            return ""
+        return self._memory_path.read_text(encoding="utf-8").strip()
 
-    def _write_memory_md(self, facts: list[MemoryFact]) -> None:
-        """Write facts back to MEMORY.md, grouped by category."""
+    def write_memory(self, content: str) -> None:
+        """Write MEMORY.md content (full rewrite)."""
         self._memory_path.parent.mkdir(parents=True, exist_ok=True)
-        categories: dict[str, list[MemoryFact]] = {}
-        for fact in facts:
-            categories.setdefault(fact.category, []).append(fact)
+        self._memory_path.write_text(content.rstrip() + "\n", encoding="utf-8")
 
-        lines: list[str] = ["# Long-term Memory", ""]
-        for cat in sorted(categories.keys()):
-            lines.append(f"## {cat.title()}")
-            for f in categories[cat]:
-                lines.append(f"- {f.key}: {f.value} (confidence: {f.confidence})")
-            lines.append("")
-        self._memory_path.write_text("\n".join(lines), encoding="utf-8")
+    async def build_memory_context(self) -> str:
+        """Build memory context for injection into the agent prompt.
 
-    async def save_memory(
-        self,
-        key: str,
-        value: str,
-        category: str = "general",
-        confidence: float = 1.0,
-        source_message_id: int | None = None,
-    ) -> MemoryFact:
-        """Save or update a memory fact."""
-        async with self._lock:
-            facts = self._parse_memory_md()
-            # Upsert: update if key exists, else append
-            for fact in facts:
-                if fact.key == key:
-                    fact.value = value
-                    fact.category = category
-                    fact.confidence = confidence
-                    self._write_memory_md(facts)
-                    return fact
-            new_fact = MemoryFact(key=key, value=value, category=category, confidence=confidence)
-            facts.append(new_fact)
-            self._write_memory_md(facts)
-            return new_fact
-
-    async def recall_memories(
-        self,
-        query: str,
-        category: str | None = None,
-        limit: int = 20,
-    ) -> list[MemoryFact]:
-        """Case-insensitive keyword search over keys and values."""
-        facts = self._parse_memory_md()
-        if category:
-            facts = [f for f in facts if f.category == category]
-        pattern = query.lower()
-        matched = [f for f in facts if pattern in f.key.lower() or pattern in f.value.lower()]
-        matched.sort(key=lambda f: f.confidence, reverse=True)
-        return matched[:limit]
-
-    async def get_all_memories(
-        self,
-        category: str | None = None,
-    ) -> list[MemoryFact]:
-        """Get all memory facts, optionally filtered by category."""
-        facts = self._parse_memory_md()
-        if category:
-            facts = [f for f in facts if f.category == category]
-        return facts
-
-    async def delete_memory(self, key: str) -> bool:
-        """Delete a specific memory. Returns True if found and deleted."""
-        async with self._lock:
-            facts = self._parse_memory_md()
-            original_len = len(facts)
-            facts = [f for f in facts if f.key != key]
-            if len(facts) == original_len:
-                return False
-            self._write_memory_md(facts)
-            return True
-
-    async def build_memory_context(self, query: str | None = None) -> str:
-        """Build a MEMORY.md-style text block for injection into the agent prompt."""
-        if query:
-            memories = await self.recall_memories(query)
-        else:
-            memories = await self.get_all_memories()
+        Returns the raw MEMORY.md content plus a formatted client list.
+        """
+        memory_text = self.read_memory()
 
         client_store = ClientStore(self.user_id)
         clients = await client_store.list_all()
 
         lines: list[str] = []
-        if memories:
-            lines.append("## Known Facts")
-            for m in memories:
-                lines.append(f"- {m.key}: {m.value} (confidence: {m.confidence})")
+        if memory_text:
+            lines.append(memory_text)
             lines.append("")
         if clients:
             lines.append("## Clients")

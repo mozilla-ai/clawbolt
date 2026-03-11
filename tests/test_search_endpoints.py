@@ -33,18 +33,11 @@ def _create_session(
     path.write_text("\n".join(lines) + "\n", encoding="utf-8")
 
 
-def _create_memory(user: UserData, facts: list[tuple[str, str, str]]) -> None:
-    """Create a MEMORY.md file with given (key, value, category) triples."""
+def _create_memory(user: UserData, content: str) -> None:
+    """Create a MEMORY.md file with the given content."""
     mem_dir = Path(settings.data_dir) / str(user.id) / "memory"
     mem_dir.mkdir(parents=True, exist_ok=True)
-    lines = ["# Long-term Memory\n"]
-    current_cat = ""
-    for key, value, category in facts:
-        if category != current_cat:
-            current_cat = category
-            lines.append(f"\n## {category}\n")
-        lines.append(f"- {key}: {value} (confidence: 1.0)\n")
-    (mem_dir / "MEMORY.md").write_text("".join(lines), encoding="utf-8")
+    (mem_dir / "MEMORY.md").write_text(content, encoding="utf-8")
 
 
 def _create_clients(user: UserData, clients: list[dict[str, str]]) -> None:
@@ -73,17 +66,14 @@ def test_search_no_results(client: TestClient) -> None:
 def test_search_finds_memory_facts(client: TestClient, test_user: UserData) -> None:
     _create_memory(
         test_user,
-        [
-            ("hourly_rate", "$85/hr", "pricing"),
-            ("favorite_tool", "DeWalt drill", "tools"),
-        ],
+        "- Hourly rate: $85/hr\n- Favorite tool: DeWalt drill\n",
     )
     resp = client.get("/api/search?q=dewalt")
     assert resp.status_code == 200
     data = resp.json()
     assert len(data["results"]) == 1
     assert data["results"][0]["type"] == "memory"
-    assert data["results"][0]["title"] == "favorite_tool"
+    assert "DeWalt drill" in data["results"][0]["title"]
 
 
 def test_search_finds_sessions(client: TestClient, test_user: UserData) -> None:
@@ -130,7 +120,7 @@ def test_search_finds_clients(client: TestClient, test_user: UserData) -> None:
 
 
 def test_search_case_insensitive(client: TestClient, test_user: UserData) -> None:
-    _create_memory(test_user, [("City", "Portland", "location")])
+    _create_memory(test_user, "- City: Portland\n")
     resp = client.get("/api/search?q=portland")
     assert resp.status_code == 200
     assert len(resp.json()["results"]) == 1
@@ -141,7 +131,7 @@ def test_search_case_insensitive(client: TestClient, test_user: UserData) -> Non
 
 
 def test_search_mixed_results(client: TestClient, test_user: UserData) -> None:
-    _create_memory(test_user, [("kitchen_style", "modern kitchen", "preferences")])
+    _create_memory(test_user, "- Kitchen style: modern kitchen\n")
     _create_session(
         test_user,
         "1_200",

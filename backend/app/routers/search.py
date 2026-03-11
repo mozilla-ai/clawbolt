@@ -40,16 +40,17 @@ async def search(
 
     results: list[SearchResult] = []
 
-    # Search memory facts (by key and value)
+    # Search memory (line-by-line text search over freeform MEMORY.md)
     memory_store = get_memory_store(current_user.id)
-    facts = await memory_store.get_all_memories()
-    for fact in facts:
-        if query in fact.key.lower() or query in fact.value.lower():
+    memory_text = memory_store.read_memory()
+    for line in memory_text.splitlines():
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#") and query in stripped.lower():
             results.append(
                 SearchResult(
                     type="memory",
-                    title=fact.key,
-                    preview=fact.value[:120],
+                    title=stripped[:60],
+                    preview=stripped[:120],
                     url="/app/memory",
                 )
             )

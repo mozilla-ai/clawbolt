@@ -148,13 +148,13 @@ async def test_stores_tool_interactions_with_outbound(
         tool_calls=[
             {
                 "id": "call_abc",
-                "name": "save_fact",
-                "arguments": json.dumps({"key": "rate", "value": "$50/hr", "category": "pricing"}),
+                "name": "read_file",
+                "arguments": json.dumps({"path": "MEMORY.md"}),
             }
         ]
     )
     # Second call: LLM responds with text
-    text_response = make_text_response("Saved your rate!")
+    text_response = make_text_response("Here is your file!")
     mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
 
     await handle_inbound_message(
@@ -171,7 +171,7 @@ async def test_stores_tool_interactions_with_outbound(
     assert outbound.tool_interactions_json
     interactions = json.loads(outbound.tool_interactions_json)
     assert len(interactions) == 1
-    assert interactions[0]["name"] == "save_fact"
+    assert interactions[0]["name"] == "read_file"
     assert interactions[0]["tool_call_id"] == "call_abc"
     assert "result" in interactions[0]
 

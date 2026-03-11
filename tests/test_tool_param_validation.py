@@ -20,11 +20,6 @@ from backend.app.agent.tools.estimate_tools import (
     GenerateEstimateParams,
 )
 from backend.app.agent.tools.file_tools import OrganizeFileParams, UploadToStorageParams
-from backend.app.agent.tools.memory_tools import (
-    ForgetFactParams,
-    RecallFactsParams,
-    SaveFactParams,
-)
 from backend.app.agent.tools.messaging_tools import SendMediaReplyParams, SendReplyParams
 from backend.app.agent.tools.workspace_tools import DeleteFileParams
 from tests.mocks.llm import make_text_response, make_tool_call_response
@@ -71,13 +66,6 @@ def test_tool_to_function_schema_uses_params_model() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_memory_tool_param_models_exist() -> None:
-    """Memory tool param models should be importable and valid BaseModels."""
-    assert issubclass(SaveFactParams, BaseModel)
-    assert issubclass(RecallFactsParams, BaseModel)
-    assert issubclass(ForgetFactParams, BaseModel)
-
-
 def test_messaging_tool_param_models_exist() -> None:
     """Messaging tool param models should be importable and valid BaseModels."""
     assert issubclass(SendReplyParams, BaseModel)
@@ -110,26 +98,6 @@ def test_file_tool_param_models_exist() -> None:
 # ---------------------------------------------------------------------------
 # Validation behavior tests: type coercion and error handling
 # ---------------------------------------------------------------------------
-
-
-def test_save_fact_params_accepts_valid_input() -> None:
-    """SaveFactParams should accept valid arguments."""
-    p = SaveFactParams(key="rate", value="$50/hr", category="pricing")
-    assert p.key == "rate"
-    assert p.value == "$50/hr"
-    assert p.category == "pricing"
-
-
-def test_save_fact_params_default_category() -> None:
-    """SaveFactParams should default category to 'general'."""
-    p = SaveFactParams(key="note", value="test")
-    assert p.category == "general"
-
-
-def test_save_fact_params_rejects_invalid_category() -> None:
-    """SaveFactParams should reject invalid category values."""
-    with pytest.raises(Exception):  # noqa: B017
-        SaveFactParams(key="note", value="test", category="invalid")  # type: ignore[invalid-argument-type]
 
 
 def test_remove_checklist_item_coerces_string_to_int() -> None:

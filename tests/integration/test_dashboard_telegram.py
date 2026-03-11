@@ -153,11 +153,9 @@ class TestDashboardSeesTelegramData:
         _seed_memory(telegram_user)
         resp = real_auth_client.get("/api/user/memory")
         assert resp.status_code == 200
-        facts = resp.json()
-        assert len(facts) == 2
-        keys = {f["key"] for f in facts}
-        assert "hourly_rate" in keys
-        assert "specialty" in keys
+        data = resp.json()
+        assert "hourly_rate" in data["content"]
+        assert "specialty" in data["content"]
 
     def test_stats_returns_telegram_stats(
         self,

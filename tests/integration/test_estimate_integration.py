@@ -14,7 +14,6 @@ import pytest
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.file_store import EstimateStore, UserData
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
-from backend.app.agent.tools.memory_tools import create_memory_tools
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
@@ -33,7 +32,6 @@ async def test_estimate_generation_roundtrip(
 
         agent = ClawboltAgent(user=integration_user)
         tools = create_estimate_tools(integration_user)
-        tools.extend(create_memory_tools(integration_user.id))
         agent.register_tools(tools)
 
         response = await agent.process_message(

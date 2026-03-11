@@ -542,8 +542,6 @@ class ClawboltAgent:
                         tags=set(tool_tags),
                     )
                 )
-                if ToolTags.SAVES_MEMORY in tool_tags:
-                    memories_saved.append(validated_args)
             except Exception:
                 logger.exception("Tool call failed: %s", tool_name)
                 hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]

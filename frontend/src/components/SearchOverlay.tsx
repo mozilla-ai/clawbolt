@@ -7,7 +7,7 @@ import {
 } from '@heroui/modal';
 import { Input } from '@heroui/input';
 import Badge from '@/components/ui/badge';
-import type { SessionSummary, MemoryFact } from '@/types';
+import type { SessionSummary } from '@/types';
 
 interface SearchResult {
   type: 'conversation' | 'memory';
@@ -20,14 +20,14 @@ interface SearchOverlayProps {
   isOpen: boolean;
   onClose: () => void;
   sessions: SessionSummary[];
-  memoryFacts: MemoryFact[];
+  memoryContent: string;
 }
 
 function fuzzyMatch(query: string, text: string): boolean {
   return text.toLowerCase().includes(query.toLowerCase());
 }
 
-export default function SearchOverlay({ isOpen, onClose, sessions, memoryFacts }: SearchOverlayProps) {
+export default function SearchOverlay({ isOpen, onClose, sessions, memoryContent }: SearchOverlayProps) {
   const [query, setQuery] = useState('');
   const [debouncedQuery, setDebouncedQuery] = useState('');
   const [selectedIndex, setSelectedIndex] = useState(0);
@@ -78,19 +78,24 @@ export default function SearchOverlay({ isOpen, onClose, sessions, memoryFacts }
       }
     }
 
-    for (const fact of memoryFacts) {
-      if (fuzzyMatch(debouncedQuery, fact.key) || fuzzyMatch(debouncedQuery, fact.value)) {
-        matched.push({
-          type: 'memory',
-          label: fact.key,
-          detail: fact.value,
-          id: fact.key,
-        });
+    // Search memory content by matching lines
+    if (memoryContent) {
+      const lines = memoryContent.split('\n');
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (trimmed && !trimmed.startsWith('#') && fuzzyMatch(debouncedQuery, trimmed)) {
+          matched.push({
+            type: 'memory',
+            label: trimmed.length > 60 ? trimmed.slice(0, 60) + '...' : trimmed,
+            detail: 'Memory',
+            id: `memory-${trimmed.slice(0, 30)}`,
+          });
+        }
       }
     }
 
     return matched;
-  }, [debouncedQuery, sessions, memoryFacts]);
+  }, [debouncedQuery, sessions, memoryContent]);
 
   // Reset selected index when results change
   useEffect(() => {

@@ -9,8 +9,8 @@ import type {
   ChecklistItemUpdate,
   UserProfile,
   UserProfileUpdate,
-  MemoryFact,
-  MemoryFactUpdate,
+  MemoryData,
+  MemoryUpdate,
   OAuthAuthorizeResponse,
   OAuthStatusResponse,
   SessionDetail,
@@ -89,18 +89,13 @@ const api = {
     _fetch<SessionDetail>(`/api/user/sessions/${encodeURIComponent(sessionId)}`),
 
   // Memory
-  listMemoryFacts: (category?: string) => {
-    const params = category ? `?category=${encodeURIComponent(category)}` : '';
-    return _fetch<MemoryFact[]>(`/api/user/memory${params}`);
-  },
-  updateMemoryFact: (key: string, body: MemoryFactUpdate) =>
-    _fetch<MemoryFact>(`/api/user/memory/${encodeURIComponent(key)}`, {
+  getMemory: () => _fetch<MemoryData>('/api/user/memory'),
+  updateMemory: (body: MemoryUpdate) =>
+    _fetch<MemoryData>('/api/user/memory', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  deleteMemoryFact: (key: string) =>
-    _fetchVoid(`/api/user/memory/${encodeURIComponent(key)}`, { method: 'DELETE' }),
 
   // Checklist
   listChecklist: () => _fetch<ChecklistItem[]>('/api/user/checklist'),

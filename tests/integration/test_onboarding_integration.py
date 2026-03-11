@@ -19,7 +19,6 @@ from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
     is_onboarding_needed,
 )
-from backend.app.agent.tools.memory_tools import create_memory_tools
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.config import settings
 
@@ -48,8 +47,7 @@ async def test_onboarding_extracts_profile_from_intro() -> None:
         mock_settings.llm_max_tokens_agent = 500
 
         agent = ClawboltAgent(user=user)
-        tools = create_memory_tools(user.id)
-        tools.extend(create_workspace_tools(user.id))
+        tools = create_workspace_tools(user.id)
         agent.register_tools(tools)
 
         system_prompt = build_onboarding_system_prompt(user)

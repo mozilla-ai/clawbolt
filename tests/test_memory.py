@@ -1,100 +1,40 @@
 import pytest
 
-from backend.app.agent.file_store import ClientStore, UserData
-from backend.app.agent.memory import (
-    build_memory_context,
-    delete_memory,
-    get_all_memories,
-    recall_memories,
-    save_memory,
-)
+from backend.app.agent.file_store import ClientStore, UserData, get_memory_store
+from backend.app.agent.memory import build_memory_context, read_memory, write_memory
 
 
 @pytest.mark.asyncio()
-async def test_save_memory_creates_new(test_user: UserData) -> None:
-    """save_memory should create a new memory entry."""
-    memory = await save_memory(
-        test_user.id,
-        key="deck_pricing",
-        value="$35-45/sqft for composite",
-        category="pricing",
-    )
-    assert memory.key == "deck_pricing"
-    assert memory.value == "$35-45/sqft for composite"
-    assert memory.category == "pricing"
+async def test_write_and_read_memory(test_user: UserData) -> None:
+    """write_memory / read_memory should round-trip freeform content."""
+    write_memory(test_user.id, "## Pricing\n- Deck: $45/sqft")
+    content = read_memory(test_user.id)
+    assert "Deck: $45/sqft" in content
 
 
 @pytest.mark.asyncio()
-async def test_save_memory_updates_existing(test_user: UserData) -> None:
-    """save_memory with same key should update the value."""
-    await save_memory(test_user.id, key="rate", value="$50/hr")
-    updated = await save_memory(test_user.id, key="rate", value="$55/hr")
-    assert updated.value == "$55/hr"
-
-    all_memories = await get_all_memories(test_user.id)
-    assert len(all_memories) == 1
+async def test_read_memory_empty(test_user: UserData) -> None:
+    """read_memory returns empty string when no MEMORY.md exists."""
+    content = read_memory(test_user.id)
+    assert content == ""
 
 
 @pytest.mark.asyncio()
-async def test_recall_memories_keyword_search(test_user: UserData) -> None:
-    """recall_memories should find memories by keyword match."""
-    await save_memory(test_user.id, key="deck_pricing", value="$35/sqft")
-    await save_memory(test_user.id, key="fence_pricing", value="$20/ft")
-    await save_memory(test_user.id, key="supplier", value="ABC Lumber")
-
-    results = await recall_memories(test_user.id, query="pricing")
-    assert len(results) == 2
-
-
-@pytest.mark.asyncio()
-async def test_recall_memories_by_category(test_user: UserData) -> None:
-    """recall_memories with category filter should narrow results."""
-    await save_memory(test_user.id, key="deck", value="deck work", category="pricing")
-    await save_memory(test_user.id, key="client_deck", value="deck client", category="client")
-
-    results = await recall_memories(test_user.id, query="deck", category="pricing")
-    assert len(results) == 1
-    assert results[0].category == "pricing"
+async def test_write_memory_overwrites(test_user: UserData) -> None:
+    """write_memory should fully replace the file."""
+    write_memory(test_user.id, "old content")
+    write_memory(test_user.id, "new content")
+    content = read_memory(test_user.id)
+    assert "new content" in content
+    assert "old content" not in content
 
 
 @pytest.mark.asyncio()
-async def test_get_all_memories(test_user: UserData) -> None:
-    """get_all_memories should return all memories for a user."""
-    await save_memory(test_user.id, key="a", value="1")
-    await save_memory(test_user.id, key="b", value="2")
+async def test_build_memory_context_with_clients(test_user: UserData) -> None:
+    """build_memory_context should include memory text and clients."""
+    store = get_memory_store(test_user.id)
+    store.write_memory("## Pricing\n- Deck: $35/sqft")
 
-    all_mems = await get_all_memories(test_user.id)
-    assert len(all_mems) == 2
-
-
-@pytest.mark.asyncio()
-async def test_delete_memory(test_user: UserData) -> None:
-    """delete_memory should remove the memory."""
-    await save_memory(test_user.id, key="temp", value="temporary")
-    result = await delete_memory(test_user.id, key="temp")
-    assert result is True
-
-    all_mems = await get_all_memories(test_user.id)
-    assert len(all_mems) == 0
-
-
-@pytest.mark.asyncio()
-async def test_delete_memory_not_found(test_user: UserData) -> None:
-    """delete_memory should return False if key not found."""
-    result = await delete_memory(test_user.id, key="nonexistent")
-    assert result is False
-
-
-@pytest.mark.asyncio()
-async def test_build_memory_context(test_user: UserData) -> None:
-    """build_memory_context should produce formatted text."""
-    await save_memory(
-        test_user.id,
-        key="deck_pricing",
-        value="$35/sqft",
-        category="pricing",
-        confidence=0.9,
-    )
     client_store = ClientStore(test_user.id)
     await client_store.create(
         name="John Smith",
@@ -103,7 +43,13 @@ async def test_build_memory_context(test_user: UserData) -> None:
     )
 
     context = await build_memory_context(test_user.id)
-    assert "deck_pricing" in context
     assert "$35/sqft" in context
     assert "John Smith" in context
     assert "123 Oak St" in context
+
+
+@pytest.mark.asyncio()
+async def test_build_memory_context_empty(test_user: UserData) -> None:
+    """build_memory_context returns empty string when no memory or clients."""
+    context = await build_memory_context(test_user.id)
+    assert context == ""

@@ -81,12 +81,12 @@ def test_create_core_tools_excludes_disabled_factories() -> None:
     ctx = ToolContext(user=user)
 
     all_core = default_registry.create_core_tools(ctx)
-    excluded = default_registry.create_core_tools(ctx, excluded_factories={"memory"})
-    # Excluding memory should remove save_fact, recall_facts, forget_fact
+    excluded = default_registry.create_core_tools(ctx, excluded_factories={"workspace"})
+    # Excluding workspace should remove read_file, write_file, etc.
     all_names = {t.name for t in all_core}
     excluded_names = {t.name for t in excluded}
-    assert "save_fact" in all_names
-    assert "save_fact" not in excluded_names
+    assert "read_file" in all_names
+    assert "read_file" not in excluded_names
 
 
 def test_specialist_summaries_excludes_disabled_factories() -> None:
@@ -135,7 +135,6 @@ def test_get_tool_config(client: TestClient) -> None:
     # Verify known factories are present
     names = {t["name"] for t in tools}
     assert "workspace" in names
-    assert "memory" in names
 
 
 def test_get_tool_config_domain_group(client: TestClient) -> None:

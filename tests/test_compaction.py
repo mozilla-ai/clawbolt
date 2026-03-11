@@ -1,4 +1,4 @@
-"""Tests for session compaction (extracting durable facts from aging messages)."""
+"""Tests for session compaction (consolidating aging messages into MEMORY.md)."""
 
 import asyncio
 import json
@@ -25,7 +25,6 @@ from backend.app.agent.file_store import (
     get_session_store,
     get_user_store,
 )
-from backend.app.agent.memory import get_all_memories
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.enums import MessageDirection
 from tests.mocks.llm import make_text_response
@@ -91,156 +90,67 @@ def test_format_messages_skips_empty_assistant() -> None:
 # --- _parse_compaction_response tests ---
 
 
-def test_parse_valid_json_array() -> None:
-    """Should parse a valid JSON array of fact objects (legacy format)."""
-    raw = json.dumps(
-        [
-            {"key": "deck_pricing", "value": "$45/sqft composite", "category": "pricing"},
-            {"key": "supplier_name", "value": "ABC Lumber", "category": "supplier"},
-        ]
-    )
-    facts, summary = _parse_compaction_response(raw)
-    assert len(facts) == 2
-    assert facts[0]["key"] == "deck_pricing"
-    assert facts[0]["value"] == "$45/sqft composite"
-    assert facts[0]["category"] == "pricing"
-    assert facts[1]["key"] == "supplier_name"
-    assert summary == ""
-
-
-def test_parse_new_object_format() -> None:
-    """Should parse the new format with facts and summary."""
+def test_parse_valid_response() -> None:
+    """Should parse a valid JSON object with memory_update and summary."""
     raw = json.dumps(
         {
-            "facts": [{"key": "rate", "value": "$85/hr", "category": "pricing"}],
-            "summary": "[TIMESTAMP] Discussed pricing for kitchen remodel.",
+            "memory_update": "## Pricing\n- Deck: $45/sqft",
+            "summary": "[TIMESTAMP] Discussed pricing.",
         }
     )
-    facts, summary = _parse_compaction_response(raw)
-    assert len(facts) == 1
-    assert facts[0]["key"] == "rate"
-    assert summary == "[TIMESTAMP] Discussed pricing for kitchen remodel."
+    memory_update, summary = _parse_compaction_response(raw)
+    assert "Deck: $45/sqft" in memory_update
+    assert summary == "[TIMESTAMP] Discussed pricing."
 
 
-def test_parse_new_format_empty_facts_and_summary() -> None:
-    """Should handle new format with empty facts and summary."""
-    raw = json.dumps({"facts": [], "summary": ""})
-    facts, summary = _parse_compaction_response(raw)
-    assert facts == []
+def test_parse_empty_fields() -> None:
+    """Should handle empty memory_update and summary."""
+    raw = json.dumps({"memory_update": "", "summary": ""})
+    memory_update, summary = _parse_compaction_response(raw)
+    assert memory_update == ""
     assert summary == ""
 
 
 def test_parse_markdown_fenced_json() -> None:
     """Should handle markdown code fences around JSON."""
-    raw = '```json\n[{"key": "rate", "value": "$50/hr", "category": "pricing"}]\n```'
-    facts, summary = _parse_compaction_response(raw)
-    assert len(facts) == 1
-    assert facts[0]["key"] == "rate"
-    assert summary == ""
-
-
-def test_parse_markdown_fenced_new_format() -> None:
-    """Should handle markdown code fences around the new object format."""
     inner = json.dumps(
         {
-            "facts": [{"key": "k", "value": "v", "category": "general"}],
+            "memory_update": "## Facts\n- Rate: $50/hr",
             "summary": "A summary.",
         }
     )
     raw = f"```json\n{inner}\n```"
-    facts, summary = _parse_compaction_response(raw)
-    assert len(facts) == 1
+    memory_update, summary = _parse_compaction_response(raw)
+    assert "Rate: $50/hr" in memory_update
     assert summary == "A summary."
 
 
-def test_parse_empty_array() -> None:
-    """Empty JSON array should return empty list."""
-    facts, summary = _parse_compaction_response("[]")
-    assert facts == []
-    assert summary == ""
-
-
 def test_parse_invalid_json() -> None:
-    """Invalid JSON should return empty list without raising."""
-    facts, summary = _parse_compaction_response("not json at all")
-    assert facts == []
+    """Invalid JSON should return empty strings without raising."""
+    memory_update, summary = _parse_compaction_response("not json at all")
+    assert memory_update == ""
     assert summary == ""
 
 
-def test_parse_non_array_json_without_facts_key() -> None:
-    """Object without 'facts' key should return empty list."""
-    facts, summary = _parse_compaction_response('{"key": "val"}')
-    assert facts == []
+def test_parse_non_object_json() -> None:
+    """Non-object JSON should return empty strings."""
+    memory_update, summary = _parse_compaction_response("[1, 2, 3]")
+    assert memory_update == ""
     assert summary == ""
-
-
-def test_parse_skips_items_without_key() -> None:
-    """Items missing 'key' should be skipped."""
-    raw = json.dumps(
-        [
-            {"value": "no key here", "category": "general"},
-            {"key": "good_fact", "value": "this is valid", "category": "general"},
-        ]
-    )
-    facts, _ = _parse_compaction_response(raw)
-    assert len(facts) == 1
-    assert facts[0]["key"] == "good_fact"
-
-
-def test_parse_skips_items_without_value() -> None:
-    """Items missing 'value' should be skipped."""
-    raw = json.dumps(
-        [
-            {"key": "empty_val", "value": "", "category": "general"},
-            {"key": "good", "value": "present", "category": "general"},
-        ]
-    )
-    facts, _ = _parse_compaction_response(raw)
-    assert len(facts) == 1
-    assert facts[0]["key"] == "good"
-
-
-def test_parse_normalizes_invalid_category() -> None:
-    """Unknown categories should be normalized to 'general'."""
-    raw = json.dumps(
-        [
-            {"key": "fact1", "value": "something", "category": "unknown_cat"},
-        ]
-    )
-    facts, _ = _parse_compaction_response(raw)
-    assert len(facts) == 1
-    assert facts[0]["category"] == "general"
-
-
-def test_parse_skips_non_dict_items() -> None:
-    """Non-dict items in the array should be skipped."""
-    raw = json.dumps(
-        [
-            "just a string",
-            42,
-            {"key": "valid", "value": "yes", "category": "general"},
-        ]
-    )
-    facts, _ = _parse_compaction_response(raw)
-    assert len(facts) == 1
-    assert facts[0]["key"] == "valid"
 
 
 # --- compact_session tests ---
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_extracts_and_saves_facts(
-    test_user: UserData,
-) -> None:
-    """compact_session should call LLM and save extracted facts to memory."""
+async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
+    """compact_session should call LLM and write updated MEMORY.md."""
     llm_response_content = json.dumps(
-        [
-            {"key": "deck_rate", "value": "$45/sqft for composite", "category": "pricing"},
-            {"key": "client_smith_phone", "value": "555-0123", "category": "client"},
-        ]
+        {
+            "memory_update": "## Pricing\n- Deck: $45/sqft composite\n\n## Clients\n- Smith: 555-0123",
+            "summary": "[TIMESTAMP] Discussed pricing and client info.",
+        }
     )
-
     mock_response = make_text_response(llm_response_content)
 
     messages: list[AgentMessage] = [
@@ -250,24 +160,16 @@ async def test_compact_session_extracts_and_saves_facts(
     ]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
-        saved, max_seq = await compact_session(test_user.id, messages)
+        memory_update, max_seq = await compact_session(test_user.id, messages)
 
-    assert len(saved) == 2
-    assert saved[0]["key"] == "deck_rate"
-    assert saved[1]["key"] == "client_smith_phone"
-    # No max_message_seq passed, so should be None
+    assert "Deck: $45/sqft" in memory_update
+    assert "Smith: 555-0123" in memory_update
     assert max_seq is None
 
-    # Verify facts were persisted
-    memories = await get_all_memories(test_user.id)
-    assert len(memories) == 2
-    keys = {m.key for m in memories}
-    assert "deck_rate" in keys
-    assert "client_smith_phone" in keys
-
-    # Verify confidence is set to 0.8 for compacted facts
-    for m in memories:
-        assert m.confidence == 0.8
+    # Verify MEMORY.md was written
+    store = get_memory_store(test_user.id)
+    content = store.read_memory()
+    assert "Deck: $45/sqft" in content
 
     # Verify LLM was called with the system prompt
     mock_llm.assert_called_once()
@@ -276,32 +178,55 @@ async def test_compact_session_extracts_and_saves_facts(
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_returns_max_message_seq(
+async def test_compact_session_includes_current_memory_and_user(
     test_user: UserData,
 ) -> None:
+    """compact_session should pass current MEMORY.md and USER.md to the LLM."""
+    store = get_memory_store(test_user.id)
+    store.write_memory("## Existing\n- Old fact: still relevant")
+    store.write_user("- Name: Nathan\n- Trade: General contractor")
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": "## Existing\n- Old fact: still relevant", "summary": ""})
+    )
+
+    messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+        await compact_session(test_user.id, messages)
+
+    # Verify the LLM received current memory and user profile
+    call_kwargs = mock_llm.call_args
+    assert call_kwargs is not None
+    user_content = call_kwargs.kwargs["messages"][0]["content"]
+    assert "Old fact: still relevant" in user_content
+    assert "Nathan" in user_content
+    assert "General contractor" in user_content
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_returns_max_message_seq(test_user: UserData) -> None:
     """compact_session should return the max_message_seq when provided."""
     mock_response = make_text_response(
-        json.dumps([{"key": "fact", "value": "val", "category": "general"}])
+        json.dumps({"memory_update": "## Facts\n- fact: val", "summary": ""})
     )
 
     messages: list[AgentMessage] = [UserMessage(content="test")]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        saved, max_seq = await compact_session(test_user.id, messages, max_message_seq=42)
+        memory_update, max_seq = await compact_session(test_user.id, messages, max_message_seq=42)
 
-    assert len(saved) == 1
+    assert memory_update != ""
     assert max_seq == 42
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_empty_messages(
-    test_user: UserData,
-) -> None:
-    """compact_session with no messages should return empty list without LLM call."""
+async def test_compact_session_empty_messages(test_user: UserData) -> None:
+    """compact_session with no messages should return empty without LLM call."""
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
-        saved, max_seq = await compact_session(test_user.id, [])
+        memory_update, max_seq = await compact_session(test_user.id, [])
 
-    assert saved == []
+    assert memory_update == ""
     assert max_seq is None
     mock_llm.assert_not_called()
 
@@ -316,52 +241,46 @@ async def test_compact_session_disabled(test_user: UserData) -> None:
         patch("backend.app.agent.compaction.amessages") as mock_llm,
     ):
         mock_settings.compaction_enabled = False
-        saved, max_seq = await compact_session(test_user.id, messages)
+        memory_update, max_seq = await compact_session(test_user.id, messages)
 
-    assert saved == []
+    assert memory_update == ""
     assert max_seq is None
     mock_llm.assert_not_called()
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_llm_failure_returns_empty(
-    test_user: UserData,
-) -> None:
-    """compact_session should return empty list if LLM call fails."""
+async def test_compact_session_llm_failure_returns_empty(test_user: UserData) -> None:
+    """compact_session should return empty string if LLM call fails."""
     messages: list[AgentMessage] = [UserMessage(content="Some content")]
 
     with patch(
         "backend.app.agent.compaction.amessages",
         side_effect=Exception("LLM unavailable"),
     ):
-        saved, max_seq = await compact_session(test_user.id, messages)
+        memory_update, max_seq = await compact_session(test_user.id, messages)
 
-    assert saved == []
+    assert memory_update == ""
     assert max_seq is None
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_invalid_llm_response(
-    test_user: UserData,
-) -> None:
+async def test_compact_session_invalid_llm_response(test_user: UserData) -> None:
     """compact_session should handle unparseable LLM responses gracefully."""
     mock_response = make_text_response("Sorry, I can't do that.")
 
     messages: list[AgentMessage] = [UserMessage(content="Some content")]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        saved, max_seq = await compact_session(test_user.id, messages)
+        memory_update, max_seq = await compact_session(test_user.id, messages)
 
-    assert saved == []
+    assert memory_update == ""
     assert max_seq is None
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_no_durable_facts(
-    test_user: UserData,
-) -> None:
-    """compact_session should handle LLM returning empty array (no facts)."""
-    mock_response = make_text_response("[]")
+async def test_compact_session_no_new_info(test_user: UserData) -> None:
+    """compact_session should handle LLM returning empty memory_update."""
+    mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
 
     messages: list[AgentMessage] = [
         UserMessage(content="Hey there"),
@@ -369,20 +288,16 @@ async def test_compact_session_no_durable_facts(
     ]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        saved, max_seq = await compact_session(test_user.id, messages)
+        memory_update, max_seq = await compact_session(test_user.id, messages)
 
-    assert saved == []
+    assert memory_update == ""
     assert max_seq is None
-    memories = await get_all_memories(test_user.id)
-    assert len(memories) == 0
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_uses_configured_model(
-    test_user: UserData,
-) -> None:
+async def test_compact_session_uses_configured_model(test_user: UserData) -> None:
     """compact_session should use compaction_model/provider when configured."""
-    mock_response = make_text_response("[]")
+    mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
 
     messages: list[AgentMessage] = [UserMessage(content="test")]
 
@@ -405,11 +320,9 @@ async def test_compact_session_uses_configured_model(
 
 
 @pytest.mark.asyncio()
-async def test_compact_session_falls_back_to_llm_model(
-    test_user: UserData,
-) -> None:
+async def test_compact_session_falls_back_to_llm_model(test_user: UserData) -> None:
     """compact_session should fall back to llm_model when compaction_model is empty."""
-    mock_response = make_text_response("[]")
+    mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
 
     messages: list[AgentMessage] = [UserMessage(content="test")]
 
@@ -443,25 +356,23 @@ async def test_load_history_triggers_compaction_when_full(
     _add_messages(session, 8)
 
     llm_response_content = json.dumps(
-        [
-            {"key": "fact_from_compaction", "value": "extracted", "category": "general"},
-        ]
+        {
+            "memory_update": "## Extracted\n- fact_from_compaction: extracted",
+            "summary": "",
+        }
     )
     mock_response = make_text_response(llm_response_content)
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        # Use limit=5, so 3 messages are trimmed (8 total, 5 loaded, minus current = 4 history)
         history = await load_conversation_history(session, limit=5, user_id=test_user.id)
-        # Allow the background compaction task to complete
         await asyncio.sleep(0.1)
 
-    # History should have 4 messages (5 loaded minus 1 current)
     assert len(history) == 4
 
-    # Compacted fact should have been saved
-    memories = await get_all_memories(test_user.id)
-    assert len(memories) == 1
-    assert memories[0].key == "fact_from_compaction"
+    # Compacted memory should have been written
+    store = get_memory_store(test_user.id)
+    content = store.read_memory()
+    assert "fact_from_compaction" in content
 
 
 @pytest.mark.asyncio()
@@ -473,15 +384,13 @@ async def test_load_history_updates_last_compacted_seq(
     _add_messages(session, 8)
 
     mock_response = make_text_response(
-        json.dumps([{"key": "f", "value": "v", "category": "general"}])
+        json.dumps({"memory_update": "## Facts\n- f: v", "summary": ""})
     )
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await load_conversation_history(session, limit=5, user_id=test_user.id)
         await asyncio.sleep(0.1)
 
-    # The trimmed messages are the first 3 (8 total - 5 limit).
-    # Their seqs are 1, 2, 3, so the max compacted seq should be 3.
     assert session.last_compacted_seq > 0
 
 
@@ -492,25 +401,20 @@ async def test_load_history_skips_already_compacted_messages(
 ) -> None:
     """Messages already compacted should not be re-compacted."""
     _add_messages(session, 8)
-
-    # Simulate that the first 2 messages were already compacted
     session.last_compacted_seq = 2
 
     mock_response = make_text_response(
-        json.dumps([{"key": "new_fact", "value": "from_remaining", "category": "general"}])
+        json.dumps({"memory_update": "## New\n- new_fact: from_remaining", "summary": ""})
     )
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
         await load_conversation_history(session, limit=5, user_id=test_user.id)
         await asyncio.sleep(0.1)
 
-    # LLM should have been called with only the 1 un-compacted trimmed message
-    # (3 trimmed total, 2 already compacted = 1 new)
     mock_llm.assert_called_once()
     call_messages = mock_llm.call_args.kwargs.get("messages") or mock_llm.call_args[1].get(
         "messages"
     )
-    # System prompt is now passed via 'system' kwarg, user content is messages[0]
     user_content = call_messages[0]["content"]
     assert "Message 2" in user_content
     assert "Message 0" not in user_content
@@ -524,8 +428,6 @@ async def test_load_history_no_compaction_when_all_already_compacted(
 ) -> None:
     """When all trimmed messages are already compacted, no LLM call should happen."""
     _add_messages(session, 8)
-
-    # Mark all trimmed messages as already compacted (first 3 are trimmed with limit=5)
     session.last_compacted_seq = 3
 
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
@@ -546,9 +448,7 @@ async def test_load_history_no_compaction_when_under_limit(
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
         history = await load_conversation_history(session, limit=20, user_id=test_user.id)
 
-    # Should not call LLM since we're under the limit
     mock_llm.assert_not_called()
-    # 3 messages, minus current = 2
     assert len(history) == 2
 
 
@@ -580,10 +480,8 @@ async def test_load_history_compaction_failure_does_not_break_history(
         side_effect=Exception("LLM down"),
     ):
         history = await load_conversation_history(session, limit=5, user_id=test_user.id)
-        # Allow the background task to complete (and fail gracefully)
         await asyncio.sleep(0.1)
 
-    # History should still load correctly despite compaction failure
     assert len(history) == 4
 
 
@@ -602,22 +500,19 @@ async def test_compaction_runs_in_background_not_blocking(
         user_id: int,
         trimmed_messages: list[object],
         max_message_seq: int | None = None,
-    ) -> tuple[list[dict[str, str]], int | None]:
+    ) -> tuple[str, int | None]:
         compaction_started.set()
         await compaction_proceed.wait()
-        return [], max_message_seq
+        return "", max_message_seq
 
     with patch("backend.app.agent.context.compact_session", side_effect=slow_compact):
         history = await load_conversation_history(session, limit=5, user_id=test_user.id)
 
-        # History should be returned immediately, even though compaction hasn't finished
         assert len(history) == 4
 
-        # Compaction task should have started
         await asyncio.sleep(0.05)
         assert compaction_started.is_set()
 
-        # Let compaction finish
         compaction_proceed.set()
         await asyncio.sleep(0.05)
 
@@ -630,7 +525,7 @@ async def test_compact_session_appends_history(test_user: UserData) -> None:
     """compact_session should write summary to HISTORY.md."""
     llm_response_text = json.dumps(
         {
-            "facts": [{"key": "rate", "value": "$100/hr", "category": "pricing"}],
+            "memory_update": "## Pricing\n- Rate: $100/hr",
             "summary": "[TIMESTAMP] User set hourly rate to $100.",
         }
     )
@@ -642,16 +537,14 @@ async def test_compact_session_appends_history(test_user: UserData) -> None:
     ]
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        saved_facts, _ = await compact_session(test_user.id, messages, max_message_seq=2)
+        memory_update, _ = await compact_session(test_user.id, messages, max_message_seq=2)
 
-    assert len(saved_facts) == 1
-    assert saved_facts[0]["key"] == "rate"
+    assert "Rate: $100/hr" in memory_update
 
     memory_store = get_memory_store(test_user.id)
     assert memory_store._history_path.exists()
     history_content = memory_store._history_path.read_text(encoding="utf-8")
     assert "User set hourly rate to $100" in history_content
-    # [TIMESTAMP] should have been replaced with an actual timestamp
     assert "[TIMESTAMP]" not in history_content
     assert "[20" in history_content
 
@@ -659,7 +552,7 @@ async def test_compact_session_appends_history(test_user: UserData) -> None:
 @pytest.mark.asyncio()
 async def test_compact_session_no_summary_skips_history(test_user: UserData) -> None:
     """compact_session should not write HISTORY.md when summary is empty."""
-    llm_response_text = json.dumps({"facts": [], "summary": ""})
+    llm_response_text = json.dumps({"memory_update": "", "summary": ""})
     mock_response = make_text_response(llm_response_text)
 
     messages: list[AgentMessage] = [
@@ -669,21 +562,6 @@ async def test_compact_session_no_summary_skips_history(test_user: UserData) -> 
 
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
         await compact_session(test_user.id, messages, max_message_seq=2)
-
-    memory_store = get_memory_store(test_user.id)
-    assert not memory_store._history_path.exists()
-
-
-@pytest.mark.asyncio()
-async def test_compact_session_legacy_format_no_history(test_user: UserData) -> None:
-    """Legacy array-format response should not write HISTORY.md."""
-    llm_response_text = json.dumps([{"key": "fact", "value": "val", "category": "general"}])
-    mock_response = make_text_response(llm_response_text)
-
-    messages: list[AgentMessage] = [UserMessage(content="test")]
-
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        await compact_session(test_user.id, messages)
 
     memory_store = get_memory_store(test_user.id)
     assert not memory_store._history_path.exists()

@@ -1,71 +1,29 @@
-"""Endpoints for viewing and managing memory facts."""
+"""Endpoints for viewing and managing memory (freeform MEMORY.md)."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends
 
 from backend.app.agent.file_store import UserData, get_memory_store
 from backend.app.auth.dependencies import get_current_user
-from backend.app.schemas import MemoryFactResponse, MemoryFactUpdate
+from backend.app.schemas import MemoryResponse, MemoryUpdate
 
 router = APIRouter()
 
 
-@router.get("/user/memory", response_model=list[MemoryFactResponse])
-async def list_memory(
-    category: str | None = None,
+@router.get("/user/memory", response_model=MemoryResponse)
+async def get_memory(
     current_user: UserData = Depends(get_current_user),
-) -> list[MemoryFactResponse]:
-    """List all memory facts, optionally filtered by category."""
+) -> MemoryResponse:
+    """Return the raw MEMORY.md content."""
     store = get_memory_store(current_user.id)
-    facts = await store.get_all_memories(category=category)
-    return [
-        MemoryFactResponse(
-            key=f.key,
-            value=f.value,
-            category=f.category,
-            confidence=f.confidence,
-        )
-        for f in facts
-    ]
+    return MemoryResponse(content=store.read_memory())
 
 
-@router.put("/user/memory/{key}", response_model=MemoryFactResponse)
+@router.put("/user/memory", response_model=MemoryResponse)
 async def update_memory(
-    key: str,
-    body: MemoryFactUpdate,
+    body: MemoryUpdate,
     current_user: UserData = Depends(get_current_user),
-) -> MemoryFactResponse:
-    """Update a memory fact's value, category, or confidence."""
+) -> MemoryResponse:
+    """Overwrite MEMORY.md with new content."""
     store = get_memory_store(current_user.id)
-    existing = await store.get_all_memories()
-    fact = next((f for f in existing if f.key == key), None)
-    if fact is None:
-        raise HTTPException(status_code=404, detail="Memory fact not found")
-
-    value = body.value if body.value is not None else fact.value
-    category = body.category if body.category is not None else fact.category
-    confidence = body.confidence if body.confidence is not None else fact.confidence
-
-    updated = await store.save_memory(
-        key=key,
-        value=value,
-        category=category,
-        confidence=confidence,
-    )
-    return MemoryFactResponse(
-        key=updated.key,
-        value=updated.value,
-        category=updated.category,
-        confidence=updated.confidence,
-    )
-
-
-@router.delete("/user/memory/{key}", status_code=204)
-async def delete_memory(
-    key: str,
-    current_user: UserData = Depends(get_current_user),
-) -> None:
-    """Delete a memory fact."""
-    store = get_memory_store(current_user.id)
-    deleted = await store.delete_memory(key)
-    if not deleted:
-        raise HTTPException(status_code=404, detail="Memory fact not found")
+    store.write_memory(body.content)
+    return MemoryResponse(content=store.read_memory())
