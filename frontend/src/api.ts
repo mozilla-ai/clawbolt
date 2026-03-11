@@ -140,6 +140,7 @@ const api = {
     message: string,
     sessionId?: string,
     files?: File[],
+    onEvent?: (event: { type: string; tool_name?: string; content?: string }) => void,
   ): Promise<ChatResponse> => {
     const formData = new FormData();
     formData.append('message', message);
@@ -200,18 +201,32 @@ const api = {
                       const payload = JSON.parse(line.slice(6)) as {
                         reply?: string;
                         error?: string;
+                        type?: string;
+                        tool_name?: string;
+                        content?: string;
                       };
                       if (payload.error) {
                         reader.cancel();
                         reject(new Error(payload.error));
                         return;
                       }
-                      reader.cancel();
-                      resolve({
-                        reply: payload.reply || '',
-                        session_id: accepted.session_id,
-                      });
-                      return;
+                      // Forward intermediate events (tool_call, thinking, etc.)
+                      if (payload.type && !payload.reply && onEvent) {
+                        onEvent({
+                          type: payload.type,
+                          tool_name: payload.tool_name,
+                          content: payload.content,
+                        });
+                        continue;
+                      }
+                      if (payload.reply !== undefined) {
+                        reader.cancel();
+                        resolve({
+                          reply: payload.reply || '',
+                          session_id: accepted.session_id,
+                        });
+                        return;
+                      }
                     } catch {
                       // Continue reading if JSON parse fails
                     }
