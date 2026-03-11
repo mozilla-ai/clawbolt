@@ -630,6 +630,7 @@ class ClawboltAgent:
         memories_saved: list[dict[str, str]] = []
         tool_call_records: list[StoredToolInteraction] = []
         reply_text = ""
+        _empty_reply_retried = False
 
         for _round in range(MAX_TOOL_ROUNDS):
             logger.debug(
@@ -682,6 +683,28 @@ class ClawboltAgent:
             parsed_raw = parse_tool_calls(response)
             if not parsed_raw:
                 reply_text = get_response_text(response)
+
+                # If the LLM returned empty text after executing tools, re-prompt
+                # once. This handles the case where the model performed work
+                # (e.g. read_file during onboarding) but did not produce a
+                # user-facing reply.
+                if not reply_text and actions_taken and not _empty_reply_retried:
+                    _empty_reply_retried = True
+                    logger.debug(
+                        "Round %d: empty reply after tool execution, re-prompting",
+                        _round,
+                    )
+                    messages.append(
+                        UserMessage(
+                            content=(
+                                "[System: you called tools but did not reply. "
+                                "Please respond to the user.]"
+                            )
+                        )
+                    )
+                    await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))
+                    continue
+
                 logger.debug(
                     "Round %d: no tool calls, final reply length=%d",
                     _round,
