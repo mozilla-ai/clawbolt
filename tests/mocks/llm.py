@@ -76,6 +76,17 @@ def make_error_response(
     )
 
 
+def make_empty_response() -> MessageResponse:
+    """Build a mock MessageResponse with no content blocks (empty reply)."""
+    return MessageResponse(
+        id="msg_mock",
+        content=[],
+        model="mock-model",
+        stop_reason="end_turn",
+        usage=MessageUsage(input_tokens=0, output_tokens=2),
+    )
+
+
 def _make_text_message_response(content: str) -> MessageResponse:
     """Build a mock MessageResponse with a single text block."""
     return MessageResponse(

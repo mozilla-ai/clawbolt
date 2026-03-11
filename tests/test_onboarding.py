@@ -122,6 +122,42 @@ def test_build_onboarding_system_prompt_includes_tool_capabilities() -> None:
     assert "estimate" in prompt.lower()
 
 
+def test_build_onboarding_system_prompt_includes_instructions() -> None:
+    """Onboarding prompt should include behavioral instructions and communication guidance.
+
+    Regression: the old onboarding prompt replaced the entire system prompt,
+    stripping away tool guidelines. The model didn't know to reply directly
+    with text and returned empty responses.
+    """
+    from pydantic import BaseModel
+
+    from backend.app.agent.tools.base import Tool, ToolResult
+
+    user = UserData(id=7, user_id="instructions-test", phone="+15550005555")
+    _create_bootstrap(user)
+
+    class _SendReplyParams(BaseModel):
+        message: str
+
+    async def dummy(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    tools = [
+        Tool(
+            name="send_reply",
+            description="Send a text reply to the user.",
+            function=dummy,
+            params_model=_SendReplyParams,
+            usage_hint="Use this to send a text message to the user.",
+        ),
+    ]
+    prompt = build_onboarding_system_prompt(user, tools=tools)
+    # Should include the communication instruction from instructions.md
+    assert "Reply directly with text" in prompt
+    # Should include tool usage hint
+    assert "send a text message" in prompt.lower()
+
+
 # --- Fixtures ---
 
 
