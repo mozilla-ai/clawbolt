@@ -1,0 +1,109 @@
+---
+title: QuickBooks Online
+description: Connect Clawbolt to QuickBooks Online to look up invoices, estimates, customers, and more.
+---
+
+:::caution[Experimental]
+The QuickBooks integration is experimental. Do not connect it to a production QuickBooks account. Use a sandbox company only while this feature is being developed.
+:::
+
+Clawbolt can connect to QuickBooks Online so you can look up invoices, estimates, customers, items, and more directly from the chat. Ask a question like "what invoices do I have for Amy?" and Clawbolt will query your QuickBooks data.
+
+## What it can do
+
+The integration provides a single read-only query tool (`qb_query`) that the agent uses to look up data in QuickBooks. It can query any entity type:
+
+- **Invoices**: amounts, payment status, due dates
+- **Estimates**: totals, status, expiry dates
+- **Customers**: contact info, balances
+- **Items**: pricing catalog, descriptions
+- **Payments, Bills, and more**
+
+The agent writes the queries itself, so you just ask in plain language and it figures out how to look it up.
+
+## Setup
+
+### 1. Create an Intuit developer account
+
+Go to [developer.intuit.com](https://developer.intuit.com) and sign up (or sign in with your existing Intuit account).
+
+### 2. Create a QuickBooks app
+
+1. From the dashboard, click **Create an app**
+2. Select **QuickBooks Online and Payments** as the platform
+3. Give it a name (e.g. "Clawbolt")
+4. Select the scope **`com.intuit.quickbooks.accounting`**
+5. Click **Create App**
+
+### 3. Get your client ID and secret
+
+1. In your app, go to the **Keys & credentials** tab
+2. Under **Development** (for sandbox testing), copy:
+   - **Client ID**
+   - **Client Secret**
+3. Add a redirect URI (use `https://developer.intuit.com/v2/OAuth2Playground/RedirectUrl` for the playground)
+
+### 4. Note your sandbox company ID
+
+Intuit automatically creates a sandbox company with sample data (customers, items, invoices). Find the **Company ID** (also called **Realm ID**) in the sandbox section of the developer dashboard.
+
+### 5. Get OAuth tokens via the playground
+
+The OAuth 2.0 Playground is the easiest way to get your initial tokens without building a callback flow:
+
+1. From your app dashboard, click **Test connect to app (OAuth)** or open the OAuth 2.0 Playground directly
+2. Select your app and the **Accounting** scope
+3. Click **Connect to QuickBooks**
+4. Sign in and authorize the sandbox company
+5. The playground will show your **Access Token** and **Refresh Token**
+
+### 6. Configure Clawbolt
+
+Add these to your `.env` file:
+
+```bash
+QUICKBOOKS_CLIENT_ID=your_client_id
+QUICKBOOKS_CLIENT_SECRET=your_client_secret
+QUICKBOOKS_REALM_ID=your_company_id
+QUICKBOOKS_ACCESS_TOKEN=your_access_token
+QUICKBOOKS_REFRESH_TOKEN=your_refresh_token
+QUICKBOOKS_ENVIRONMENT=sandbox
+```
+
+Restart Clawbolt and the QuickBooks tool will appear as a specialist capability.
+
+## Example conversation
+
+```
+You: Do I have any invoices for Amy's Bird Sanctuary?
+
+Clawbolt: Found 4 invoices for Amy's Bird Sanctuary:
+          - #1036 | $315.00 (Paid) | Date: 2024-01-10
+          - #1012 | $650.00 (Open, $400 paid) | Due: 2024-03-15
+          - #1009 | $1,250.00 (Paid) | Date: 2023-11-20
+          - #1003 | $475.00 (Paid) | Date: 2023-09-05
+
+You: What about estimates?
+
+Clawbolt: Found 1 estimate for Amy's Bird Sanctuary:
+          - #1004 | $2,500.00 | Status: Accepted | Date: 2024-02-01
+```
+
+## Token lifecycle
+
+- **Access tokens** expire after 1 hour. Clawbolt automatically refreshes them using the refresh token when it gets a 401 response.
+- **Refresh tokens** expire after 101 days. Each time a token is refreshed, Intuit issues a new refresh token and invalidates the old one.
+- **Known limitation**: refreshed tokens are stored in memory only. If Clawbolt restarts, the original `.env` tokens are used. For long-running use, you may need to periodically update the tokens in your `.env` from the OAuth playground.
+
+## Troubleshooting
+
+| Problem | Fix |
+|---------|-----|
+| Tools don't appear | Check that `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set. The integration is disabled when these are empty. |
+| 401 Unauthorized | Your access token has expired and the refresh token may be stale. Get fresh tokens from the OAuth playground. |
+| 400 Bad Request | The query syntax may be invalid. Check the Clawbolt logs for the full error. QBO does not support subqueries. |
+| Wrong company data | Verify `QUICKBOOKS_REALM_ID` is the numeric company ID (no letters). |
+
+## Reference
+
+See the [Configuration](../configuration/#quickbooks-online) page for the full list of environment variables.
