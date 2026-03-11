@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { Outlet, NavLink, Navigate, Link as RouterLink, useSearchParams } from 'react-router-dom';
 import { ToastProvider } from '@heroui/toast';
+import { useQueryClient } from '@tanstack/react-query';
 import api from '@/api';
 import Button from '@/components/ui/button';
 import OfflineIndicator from '@/components/ui/OfflineIndicator';
@@ -12,6 +13,8 @@ import { Link } from '@heroui/link';
 import { Divider } from '@heroui/divider';
 import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
+import { useProfile } from '@/hooks/queries';
+import { queryKeys } from '@/lib/query-keys';
 import type { UserProfile, SessionSummary, MemoryFact } from '@/types';
 
 /** Context value provided to child routes via useOutletContext(). */
@@ -34,8 +37,13 @@ const NAV_ITEMS = [
 
 export default function AppShell() {
   const { authState, currentAuthUser, isPremium, handleLogout } = useAuth();
-  const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [profileError, setProfileError] = useState(false);
+  const queryClient = useQueryClient();
+  const {
+    data: profile,
+    isError: profileError,
+    isPending: profilePending,
+    refetch: refetchProfile,
+  } = useProfile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
   const [searchOpen, setSearchOpen] = useState(false);
@@ -46,6 +54,10 @@ export default function AppShell() {
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useSwipeSidebar({ isOpen: sidebarOpen, onOpen: openSidebar, onClose: closeSidebar });
+
+  const reloadProfile = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: queryKeys.profile });
+  }, [queryClient]);
 
   // Global Cmd+K / Ctrl+K listener
   useEffect(() => {
@@ -70,27 +82,12 @@ export default function AppShell() {
       .catch((err: unknown) => console.error('[AppShell] Failed to load memory for search:', err));
   }, [searchOpen]);
 
-  const loadProfile = useCallback(() => {
-    setProfileError(false);
-    api.getProfile()
-      .then(setProfile)
-      .catch((err: unknown) => {
-        console.error('[AppShell] Failed to load profile:', err);
-        setProfileError(true);
-      });
-  }, []);
-
-  useEffect(() => {
-    if (authState !== 'ready') return;
-    loadProfile();
-  }, [authState, loadProfile]);
-
   // Redirect to login if not authenticated
   if (authState === 'login') {
     return <Navigate to="/app/login" replace />;
   }
 
-  if (authState === 'loading') {
+  if (authState === 'loading' || (profilePending && !profile)) {
     return (
       <div className="flex items-center justify-center min-h-dvh">
         <Spinner />
@@ -98,19 +95,19 @@ export default function AppShell() {
     );
   }
 
-  // Show error banner if profile loading failed
-  if (profileError) {
+  // Show error banner if profile loading failed and no cached data
+  if (profileError && !profile) {
     return (
       <div className="flex flex-col items-center justify-center min-h-dvh gap-3 text-muted-foreground">
         <p className="text-sm">Unable to load your profile. The server may be unavailable.</p>
-        <Button onClick={loadProfile}>Retry</Button>
+        <Button onClick={() => void refetchProfile()}>Retry</Button>
       </div>
     );
   }
 
   const ctx: AppShellContext = {
-    profile,
-    reloadProfile: loadProfile,
+    profile: profile ?? null,
+    reloadProfile,
     isPremium,
     isAdmin: currentAuthUser?.role === 'admin',
   };

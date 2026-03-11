@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Textarea from '@/components/ui/textarea';
@@ -6,54 +6,37 @@ import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import Field from '@/components/ui/field';
 import { toast } from '@/lib/toast';
-import api from '@/api';
+import { useUpdateProfile } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
 
 export default function ChecklistPage() {
-  const { profile, reloadProfile } = useOutletContext<AppShellContext>();
+  const { profile } = useOutletContext<AppShellContext>();
   const [checklistText, setChecklistText] = useState(profile?.checklist_text ?? '');
-  const [saving, setSaving] = useState(false);
-  const [loading, setLoading] = useState(!profile);
-
-  useEffect(() => {
-    if (!profile) {
-      setLoading(true);
-      api.getProfile()
-        .then((p) => {
-          setChecklistText(p.checklist_text);
-        })
-        .catch(() => { /* profile loaded via outlet; fallback fetch is best-effort */ })
-        .finally(() => setLoading(false));
-    }
-  }, [profile]);
+  const updateProfile = useUpdateProfile();
 
   useEffect(() => {
     if (profile) {
       setChecklistText(profile.checklist_text);
-      setLoading(false);
     }
   }, [profile]);
 
-  const handleSave = useCallback(async () => {
-    setSaving(true);
-    try {
-      await api.updateProfile({ checklist_text: checklistText });
-      reloadProfile();
-      toast.success('Checklist updated');
-    } catch (e) {
-      toast.error((e as Error).message);
-    } finally {
-      setSaving(false);
-    }
-  }, [checklistText, reloadProfile]);
-
-  if (loading) {
+  if (!profile) {
     return (
       <div className="flex justify-center py-12">
         <Spinner />
       </div>
     );
   }
+
+  const handleSave = () => {
+    updateProfile.mutate(
+      { checklist_text: checklistText },
+      {
+        onSuccess: () => toast.success('Checklist updated'),
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
 
   return (
     <div>
@@ -77,7 +60,7 @@ export default function ChecklistPage() {
             </p>
           </Field>
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={saving} isLoading={saving}>
+            <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
               Save
             </Button>
           </div>

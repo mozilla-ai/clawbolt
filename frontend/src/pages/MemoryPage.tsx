@@ -1,58 +1,35 @@
-import { useState, useEffect, useCallback, lazy, Suspense } from 'react';
+import { useState, lazy, Suspense } from 'react';
 import Card from '@/components/ui/card';
 import Badge from '@/components/ui/badge';
 import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
 import Spinner from '@/components/ui/spinner';
 import { ModalContent, ModalHeader, ModalBody } from '@heroui/modal';
-import api from '@/api';
+import { toast } from '@/lib/toast';
+import { useMemoryFacts, useUpdateMemoryFact, useDeleteMemoryFact } from '@/hooks/queries';
 import type { MemoryFact } from '@/types';
 
 const Modal = lazy(() => import('@heroui/modal').then(m => ({ default: m.Modal })));
 
 export default function MemoryPage() {
-  const [facts, setFacts] = useState<MemoryFact[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
+  const { data: facts, isPending, isError, error } = useMemoryFacts();
   const [filter, setFilter] = useState('');
   const [editingFact, setEditingFact] = useState<MemoryFact | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null);
+  const deleteMutation = useDeleteMemoryFact();
 
-  const load = useCallback(() => {
-    setLoading(true);
-    setError(null);
-    api.listMemoryFacts()
-      .then(setFacts)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, []);
+  const handleDelete = (key: string) => {
+    deleteMutation.mutate(key, {
+      onSuccess: () => setDeleteConfirm(null),
+      onError: (e) => toast.error(e.message),
+    });
+  };
 
-  useEffect(() => { load(); }, [load]);
-
-  const categories = [...new Set(facts.map((f) => f.category))].sort();
+  const allFacts = facts ?? [];
+  const categories = [...new Set(allFacts.map((f) => f.category))].sort();
   const filtered = filter
-    ? facts.filter((f) => f.category === filter)
-    : facts;
-
-  const handleDelete = async (key: string) => {
-    try {
-      await api.deleteMemoryFact(key);
-      setFacts((prev) => prev.filter((f) => f.key !== key));
-      setDeleteConfirm(null);
-    } catch (e) {
-      alert((e as Error).message);
-    }
-  };
-
-  const handleSaveEdit = async (key: string, value: string) => {
-    try {
-      const updated = await api.updateMemoryFact(key, { value });
-      setFacts((prev) => prev.map((f) => (f.key === key ? updated : f)));
-      setEditingFact(null);
-    } catch (e) {
-      alert((e as Error).message);
-    }
-  };
+    ? allFacts.filter((f) => f.category === filter)
+    : allFacts;
 
   return (
     <div>
@@ -63,14 +40,13 @@ export default function MemoryPage() {
         </p>
       </div>
 
-      {loading ? (
+      {isPending && !facts ? (
         <div className="flex justify-center py-12"><Spinner /></div>
-      ) : error ? (
+      ) : isError && !facts ? (
         <Card className="text-center py-8">
-          <p className="text-sm text-danger">{error}</p>
-          <Button variant="secondary" size="sm" className="mt-2" onClick={load}>Retry</Button>
+          <p className="text-sm text-danger">{error.message}</p>
         </Card>
-      ) : facts.length === 0 ? (
+      ) : allFacts.length === 0 ? (
         <Card className="text-center py-8">
           <p className="text-sm text-muted-foreground">
             No memory facts yet. Chat with your assistant on Telegram to build up knowledge.
@@ -87,10 +63,10 @@ export default function MemoryPage() {
                 onClick={() => setFilter('')}
                 className="rounded-full text-xs px-3 py-1"
               >
-                All ({facts.length})
+                All ({allFacts.length})
               </Button>
               {categories.map((cat) => {
-                const count = facts.filter((f) => f.category === cat).length;
+                const count = allFacts.filter((f) => f.category === cat).length;
                 return (
                   <Button
                     key={cat}
@@ -173,8 +149,7 @@ export default function MemoryPage() {
               {editingFact && (
                 <EditFactForm
                   fact={editingFact}
-                  onSave={handleSaveEdit}
-                  onCancel={() => setEditingFact(null)}
+                  onDone={() => setEditingFact(null)}
                 />
               )}
             </ModalBody>
@@ -187,24 +162,23 @@ export default function MemoryPage() {
 
 function EditFactForm({
   fact,
-  onSave,
-  onCancel,
+  onDone,
 }: {
   fact: MemoryFact;
-  onSave: (key: string, value: string) => Promise<void>;
-  onCancel: () => void;
+  onDone: () => void;
 }) {
   const [value, setValue] = useState(fact.value);
-  const [saving, setSaving] = useState(false);
+  const updateMutation = useUpdateMemoryFact();
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    setSaving(true);
-    try {
-      await onSave(fact.key, value);
-    } finally {
-      setSaving(false);
-    }
+    updateMutation.mutate(
+      { key: fact.key, body: { value } },
+      {
+        onSuccess: () => onDone(),
+        onError: (err) => toast.error(err.message),
+      },
+    );
   };
 
   return (
@@ -214,8 +188,8 @@ function EditFactForm({
         <Input value={value} onChange={(e) => setValue(e.target.value)} />
       </div>
       <div className="flex justify-end gap-2">
-        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving || value === fact.value} isLoading={saving}>
+        <Button type="button" variant="secondary" onClick={onDone}>Cancel</Button>
+        <Button type="submit" disabled={updateMutation.isPending || value === fact.value} isLoading={updateMutation.isPending}>
           Save
         </Button>
       </div>

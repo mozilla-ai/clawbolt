@@ -5,7 +5,8 @@ import Badge from '@/components/ui/badge';
 import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
 import api from '@/api';
-import type { SessionSummary, SessionDetail, SessionMessage } from '@/types';
+import { useSession } from '@/hooks/queries';
+import type { SessionSummary, SessionMessage } from '@/types';
 
 /** Map internal channel identifiers to user-friendly labels. */
 function channelLabel(channel: string): string {
@@ -158,17 +159,7 @@ function SessionListView() {
 
 function SessionDetailView({ sessionId }: { sessionId: string }) {
   const navigate = useNavigate();
-  const [session, setSession] = useState<SessionDetail | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    setLoading(true);
-    api.getSession(sessionId)
-      .then(setSession)
-      .catch((e: Error) => setError(e.message))
-      .finally(() => setLoading(false));
-  }, [sessionId]);
+  const { data: session, isPending, isError, error } = useSession(sessionId);
 
   return (
     <div>
@@ -182,11 +173,11 @@ function SessionDetailView({ sessionId }: { sessionId: string }) {
         Back to conversations
       </button>
 
-      {loading ? (
+      {isPending && !session ? (
         <div className="flex justify-center py-12"><Spinner /></div>
-      ) : error ? (
+      ) : isError && !session ? (
         <Card className="text-center py-8">
-          <p className="text-sm text-danger">{error}</p>
+          <p className="text-sm text-danger">{error.message}</p>
         </Card>
       ) : session ? (
         <>

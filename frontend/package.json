@@ -30,6 +30,7 @@
     "@heroui/theme": "^2.4.26",
     "@heroui/toast": "^2.0.22",
     "@heroui/tooltip": "^2.2.29",
+    "@tanstack/react-query": "^5.90.21",
     "@tailwindcss/vite": "^4.2.0",
     "framer-motion": "^12.35.2",
     "openapi-fetch": "^0.17.0",
