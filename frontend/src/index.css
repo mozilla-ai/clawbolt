@@ -4,6 +4,7 @@
 @source "../node_modules/@heroui/theme/dist/**/*.{js,ts}";
 
 @custom-variant dark (&:where(.dark, .dark *));
+@custom-variant can-hover (@media (hover: hover));
 
 @theme {
   --color-background: #f8f9fc;

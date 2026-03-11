@@ -146,7 +146,7 @@ export default function AppShell() {
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
                     ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
-                    : 'text-muted-foreground hover:bg-secondary-hover hover:text-foreground border-l-2 border-transparent'
+                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
                 }`
               }
             >
@@ -166,7 +166,7 @@ export default function AppShell() {
               isExternal
               showAnchorIcon
               size="sm"
-              className="text-xs text-muted-foreground hover:text-foreground transition-all duration-150"
+              className="text-xs text-muted-foreground can-hover:hover:text-foreground transition-all duration-150"
             >
               Report issue
             </Link>
@@ -175,7 +175,7 @@ export default function AppShell() {
               isExternal
               showAnchorIcon
               size="sm"
-              className="text-xs text-muted-foreground hover:text-foreground transition-all duration-150"
+              className="text-xs text-muted-foreground can-hover:hover:text-foreground transition-all duration-150"
             >
               Feature request
             </Link>
@@ -329,7 +329,7 @@ function RecentConversations({ onNavigate }: { onNavigate: () => void }) {
         <RouterLink
           to="/app/conversations"
           onClick={onNavigate}
-          className="text-xs text-muted-foreground hover:text-foreground transition-all duration-150"
+          className="text-xs text-muted-foreground can-hover:hover:text-foreground transition-all duration-150"
         >
           View all
         </RouterLink>
@@ -345,7 +345,7 @@ function RecentConversations({ onNavigate }: { onNavigate: () => void }) {
               className={`block px-3 py-1.5 rounded-md text-sm transition-all duration-150 ${
                 isActive
                   ? 'bg-selected-bg text-primary border-l-2 border-primary'
-                  : 'text-muted-foreground hover:bg-secondary-hover hover:text-foreground'
+                  : 'text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
               }`}
             >
               <p className="line-clamp-1 text-xs">
