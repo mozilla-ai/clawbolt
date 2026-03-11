@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -12,14 +12,23 @@ from backend.app.agent.compaction import (
     _parse_compaction_response,
     compact_session,
 )
-from backend.app.agent.context import load_conversation_history
+from backend.app.agent.context import (
+    _consolidate_previous_session,
+    get_or_create_conversation,
+    load_conversation_history,
+)
 from backend.app.agent.file_store import (
+    FileSessionStore,
     SessionState,
     StoredMessage,
     UserData,
+    get_memory_store,
+    get_session_store,
+    get_user_store,
 )
 from backend.app.agent.memory import get_all_memories
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
+from backend.app.enums import MessageDirection
 from tests.mocks.llm import make_text_response
 
 
@@ -84,45 +93,86 @@ def test_format_messages_skips_empty_assistant() -> None:
 
 
 def test_parse_valid_json_array() -> None:
-    """Should parse a valid JSON array of fact objects."""
+    """Should parse a valid JSON array of fact objects (legacy format)."""
     raw = json.dumps(
         [
             {"key": "deck_pricing", "value": "$45/sqft composite", "category": "pricing"},
             {"key": "supplier_name", "value": "ABC Lumber", "category": "supplier"},
         ]
     )
-    facts = _parse_compaction_response(raw)
+    facts, summary = _parse_compaction_response(raw)
     assert len(facts) == 2
     assert facts[0]["key"] == "deck_pricing"
     assert facts[0]["value"] == "$45/sqft composite"
     assert facts[0]["category"] == "pricing"
     assert facts[1]["key"] == "supplier_name"
+    assert summary == ""
+
+
+def test_parse_new_object_format() -> None:
+    """Should parse the new format with facts and summary."""
+    raw = json.dumps(
+        {
+            "facts": [{"key": "rate", "value": "$85/hr", "category": "pricing"}],
+            "summary": "[TIMESTAMP] Discussed pricing for kitchen remodel.",
+        }
+    )
+    facts, summary = _parse_compaction_response(raw)
+    assert len(facts) == 1
+    assert facts[0]["key"] == "rate"
+    assert summary == "[TIMESTAMP] Discussed pricing for kitchen remodel."
+
+
+def test_parse_new_format_empty_facts_and_summary() -> None:
+    """Should handle new format with empty facts and summary."""
+    raw = json.dumps({"facts": [], "summary": ""})
+    facts, summary = _parse_compaction_response(raw)
+    assert facts == []
+    assert summary == ""
 
 
 def test_parse_markdown_fenced_json() -> None:
     """Should handle markdown code fences around JSON."""
     raw = '```json\n[{"key": "rate", "value": "$50/hr", "category": "pricing"}]\n```'
-    facts = _parse_compaction_response(raw)
+    facts, summary = _parse_compaction_response(raw)
     assert len(facts) == 1
     assert facts[0]["key"] == "rate"
+    assert summary == ""
+
+
+def test_parse_markdown_fenced_new_format() -> None:
+    """Should handle markdown code fences around the new object format."""
+    inner = json.dumps(
+        {
+            "facts": [{"key": "k", "value": "v", "category": "general"}],
+            "summary": "A summary.",
+        }
+    )
+    raw = f"```json\n{inner}\n```"
+    facts, summary = _parse_compaction_response(raw)
+    assert len(facts) == 1
+    assert summary == "A summary."
 
 
 def test_parse_empty_array() -> None:
     """Empty JSON array should return empty list."""
-    facts = _parse_compaction_response("[]")
+    facts, summary = _parse_compaction_response("[]")
     assert facts == []
+    assert summary == ""
 
 
 def test_parse_invalid_json() -> None:
     """Invalid JSON should return empty list without raising."""
-    facts = _parse_compaction_response("not json at all")
+    facts, summary = _parse_compaction_response("not json at all")
     assert facts == []
+    assert summary == ""
 
 
-def test_parse_non_array_json() -> None:
-    """Non-array JSON should return empty list."""
-    facts = _parse_compaction_response('{"key": "val"}')
+def test_parse_non_array_json_without_facts_key() -> None:
+    """Object without 'facts' key should return empty list."""
+    facts, summary = _parse_compaction_response('{"key": "val"}')
     assert facts == []
+    assert summary == ""
 
 
 def test_parse_skips_items_without_key() -> None:
@@ -133,7 +183,7 @@ def test_parse_skips_items_without_key() -> None:
             {"key": "good_fact", "value": "this is valid", "category": "general"},
         ]
     )
-    facts = _parse_compaction_response(raw)
+    facts, _ = _parse_compaction_response(raw)
     assert len(facts) == 1
     assert facts[0]["key"] == "good_fact"
 
@@ -146,7 +196,7 @@ def test_parse_skips_items_without_value() -> None:
             {"key": "good", "value": "present", "category": "general"},
         ]
     )
-    facts = _parse_compaction_response(raw)
+    facts, _ = _parse_compaction_response(raw)
     assert len(facts) == 1
     assert facts[0]["key"] == "good"
 
@@ -158,7 +208,7 @@ def test_parse_normalizes_invalid_category() -> None:
             {"key": "fact1", "value": "something", "category": "unknown_cat"},
         ]
     )
-    facts = _parse_compaction_response(raw)
+    facts, _ = _parse_compaction_response(raw)
     assert len(facts) == 1
     assert facts[0]["category"] == "general"
 
@@ -172,7 +222,7 @@ def test_parse_skips_non_dict_items() -> None:
             {"key": "valid", "value": "yes", "category": "general"},
         ]
     )
-    facts = _parse_compaction_response(raw)
+    facts, _ = _parse_compaction_response(raw)
     assert len(facts) == 1
     assert facts[0]["key"] == "valid"
 
@@ -571,3 +621,236 @@ async def test_compaction_runs_in_background_not_blocking(
         # Let compaction finish
         compaction_proceed.set()
         await asyncio.sleep(0.05)
+
+
+# --- compact_session HISTORY.md tests ---
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_appends_history(test_user: UserData) -> None:
+    """compact_session should write summary to HISTORY.md."""
+    llm_response_text = json.dumps(
+        {
+            "facts": [{"key": "rate", "value": "$100/hr", "category": "pricing"}],
+            "summary": "[TIMESTAMP] User set hourly rate to $100.",
+        }
+    )
+    mock_response = make_text_response(llm_response_text)
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="My rate is $100 per hour."),
+        AssistantMessage(content="Got it, saved your rate."),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        saved_facts, _ = await compact_session(test_user.id, messages, max_message_seq=2)
+
+    assert len(saved_facts) == 1
+    assert saved_facts[0]["key"] == "rate"
+
+    memory_store = get_memory_store(test_user.id)
+    assert memory_store._history_path.exists()
+    history_content = memory_store._history_path.read_text(encoding="utf-8")
+    assert "User set hourly rate to $100" in history_content
+    # [TIMESTAMP] should have been replaced with an actual timestamp
+    assert "[TIMESTAMP]" not in history_content
+    assert "[20" in history_content
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_no_summary_skips_history(test_user: UserData) -> None:
+    """compact_session should not write HISTORY.md when summary is empty."""
+    llm_response_text = json.dumps({"facts": [], "summary": ""})
+    mock_response = make_text_response(llm_response_text)
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="Hey"),
+        AssistantMessage(content="Hi there!"),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, messages, max_message_seq=2)
+
+    memory_store = get_memory_store(test_user.id)
+    assert not memory_store._history_path.exists()
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_legacy_format_no_history(test_user: UserData) -> None:
+    """Legacy array-format response should not write HISTORY.md."""
+    llm_response_text = json.dumps([{"key": "fact", "value": "val", "category": "general"}])
+    mock_response = make_text_response(llm_response_text)
+
+    messages: list[AgentMessage] = [UserMessage(content="test")]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, messages)
+
+    memory_store = get_memory_store(test_user.id)
+    assert not memory_store._history_path.exists()
+
+
+# --- Session-end consolidation tests ---
+
+
+def _backdate_session(session_store: "FileSessionStore", session: SessionState) -> None:
+    """Set the session's last_message_at to 24 hours ago so it times out."""
+    import datetime
+
+    old_time = (datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=24)).isoformat()
+    session_store._write_metadata(session.session_id, {"last_message_at": old_time})
+    session.last_message_at = old_time
+
+
+@pytest.mark.asyncio()
+async def test_consolidate_previous_session_triggers_compaction() -> None:
+    """When a new session starts, unconsolidated messages from the previous
+    session should trigger background compaction."""
+    import datetime
+
+    user_store = get_user_store()
+    user = await user_store.create(
+        user_id="consolidation-test",
+        phone="+15550003333",
+        channel_identifier="333",
+        preferred_channel="telegram",
+        onboarding_complete=True,
+    )
+
+    session_store = get_session_store(user.id)
+
+    # Manually create two sessions with different timestamps
+    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=24)
+    with patch("backend.app.agent.file_store.datetime") as mock_dt:
+        mock_dt.datetime.now.return_value = past
+        mock_dt.UTC = datetime.UTC
+        mock_dt.timedelta = datetime.timedelta
+        old_session, _ = await session_store.get_or_create_session()
+
+    await session_store.add_message(old_session, MessageDirection.INBOUND, "My rate is $75/hr")
+    await session_store.add_message(old_session, MessageDirection.OUTBOUND, "Got it, saved.")
+    assert old_session.last_compacted_seq == 0
+
+    _backdate_session(session_store, old_session)
+    new_session, is_new = await session_store.get_or_create_session()
+    assert is_new
+    assert new_session.session_id != old_session.session_id
+
+    with patch(
+        "backend.app.agent.context._run_compaction_in_background",
+        new_callable=AsyncMock,
+    ) as mock_compact:
+        await _consolidate_previous_session(
+            session_store,
+            user.id,
+            new_session.session_id,
+        )
+
+    mock_compact.assert_called_once()
+    call_args = mock_compact.call_args
+    agent_messages = call_args[0][3]
+    assert len(agent_messages) == 2
+    assert call_args[0][4] == 2
+
+
+@pytest.mark.asyncio()
+async def test_consolidate_previous_session_skips_already_compacted() -> None:
+    """If the previous session was fully compacted, no compaction should trigger."""
+    import datetime
+
+    user_store = get_user_store()
+    user = await user_store.create(
+        user_id="consolidation-skip",
+        phone="+15550004444",
+        channel_identifier="444",
+        preferred_channel="telegram",
+        onboarding_complete=True,
+    )
+
+    session_store = get_session_store(user.id)
+
+    past = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=24)
+    with patch("backend.app.agent.file_store.datetime") as mock_dt:
+        mock_dt.datetime.now.return_value = past
+        mock_dt.UTC = datetime.UTC
+        mock_dt.timedelta = datetime.timedelta
+        old_session, _ = await session_store.get_or_create_session()
+
+    await session_store.add_message(old_session, MessageDirection.INBOUND, "Hello")
+    await session_store.add_message(old_session, MessageDirection.OUTBOUND, "Hi!")
+    await session_store.update_compaction_seq(old_session, 2)
+
+    _backdate_session(session_store, old_session)
+    new_session, is_new = await session_store.get_or_create_session()
+    assert is_new
+
+    with patch(
+        "backend.app.agent.context._run_compaction_in_background",
+        new_callable=AsyncMock,
+    ) as mock_compact:
+        await _consolidate_previous_session(
+            session_store,
+            user.id,
+            new_session.session_id,
+        )
+
+    mock_compact.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_get_or_create_conversation_triggers_consolidation() -> None:
+    """get_or_create_conversation should consolidate previous session on new session."""
+    user_store = get_user_store()
+    user = await user_store.create(
+        user_id="conv-consolidation",
+        phone="+15550005555",
+        channel_identifier="555",
+        preferred_channel="telegram",
+        onboarding_complete=True,
+    )
+
+    session_store = get_session_store(user.id)
+    old_session, _ = await session_store.get_or_create_session()
+    await session_store.add_message(old_session, MessageDirection.INBOUND, "Some info")
+    _backdate_session(session_store, old_session)
+
+    with patch(
+        "backend.app.agent.context._consolidate_previous_session",
+        new_callable=AsyncMock,
+    ) as mock_consolidate:
+        _, is_new = await get_or_create_conversation(user.id)
+
+    assert is_new
+    mock_consolidate.assert_called_once()
+
+
+@pytest.mark.asyncio()
+async def test_get_or_create_conversation_no_consolidation_when_disabled() -> None:
+    """get_or_create_conversation should skip consolidation when compaction disabled."""
+    user_store = get_user_store()
+    user = await user_store.create(
+        user_id="conv-no-consolidation",
+        phone="+15550006666",
+        channel_identifier="666",
+        preferred_channel="telegram",
+        onboarding_complete=True,
+    )
+
+    session_store = get_session_store(user.id)
+    old_session, _ = await session_store.get_or_create_session()
+    await session_store.add_message(old_session, MessageDirection.INBOUND, "Some info")
+    _backdate_session(session_store, old_session)
+
+    with (
+        patch(
+            "backend.app.agent.context._consolidate_previous_session",
+            new_callable=AsyncMock,
+        ) as mock_consolidate,
+        patch("backend.app.agent.context.settings") as mock_settings,
+    ):
+        mock_settings.compaction_enabled = False
+        mock_settings.conversation_timeout_hours = 4
+        _, is_new = await get_or_create_conversation(user.id)
+
+    assert is_new
+    mock_consolidate.assert_not_called()
