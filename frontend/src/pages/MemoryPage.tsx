@@ -106,7 +106,7 @@ export default function MemoryPage() {
 
           <div className="space-y-2">
             {filtered.map((fact) => (
-              <Card key={fact.key} className="flex items-start justify-between gap-3">
+              <Card key={fact.key} className="group flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 mb-1">
                     <span className="text-sm font-medium">{fact.key}</span>
@@ -119,7 +119,7 @@ export default function MemoryPage() {
                   </div>
                   <p className="text-sm text-muted-foreground">{fact.value}</p>
                 </div>
-                <div className="flex gap-1 shrink-0">
+                <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                   <Button
                     variant="ghost"
                     size="sm"
