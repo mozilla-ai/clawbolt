@@ -24,6 +24,7 @@ from backend.app.agent.heartbeat import (
     evaluate_heartbeat_need,
     get_daily_heartbeat_count,
     is_within_business_hours,
+    parse_frequency_to_minutes,
     run_heartbeat_for_user,
 )
 from backend.app.agent.system_prompt import to_local_time
@@ -1230,3 +1231,191 @@ class TestPickHeartbeatChannel:
 
         mock_pick_channel.assert_called_once_with(user)
         mock_run.assert_awaited_once()
+
+
+# ---------------------------------------------------------------------------
+# parse_frequency_to_minutes
+# ---------------------------------------------------------------------------
+
+
+class TestParseFrequencyToMinutes:
+    def test_minutes(self) -> None:
+        assert parse_frequency_to_minutes("15m") == 15
+
+    def test_minutes_uppercase(self) -> None:
+        assert parse_frequency_to_minutes("15M") == 15
+
+    def test_hours(self) -> None:
+        assert parse_frequency_to_minutes("2h") == 120
+
+    def test_days(self) -> None:
+        assert parse_frequency_to_minutes("1d") == 1440
+
+    def test_daily(self) -> None:
+        assert parse_frequency_to_minutes("daily") == 1440
+
+    def test_weekdays(self) -> None:
+        assert parse_frequency_to_minutes("weekdays") == 1440
+
+    def test_weekly(self) -> None:
+        assert parse_frequency_to_minutes("weekly") == 10080
+
+    def test_one_minute_minimum(self) -> None:
+        assert parse_frequency_to_minutes("0m") == 1
+
+    def test_invalid_returns_none(self) -> None:
+        assert parse_frequency_to_minutes("banana") is None
+
+    def test_empty_returns_none(self) -> None:
+        assert parse_frequency_to_minutes("") is None
+
+    def test_whitespace_trimmed(self) -> None:
+        assert parse_frequency_to_minutes("  30m  ") == 30
+
+
+# ---------------------------------------------------------------------------
+# Per-user frequency scheduling
+# ---------------------------------------------------------------------------
+
+
+class TestPerUserFrequencyScheduling:
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
+    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_user_skipped_when_interval_not_elapsed(
+        self,
+        mock_settings: MagicMock,
+        mock_pick_channel: MagicMock,
+        mock_get_store: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """A user whose interval has not elapsed should not be processed."""
+        mock_settings.heartbeat_concurrency = 5
+        mock_settings.heartbeat_max_daily_messages = 5
+        mock_settings.heartbeat_interval_minutes = 30
+
+        mock_pick_channel.return_value = "telegram"
+
+        user = MagicMock()
+        user.id = 1
+        user.onboarding_complete = True
+        user.heartbeat_frequency = "1h"
+        user.preferred_channel = "telegram"
+        user.channel_identifier = ""
+        user.phone = "+15559990000"
+
+        mock_store = AsyncMock()
+        mock_store.list_all.return_value = [user]
+        mock_get_store.return_value = mock_store
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+
+        # First tick: user is due (no previous tick)
+        await scheduler.tick()
+        assert mock_run.await_count == 1
+
+        # Second tick immediately after: user interval (1h) has not elapsed
+        await scheduler.tick()
+        assert mock_run.await_count == 1  # Still 1, not called again
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
+    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_user_processed_when_interval_elapsed(
+        self,
+        mock_settings: MagicMock,
+        mock_pick_channel: MagicMock,
+        mock_get_store: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """A user whose interval has elapsed should be processed again."""
+        mock_settings.heartbeat_concurrency = 5
+        mock_settings.heartbeat_max_daily_messages = 5
+        mock_settings.heartbeat_interval_minutes = 30
+
+        mock_pick_channel.return_value = "telegram"
+
+        user = MagicMock()
+        user.id = 1
+        user.onboarding_complete = True
+        user.heartbeat_frequency = "15m"
+        user.preferred_channel = "telegram"
+        user.channel_identifier = ""
+        user.phone = "+15559990000"
+
+        mock_store = AsyncMock()
+        mock_store.list_all.return_value = [user]
+        mock_get_store.return_value = mock_store
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+
+        # First tick
+        await scheduler.tick()
+        assert mock_run.await_count == 1
+
+        # Simulate time passing: set last tick to 16 minutes ago
+        scheduler._last_tick[1] = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+            minutes=16
+        )
+
+        # Second tick: 16 > 15 minutes, so user is due
+        await scheduler.tick()
+        assert mock_run.await_count == 2
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
+    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_invalid_frequency_falls_back_to_global(
+        self,
+        mock_settings: MagicMock,
+        mock_pick_channel: MagicMock,
+        mock_get_store: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """Invalid frequency should fall back to global heartbeat_interval_minutes."""
+        mock_settings.heartbeat_concurrency = 5
+        mock_settings.heartbeat_max_daily_messages = 5
+        mock_settings.heartbeat_interval_minutes = 30
+
+        mock_pick_channel.return_value = "telegram"
+
+        user = MagicMock()
+        user.id = 1
+        user.onboarding_complete = True
+        user.heartbeat_frequency = "invalid"
+        user.preferred_channel = "telegram"
+        user.channel_identifier = ""
+        user.phone = "+15559990000"
+
+        mock_store = AsyncMock()
+        mock_store.list_all.return_value = [user]
+        mock_get_store.return_value = mock_store
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+
+        # First tick: always due
+        await scheduler.tick()
+        assert mock_run.await_count == 1
+
+        # Set last tick to 29 minutes ago (< 30m global default)
+        scheduler._last_tick[1] = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+            minutes=29
+        )
+        await scheduler.tick()
+        assert mock_run.await_count == 1  # Not yet due
+
+        # Set last tick to 31 minutes ago (> 30m global default)
+        scheduler._last_tick[1] = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+            minutes=31
+        )
+        await scheduler.tick()
+        assert mock_run.await_count == 2  # Now due
