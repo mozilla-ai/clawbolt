@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field
+from pydantic import Field, ValidationError
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -136,6 +136,30 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
 )
 
 
+def update_settings(updates: dict[str, Any]) -> None:
+    """Validate and apply runtime updates to the settings singleton.
+
+    Only keys listed in ``PERSISTABLE_SETTINGS`` are accepted.  Each value is
+    validated against the Pydantic field definition before being applied, so
+    type mismatches raise ``ValueError``.
+
+    Validation runs for all keys before any are applied, so a failure on one
+    key never leaves the singleton in a partially-updated state.
+    """
+    for key, value in updates.items():
+        if key not in PERSISTABLE_SETTINGS:
+            raise ValueError(
+                f"{key!r} is not a persistable setting (allowed: {sorted(PERSISTABLE_SETTINGS)})"
+            )
+        try:
+            Settings.model_validate({key: value})
+        except ValidationError as exc:
+            raise ValueError(str(exc)) from exc
+
+    for key, value in updates.items():
+        setattr(settings, key, value)
+
+
 def _config_json_path() -> Path:
     """Return the path to config.json inside the volume-mounted data directory.
 
@@ -162,6 +186,7 @@ def load_persistent_config(path: Path | None = None) -> dict[str, Any]:
         logger.warning("Failed to read %s: %s", config_path, exc)
         return {}
 
+    filtered: dict[str, Any] = {}
     for key, value in data.items():
         if key not in PERSISTABLE_SETTINGS:
             continue
@@ -169,7 +194,10 @@ def load_persistent_config(path: Path | None = None) -> dict[str, Any]:
         env_name = key.upper()
         if os.environ.get(env_name):
             continue
-        setattr(settings, key, value)
+        filtered[key] = value
+
+    if filtered:
+        update_settings(filtered)
 
     return data
 

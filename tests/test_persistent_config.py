@@ -13,6 +13,7 @@ from backend.app.config import (
     load_persistent_config,
     save_persistent_config,
     settings,
+    update_settings,
 )
 
 
@@ -186,3 +187,44 @@ def test_round_trip_save_then_load(config_path: Path) -> None:
 
     assert settings.telegram_bot_token == "rt-token"
     assert settings.telegram_allowed_usernames == "rt-user"
+
+
+# ---------------------------------------------------------------------------
+# update_settings() validation
+# ---------------------------------------------------------------------------
+
+
+def test_update_settings_applies_valid_values() -> None:
+    """update_settings applies valid string values to the singleton."""
+    update_settings({"telegram_bot_token": "validated-tok"})
+    assert settings.telegram_bot_token == "validated-tok"
+
+
+def test_update_settings_rejects_non_persistable_key() -> None:
+    """update_settings raises ValueError for keys not in PERSISTABLE_SETTINGS."""
+    with pytest.raises(ValueError, match="not a persistable setting"):
+        update_settings({"log_level": "DEBUG"})
+
+
+def test_update_settings_rejects_unknown_key() -> None:
+    """update_settings raises ValueError for keys that don't exist on Settings."""
+    with pytest.raises(ValueError, match="not a persistable setting"):
+        update_settings({"totally_unknown_field": "value"})
+
+
+def test_update_settings_rejects_wrong_type() -> None:
+    """update_settings raises ValueError when the value fails Pydantic validation."""
+    with pytest.raises(ValueError):
+        update_settings({"telegram_bot_token": 12345})
+
+
+def test_update_settings_multiple_keys() -> None:
+    """update_settings can apply multiple valid keys at once."""
+    update_settings(
+        {
+            "telegram_bot_token": "multi-tok",
+            "telegram_allowed_usernames": "alice,bob",
+        }
+    )
+    assert settings.telegram_bot_token == "multi-tok"
+    assert settings.telegram_allowed_usernames == "alice,bob"

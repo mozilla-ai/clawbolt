@@ -4,7 +4,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.agent.file_store import UserData, get_user_store
 from backend.app.auth.dependencies import get_current_user
-from backend.app.config import save_persistent_config, settings
+from backend.app.config import save_persistent_config, settings, update_settings
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
@@ -91,8 +91,10 @@ async def update_channel_config(
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    for field, value in updates.items():
-        setattr(settings, field, value)
+    try:
+        update_settings(updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
     # Persist to config.json inside the volume-mounted data directory.
     save_persistent_config(updates)
