@@ -11,7 +11,10 @@ from backend.app.agent.file_store import (
     get_user_store,
 )
 from backend.app.agent.onboarding import (
+    _has_custom_soul,
+    _has_real_user_profile,
     build_onboarding_system_prompt,
+    is_onboarding_complete_heuristic,
     is_onboarding_needed,
 )
 from backend.app.agent.router import handle_inbound_message
@@ -497,3 +500,189 @@ async def test_no_completion_message_when_already_onboarded(
     )
 
     assert response.reply_text == "Sure, I can help!"
+
+
+# ---------------------------------------------------------------------------
+# Heuristic onboarding completion tests (#639)
+# ---------------------------------------------------------------------------
+
+
+def _write_user_md(user: UserData, content: str) -> None:
+    """Write USER.md for the given user."""
+    cdir = Path(settings.data_dir) / str(user.id)
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "USER.md").write_text(content, encoding="utf-8")
+
+
+def _write_soul_md(user: UserData, content: str) -> None:
+    """Write SOUL.md for the given user."""
+    cdir = Path(settings.data_dir) / str(user.id)
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "SOUL.md").write_text(content, encoding="utf-8")
+
+
+class TestHasRealUserProfile:
+    """Tests for _has_real_user_profile heuristic."""
+
+    def test_no_user_md(self) -> None:
+        user = UserData(id=100, user_id="no-user-md")
+        assert _has_real_user_profile(user) is False
+
+    def test_empty_name_field(self) -> None:
+        user = UserData(id=101, user_id="empty-name")
+        _write_user_md(user, "# User\n\n- Name:\n- Timezone:\n")
+        assert _has_real_user_profile(user) is False
+
+    def test_filled_name_field(self) -> None:
+        user = UserData(id=102, user_id="filled-name")
+        _write_user_md(user, "# User\n\n- Name: Nathan\n- Trade: GC\n")
+        assert _has_real_user_profile(user) is True
+
+    def test_default_template(self) -> None:
+        user = UserData(id=103, user_id="default-template")
+        from backend.app.agent.prompts import load_prompt
+
+        _write_user_md(user, f"# User\n\n{load_prompt('default_user')}\n")
+        assert _has_real_user_profile(user) is False
+
+
+class TestHasCustomSoul:
+    """Tests for _has_custom_soul heuristic."""
+
+    def test_no_soul_md(self) -> None:
+        user = UserData(id=110, user_id="no-soul")
+        assert _has_custom_soul(user) is False
+
+    def test_default_soul(self) -> None:
+        user = UserData(id=111, user_id="default-soul")
+        from backend.app.agent.prompts import load_prompt
+
+        _write_soul_md(user, load_prompt("default_soul"))
+        assert _has_custom_soul(user) is False
+
+    def test_default_soul_wrapped(self) -> None:
+        """Default soul written by _ensure_user_dir includes a '# Soul' header."""
+        user = UserData(id=113, user_id="default-soul-wrapped")
+        from backend.app.agent.prompts import load_prompt
+
+        _write_soul_md(user, f"# Soul\n\n{load_prompt('default_soul')}")
+        assert _has_custom_soul(user) is False
+
+    def test_custom_soul(self) -> None:
+        user = UserData(id=112, user_id="custom-soul")
+        _write_soul_md(user, "# Soul\n\nI'm Clawbolt. Straight and to the point.")
+        assert _has_custom_soul(user) is True
+
+
+class TestIsOnboardingCompleteHeuristic:
+    """Tests for the combined heuristic."""
+
+    def test_no_evidence(self) -> None:
+        user = UserData(id=120, user_id="no-evidence")
+        assert is_onboarding_complete_heuristic(user) is False
+
+    def test_name_only(self) -> None:
+        user = UserData(id=121, user_id="name-only")
+        _write_user_md(user, "# User\n\n- Name: Jake\n")
+        assert is_onboarding_complete_heuristic(user) is True
+
+    def test_soul_only(self) -> None:
+        user = UserData(id=122, user_id="soul-only")
+        _write_soul_md(user, "# Soul\n\nCustom personality.")
+        assert is_onboarding_complete_heuristic(user) is True
+
+
+def test_is_onboarding_needed_heuristic_override() -> None:
+    """BOOTSTRAP.md exists but heuristic says onboarding is done."""
+    user = UserData(id=130, user_id="heuristic-user")
+    _create_bootstrap(user)
+    _write_user_md(user, "# User\n\n- Name: Nathan\n- Trade: GC\n")
+    # BOOTSTRAP.md exists, but heuristic detects completed onboarding
+    assert is_onboarding_needed(user) is False
+
+
+def test_is_onboarding_needed_no_heuristic_evidence() -> None:
+    """BOOTSTRAP.md exists and no heuristic evidence: still needs onboarding."""
+    user = UserData(id=131, user_id="fresh-user")
+    _create_bootstrap(user)
+    # No USER.md or SOUL.md written yet
+    assert is_onboarding_needed(user) is True
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
+    mock_amessages: object,
+) -> None:
+    """Onboarding should complete via heuristic even if LLM never deletes BOOTSTRAP.md.
+
+    Regression test for #639: if the LLM gets sidetracked (e.g. user asks
+    a real question) and never calls delete_file("BOOTSTRAP.md"), the
+    heuristic fallback should detect that USER.md has a real name and mark
+    onboarding complete.
+    """
+    user = UserData(
+        id=140,
+        user_id="sidetracked-user",
+        channel_identifier="555555555",
+        preferred_channel="telegram",
+        onboarding_complete=False,
+    )
+    _create_bootstrap(user)
+    assert is_onboarding_needed(user) is True
+
+    # Simulate: the LLM writes USER.md and SOUL.md but does NOT delete BOOTSTRAP.md
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_user",
+                "name": "write_file",
+                "arguments": json.dumps(
+                    {
+                        "path": "USER.md",
+                        "content": "# User\n\n- Name: Nathan\n- Trade: GC\n",
+                    }
+                ),
+            },
+            {
+                "id": "call_soul",
+                "name": "write_file",
+                "arguments": json.dumps(
+                    {
+                        "path": "SOUL.md",
+                        "content": "# Soul\n\nStraight and to the point.",
+                    }
+                ),
+            },
+        ]
+    )
+    text_response = make_text_response("Got it Nathan! What invoices do you need?")
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    session = SessionState(
+        session_id="onboard-session",
+        user_id=user.id,
+        is_active=True,
+        messages=[
+            StoredMessage(direction="inbound", body="I'm Nathan, a GC", seq=1),
+        ],
+    )
+    _ensure_session_on_disk(user, session)
+    message = StoredMessage(direction="inbound", body="I'm Nathan, a GC", seq=1)
+
+    await handle_inbound_message(
+        user=user,
+        session=session,
+        message=message,
+        media_urls=[],
+        channel="telegram",
+    )
+
+    # BOOTSTRAP.md should have been cleaned up by the heuristic
+    bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
+    assert not bootstrap.exists()
+
+    store = get_user_store()
+    refreshed = await store.get_by_id(user.id)
+    assert refreshed is not None
+    assert refreshed.onboarding_complete is True
