@@ -506,14 +506,16 @@ async def test_agent_passes_dict_arguments_to_tool(
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.agent.core.random.uniform", return_value=0.5)
 @patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
 @patch("backend.app.agent.core.amessages")
 async def test_agent_retries_on_rate_limit_error(
     mock_amessages: AsyncMock,
     mock_sleep: AsyncMock,
+    _mock_uniform: AsyncMock,
     test_user: UserData,
 ) -> None:
-    """RateLimitError should trigger one retry after a delay."""
+    """RateLimitError should trigger retry with exponential backoff."""
     mock_amessages.side_effect = [
         RateLimitError("Too many requests"),
         make_text_response("Retry succeeded!"),
@@ -524,20 +526,52 @@ async def test_agent_retries_on_rate_limit_error(
 
     assert response.reply_text == "Retry succeeded!"
     assert mock_amessages.call_count == 2
-    mock_sleep.assert_called_once()
+    mock_sleep.assert_called_once_with(1.5)  # 2**0 + 0.5 jitter
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.agent.core.random.uniform", return_value=0.5)
 @patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
+@patch("backend.app.agent.core.LLM_MAX_RETRIES", 3)
+@patch("backend.app.agent.core.amessages")
+async def test_agent_rate_limit_exponential_backoff(
+    mock_amessages: AsyncMock,
+    mock_sleep: AsyncMock,
+    _mock_uniform: AsyncMock,
+    test_user: UserData,
+) -> None:
+    """Exponential backoff delays should increase with each attempt."""
+    mock_amessages.side_effect = [
+        RateLimitError("Too many requests"),
+        RateLimitError("Still rate limited"),
+        make_text_response("Third time's a charm!"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    response = await agent.process_message("Hello")
+
+    assert response.reply_text == "Third time's a charm!"
+    assert mock_amessages.call_count == 3
+    assert mock_sleep.call_count == 2
+    mock_sleep.assert_any_call(1.5)  # 2**0 + 0.5
+    mock_sleep.assert_any_call(2.5)  # 2**1 + 0.5
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.random.uniform", return_value=0.5)
+@patch("backend.app.agent.core.asyncio.sleep", new_callable=AsyncMock)
+@patch("backend.app.agent.core.LLM_MAX_RETRIES", 3)
 @patch("backend.app.agent.core.amessages")
 async def test_agent_rate_limit_retry_failure_propagates(
     mock_amessages: AsyncMock,
     mock_sleep: AsyncMock,
+    _mock_uniform: AsyncMock,
     test_user: UserData,
 ) -> None:
-    """If the retry after RateLimitError also fails, the exception propagates."""
+    """If all retries after RateLimitError fail, the exception propagates."""
     mock_amessages.side_effect = [
         RateLimitError("Too many requests"),
+        RateLimitError("Still rate limited"),
         RateLimitError("Still rate limited"),
     ]
 
@@ -545,7 +579,8 @@ async def test_agent_rate_limit_retry_failure_propagates(
     with pytest.raises(RateLimitError):
         await agent.process_message("Hello")
 
-    assert mock_amessages.call_count == 2
+    assert mock_amessages.call_count == 3
+    assert mock_sleep.call_count == 2
 
 
 # ---------------------------------------------------------------------------

@@ -43,13 +43,17 @@ class TestFieldConstraints:
         s = Settings(llm_max_tokens_agent=1)
         assert s.llm_max_tokens_agent == 1
 
-    def test_rate_limit_retry_delay_rejects_zero(self) -> None:
+    def test_llm_max_retries_rejects_zero(self) -> None:
         with pytest.raises(ValidationError):
-            Settings(rate_limit_retry_delay=0)
+            Settings(llm_max_retries=0)
 
-    def test_rate_limit_retry_delay_rejects_negative(self) -> None:
-        with pytest.raises(ValidationError):
-            Settings(rate_limit_retry_delay=-1.0)
+    def test_llm_max_retries_accepts_one(self) -> None:
+        s = Settings(llm_max_retries=1)
+        assert s.llm_max_retries == 1
+
+    def test_llm_max_retries_default_is_three(self) -> None:
+        s = Settings()
+        assert s.llm_max_retries == 3
 
     def test_http_timeout_rejects_zero(self) -> None:
         with pytest.raises(ValidationError):
