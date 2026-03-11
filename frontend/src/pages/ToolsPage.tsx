@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect } from 'react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Checkbox from '@/components/ui/checkbox';
+import Divider from '@/components/ui/divider';
 import { toast } from '@/lib/toast';
 import api from '@/api';
 import type { ToolConfigEntry } from '@/types';
@@ -98,7 +99,8 @@ export default function ToolsPage() {
           ))}
 
           {coreTools.length > 0 && (
-            <div className="border-t border-border pt-4">
+            <div className="pt-4">
+              <Divider className="mb-4" />
               <Button
                 variant="ghost"
                 className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground font-medium"

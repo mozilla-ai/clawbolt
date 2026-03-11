@@ -77,8 +77,8 @@ export default function ChecklistPage() {
             </p>
           </Field>
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={saving}>
-              {saving ? 'Saving...' : 'Save'}
+            <Button onClick={handleSave} disabled={saving} isLoading={saving}>
+              Save
             </Button>
           </div>
         </div>

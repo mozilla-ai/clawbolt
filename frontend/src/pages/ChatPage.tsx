@@ -2,6 +2,7 @@ import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react'
 import { useSearchParams } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
+import Tooltip from '@/components/ui/tooltip';
 import Spinner from '@/components/ui/spinner';
 import api from '@/api';
 import { toast } from '@/lib/toast';
@@ -467,15 +468,17 @@ export default function ChatPage() {
                       <FileIcon />
                     )}
                     <span className="truncate max-w-[100px]">{file.name}</span>
-                    <Button
-                      variant="ghost"
-                      size="icon-sm"
-                      onClick={() => removeFile(i)}
-                      className="ml-0.5 text-muted-foreground hover:text-foreground"
-                      aria-label={`Remove ${file.name}`}
-                    >
-                      <CloseIcon />
-                    </Button>
+                    <Tooltip content={`Remove ${file.name}`}>
+                      <Button
+                        variant="ghost"
+                        size="icon-sm"
+                        onClick={() => removeFile(i)}
+                        className="ml-0.5 text-muted-foreground hover:text-foreground"
+                        aria-label={`Remove ${file.name}`}
+                      >
+                        <CloseIcon />
+                      </Button>
+                    </Tooltip>
                   </div>
                 ))}
               </div>
@@ -483,24 +486,28 @@ export default function ChatPage() {
 
             {/* Toolbar row */}
             <div className="flex items-center justify-between">
-              <Button
-                variant="ghost"
-                size="icon"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={sending}
-                className="text-muted-foreground hover:text-foreground"
-                title="Attach files"
-              >
-                <PaperclipIcon />
-              </Button>
-              <Button
-                type="submit"
-                size="icon"
-                disabled={!canSend}
-                aria-label="Send message"
-              >
-                <SendIcon />
-              </Button>
+              <Tooltip content="Attach files">
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={sending}
+                  className="text-muted-foreground hover:text-foreground"
+                  aria-label="Attach files"
+                >
+                  <PaperclipIcon />
+                </Button>
+              </Tooltip>
+              <Tooltip content="Send message">
+                <Button
+                  type="submit"
+                  size="icon"
+                  disabled={!canSend}
+                  aria-label="Send message"
+                >
+                  <SendIcon />
+                </Button>
+              </Tooltip>
             </div>
           </div>
         </form>
