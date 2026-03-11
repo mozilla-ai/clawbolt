@@ -116,8 +116,8 @@ export default function AppShell() {
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
-                    ? 'bg-selected-bg text-primary font-medium'
-                    : 'text-muted-foreground hover:bg-secondary-hover hover:text-foreground'
+                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                    : 'text-muted-foreground hover:bg-secondary-hover hover:text-foreground border-l-2 border-transparent'
                 }`
               }
             >
