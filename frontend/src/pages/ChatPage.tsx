@@ -72,6 +72,13 @@ export default function ChatPage() {
   const pickerRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
   const autoAttachDone = useRef(false);
+  const mountedRef = useRef(true);
+
+  // Track mounted state to prevent state updates after unmount
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
 
   // Fetch sessions via React Query
   const { data: sessionsData, isPending: loadingSessions } = useSessions(0, 50);
@@ -217,11 +224,13 @@ export default function ChatPage() {
         activeSessionId ?? undefined,
         filesToSend,
         (event) => {
+          if (!mountedRef.current) return;
           if (event.type === 'tool_call') {
             setCurrentTool(event.tool_name ?? null);
           }
         },
       );
+      if (!mountedRef.current) return;
       const assistantMsg: ChatMessage = {
         id: nextId.current++,
         role: 'assistant',
@@ -238,9 +247,11 @@ export default function ChatPage() {
         void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
       }
     } catch (err: unknown) {
+      if (!mountedRef.current) return;
       const msg = err instanceof Error ? err.message : 'Failed to send message';
       toast.error(msg);
     } finally {
+      if (!mountedRef.current) return;
       setSending(false);
       setCurrentTool(null);
       // Re-focus input on desktop only; on mobile, programmatic focus

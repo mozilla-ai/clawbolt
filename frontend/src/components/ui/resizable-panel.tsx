@@ -140,9 +140,30 @@ export default function ResizablePanel({
   };
 
   const onTouchStart = (e: React.TouchEvent) => {
+    e.preventDefault();
     const touch = e.touches[0];
     if (touch) startDrag(touch.clientX);
   };
+
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const step = 10;
+    if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      setWidth((w) => clamp(w - step, minWidth, maxWidth));
+    } else if (e.key === 'ArrowRight') {
+      e.preventDefault();
+      setWidth((w) => clamp(w + step, minWidth, maxWidth));
+    }
+  };
+
+  // Cancel pending requestAnimationFrame on unmount
+  useEffect(() => {
+    return () => {
+      if (pendingPersist.current !== null) {
+        cancelAnimationFrame(pendingPersist.current);
+      }
+    };
+  }, []);
 
   const panelStyle: CSSProperties = {
     width: `${width}px`,
@@ -175,9 +196,12 @@ export default function ResizablePanel({
         aria-valuenow={width}
         aria-valuemin={minWidth}
         aria-valuemax={maxWidth}
+        tabIndex={0}
+        aria-label="Resize panel"
         style={handleStyle}
         onMouseDown={onMouseDown}
         onTouchStart={onTouchStart}
+        onKeyDown={onKeyDown}
       >
         <div
           style={{
