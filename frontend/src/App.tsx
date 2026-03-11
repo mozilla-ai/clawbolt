@@ -1,13 +1,7 @@
+import { lazy, Suspense } from 'react';
 import { Routes, Route, Navigate } from 'react-router-dom';
 import Spinner from '@/components/ui/spinner';
 import AppShell from '@/layouts/AppShell';
-import ConversationsPage from '@/pages/ConversationsPage';
-import MemoryPage from '@/pages/MemoryPage';
-import SettingsPage from '@/pages/SettingsPage';
-import ChatPage from '@/pages/ChatPage';
-import ChecklistPage from '@/pages/ChecklistPage';
-import ChannelsPage from '@/pages/ChannelsPage';
-import ToolsPage from '@/pages/ToolsPage';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getLoginPageElement,
@@ -15,6 +9,28 @@ import {
   getDefaultSettingsTab,
   shouldRedirectRootToApp,
 } from '@/extensions';
+
+const ChatPage = lazy(() => import('@/pages/ChatPage'));
+const ConversationsPage = lazy(() => import('@/pages/ConversationsPage'));
+const MemoryPage = lazy(() => import('@/pages/MemoryPage'));
+const ChecklistPage = lazy(() => import('@/pages/ChecklistPage'));
+const ChannelsPage = lazy(() => import('@/pages/ChannelsPage'));
+const ToolsPage = lazy(() => import('@/pages/ToolsPage'));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
+
+function PageSuspense({ children }: { children: React.ReactNode }) {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex justify-center py-12">
+          <Spinner />
+        </div>
+      }
+    >
+      {children}
+    </Suspense>
+  );
+}
 
 export default function App() {
   const { authState, isPremium } = useAuth();
@@ -39,14 +55,14 @@ export default function App() {
       {/* Authenticated app */}
       <Route path="/app" element={<AppShell />}>
         <Route index element={<Navigate to="/app/chat" replace />} />
-        <Route path="chat" element={<ChatPage />} />
-        <Route path="conversations" element={<ConversationsPage />} />
-        <Route path="conversations/:sessionId" element={<ConversationsPage />} />
-        <Route path="memory" element={<MemoryPage />} />
-        <Route path="checklist" element={<ChecklistPage />} />
-        <Route path="channels" element={<ChannelsPage />} />
-        <Route path="tools" element={<ToolsPage />} />
-        <Route path="settings/:tab" element={<SettingsPage />} />
+        <Route path="chat" element={<PageSuspense><ChatPage /></PageSuspense>} />
+        <Route path="conversations" element={<PageSuspense><ConversationsPage /></PageSuspense>} />
+        <Route path="conversations/:sessionId" element={<PageSuspense><ConversationsPage /></PageSuspense>} />
+        <Route path="memory" element={<PageSuspense><MemoryPage /></PageSuspense>} />
+        <Route path="checklist" element={<PageSuspense><ChecklistPage /></PageSuspense>} />
+        <Route path="channels" element={<PageSuspense><ChannelsPage /></PageSuspense>} />
+        <Route path="tools" element={<PageSuspense><ToolsPage /></PageSuspense>} />
+        <Route path="settings/:tab" element={<PageSuspense><SettingsPage /></PageSuspense>} />
         <Route path="settings" element={<Navigate to={`/app/settings/${getDefaultSettingsTab(isPremium)}`} replace />} />
       </Route>
 

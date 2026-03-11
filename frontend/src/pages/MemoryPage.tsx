@@ -1,12 +1,13 @@
-import { useState, useEffect, useCallback } from 'react';
+import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import Card from '@/components/ui/card';
 import Badge from '@/components/ui/badge';
 import Button from '@/components/ui/button';
-import Input from '@/components/ui/input';
 import Spinner from '@/components/ui/spinner';
 import { Modal, ModalContent, ModalHeader, ModalBody } from '@heroui/modal';
 import api from '@/api';
 import type { MemoryFact } from '@/types';
+
+const EditFactForm = lazy(() => import('@/pages/EditFactForm'));
 
 export default function MemoryPage() {
   const [facts, setFacts] = useState<MemoryFact[]>([]);
@@ -162,59 +163,23 @@ export default function MemoryPage() {
         </>
       )}
 
-      {/* Edit modal */}
+      {/* Edit modal - lazy-loaded */}
       <Modal isOpen={!!editingFact} onOpenChange={(open) => { if (!open) setEditingFact(null); }}>
         <ModalContent>
           <ModalHeader>Edit Fact: {editingFact?.key}</ModalHeader>
           <ModalBody>
             {editingFact && (
-              <EditFactForm
-                fact={editingFact}
-                onSave={handleSaveEdit}
-                onCancel={() => setEditingFact(null)}
-              />
+              <Suspense fallback={null}>
+                <EditFactForm
+                  fact={editingFact}
+                  onSave={handleSaveEdit}
+                  onCancel={() => setEditingFact(null)}
+                />
+              </Suspense>
             )}
           </ModalBody>
         </ModalContent>
       </Modal>
     </div>
-  );
-}
-
-function EditFactForm({
-  fact,
-  onSave,
-  onCancel,
-}: {
-  fact: MemoryFact;
-  onSave: (key: string, value: string) => Promise<void>;
-  onCancel: () => void;
-}) {
-  const [value, setValue] = useState(fact.value);
-  const [saving, setSaving] = useState(false);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setSaving(true);
-    try {
-      await onSave(fact.key, value);
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <form onSubmit={handleSubmit} className="mt-4 space-y-4">
-      <div>
-        <label className="section-label">Value</label>
-        <Input value={value} onChange={(e) => setValue(e.target.value)} />
-      </div>
-      <div className="flex justify-end gap-2">
-        <Button type="button" variant="secondary" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving || value === fact.value}>
-          {saving ? 'Saving...' : 'Save'}
-        </Button>
-      </div>
-    </form>
   );
 }
