@@ -32,7 +32,7 @@ from backend.app.media.download import DEFAULT_MIME_TYPE, DownloadedMedia, gener
 
 logger = logging.getLogger(__name__)
 
-_SESSION_ID_RE = re.compile(r"^\d+_\d+$")
+_SESSION_ID_RE = re.compile(r"^\d+_\d+(_\d+)?$")
 
 
 class _ChatAccepted(BaseModel):
@@ -72,7 +72,7 @@ class WebChatChannel(BaseChannel):
             if session_id is not None and not _SESSION_ID_RE.match(session_id):
                 raise HTTPException(
                     status_code=422,
-                    detail="session_id must match pattern: digits_digits",
+                    detail="session_id must match pattern: digits_digits or digits_digits_digits",
                 )
 
             # Build DownloadedMedia from uploaded files

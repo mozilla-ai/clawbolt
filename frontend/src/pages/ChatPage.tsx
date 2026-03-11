@@ -169,6 +169,7 @@ export default function ChatPage() {
     setActiveSessionId(sessionId);
     setSearchParams({ session: sessionId }, { replace: true });
     setPickerOpen(false);
+    forceNewRef.current = false;
   };
 
   const startNewChat = () => {
