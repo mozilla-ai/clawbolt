@@ -62,6 +62,7 @@ export default function ChatPage() {
   const [loadingSessions, setLoadingSessions] = useState(true);
   const [loadingHistory, setLoadingHistory] = useState(false);
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -203,7 +204,16 @@ export default function ChatPage() {
     setSending(true);
 
     try {
-      const res = await api.sendChatMessage(text, activeSessionId ?? undefined, filesToSend);
+      const res = await api.sendChatMessage(
+        text,
+        activeSessionId ?? undefined,
+        filesToSend,
+        (event) => {
+          if (event.type === 'tool_call') {
+            setCurrentTool(event.tool_name ?? null);
+          }
+        },
+      );
       const assistantMsg: ChatMessage = {
         id: nextId.current++,
         role: 'assistant',
@@ -226,6 +236,7 @@ export default function ChatPage() {
       toast.error(msg);
     } finally {
       setSending(false);
+      setCurrentTool(null);
       // Re-focus input on desktop only; on mobile, programmatic focus
       // triggers iOS Safari auto-zoom and forces the keyboard open.
       if (window.matchMedia('(min-width: 640px)').matches) {
@@ -390,24 +401,7 @@ export default function ChatPage() {
             ))}
 
             {sending && (
-              <div className="flex justify-start">
-                <div className="bg-card border border-border rounded-[12px_12px_12px_4px] px-4 py-3 animate-message-in">
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className="status-dot bg-muted-foreground/60"
-                      style={{ animation: 'typing-bounce 1.2s ease-in-out infinite' }}
-                    />
-                    <span
-                      className="status-dot bg-muted-foreground/60"
-                      style={{ animation: 'typing-bounce 1.2s ease-in-out 0.2s infinite' }}
-                    />
-                    <span
-                      className="status-dot bg-muted-foreground/60"
-                      style={{ animation: 'typing-bounce 1.2s ease-in-out 0.4s infinite' }}
-                    />
-                  </div>
-                </div>
-              </div>
+              <ToolUseIndicator toolName={currentTool ?? undefined} />
             )}
           </div>
         )}
@@ -504,6 +498,21 @@ export default function ChatPage() {
             </div>
           </div>
         </form>
+      </div>
+    </div>
+  );
+}
+
+function ToolUseIndicator({ toolName }: { toolName?: string }) {
+  return (
+    <div className="flex justify-start">
+      <div className="bg-card border border-border rounded-[12px_12px_12px_4px] px-4 py-3 animate-message-in">
+        <div className="flex items-center gap-2">
+          <Spinner className="w-4 h-4" />
+          <span className="text-xs text-muted-foreground">
+            {toolName ? `Using ${toolName}...` : 'Thinking...'}
+          </span>
+        </div>
       </div>
     </div>
   );
