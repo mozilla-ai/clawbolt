@@ -37,3 +37,4 @@ class ToolName:
 
     # Heartbeat (not registered in the main tool registry)
     COMPOSE_MESSAGE = "compose_message"
+    HEARTBEAT_DECISION = "heartbeat_decision"

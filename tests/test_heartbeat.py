@@ -18,12 +18,17 @@ from backend.app.agent.file_store import (
 from backend.app.agent.heartbeat import (
     _NON_PUSHABLE_CHANNELS,
     COMPOSE_MESSAGE_TOOL,
+    HEARTBEAT_DECISION_TOOL,
     ComposeMessageParams,
     HeartbeatAction,
+    HeartbeatDecision,
+    HeartbeatDecisionParams,
     HeartbeatScheduler,
+    _parse_decision_response,
     _parse_tool_call_response,
     _pick_heartbeat_channel,
     evaluate_heartbeat_need,
+    execute_heartbeat_tasks,
     get_daily_heartbeat_count,
     is_within_business_hours,
     parse_frequency_to_minutes,
@@ -75,6 +80,23 @@ def _make_heartbeat_tool_call(
         }
     )
     return make_tool_call_response([{"name": tool_name, "arguments": args, "id": "call_mock_001"}])
+
+
+def _make_decision_tool_call(
+    action: str = "skip",
+    tasks: str = "",
+    reasoning: str = "",
+    tool_name: str = "heartbeat_decision",
+) -> MessageResponse:
+    """Build a mock Phase 1 LLM response with a heartbeat_decision tool call."""
+    args = json.dumps(
+        {
+            "action": action,
+            "tasks": tasks,
+            "reasoning": reasoning,
+        }
+    )
+    return make_tool_call_response([{"name": tool_name, "arguments": args, "id": "call_mock_002"}])
 
 
 # ---------------------------------------------------------------------------
@@ -394,27 +416,105 @@ class TestParseToolCallResponse:
 
 
 # ---------------------------------------------------------------------------
+# HEARTBEAT_DECISION_TOOL schema
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatDecisionToolSchema:
+    def test_tool_has_name(self) -> None:
+        assert HEARTBEAT_DECISION_TOOL["name"] == "heartbeat_decision"
+
+    def test_tool_has_description(self) -> None:
+        assert "description" in HEARTBEAT_DECISION_TOOL
+
+    def test_tool_has_required_fields(self) -> None:
+        required = HEARTBEAT_DECISION_TOOL["input_schema"]["required"]
+        assert "action" in required
+        assert "reasoning" in required
+
+    def test_action_enum_values(self) -> None:
+        action_prop = HEARTBEAT_DECISION_TOOL["input_schema"]["properties"]["action"]
+        assert action_prop["enum"] == ["skip", "run"]
+
+    def test_schema_generated_from_pydantic_model(self) -> None:
+        assert (
+            HEARTBEAT_DECISION_TOOL["input_schema"] == HeartbeatDecisionParams.model_json_schema()
+        )
+
+
+# ---------------------------------------------------------------------------
+# _parse_decision_response
+# ---------------------------------------------------------------------------
+
+
+class TestParseDecisionResponse:
+    def test_valid_skip(self) -> None:
+        resp = _make_decision_tool_call(action="skip", tasks="", reasoning="Nothing actionable")
+        decision = _parse_decision_response(resp)
+        assert decision.action == "skip"
+        assert decision.tasks == ""
+        assert decision.reasoning == "Nothing actionable"
+
+    def test_valid_run(self) -> None:
+        resp = _make_decision_tool_call(
+            action="run",
+            tasks="Check QuickBooks for unpaid invoices and report to user",
+            reasoning="Checklist item needs QB check",
+        )
+        decision = _parse_decision_response(resp)
+        assert decision.action == "run"
+        assert "QuickBooks" in decision.tasks
+        assert decision.reasoning == "Checklist item needs QB check"
+
+    def test_text_response_falls_back_to_skip(self) -> None:
+        resp = make_text_response("I think there is something to do.")
+        decision = _parse_decision_response(resp)
+        assert decision.action == "skip"
+        assert "did not call tool" in decision.reasoning
+
+    def test_wrong_tool_name_falls_back(self) -> None:
+        resp = _make_decision_tool_call(
+            action="run", tasks="do stuff", reasoning="test", tool_name="wrong_tool"
+        )
+        decision = _parse_decision_response(resp)
+        assert decision.action == "skip"
+        assert "unexpected tool" in decision.reasoning
+
+    def test_malformed_arguments(self) -> None:
+        resp = MessageResponse(
+            id="msg_mock",
+            content=[
+                MessageContentBlock(
+                    type="tool_use",
+                    id="call_bad",
+                    name="heartbeat_decision",
+                    input=None,
+                ),
+            ],
+            model="mock-model",
+            stop_reason="tool_use",
+            usage=MessageUsage(input_tokens=0, output_tokens=0),
+        )
+        decision = _parse_decision_response(resp)
+        assert decision.action == "skip"
+        assert "Malformed" in decision.reasoning
+
+
+# ---------------------------------------------------------------------------
 # evaluate_heartbeat_need
 # ---------------------------------------------------------------------------
 
 
 class TestEvaluateHeartbeatNeed:
-    @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.log_llm_usage")
-    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
-    @patch("backend.app.agent.heartbeat.HeartbeatStore")
-    @patch("backend.app.agent.heartbeat.get_session_store")
-    @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
-    async def test_llm_says_no(
+    """Tests for Phase 1: evaluate_heartbeat_need returns HeartbeatDecision."""
+
+    def _setup_mocks(
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
         mock_get_session_store: MagicMock,
         mock_heartbeat_store_cls: MagicMock,
         mock_build_prompt: AsyncMock,
-        mock_log_usage: MagicMock,
-        user: UserData,
     ) -> None:
         mock_settings.llm_model = "gpt-4o"
         mock_settings.llm_provider = "openai"
@@ -434,16 +534,6 @@ class TestEvaluateHeartbeatNeed:
 
         mock_build_prompt.return_value = "system prompt"
 
-        mock_llm.return_value = _make_heartbeat_tool_call(
-            action="no_action",
-            message="",
-            reasoning="Nothing actionable",
-            priority=1,
-        )
-        action = await evaluate_heartbeat_need(user)
-        assert action.action_type == "no_action"
-        assert action.message == ""
-
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
     @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
@@ -451,7 +541,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
     @patch("backend.app.agent.heartbeat.amessages")
-    async def test_llm_says_send(
+    async def test_llm_says_skip(
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
@@ -461,33 +551,52 @@ class TestEvaluateHeartbeatNeed:
         mock_log_usage: MagicMock,
         user: UserData,
     ) -> None:
-        mock_settings.llm_model = "gpt-4o"
-        mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_base = None
-        mock_settings.heartbeat_model = ""
-        mock_settings.heartbeat_provider = ""
-        mock_settings.llm_max_tokens_heartbeat = 256
-        mock_settings.heartbeat_recent_messages_count = 5
-
-        mock_session_store = MagicMock()
-        mock_session_store.get_recent_messages.return_value = []
-        mock_get_session_store.return_value = mock_session_store
-
-        mock_hb_store = MagicMock()
-        mock_hb_store.read_checklist_md.return_value = ""
-        mock_heartbeat_store_cls.return_value = mock_hb_store
-
-        mock_build_prompt.return_value = "system prompt"
-
-        mock_llm.return_value = _make_heartbeat_tool_call(
-            action="send_message",
-            message="Hey Mike, you have a draft estimate sitting for 2 days.",
-            reasoning="Stale draft estimate",
-            priority=4,
+        self._setup_mocks(
+            mock_llm,
+            mock_settings,
+            mock_get_session_store,
+            mock_heartbeat_store_cls,
+            mock_build_prompt,
         )
-        action = await evaluate_heartbeat_need(user)
-        assert action.action_type == "send_message"
-        assert "draft estimate" in action.message
+        mock_llm.return_value = _make_decision_tool_call(
+            action="skip", tasks="", reasoning="Nothing actionable"
+        )
+        decision = await evaluate_heartbeat_need(user)
+        assert decision.action == "skip"
+        assert decision.tasks == ""
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.log_llm_usage")
+    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.amessages")
+    async def test_llm_says_run(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        mock_build_prompt: AsyncMock,
+        mock_log_usage: MagicMock,
+        user: UserData,
+    ) -> None:
+        self._setup_mocks(
+            mock_llm,
+            mock_settings,
+            mock_get_session_store,
+            mock_heartbeat_store_cls,
+            mock_build_prompt,
+        )
+        mock_llm.return_value = _make_decision_tool_call(
+            action="run",
+            tasks="Check QuickBooks for unpaid invoices",
+            reasoning="Checklist item due",
+        )
+        decision = await evaluate_heartbeat_need(user)
+        assert decision.action == "run"
+        assert "QuickBooks" in decision.tasks
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
@@ -507,30 +616,18 @@ class TestEvaluateHeartbeatNeed:
         user: UserData,
     ) -> None:
         """When heartbeat_model is configured, it should be used instead of llm_model."""
-        mock_settings.llm_model = "gpt-4o"
-        mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_base = None
+        self._setup_mocks(
+            mock_llm,
+            mock_settings,
+            mock_get_session_store,
+            mock_heartbeat_store_cls,
+            mock_build_prompt,
+        )
         mock_settings.heartbeat_model = "gpt-4o-mini"
         mock_settings.heartbeat_provider = "openai"
-        mock_settings.llm_max_tokens_heartbeat = 256
-        mock_settings.heartbeat_recent_messages_count = 5
 
-        mock_session_store = MagicMock()
-        mock_session_store.get_recent_messages.return_value = []
-        mock_get_session_store.return_value = mock_session_store
-
-        mock_hb_store = MagicMock()
-        mock_hb_store.read_checklist_md.return_value = ""
-        mock_heartbeat_store_cls.return_value = mock_hb_store
-
-        mock_build_prompt.return_value = "system prompt"
-
-        mock_llm.return_value = _make_heartbeat_tool_call(
-            action="no_action", message="", reasoning="", priority=1
-        )
+        mock_llm.return_value = _make_decision_tool_call(action="skip", tasks="", reasoning="")
         await evaluate_heartbeat_need(user)
-
-        # Verify the cheap model was used
         call_kwargs = mock_llm.call_args
         assert call_kwargs.kwargs["model"] == "gpt-4o-mini"
 
@@ -552,27 +649,16 @@ class TestEvaluateHeartbeatNeed:
         user: UserData,
     ) -> None:
         """Regression test: acompletion must receive api_base, not api_key."""
-        mock_settings.llm_model = "gpt-4o"
-        mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_base = "http://localhost:1234/v1"
-        mock_settings.heartbeat_model = ""
-        mock_settings.heartbeat_provider = ""
-        mock_settings.llm_max_tokens_heartbeat = 256
-        mock_settings.heartbeat_recent_messages_count = 5
-
-        mock_session_store = MagicMock()
-        mock_session_store.get_recent_messages.return_value = []
-        mock_get_session_store.return_value = mock_session_store
-
-        mock_hb_store = MagicMock()
-        mock_hb_store.read_checklist_md.return_value = ""
-        mock_heartbeat_store_cls.return_value = mock_hb_store
-
-        mock_build_prompt.return_value = "system prompt"
-
-        mock_llm.return_value = _make_heartbeat_tool_call(
-            action="no_action", message="", reasoning="test", priority=1
+        self._setup_mocks(
+            mock_llm,
+            mock_settings,
+            mock_get_session_store,
+            mock_heartbeat_store_cls,
+            mock_build_prompt,
         )
+        mock_settings.llm_api_base = "http://localhost:1234/v1"
+
+        mock_llm.return_value = _make_decision_tool_call(action="skip", tasks="", reasoning="test")
         await evaluate_heartbeat_need(user)
         _, kwargs = mock_llm.call_args
         assert "api_base" in kwargs
@@ -586,7 +672,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
     @patch("backend.app.agent.heartbeat.amessages")
-    async def test_text_response_falls_back_to_no_action(
+    async def test_text_response_falls_back_to_skip(
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
@@ -596,29 +682,17 @@ class TestEvaluateHeartbeatNeed:
         mock_log_usage: MagicMock,
         user: UserData,
     ) -> None:
-        """If LLM returns text instead of tool call, default to no_action."""
-        mock_settings.llm_model = "gpt-4o"
-        mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_base = None
-        mock_settings.heartbeat_model = ""
-        mock_settings.heartbeat_provider = ""
-        mock_settings.llm_max_tokens_heartbeat = 256
-        mock_settings.heartbeat_recent_messages_count = 5
-
-        mock_session_store = MagicMock()
-        mock_session_store.get_recent_messages.return_value = []
-        mock_get_session_store.return_value = mock_session_store
-
-        mock_hb_store = MagicMock()
-        mock_hb_store.read_checklist_md.return_value = ""
-        mock_heartbeat_store_cls.return_value = mock_hb_store
-
-        mock_build_prompt.return_value = "system prompt"
-
-        mock_llm.return_value = make_text_response("I'm not sure what to do {broken json")
-        action = await evaluate_heartbeat_need(user)
-        assert action.action_type == "no_action"
-        assert action.priority == 0
+        """If LLM returns text instead of tool call, default to skip."""
+        self._setup_mocks(
+            mock_llm,
+            mock_settings,
+            mock_get_session_store,
+            mock_heartbeat_store_cls,
+            mock_build_prompt,
+        )
+        mock_llm.return_value = make_text_response("I'm not sure what to do")
+        decision = await evaluate_heartbeat_need(user)
+        assert decision.action == "skip"
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.log_llm_usage")
@@ -627,7 +701,7 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
     @patch("backend.app.agent.heartbeat.amessages")
-    async def test_passes_tools_to_acompletion(
+    async def test_passes_decision_tool_to_acompletion(
         self,
         mock_llm: AsyncMock,
         mock_settings: MagicMock,
@@ -637,77 +711,19 @@ class TestEvaluateHeartbeatNeed:
         mock_log_usage: MagicMock,
         user: UserData,
     ) -> None:
-        """acompletion should receive tools=[COMPOSE_MESSAGE_TOOL]."""
-        mock_settings.llm_model = "gpt-4o"
-        mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_base = None
-        mock_settings.heartbeat_model = ""
-        mock_settings.heartbeat_provider = ""
-        mock_settings.llm_max_tokens_heartbeat = 256
-        mock_settings.heartbeat_recent_messages_count = 5
-
-        mock_session_store = MagicMock()
-        mock_session_store.get_recent_messages.return_value = []
-        mock_get_session_store.return_value = mock_session_store
-
-        mock_hb_store = MagicMock()
-        mock_hb_store.read_checklist_md.return_value = ""
-        mock_heartbeat_store_cls.return_value = mock_hb_store
-
-        mock_build_prompt.return_value = "system prompt"
-
-        mock_llm.return_value = _make_heartbeat_tool_call(
-            action="no_action", message="", reasoning="test", priority=1
+        """acompletion should receive tools=[HEARTBEAT_DECISION_TOOL]."""
+        self._setup_mocks(
+            mock_llm,
+            mock_settings,
+            mock_get_session_store,
+            mock_heartbeat_store_cls,
+            mock_build_prompt,
         )
+        mock_llm.return_value = _make_decision_tool_call(action="skip", tasks="", reasoning="test")
         await evaluate_heartbeat_need(user)
         _, kwargs = mock_llm.call_args
         assert "tools" in kwargs
-        assert kwargs["tools"] == [COMPOSE_MESSAGE_TOOL]
-
-    @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.log_llm_usage")
-    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
-    @patch("backend.app.agent.heartbeat.HeartbeatStore")
-    @patch("backend.app.agent.heartbeat.get_session_store")
-    @patch("backend.app.agent.heartbeat.settings")
-    @patch("backend.app.agent.heartbeat.amessages")
-    async def test_prompt_does_not_ask_for_raw_json(
-        self,
-        mock_llm: AsyncMock,
-        mock_settings: MagicMock,
-        mock_get_session_store: MagicMock,
-        mock_heartbeat_store_cls: MagicMock,
-        mock_build_prompt: AsyncMock,
-        mock_log_usage: MagicMock,
-        user: UserData,
-    ) -> None:
-        """System prompt should not contain 'Respond with ONLY a JSON object'."""
-        mock_settings.llm_model = "gpt-4o"
-        mock_settings.llm_provider = "openai"
-        mock_settings.llm_api_base = None
-        mock_settings.heartbeat_model = ""
-        mock_settings.heartbeat_provider = ""
-        mock_settings.llm_max_tokens_heartbeat = 256
-        mock_settings.heartbeat_recent_messages_count = 5
-
-        mock_session_store = MagicMock()
-        mock_session_store.get_recent_messages.return_value = []
-        mock_get_session_store.return_value = mock_session_store
-
-        mock_hb_store = MagicMock()
-        mock_hb_store.read_checklist_md.return_value = ""
-        mock_heartbeat_store_cls.return_value = mock_hb_store
-
-        mock_build_prompt.return_value = "Use compose_message tool to decide"
-
-        mock_llm.return_value = _make_heartbeat_tool_call(
-            action="no_action", message="", reasoning="test", priority=1
-        )
-        await evaluate_heartbeat_need(user)
-        call_args = mock_llm.call_args
-        system_content = call_args.kwargs["system"]
-        assert "Respond with ONLY a JSON object" not in system_content
-        assert "compose_message" in system_content
+        assert kwargs["tools"] == [HEARTBEAT_DECISION_TOOL]
 
 
 # ---------------------------------------------------------------------------
@@ -716,6 +732,8 @@ class TestEvaluateHeartbeatNeed:
 
 
 class TestRunHeartbeatForUser:
+    """Tests for the two-phase run_heartbeat_for_user orchestrator."""
+
     @pytest.mark.asyncio
     async def test_skip_not_onboarded(self) -> None:
         c = UserData(id=10, user_id="hb-new", phone="+15550000000", onboarding_complete=False)
@@ -736,19 +754,16 @@ class TestRunHeartbeatForUser:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
-    async def test_no_action_from_llm(
+    async def test_phase1_skip_no_phase2(
         self,
         mock_count: AsyncMock,
         mock_eval: AsyncMock,
         user: UserData,
     ) -> None:
-        """When LLM returns no_action, no message is sent."""
+        """When Phase 1 returns skip, Phase 2 is not invoked."""
         mock_count.return_value = 0
-        mock_eval.return_value = HeartbeatAction(
-            action_type="no_action",
-            message="",
-            reasoning="Nothing actionable right now",
-            priority=1,
+        mock_eval.return_value = HeartbeatDecision(
+            action="skip", tasks="", reasoning="Nothing actionable right now"
         )
         result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
         assert result is not None
@@ -761,12 +776,14 @@ class TestRunHeartbeatForUser:
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
     @patch("backend.app.bus.OutboundMessage")
     @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
-    async def test_send_message_and_record(
+    async def test_phase2_sends_agent_reply(
         self,
         mock_count: AsyncMock,
         mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
         mock_bus: MagicMock,
         mock_outbound_msg: MagicMock,
         mock_get_conv: AsyncMock,
@@ -774,14 +791,14 @@ class TestRunHeartbeatForUser:
         mock_heartbeat_store_cls: MagicMock,
         user: UserData,
     ) -> None:
-        """When LLM says send, message is delivered via the bus."""
+        """When Phase 1 says run, Phase 2 executes and delivers the reply."""
         mock_count.return_value = 0
-        mock_eval.return_value = HeartbeatAction(
-            action_type="send_message",
-            message="Reminder: draft estimate pending!",
-            reasoning="Stale draft",
-            priority=4,
+        mock_eval.return_value = HeartbeatDecision(
+            action="run",
+            tasks="Check QuickBooks for unpaid invoices",
+            reasoning="Checklist item due",
         )
+        mock_execute.return_value = "You have 2 unpaid invoices totaling $1,500."
         mock_bus.publish_outbound = AsyncMock()
 
         mock_session = MagicMock()
@@ -799,36 +816,65 @@ class TestRunHeartbeatForUser:
 
         assert result is not None
         assert result.action_type == "send_message"
-        # Verify outbound message was published to the bus
+        assert "unpaid invoices" in result.message
+        # Phase 2 was called with the task description
+        mock_execute.assert_awaited_once_with(
+            user,
+            "Check QuickBooks for unpaid invoices",
+            channel="telegram",
+            chat_id="+15559990000",
+        )
+        # Outbound message was published
         mock_bus.publish_outbound.assert_awaited_once()
         mock_outbound_msg.assert_called_once_with(
             channel="telegram",
             chat_id="+15559990000",
-            content="Reminder: draft estimate pending!",
+            content="You have 2 unpaid invoices totaling $1,500.",
         )
-        # LLM was called with new keyword args (no flags)
-        mock_eval.assert_awaited_once_with(user, channel="telegram", chat_id="+15559990000")
+        # Heartbeat was logged for rate limiting
+        mock_hb_store.log_heartbeat.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_no_output_returns_no_action(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        user: UserData,
+    ) -> None:
+        """When Phase 2 produces no output, no message is sent."""
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run", tasks="Check something", reasoning="test"
+        )
+        mock_execute.return_value = ""
+        result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        assert result is not None
+        assert result.action_type == "no_action"
 
     @pytest.mark.asyncio
     @patch("backend.app.bus.OutboundMessage")
     @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
-    async def test_sms_failure_graceful(
+    async def test_bus_failure_graceful(
         self,
         mock_count: AsyncMock,
         mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
         mock_bus: MagicMock,
         mock_outbound_msg: MagicMock,
         user: UserData,
     ) -> None:
         mock_count.return_value = 0
-        mock_eval.return_value = HeartbeatAction(
-            action_type="send_message",
-            message="Reminder!",
-            reasoning="test",
-            priority=3,
+        mock_eval.return_value = HeartbeatDecision(
+            action="run", tasks="Check something", reasoning="test"
         )
+        mock_execute.return_value = "Here is an update."
         mock_bus.publish_outbound = AsyncMock(side_effect=Exception("Bus down"))
         result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
         # Should still return the action, just not record a message
@@ -888,6 +934,79 @@ class TestGetDailyHeartbeatCount:
 
         assert await get_daily_heartbeat_count(user.id) == 0
         assert await get_daily_heartbeat_count(other.id) == 1
+
+
+# ---------------------------------------------------------------------------
+# execute_heartbeat_tasks (Phase 2)
+# ---------------------------------------------------------------------------
+
+
+class TestExecuteHeartbeatTasks:
+    @pytest.mark.asyncio
+    async def test_returns_agent_reply(self, user: UserData) -> None:
+        """Phase 2 should return the agent's reply text."""
+        from backend.app.agent.core import AgentResponse
+
+        mock_response = AgentResponse(reply_text="You have 3 unpaid invoices.")
+
+        with (
+            patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
+            patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
+            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.router.init_storage", return_value=None),
+            patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        ):
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
+            MockAgent.return_value = mock_agent_instance
+            mock_registry.create_tools.return_value = []
+            mock_bus.publish_outbound = AsyncMock()
+
+            result = await execute_heartbeat_tasks(user, "Check QuickBooks for unpaid invoices")
+            assert result == "You have 3 unpaid invoices."
+            mock_agent_instance.process_message.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_error(self, user: UserData) -> None:
+        """Phase 2 should return empty string if agent raises."""
+        with (
+            patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
+            patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
+            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.router.init_storage", return_value=None),
+            patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        ):
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.process_message = AsyncMock(side_effect=Exception("LLM down"))
+            MockAgent.return_value = mock_agent_instance
+            mock_registry.create_tools.return_value = []
+            mock_bus.publish_outbound = AsyncMock()
+
+            result = await execute_heartbeat_tasks(user, "Check something")
+            assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_returns_empty_on_error_fallback(self, user: UserData) -> None:
+        """Phase 2 should return empty string if agent returns error fallback."""
+        from backend.app.agent.core import AgentResponse
+
+        mock_response = AgentResponse(reply_text="I'm having trouble.", is_error_fallback=True)
+
+        with (
+            patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
+            patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
+            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.router.init_storage", return_value=None),
+            patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        ):
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
+            MockAgent.return_value = mock_agent_instance
+            mock_registry.create_tools.return_value = []
+            mock_bus.publish_outbound = AsyncMock()
+
+            result = await execute_heartbeat_tasks(user, "Check something")
+            assert result == ""
 
 
 # ---------------------------------------------------------------------------

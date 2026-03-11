@@ -282,13 +282,12 @@ async def test_heartbeat_works_without_channel(
     mock_llm.return_value = make_tool_call_response(
         [
             {
-                "name": "compose_message",
+                "name": "heartbeat_decision",
                 "arguments": json.dumps(
                     {
-                        "action": "no_action",
-                        "message": "",
+                        "action": "skip",
+                        "tasks": "",
                         "reasoning": "Nothing actionable",
-                        "priority": 1,
                     }
                 ),
             }
@@ -296,5 +295,5 @@ async def test_heartbeat_works_without_channel(
     )
 
     # Should not raise when no channel is provided
-    action = await evaluate_heartbeat_need(test_user)
-    assert action.action_type == "no_action"
+    decision = await evaluate_heartbeat_need(test_user)
+    assert decision.action == "skip"

@@ -1,10 +1,14 @@
-"""Proactive heartbeat engine.
+"""Two-phase proactive heartbeat engine.
 
-Every ``heartbeat_interval_minutes`` the scheduler wakes up, iterates over
-onboarded users, and makes a single LLM call per user to decide whether
-a proactive message is needed.  The LLM sees the user's checklist, memory,
-recent messages, and current time, then decides holistically whether to
-reach out.
+Phase 1 (Decision): A lightweight LLM call evaluates the user's checklist,
+memory, recent messages, and current time, then decides whether any tasks
+need attention.  Uses a single ``heartbeat_decision`` tool that returns
+``skip`` or ``run`` plus a natural-language task description.
+
+Phase 2 (Execution): When Phase 1 returns ``run``, the task description is
+handed to a full ``ClawboltAgent`` with all registered tools (QuickBooks,
+file I/O, memory, etc.).  The agent executes the tasks autonomously and
+produces a reply that is delivered to the user.
 """
 
 from __future__ import annotations
@@ -76,12 +80,48 @@ def parse_frequency_to_minutes(freq: str) -> int | None:
 
 
 # ---------------------------------------------------------------------------
-# Data structures
+# Data structures -- Phase 1 (decision)
 # ---------------------------------------------------------------------------
 
 
+class HeartbeatDecisionParams(BaseModel):
+    """Parameters for the Phase 1 heartbeat_decision tool."""
+
+    action: Literal["skip", "run"]
+    tasks: str = Field(
+        default="",
+        description=(
+            "When action is 'run': a natural-language description of the tasks "
+            "the agent should execute. Be specific about what to check or do."
+        ),
+    )
+    reasoning: str = Field(description="Brief explanation of why this action was chosen")
+
+
+HEARTBEAT_DECISION_TOOL: dict[str, Any] = {
+    "name": ToolName.HEARTBEAT_DECISION,
+    "description": (
+        "Decide whether any checklist items or proactive tasks need attention right now. "
+        "Choose 'skip' if nothing needs doing, or 'run' with a task description "
+        "to hand off to the full agent for execution."
+    ),
+    "input_schema": HeartbeatDecisionParams.model_json_schema(),
+}
+
+
+@dataclass
+class HeartbeatDecision:
+    """Result of Phase 1: should the agent act?"""
+
+    action: str  # "skip" or "run"
+    tasks: str
+    reasoning: str
+
+
+# Legacy data structure kept for backwards compatibility with existing code
+# that references HeartbeatAction (e.g. tests, return types).
 class ComposeMessageParams(BaseModel):
-    """Parameters for the heartbeat compose_message tool."""
+    """Parameters for the heartbeat compose_message tool (legacy)."""
 
     action: Literal["send_message", "no_action"]
     message: str = Field(
@@ -133,20 +173,53 @@ def is_within_business_hours(
 
 
 # ---------------------------------------------------------------------------
-# Tool call response parsing
+# Phase 1: Decision LLM call
 # ---------------------------------------------------------------------------
 
 
-def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
-    """Extract a HeartbeatAction from an LLM tool call response.
-
-    If the LLM did not call the compose_message tool (e.g. returned plain text
-    instead), falls back to no_action.
-    """
+def _parse_decision_response(response: MessageResponse) -> HeartbeatDecision:
+    """Extract a HeartbeatDecision from the Phase 1 LLM response."""
     parsed = parse_tool_calls(response)
 
     if not parsed:
-        # LLM returned text instead of calling the tool: default to no_action
+        content = get_response_text(response)
+        logger.warning(
+            "Heartbeat decision LLM returned text instead of tool call: %s", content[:200]
+        )
+        return HeartbeatDecision(
+            action="skip", tasks="", reasoning=f"LLM did not call tool: {content[:100]}"
+        )
+
+    tc = parsed[0]
+    if tc.name != ToolName.HEARTBEAT_DECISION:
+        logger.warning("Heartbeat decision LLM called unexpected tool: %s", tc.name)
+        return HeartbeatDecision(action="skip", tasks="", reasoning="LLM called unexpected tool")
+
+    if tc.arguments is None:
+        logger.warning("Heartbeat decision tool call had malformed arguments")
+        return HeartbeatDecision(action="skip", tasks="", reasoning="Malformed tool arguments")
+
+    try:
+        params = HeartbeatDecisionParams.model_validate(tc.arguments)
+    except ValidationError as exc:
+        logger.warning("Heartbeat decision tool call failed validation: %s", exc)
+        return HeartbeatDecision(
+            action="skip", tasks="", reasoning="Tool arguments failed validation"
+        )
+
+    return HeartbeatDecision(
+        action=params.action,
+        tasks=params.tasks,
+        reasoning=params.reasoning,
+    )
+
+
+# Keep legacy parser for backwards compatibility in tests
+def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
+    """Extract a HeartbeatAction from an LLM tool call response (legacy)."""
+    parsed = parse_tool_calls(response)
+
+    if not parsed:
         content = get_response_text(response)
         logger.warning("Heartbeat LLM returned text instead of tool call: %s", content[:200])
         return HeartbeatAction(
@@ -156,7 +229,6 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
             priority=0,
         )
 
-    # Use the first tool call
     tc = parsed[0]
     if tc.name != ToolName.COMPOSE_MESSAGE:
         logger.warning("Heartbeat LLM called unexpected tool: %s", tc.name)
@@ -195,20 +267,15 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
     )
 
 
-# ---------------------------------------------------------------------------
-# LLM evaluation
-# ---------------------------------------------------------------------------
-
-
 async def evaluate_heartbeat_need(
     user: UserData,
     channel: str = "",
     chat_id: str = "",
-) -> HeartbeatAction:
-    """Single LLM call to evaluate whether a proactive message is needed.
+) -> HeartbeatDecision:
+    """Phase 1: lightweight LLM call to decide whether tasks need attention.
 
     The LLM sees the user's checklist, memory, recent messages, and current
-    time, and decides holistically whether to send a message.
+    time, then decides whether to skip or hand off tasks to the full agent.
     """
     session_store = get_session_store(user.id)
     recent = session_store.get_recent_messages(count=settings.heartbeat_recent_messages_count)
@@ -226,14 +293,14 @@ async def evaluate_heartbeat_need(
     prompt = await build_heartbeat_system_prompt(user, recent_text, checklist_md=checklist_md)
 
     logger.debug(
-        "Heartbeat context for user %d: recent_messages=%d, "
+        "Heartbeat Phase 1 context for user %d: recent_messages=%d, "
         "checklist_length=%d, system_prompt_length=%d",
         user.id,
         len(recent),
         len(checklist_md),
         len(prompt),
     )
-    logger.debug("Heartbeat system prompt for user %d:\n%s", user.id, prompt)
+    logger.debug("Heartbeat Phase 1 system prompt for user %d:\n%s", user.id, prompt)
 
     # Send typing indicator before LLM call via the bus
     if channel and chat_id:
@@ -255,7 +322,7 @@ async def evaluate_heartbeat_need(
     provider = settings.heartbeat_provider or settings.llm_provider
 
     logger.debug(
-        "Heartbeat LLM call for user %d: model=%s, provider=%s",
+        "Heartbeat Phase 1 LLM call for user %d: model=%s, provider=%s",
         user.id,
         model,
         provider,
@@ -272,18 +339,18 @@ async def evaluate_heartbeat_need(
                 {
                     "role": "user",
                     "content": (
-                        "Review the context above and decide whether to send a proactive message."
+                        "Review the context above and decide whether any tasks need attention."
                     ),
                 },
             ],
-            tools=[COMPOSE_MESSAGE_TOOL],
+            tools=[HEARTBEAT_DECISION_TOOL],
             max_tokens=settings.llm_max_tokens_heartbeat,
         ),
     )
 
-    log_llm_usage(user.id, model, response, "heartbeat")
+    log_llm_usage(user.id, model, response, "heartbeat_decision")
     logger.debug(
-        "Heartbeat LLM raw response for user %d: stop_reason=%s, content_blocks=%d",
+        "Heartbeat Phase 1 raw response for user %d: stop_reason=%s, content_blocks=%d",
         user.id,
         getattr(response, "stop_reason", "unknown"),
         len(response.content),
@@ -291,20 +358,110 @@ async def evaluate_heartbeat_need(
     for i, block in enumerate(response.content):
         if block.type == "text":
             logger.debug(
-                "Heartbeat LLM response block %d for user %d [text]: %s",
+                "Heartbeat Phase 1 response block %d for user %d [text]: %s",
                 i,
                 user.id,
                 block.text,
             )
         elif block.type == "tool_use":
             logger.debug(
-                "Heartbeat LLM response block %d for user %d [tool_use]: name=%s, input=%s",
+                "Heartbeat Phase 1 response block %d for user %d [tool_use]: name=%s, input=%s",
                 i,
                 user.id,
                 block.name,
                 block.input,
             )
-    return _parse_tool_call_response(response)
+    return _parse_decision_response(response)
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: Full agent execution
+# ---------------------------------------------------------------------------
+
+
+async def execute_heartbeat_tasks(
+    user: UserData,
+    tasks: str,
+    channel: str = "",
+    chat_id: str = "",
+) -> str:
+    """Phase 2: run the task description through the full agent loop.
+
+    Creates a ``ClawboltAgent`` with all registered tools and processes the
+    task description as if it were a user message.  Returns the agent's
+    reply text, or an empty string if the agent produced no output.
+    """
+    from backend.app.agent.core import AgentResponse, ClawboltAgent
+    from backend.app.agent.tools.registry import (
+        ToolContext,
+        default_registry,
+        ensure_tool_modules_imported,
+    )
+    from backend.app.bus import message_bus
+
+    ensure_tool_modules_imported()
+
+    logger.info("Heartbeat Phase 2 starting for user %d: %.200s", user.id, tasks)
+
+    publish_outbound = message_bus.publish_outbound if channel else None
+
+    # Initialize storage backend
+    storage = None
+    try:
+        from backend.app.agent.router import init_storage
+
+        storage = init_storage(user)
+    except Exception:
+        logger.debug("Heartbeat Phase 2: storage not available for user %d", user.id)
+
+    tool_context = ToolContext(
+        user=user,
+        storage=storage,
+        publish_outbound=publish_outbound,
+        channel=channel,
+        to_address=chat_id,
+    )
+
+    agent = ClawboltAgent(
+        user=user,
+        channel=channel,
+        publish_outbound=publish_outbound,
+        chat_id=chat_id,
+        tool_context=tool_context,
+        registry=default_registry,
+    )
+
+    # Register ALL tools (core + all specialists) so the agent can query
+    # QuickBooks, manage files, etc. without needing list_capabilities.
+    tools = default_registry.create_tools(tool_context)
+    agent.register_tools(tools)
+
+    logger.debug(
+        "Heartbeat Phase 2 agent for user %d initialized with %d tools",
+        user.id,
+        len(tools),
+    )
+
+    try:
+        response: AgentResponse = await agent.process_message(
+            message_context=tasks,
+        )
+    except Exception:
+        logger.exception("Heartbeat Phase 2 agent failed for user %d", user.id)
+        return ""
+
+    if response.is_error_fallback:
+        logger.warning("Heartbeat Phase 2 agent returned error fallback for user %d", user.id)
+        return ""
+
+    logger.info(
+        "Heartbeat Phase 2 completed for user %d: reply_length=%d, actions=%s",
+        user.id,
+        len(response.reply_text),
+        response.actions_taken or "(none)",
+    )
+
+    return response.reply_text
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +476,7 @@ async def get_daily_heartbeat_count(user_id: int) -> int:
 
 
 # ---------------------------------------------------------------------------
-# Per-user runner
+# Per-user runner (orchestrates Phase 1 + Phase 2)
 # ---------------------------------------------------------------------------
 
 
@@ -329,9 +486,12 @@ async def run_heartbeat_for_user(
     chat_id: str,
     max_daily: int,
 ) -> HeartbeatAction | None:
-    """Full heartbeat pipeline for a single user.
+    """Full two-phase heartbeat pipeline for a single user.
 
-    Returns the action taken, or *None* if skipped.
+    Phase 1: Lightweight LLM decides whether tasks need attention.
+    Phase 2: Full agent executes tasks and produces a message.
+
+    Returns a ``HeartbeatAction`` for compatibility, or *None* if skipped.
     """
     # Gate: onboarding must be complete
     if not user.onboarding_complete:
@@ -356,32 +516,49 @@ async def run_heartbeat_for_user(
 
     logger.debug("Heartbeat evaluating user %d via LLM (channel=%s)", user.id, channel)
 
-    # Single LLM call: the model evaluates all context holistically
-    action = await evaluate_heartbeat_need(user, channel=channel, chat_id=chat_id)
+    # -- Phase 1: decide whether tasks need attention --
+    decision = await evaluate_heartbeat_need(user, channel=channel, chat_id=chat_id)
 
     logger.debug(
-        "Heartbeat LLM decision for user %d: action=%s, priority=%d, reasoning=%s",
+        "Heartbeat Phase 1 decision for user %d: action=%s, reasoning=%s",
         user.id,
-        action.action_type,
-        action.priority,
-        action.reasoning,
+        decision.action,
+        decision.reasoning,
     )
 
-    if action.action_type != "send_message" or not action.message:
+    if decision.action != "run" or not decision.tasks:
         logger.debug(
-            "Heartbeat no message for user %d: action=%s, message_empty=%s",
+            "Heartbeat skip Phase 2 for user %d: action=%s, tasks_empty=%s",
             user.id,
-            action.action_type,
-            not action.message,
+            decision.action,
+            not decision.tasks,
         )
-        return action
+        return HeartbeatAction(
+            action_type="no_action",
+            message="",
+            reasoning=decision.reasoning,
+            priority=0,
+        )
 
-    # Send message via the bus
+    # -- Phase 2: execute tasks via full agent loop --
+    reply_text = await execute_heartbeat_tasks(
+        user, decision.tasks, channel=channel, chat_id=chat_id
+    )
+
+    if not reply_text:
+        logger.debug("Heartbeat Phase 2 produced no output for user %d", user.id)
+        return HeartbeatAction(
+            action_type="no_action",
+            message="",
+            reasoning="Phase 2 agent produced no output",
+            priority=0,
+        )
+
+    # -- Deliver the agent's reply to the user --
     logger.info(
-        "Heartbeat sending message to user %d (priority=%d): %.100s",
+        "Heartbeat sending message to user %d: %.100s",
         user.id,
-        action.priority,
-        action.message,
+        reply_text,
     )
     try:
         from backend.app.bus import OutboundMessage, message_bus
@@ -390,27 +567,37 @@ async def run_heartbeat_for_user(
             OutboundMessage(
                 channel=channel,
                 chat_id=chat_id,
-                content=action.message,
+                content=reply_text,
             )
         )
     except Exception:
         logger.exception("Heartbeat message failed for user %d", user.id)
-        return action
+        return HeartbeatAction(
+            action_type="send_message",
+            message=reply_text,
+            reasoning=decision.reasoning,
+            priority=3,
+        )
 
-    # Record outbound message
+    # Record outbound message in session history
     session, _ = await get_or_create_conversation(user.id)
     session_store = get_session_store(user.id)
     await session_store.add_message(
         session=session,
         direction=MessageDirection.OUTBOUND,
-        body=action.message,
+        body=reply_text,
     )
 
     # Record heartbeat log for persistent rate limiting
     heartbeat_store = HeartbeatStore(user.id)
     await heartbeat_store.log_heartbeat()
 
-    return action
+    return HeartbeatAction(
+        action_type="send_message",
+        message=reply_text,
+        reasoning=decision.reasoning,
+        priority=3,
+    )
 
 
 # ---------------------------------------------------------------------------
