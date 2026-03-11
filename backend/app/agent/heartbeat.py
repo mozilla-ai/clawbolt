@@ -225,6 +225,16 @@ async def evaluate_heartbeat_need(
 
     prompt = await build_heartbeat_system_prompt(user, recent_text, checklist_md=checklist_md)
 
+    logger.debug(
+        "Heartbeat context for user %d: recent_messages=%d, "
+        "checklist_length=%d, system_prompt_length=%d",
+        user.id,
+        len(recent),
+        len(checklist_md),
+        len(prompt),
+    )
+    logger.debug("Heartbeat system prompt for user %d:\n%s", user.id, prompt)
+
     # Send typing indicator before LLM call via the bus
     if channel and chat_id:
         try:
@@ -278,6 +288,22 @@ async def evaluate_heartbeat_need(
         getattr(response, "stop_reason", "unknown"),
         len(response.content),
     )
+    for i, block in enumerate(response.content):
+        if block.type == "text":
+            logger.debug(
+                "Heartbeat LLM response block %d for user %d [text]: %s",
+                i,
+                user.id,
+                block.text,
+            )
+        elif block.type == "tool_use":
+            logger.debug(
+                "Heartbeat LLM response block %d for user %d [tool_use]: name=%s, input=%s",
+                i,
+                user.id,
+                block.name,
+                block.input,
+            )
     return _parse_tool_call_response(response)
 
 
@@ -543,7 +569,17 @@ class HeartbeatScheduler:
             async with semaphore:
                 try:
                     channel_name = _pick_heartbeat_channel(user)
-                    chat_id = user.channel_identifier or user.phone
+
+                    # Look up the channel-specific identifier from the
+                    # user index.  Falls back to the user's stored
+                    # channel_identifier or phone when no index entry
+                    # exists for the target channel.
+                    store = get_user_store()
+                    chat_id = (
+                        store.get_channel_identifier(user.id, channel_name)
+                        or user.channel_identifier
+                        or user.phone
+                    )
 
                     await run_heartbeat_for_user(
                         user=user,

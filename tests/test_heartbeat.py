@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -12,6 +13,7 @@ from any_llm.types.messages import MessageContentBlock, MessageResponse, Message
 from backend.app.agent.file_store import (
     HeartbeatLogEntry,
     UserData,
+    get_user_store,
 )
 from backend.app.agent.heartbeat import (
     _NON_PUSHABLE_CHANNELS,
@@ -1419,3 +1421,128 @@ class TestPerUserFrequencyScheduling:
         )
         await scheduler.tick()
         assert mock_run.await_count == 2  # Now due
+
+
+# ---------------------------------------------------------------------------
+# get_channel_identifier & tick chat_id lookup (#639)
+# ---------------------------------------------------------------------------
+
+
+class TestGetChannelIdentifier:
+    """UserStore.get_channel_identifier reverse-index lookup."""
+
+    def test_returns_matching_identifier(self, tmp_path: Path) -> None:
+        index_path = tmp_path / "user_index.json"
+        index_path.write_text(
+            json.dumps({"webchat:web-1": 1, "telegram:99887766": 1}),
+            encoding="utf-8",
+        )
+        store = get_user_store()
+        with patch("backend.app.agent.file_store._index_path", return_value=index_path):
+            assert store.get_channel_identifier(1, "telegram") == "99887766"
+
+    def test_returns_none_when_no_match(self, tmp_path: Path) -> None:
+        index_path = tmp_path / "user_index.json"
+        index_path.write_text(
+            json.dumps({"webchat:web-1": 1}),
+            encoding="utf-8",
+        )
+        store = get_user_store()
+        with patch("backend.app.agent.file_store._index_path", return_value=index_path):
+            assert store.get_channel_identifier(1, "telegram") is None
+
+    def test_does_not_return_other_users_identifier(self, tmp_path: Path) -> None:
+        index_path = tmp_path / "user_index.json"
+        index_path.write_text(
+            json.dumps({"telegram:tg-for-a": 1, "webchat:b-1": 2}),
+            encoding="utf-8",
+        )
+        store = get_user_store()
+        with patch("backend.app.agent.file_store._index_path", return_value=index_path):
+            assert store.get_channel_identifier(2, "telegram") is None
+
+
+class TestTickChatIdLookup:
+    """Heartbeat tick should look up the correct chat_id for the target channel."""
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
+    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_uses_channel_specific_chat_id(
+        self,
+        mock_settings: MagicMock,
+        mock_pick_channel: MagicMock,
+        mock_get_store: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """When falling back to telegram, tick should use the telegram chat_id
+        from the user index, not the webchat channel_identifier."""
+        mock_settings.heartbeat_concurrency = 2
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        mock_pick_channel.return_value = "telegram"
+
+        user = MagicMock()
+        user.id = 1
+        user.onboarding_complete = True
+        user.preferred_channel = "webchat"
+        user.channel_identifier = "web-1"
+        user.phone = ""
+
+        mock_store = MagicMock()
+        mock_store.list_all = AsyncMock(return_value=[user])
+        mock_store.get_channel_identifier.return_value = "tg-12345"
+        mock_get_store.return_value = mock_store
+
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        mock_store.get_channel_identifier.assert_called_once_with(1, "telegram")
+        mock_run.assert_awaited_once()
+        call_kwargs = mock_run.call_args.kwargs
+        assert call_kwargs["chat_id"] == "tg-12345"
+        assert call_kwargs["channel"] == "telegram"
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.get_user_store")
+    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_falls_back_to_channel_identifier(
+        self,
+        mock_settings: MagicMock,
+        mock_pick_channel: MagicMock,
+        mock_get_store: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """When no index entry exists, fall back to user.channel_identifier."""
+        mock_settings.heartbeat_concurrency = 2
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        mock_pick_channel.return_value = "telegram"
+
+        user = MagicMock()
+        user.id = 1
+        user.onboarding_complete = True
+        user.preferred_channel = "webchat"
+        user.channel_identifier = "web-1"
+        user.phone = "+15559990000"
+
+        mock_store = MagicMock()
+        mock_store.list_all = AsyncMock(return_value=[user])
+        mock_store.get_channel_identifier.return_value = None
+        mock_get_store.return_value = mock_store
+
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        mock_run.assert_awaited_once()
+        call_kwargs = mock_run.call_args.kwargs
+        # Falls back to user.channel_identifier
+        assert call_kwargs["chat_id"] == "web-1"
