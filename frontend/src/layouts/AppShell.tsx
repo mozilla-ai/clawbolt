@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { Outlet, NavLink, Navigate } from 'react-router-dom';
+import { Outlet, NavLink, Navigate, Link as RouterLink, useSearchParams } from 'react-router-dom';
 import { ToastProvider } from '@heroui/toast';
 import api from '@/api';
 import Button from '@/components/ui/button';
@@ -138,7 +138,7 @@ export default function AppShell() {
           </div>
         </div>
 
-        <nav className="flex-1 p-2 space-y-0.5 overflow-y-auto">
+        <nav className="p-2 space-y-0.5">
           {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
@@ -158,6 +158,8 @@ export default function AppShell() {
             </NavLink>
           ))}
         </nav>
+
+        <RecentConversations onNavigate={closeSidebar} />
 
         <div className="p-2 text-xs text-muted-foreground space-y-1">
           <Divider className="mb-1" />
@@ -288,5 +290,75 @@ function SettingsIcon() {
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
     </svg>
+  );
+}
+
+// --- Recent conversations sidebar section ---
+
+/** Format an ISO timestamp as a short relative string (e.g. "5m ago", "2h ago"). */
+export function formatRelativeTime(iso: string): string {
+  const diffMs = Date.now() - new Date(iso).getTime();
+  const seconds = Math.max(0, Math.floor(diffMs / 1000));
+  if (seconds < 60) return 'just now';
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
+function RecentConversations({ onNavigate }: { onNavigate: () => void }) {
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [searchParams] = useSearchParams();
+  const activeSessionId = searchParams.get('session');
+
+  useEffect(() => {
+    api.listSessions(0, 10)
+      .then((res) => setSessions(res.sessions))
+      .catch((err: unknown) => {
+        console.error('[RecentConversations] Failed to load sessions:', err);
+      });
+  }, []);
+
+  if (sessions.length === 0) return null;
+
+  return (
+    <div className="flex-1 flex flex-col min-h-0 border-t border-border">
+      <div className="flex items-center justify-between px-3 py-2">
+        <span className="text-xs font-medium text-muted-foreground">Recent</span>
+        <RouterLink
+          to="/app/conversations"
+          onClick={onNavigate}
+          className="text-xs text-muted-foreground hover:text-foreground transition-all duration-150"
+        >
+          View all
+        </RouterLink>
+      </div>
+      <div className="flex-1 overflow-y-auto px-1 pb-1" data-testid="recent-conversations">
+        {sessions.map((s) => {
+          const isActive = s.id === activeSessionId;
+          return (
+            <RouterLink
+              key={s.id}
+              to={`/app/chat?session=${encodeURIComponent(s.id)}`}
+              onClick={onNavigate}
+              className={`block px-3 py-1.5 rounded-md text-sm transition-all duration-150 ${
+                isActive
+                  ? 'bg-selected-bg text-primary border-l-2 border-primary'
+                  : 'text-muted-foreground hover:bg-secondary-hover hover:text-foreground'
+              }`}
+            >
+              <p className="line-clamp-1 text-xs">
+                {s.last_message_preview || 'New conversation'}
+              </p>
+              <p className="text-[10px] text-muted-foreground mt-0.5">
+                {formatRelativeTime(s.start_time)}
+              </p>
+            </RouterLink>
+          );
+        })}
+      </div>
+    </div>
   );
 }
