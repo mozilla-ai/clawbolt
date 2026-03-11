@@ -959,6 +959,7 @@ class TestExecuteHeartbeatTasks:
             mock_agent_instance = MagicMock()
             mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
             MockAgent.return_value = mock_agent_instance
+            mock_registry.factory_names = ["core", "quickbooks"]
             mock_registry.create_tools.return_value = []
             mock_bus.publish_outbound = AsyncMock()
 
@@ -979,6 +980,7 @@ class TestExecuteHeartbeatTasks:
             mock_agent_instance = MagicMock()
             mock_agent_instance.process_message = AsyncMock(side_effect=Exception("LLM down"))
             MockAgent.return_value = mock_agent_instance
+            mock_registry.factory_names = ["core"]
             mock_registry.create_tools.return_value = []
             mock_bus.publish_outbound = AsyncMock()
 
@@ -1002,11 +1004,44 @@ class TestExecuteHeartbeatTasks:
             mock_agent_instance = MagicMock()
             mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
             MockAgent.return_value = mock_agent_instance
+            mock_registry.factory_names = ["core"]
             mock_registry.create_tools.return_value = []
             mock_bus.publish_outbound = AsyncMock()
 
             result = await execute_heartbeat_tasks(user, "Check something")
             assert result == ""
+
+    @pytest.mark.asyncio
+    async def test_excludes_messaging_tools(self, user: UserData) -> None:
+        """Phase 2 should exclude the messaging factory so the agent cannot call send_reply."""
+        from backend.app.agent.core import AgentResponse
+
+        mock_response = AgentResponse(reply_text="Report")
+
+        with (
+            patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
+            patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
+            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.router.init_storage", return_value=None),
+            patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        ):
+            mock_agent_instance = MagicMock()
+            mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
+            MockAgent.return_value = mock_agent_instance
+            mock_registry.factory_names = ["core", "quickbooks", "messaging"]
+            mock_registry.create_tools.return_value = []
+            mock_bus.publish_outbound = AsyncMock()
+
+            await execute_heartbeat_tasks(user, "Check QB", channel="telegram", chat_id="123")
+
+            # Verify create_tools was called with selected_factories excluding "messaging"
+            call_kwargs = mock_registry.create_tools.call_args
+            selected = call_kwargs.kwargs.get("selected_factories") or call_kwargs[1].get(
+                "selected_factories"
+            )
+            assert "messaging" not in selected
+            assert "core" in selected
+            assert "quickbooks" in selected
 
 
 # ---------------------------------------------------------------------------

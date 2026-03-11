@@ -300,6 +300,7 @@ class ClawboltAgent:
         messages: list[AgentMessage],
         tool_schemas: list[Any] | None,
         llm_kwargs: dict[str, Any],
+        max_tokens: int | None = None,
     ) -> MessageResponse:
         """Call amessages with typed exception handling and retry logic.
 
@@ -312,6 +313,7 @@ class ClawboltAgent:
         appropriate logging so the caller can produce a user-facing message.
         """
         await self._send_typing_indicator()
+        effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
         system, msg_dicts = messages_to_messages_api(messages)
         tool_count = len(tool_schemas) if tool_schemas else 0
         logger.debug(
@@ -320,7 +322,7 @@ class ClawboltAgent:
             settings.llm_provider,
             len(msg_dicts),
             tool_count,
-            settings.llm_max_tokens_agent,
+            effective_max_tokens,
         )
         for attempt in range(LLM_MAX_RETRIES):
             try:
@@ -333,7 +335,7 @@ class ClawboltAgent:
                         system=system,
                         messages=msg_dicts,
                         tools=tool_schemas,
-                        max_tokens=settings.llm_max_tokens_agent,
+                        max_tokens=effective_max_tokens,
                         **llm_kwargs,
                     ),
                 )
@@ -368,7 +370,7 @@ class ClawboltAgent:
                         system=system,
                         messages=trimmed_dicts,
                         tools=tool_schemas,
-                        max_tokens=settings.llm_max_tokens_agent,
+                        max_tokens=effective_max_tokens,
                         **llm_kwargs,
                     ),
                 )
@@ -579,6 +581,7 @@ class ClawboltAgent:
         conversation_history: list[AgentMessage] | None = None,
         system_prompt_override: str | None = None,
         temperature: float | None = None,
+        max_tokens: int | None = None,
     ) -> AgentResponse:
         """Process a message through the agent loop."""
         agent_start_time = time.monotonic()
@@ -641,7 +644,9 @@ class ClawboltAgent:
             # specialist tools are visible to the LLM.
             tool_schemas = [tool_to_function_schema(t) for t in self.tools] if self.tools else None
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
-            response = await self._call_llm_with_retry(messages, tool_schemas, llm_kwargs)
+            response = await self._call_llm_with_retry(
+                messages, tool_schemas, llm_kwargs, max_tokens=max_tokens
+            )
             purpose = "agent_main" if _round == 0 else "agent_followup"
             log_llm_usage(self.user.id, settings.llm_model, response, purpose)
             if response.usage and response.usage.input_tokens:

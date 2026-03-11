@@ -300,7 +300,6 @@ async def evaluate_heartbeat_need(
         len(checklist_md),
         len(prompt),
     )
-    logger.debug("Heartbeat Phase 1 system prompt for user %d:\n%s", user.id, prompt)
 
     # Send typing indicator before LLM call via the bus
     if channel and chat_id:
@@ -320,13 +319,6 @@ async def evaluate_heartbeat_need(
 
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
-
-    logger.debug(
-        "Heartbeat Phase 1 LLM call for user %d: model=%s, provider=%s",
-        user.id,
-        model,
-        provider,
-    )
 
     response = cast(
         MessageResponse,
@@ -350,27 +342,11 @@ async def evaluate_heartbeat_need(
 
     log_llm_usage(user.id, model, response, "heartbeat_decision")
     logger.debug(
-        "Heartbeat Phase 1 raw response for user %d: stop_reason=%s, content_blocks=%d",
+        "Heartbeat Phase 1 response for user %d: stop_reason=%s, blocks=%d",
         user.id,
         getattr(response, "stop_reason", "unknown"),
         len(response.content),
     )
-    for i, block in enumerate(response.content):
-        if block.type == "text":
-            logger.debug(
-                "Heartbeat Phase 1 response block %d for user %d [text]: %s",
-                i,
-                user.id,
-                block.text,
-            )
-        elif block.type == "tool_use":
-            logger.debug(
-                "Heartbeat Phase 1 response block %d for user %d [tool_use]: name=%s, input=%s",
-                i,
-                user.id,
-                block.name,
-                block.input,
-            )
     return _parse_decision_response(response)
 
 
@@ -431,9 +407,12 @@ async def execute_heartbeat_tasks(
         registry=default_registry,
     )
 
-    # Register ALL tools (core + all specialists) so the agent can query
-    # QuickBooks, manage files, etc. without needing list_capabilities.
-    tools = default_registry.create_tools(tool_context)
+    # Register ALL tools except messaging (send_reply, send_media_reply).
+    # The heartbeat system delivers the agent's final reply text, so the
+    # agent should not try to message the user directly.
+    all_factories = set(default_registry.factory_names)
+    all_factories.discard("messaging")
+    tools = default_registry.create_tools(tool_context, selected_factories=all_factories)
     agent.register_tools(tools)
 
     logger.debug(
@@ -442,9 +421,14 @@ async def execute_heartbeat_tasks(
         len(tools),
     )
 
+    # Use at least 1024 tokens for heartbeat execution so the agent can
+    # compose detailed reports (the default agent max_tokens may be lower).
+    heartbeat_max_tokens = max(settings.llm_max_tokens_agent, 1024)
+
     try:
         response: AgentResponse = await agent.process_message(
             message_context=tasks,
+            max_tokens=heartbeat_max_tokens,
         )
     except Exception:
         logger.exception("Heartbeat Phase 2 agent failed for user %d", user.id)
