@@ -139,51 +139,6 @@
   to { opacity: 1; }
 }
 
-/* Custom utilities */
-@utility heading-page {
-  font-size: 1.25rem;
-  line-height: 1.75rem;
-  font-weight: 600;
-}
-
-@utility page-subtitle {
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  color: var(--color-muted-foreground);
-  margin-top: 0.25rem;
-}
-
-@utility heading-card {
-  font-size: 0.875rem;
-  line-height: 1.25rem;
-  font-weight: 500;
-  color: var(--color-foreground);
-}
-
-@utility section-label {
-  font-size: 0.75rem;
-  line-height: 1rem;
-  font-weight: 500;
-  color: var(--color-muted-foreground);
-  display: block;
-  margin-bottom: 0.25rem;
-}
-
-@utility helper-text {
-  font-size: 0.75rem;
-  line-height: 1rem;
-  color: var(--color-muted-foreground);
-  margin-top: 0.25rem;
-}
-
-@utility status-dot {
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 9999px;
-  display: inline-block;
-  flex-shrink: 0;
-}
-
 @layer base {
   html {
     overflow-x: hidden;

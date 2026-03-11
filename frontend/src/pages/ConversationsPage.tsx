@@ -1,10 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 
 import { useParams, useNavigate } from 'react-router-dom';
-import Card from '@/components/ui/card';
 import Badge from '@/components/ui/badge';
 import Button from '@/components/ui/button';
-import Spinner from '@/components/ui/spinner';
+import { Spinner } from '@heroui/spinner';
 import api from '@/api';
 import { useSession } from '@/hooks/queries';
 import type { SessionSummary, SessionMessage } from '@/types';
@@ -99,48 +98,47 @@ function SessionListView() {
       </div>
 
       {loading ? (
-        <div className="flex justify-center py-12"><Spinner /></div>
+        <div className="flex justify-center py-12"><Spinner color="primary" size="md" aria-label="Loading" /></div>
       ) : error ? (
-        <Card className="text-center py-8">
+        <div className="text-center py-8">
           <p className="text-sm text-danger">{error}</p>
           <Button variant="secondary" size="sm" className="mt-2" onClick={() => loadInitial()}>
             Retry
           </Button>
-        </Card>
+        </div>
       ) : sessions.length === 0 ? (
-        <Card className="text-center py-8">
+        <div className="text-center py-8">
           <p className="text-sm text-muted-foreground">
             No conversations yet. Start chatting via the Chat page or Telegram!
           </p>
-        </Card>
+        </div>
       ) : (
         <>
           <p className="text-sm text-muted-foreground mb-3">
             {total} conversation{total !== 1 ? 's' : ''}
           </p>
 
-          <div className="space-y-2">
+          <div className="divide-y divide-border">
             {sessions.map((s) => (
-              <Card
+              <button
                 key={s.id}
-                className="group cursor-pointer hover:border-primary/50 transition-colors duration-150"
+                type="button"
+                className="group w-full text-left flex items-center justify-between py-3 px-1 hover:bg-secondary-hover transition-colors duration-150"
                 onClick={() => navigate(`/app/conversations/${s.id}`)}
               >
-                <div className="flex items-center justify-between">
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium truncate">
-                      {s.last_message_preview || 'No messages'}
-                    </p>
-                    <p className="text-xs text-muted-foreground mt-0.5">
-                      {new Date(s.start_time).toLocaleString()}
-                    </p>
-                  </div>
-                  <div className="ml-3 flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
-                    {s.channel && <Badge variant="outline">{channelLabel(s.channel)}</Badge>}
-                    <Badge>{s.message_count} msgs</Badge>
-                  </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium truncate">
+                    {s.last_message_preview || 'No messages'}
+                  </p>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {new Date(s.start_time).toLocaleString()}
+                  </p>
                 </div>
-              </Card>
+                <div className="ml-3 flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity duration-150">
+                  {s.channel && <Badge variant="outline">{channelLabel(s.channel)}</Badge>}
+                  <Badge>{s.message_count} msgs</Badge>
+                </div>
+              </button>
             ))}
           </div>
 
@@ -150,7 +148,7 @@ function SessionListView() {
             className="flex justify-center py-4"
             data-testid="scroll-sentinel"
           >
-            {loadingMore && <Spinner />}
+            {loadingMore && <Spinner color="primary" size="md" aria-label="Loading" />}
             {!hasMore && sessions.length > PAGE_SIZE && (
               <p className="text-xs text-muted-foreground">All conversations loaded</p>
             )}
@@ -180,11 +178,11 @@ function SessionDetailView({ sessionId }: { sessionId: string }) {
       </button>
 
       {isPending && !session ? (
-        <div className="flex justify-center py-12"><Spinner /></div>
+        <div className="flex justify-center py-12"><Spinner color="primary" size="md" aria-label="Loading" /></div>
       ) : isError && !session ? (
-        <Card className="text-center py-8">
+        <div className="text-center py-8">
           <p className="text-sm text-danger">{error.message}</p>
-        </Card>
+        </div>
       ) : session ? (
         <>
           <div className="mb-4 flex items-center gap-3">

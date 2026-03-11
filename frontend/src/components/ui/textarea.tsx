@@ -1,10 +1,12 @@
 import { forwardRef, type TextareaHTMLAttributes } from 'react';
 import { Textarea as HeroTextarea } from '@heroui/input';
 
-type TextareaProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'size' | 'color'>;
+type TextareaProps = Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'size' | 'color'> & {
+  maxRows?: number;
+};
 
 const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
-  ({ className, disabled, onChange, value, placeholder, rows, id, ...rest }, ref) => {
+  ({ className, disabled, onChange, value, placeholder, rows, maxRows, id, ...rest }, ref) => {
     void rest;
     return (
       <HeroTextarea
@@ -16,6 +18,7 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
         value={value as string | undefined}
         placeholder={placeholder}
         minRows={rows ?? 3}
+        maxRows={maxRows}
         id={id}
         onValueChange={(val) => {
           if (onChange) {

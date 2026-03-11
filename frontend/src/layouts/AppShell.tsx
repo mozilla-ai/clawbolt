@@ -5,7 +5,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import api from '@/api';
 import Button from '@/components/ui/button';
 import OfflineIndicator from '@/components/ui/OfflineIndicator';
-import Spinner from '@/components/ui/spinner';
+import { Spinner } from '@heroui/spinner';
 import SearchOverlay from '@/components/SearchOverlay';
 import { useAuth } from '@/contexts/AuthContext';
 import { Tooltip } from '@heroui/tooltip';
@@ -90,7 +90,7 @@ export default function AppShell() {
   if (authState === 'loading' || (profilePending && !profile)) {
     return (
       <div className="flex items-center justify-center min-h-dvh">
-        <Spinner />
+        <Spinner color="primary" size="md" aria-label="Loading" />
       </div>
     );
   }

@@ -3,7 +3,7 @@ import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Checkbox from '@/components/ui/checkbox';
 import { Switch } from '@heroui/switch';
-import Divider from '@/components/ui/divider';
+import { Divider } from '@heroui/divider';
 import { toast } from '@/lib/toast';
 import { useToolConfig, useUpdateToolConfig } from '@/hooks/queries';
 import type { ToolConfigEntry } from '@/types';
@@ -26,7 +26,7 @@ export default function ToolsPage() {
   if (isPending && !data) {
     return (
       <div>
-        <h2 className="heading-page mb-6">Tools</h2>
+        <h2 className="text-xl font-semibold mb-6">Tools</h2>
         <Card>
           <p className="text-sm text-muted-foreground">Loading tool configuration...</p>
         </Card>
@@ -54,79 +54,75 @@ export default function ToolsPage() {
 
   return (
     <div>
-      <h2 className="heading-page mb-6">Tools</h2>
-      <Card>
-        <div className="grid gap-6">
-          <div>
-            <p className="text-sm text-muted-foreground mb-4">
-              Configure which tool groups are available to your AI assistant.
-            </p>
-          </div>
+      <h2 className="text-xl font-semibold mb-6">Tools</h2>
+      <p className="text-sm text-muted-foreground mb-4">
+        Configure which tool groups are available to your AI assistant.
+      </p>
 
-          {groupNames.map((group) => (
-            <div key={group}>
-              <h3 className="text-sm font-medium mb-3">{group}</h3>
-              <div className="grid gap-2">
-                {(domainGroups[group] ?? []).map((tool) => (
-                  <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded-md border border-border hover:bg-secondary-hover transition-all duration-150">
+      <div className="grid gap-6">
+        {groupNames.map((group) => (
+          <div key={group}>
+            <h3 className="text-sm font-medium mb-3">{group}</h3>
+            <div className="divide-y divide-border">
+              {(domainGroups[group] ?? []).map((tool) => (
+                <div key={tool.name} className="flex items-center justify-between py-2.5 px-1">
+                  <div>
+                    <span className="text-sm font-medium">{tool.name}</span>
+                    {tool.description && (
+                      <p className="text-xs text-muted-foreground">{tool.description}</p>
+                    )}
+                  </div>
+                  <Switch
+                    isSelected={tool.enabled}
+                    isDisabled={updateMutation.isPending}
+                    onValueChange={(val) => handleToggle(tool.name, val)}
+                    size="sm"
+                    aria-label={`Toggle ${tool.name}`}
+                  />
+                </div>
+              ))}
+            </div>
+          </div>
+        ))}
+
+        {coreTools.length > 0 && (
+          <div className="pt-4">
+            <Divider className="mb-4" />
+            <Button
+              variant="ghost"
+              className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground font-medium"
+              onClick={() => setCoreExpanded(!coreExpanded)}
+              aria-expanded={coreExpanded}
+            >
+              <svg
+                className={`w-4 h-4 transition-transform ${coreExpanded ? 'rotate-90' : ''}`}
+                fill="none"
+                viewBox="0 0 24 24"
+                stroke="currentColor"
+                strokeWidth={2}
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+              </svg>
+              Core Tools (always enabled)
+            </Button>
+            {coreExpanded && (
+              <div className="divide-y divide-border mt-3">
+                {coreTools.map((tool) => (
+                  <div key={tool.name} className="flex items-center justify-between py-2.5 px-1">
                     <div>
                       <span className="text-sm font-medium">{tool.name}</span>
                       {tool.description && (
                         <p className="text-xs text-muted-foreground">{tool.description}</p>
                       )}
                     </div>
-                    <Switch
-                      isSelected={tool.enabled}
-                      isDisabled={updateMutation.isPending}
-                      onValueChange={(val) => handleToggle(tool.name, val)}
-                      size="sm"
-                      aria-label={`Toggle ${tool.name}`}
-                    />
+                    <Checkbox checked disabled />
                   </div>
                 ))}
               </div>
-            </div>
-          ))}
-
-          {coreTools.length > 0 && (
-            <div className="pt-4">
-              <Divider className="mb-4" />
-              <Button
-                variant="ghost"
-                className="w-full justify-start gap-2 text-muted-foreground hover:text-foreground font-medium"
-                onClick={() => setCoreExpanded(!coreExpanded)}
-                aria-expanded={coreExpanded}
-              >
-                <svg
-                  className={`w-4 h-4 transition-transform ${coreExpanded ? 'rotate-90' : ''}`}
-                  fill="none"
-                  viewBox="0 0 24 24"
-                  stroke="currentColor"
-                  strokeWidth={2}
-                >
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
-                </svg>
-                Core Tools (always enabled)
-              </Button>
-              {coreExpanded && (
-                <div className="grid gap-2 mt-3">
-                  {coreTools.map((tool) => (
-                    <div key={tool.name} className="flex items-center justify-between py-2 px-3 rounded-md bg-panel/50">
-                      <div>
-                        <span className="text-sm font-medium">{tool.name}</span>
-                        {tool.description && (
-                          <p className="text-xs text-muted-foreground">{tool.description}</p>
-                        )}
-                      </div>
-                      <Checkbox checked disabled />
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-      </Card>
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

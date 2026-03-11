@@ -3,7 +3,7 @@ import { useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
-import Divider from '@/components/ui/divider';
+import { Divider } from '@heroui/divider';
 import Field from '@/components/ui/field';
 import { toast } from '@/lib/toast';
 import { useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
@@ -16,7 +16,7 @@ export default function ChannelsPage() {
 
   return (
     <div>
-      <h2 className="heading-page mb-6">Channels</h2>
+      <h2 className="text-xl font-semibold mb-6">Channels</h2>
       <ChannelsContent profile={profile} />
     </div>
   );
@@ -67,12 +67,12 @@ function ChannelsContent({
               <div className="mb-2">
                 {config.telegram_bot_token_set ? (
                   <span className="inline-flex items-center gap-1.5 text-sm">
-                    <span className="status-dot bg-success" />
+                    <span className="size-2 rounded-full inline-block shrink-0 bg-success" />
                     Configured
                   </span>
                 ) : (
                   <span className="inline-flex items-center gap-1.5 text-sm">
-                    <span className="status-dot bg-danger" />
+                    <span className="size-2 rounded-full inline-block shrink-0 bg-danger" />
                     Not configured
                   </span>
                 )}
@@ -92,7 +92,7 @@ function ChannelsContent({
             onChange={(e) => setAllowedUsernames(e.target.value)}
             placeholder='Comma-separated @usernames, or * for all'
           />
-          <p className="helper-text">
+          <p className="text-xs text-muted-foreground mt-1">
             Controls which Telegram users can message your bot.
           </p>
         </Field>
@@ -106,7 +106,7 @@ function ChannelsContent({
           {connected ? (
             <div className="flex items-center gap-2">
               <span className="inline-flex items-center gap-1.5 text-sm">
-                <span className="status-dot bg-success" />
+                <span className="size-2 rounded-full inline-block shrink-0 bg-success" />
                 Connected
               </span>
               <span className="text-xs text-muted-foreground">
