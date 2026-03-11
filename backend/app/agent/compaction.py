@@ -4,8 +4,12 @@ When conversation history reaches the configured limit, messages about to be
 trimmed are passed through a lightweight LLM call that extracts key facts.
 Those facts are persisted via the existing memory subsystem so they survive
 after the messages leave the context window.
+
+A timestamped summary is also appended to HISTORY.md so the conversation
+remains searchable after the raw messages are gone.
 """
 
+import datetime
 import json
 import logging
 from typing import Any, cast
@@ -13,6 +17,7 @@ from typing import Any, cast
 from any_llm import amessages
 from any_llm.types.messages import MessageResponse
 
+from backend.app.agent.file_store import get_memory_store
 from backend.app.agent.llm_parsing import get_response_text
 from backend.app.agent.memory import save_memory
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
@@ -35,16 +40,17 @@ def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
     return "\n".join(lines)
 
 
-def _parse_compaction_response(raw: str) -> list[dict[str, str]]:
-    """Parse the LLM compaction response into a list of fact dicts.
+def _parse_compaction_response(raw: str) -> tuple[list[dict[str, str]], str]:
+    """Parse the LLM compaction response into facts and a summary.
 
-    Handles common LLM formatting issues like markdown code fences.
-    Returns an empty list if parsing fails.
+    Accepts both the new object format (``{"facts": [...], "summary": "..."}``)
+    and the legacy array format (``[...]``) for backwards compatibility.
+
+    Returns a tuple of (facts_list, summary_string).
     """
     text = raw.strip()
     # Strip markdown code fences if present
     if text.startswith("```"):
-        # Remove opening fence (with optional language tag)
         first_newline = text.index("\n") if "\n" in text else len(text)
         text = text[first_newline + 1 :]
         if text.endswith("```"):
@@ -55,11 +61,17 @@ def _parse_compaction_response(raw: str) -> list[dict[str, str]]:
         parsed = json.loads(text)
     except json.JSONDecodeError:
         logger.warning("Failed to parse compaction response as JSON: %s", text[:200])
-        return []
+        return [], ""
+
+    # New format: {"facts": [...], "summary": "..."}
+    summary = ""
+    if isinstance(parsed, dict):
+        summary = str(parsed.get("summary", "")).strip()
+        parsed = parsed.get("facts", [])
 
     if not isinstance(parsed, list):
-        logger.warning("Compaction response is not a JSON array")
-        return []
+        logger.warning("Compaction response facts is not a JSON array")
+        return [], summary
 
     valid_categories = {"pricing", "client", "job", "supplier", "scheduling", "general"}
     facts: list[dict[str, str]] = []
@@ -74,7 +86,7 @@ def _parse_compaction_response(raw: str) -> list[dict[str, str]]:
         if category not in valid_categories:
             category = "general"
         facts.append({"key": str(key), "value": str(value), "category": str(category)})
-    return facts
+    return facts, summary
 
 
 async def compact_session(
@@ -85,7 +97,8 @@ async def compact_session(
     """Extract durable facts from messages about to leave the context window.
 
     Uses a lightweight LLM call to identify facts worth persisting, then saves
-    them via the existing memory subsystem.
+    them via the existing memory subsystem.  A timestamped summary is also
+    appended to HISTORY.md.
 
     Args:
         user_id: The user whose session is being compacted.
@@ -132,7 +145,7 @@ async def compact_session(
         return [], None
 
     raw_content = get_response_text(response)
-    facts = _parse_compaction_response(raw_content)
+    facts, summary = _parse_compaction_response(raw_content)
 
     saved_facts: list[dict[str, str]] = []
     for fact in facts:
@@ -157,5 +170,16 @@ async def compact_session(
                 fact["key"],
                 user_id,
             )
+
+    # Append summary to HISTORY.md if the LLM produced one
+    if summary:
+        timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M")
+        entry = summary.replace("[TIMESTAMP]", f"[{timestamp}]")
+        try:
+            memory_store = get_memory_store(user_id)
+            await memory_store.append_history(entry)
+            logger.info("Compaction appended history entry for user %d", user_id)
+        except Exception:
+            logger.exception("Failed to append history for user %d", user_id)
 
     return saved_facts, max_message_seq
