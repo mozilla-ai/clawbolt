@@ -4,10 +4,11 @@ import { ToastProvider } from '@heroui/toast';
 import api from '@/api';
 import Button from '@/components/ui/button';
 import Spinner from '@/components/ui/spinner';
+import SearchOverlay from '@/components/SearchOverlay';
 import { useAuth } from '@/contexts/AuthContext';
 import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
-import type { UserProfile } from '@/types';
+import type { UserProfile, SessionSummary, MemoryFact } from '@/types';
 
 /** Context value provided to child routes via useOutletContext(). */
 export interface AppShellContext {
@@ -33,10 +34,37 @@ export default function AppShell() {
   const [profileError, setProfileError] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
+  const [searchOpen, setSearchOpen] = useState(false);
+  const [searchSessions, setSearchSessions] = useState<SessionSummary[]>([]);
+  const [searchFacts, setSearchFacts] = useState<MemoryFact[]>([]);
+
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useSwipeSidebar({ isOpen: sidebarOpen, onOpen: openSidebar, onClose: closeSidebar });
+
+  // Global Cmd+K / Ctrl+K listener
+  useEffect(() => {
+    function handleKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setSearchOpen(true);
+      }
+    }
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Fetch data when search overlay opens
+  useEffect(() => {
+    if (!searchOpen) return;
+    api.listSessions(0, 50)
+      .then((res) => setSearchSessions(res.sessions))
+      .catch((err: unknown) => console.error('[AppShell] Failed to load sessions for search:', err));
+    api.listMemoryFacts()
+      .then(setSearchFacts)
+      .catch((err: unknown) => console.error('[AppShell] Failed to load memory for search:', err));
+  }, [searchOpen]);
 
   const loadProfile = useCallback(() => {
     setProfileError(false);
@@ -183,6 +211,13 @@ export default function AppShell() {
       </div>
 
       <ToastProvider placement="bottom-right" />
+
+      <SearchOverlay
+        isOpen={searchOpen}
+        onClose={() => setSearchOpen(false)}
+        sessions={searchSessions}
+        memoryFacts={searchFacts}
+      />
     </div>
   );
 }
