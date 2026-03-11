@@ -80,7 +80,7 @@ function SessionListView() {
             {sessions.map((s) => (
               <Card
                 key={s.id}
-                className="cursor-pointer hover:border-primary/50 transition-colors"
+                className="group cursor-pointer hover:border-primary/50 transition-colors duration-150"
                 onClick={() => navigate(`/app/conversations/${s.id}`)}
               >
                 <div className="flex items-center justify-between">
@@ -92,7 +92,7 @@ function SessionListView() {
                       {new Date(s.start_time).toLocaleString()}
                     </p>
                   </div>
-                  <div className="ml-3 flex items-center gap-2 shrink-0">
+                  <div className="ml-3 flex items-center gap-2 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity duration-150">
                     {s.channel && <Badge variant="outline">{channelLabel(s.channel)}</Badge>}
                     <Badge>{s.message_count} msgs</Badge>
                   </div>
@@ -151,7 +151,7 @@ function SessionDetailView({ sessionId }: { sessionId: string }) {
     <div>
       <button
         onClick={() => navigate('/app/conversations')}
-        className="text-sm text-primary hover:underline mb-4 inline-flex items-center gap-1"
+        className="text-sm text-primary hover:underline mb-4 inline-flex items-center gap-1 transition-colors duration-150"
       >
         <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
