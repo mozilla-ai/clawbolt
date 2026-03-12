@@ -8,7 +8,7 @@ import api from '@/api';
 import { toast } from '@/lib/toast';
 import { useSessions, useSession } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
-import type { SessionSummary } from '@/types';
+import type { SessionSummary, ToolInteraction } from '@/types';
 
 interface FileAttachment {
   name: string;
@@ -22,6 +22,7 @@ interface ChatMessage {
   body: string;
   timestamp: Date;
   attachments?: FileAttachment[];
+  toolInteractions?: ToolInteraction[];
 }
 
 const ACCEPTED_FILE_TYPES = 'image/*,audio/*,application/pdf';
@@ -152,6 +153,7 @@ export default function ChatPage() {
       role: m.direction === 'inbound' ? 'user' : 'assistant',
       body: m.body,
       timestamp: new Date(m.timestamp),
+      toolInteractions: m.tool_interactions.length > 0 ? m.tool_interactions : undefined,
     }));
     setMessages(loaded);
   }, [sessionDetail]);
@@ -221,6 +223,7 @@ export default function ChatPage() {
     setSending(true);
 
     try {
+      const toolNames: string[] = [];
       const res = await api.sendChatMessage(
         text,
         activeSessionId ?? undefined,
@@ -229,6 +232,9 @@ export default function ChatPage() {
           if (!mountedRef.current) return;
           if (event.type === 'tool_call') {
             setCurrentTool(event.tool_name ?? null);
+            if (event.tool_name) {
+              toolNames.push(event.tool_name);
+            }
           }
         },
         forceNewRef.current,
@@ -239,6 +245,9 @@ export default function ChatPage() {
         role: 'assistant',
         body: res.reply,
         timestamp: new Date(),
+        toolInteractions: toolNames.length > 0
+          ? toolNames.map((name) => ({ name }))
+          : undefined,
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
@@ -410,6 +419,30 @@ export default function ChatPage() {
                       <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
                     </div>
                   )}
+
+                  {msg.toolInteractions && msg.toolInteractions.length > 0 && (
+                    <div className="mt-2 space-y-1">
+                      {msg.toolInteractions.map((tool, i) => (
+                        <div
+                          key={i}
+                          className={`text-xs px-2 py-1 rounded ${
+                            msg.role === 'user'
+                              ? 'bg-white/10'
+                              : 'bg-panel'
+                          }`}
+                        >
+                          <span className="font-medium">Tool: </span>
+                          {String(tool['name'] ?? tool['tool'] ?? 'unknown')}
+                          {'result' in tool && (
+                            <span className="opacity-70">
+                              {' '}- {String(tool['result']).slice(0, 100)}
+                            </span>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
                   <p
                     className={`text-[10px] mt-1 ${
                       msg.role === 'user' ? 'text-white/60' : 'text-muted-foreground'
