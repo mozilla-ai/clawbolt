@@ -24,6 +24,7 @@ from backend.app.agent.file_store import (
     ToolConfigStore,
     UserData,
     get_session_store,
+    get_user_store,
 )
 from backend.app.agent.messages import AgentMessage
 from backend.app.agent.onboarding import (
@@ -476,7 +477,10 @@ async def handle_inbound_message(
         user.id,
         len(media_urls),
     )
-    to_address = user.channel_identifier or user.phone
+    store = get_user_store()
+    to_address = (
+        store.get_channel_identifier(user.id, channel) or user.channel_identifier or user.phone
+    )
     if not to_address:
         logger.error(
             "User %d has no channel_identifier or phone -- cannot send replies",
