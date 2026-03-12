@@ -5,8 +5,8 @@ import type {
   ChannelConfigUpdate,
   ChatAccepted,
   ChatResponse,
-  ChecklistItem,
-  ChecklistItemUpdate,
+  HeartbeatItem,
+  HeartbeatItemUpdate,
   UserProfile,
   UserProfileUpdate,
   MemoryData,
@@ -97,22 +97,22 @@ const api = {
       body: JSON.stringify(body),
     }),
 
-  // Checklist
-  listChecklist: () => _fetch<ChecklistItem[]>('/api/user/checklist'),
-  createChecklistItem: (body: { description: string; schedule?: string }) =>
-    _fetch<ChecklistItem>('/api/user/checklist', {
+  // Heartbeat items
+  listHeartbeatItems: () => _fetch<HeartbeatItem[]>('/api/user/heartbeat'),
+  createHeartbeatItem: (body: { description: string; schedule?: string }) =>
+    _fetch<HeartbeatItem>('/api/user/heartbeat', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  updateChecklistItem: (id: number, body: ChecklistItemUpdate) =>
-    _fetch<ChecklistItem>(`/api/user/checklist/${id}`, {
+  updateHeartbeatItem: (id: number, body: HeartbeatItemUpdate) =>
+    _fetch<HeartbeatItem>(`/api/user/heartbeat/${id}`, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-  deleteChecklistItem: (id: number) =>
-    _fetchVoid(`/api/user/checklist/${id}`, { method: 'DELETE' }),
+  deleteHeartbeatItem: (id: number) =>
+    _fetchVoid(`/api/user/heartbeat/${id}`, { method: 'DELETE' }),
 
   // Channel config
   getChannelConfig: () => _fetch<ChannelConfig>('/api/user/channels/config'),

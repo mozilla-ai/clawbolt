@@ -14,7 +14,9 @@ const ChatPage = lazy(() => import('@/pages/ChatPage'));
 const ConversationsPage = lazy(() => import('@/pages/ConversationsPage'));
 const MemoryPage = lazy(() => import('@/pages/MemoryPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
-const ChecklistPage = lazy(() => import('@/pages/ChecklistPage'));
+const HeartbeatPage = lazy(() => import('@/pages/HeartbeatPage'));
+const SoulPage = lazy(() => import('@/pages/SoulPage'));
+const UserPage = lazy(() => import('@/pages/UserPage'));
 const ChannelsPage = lazy(() => import('@/pages/ChannelsPage'));
 const ToolsPage = lazy(() => import('@/pages/ToolsPage'));
 const OAuthCallbackPage = lazy(() => import('@/pages/OAuthCallbackPage'));
@@ -53,7 +55,9 @@ export default function App() {
           <Route path="conversations" element={<ConversationsPage />} />
           <Route path="conversations/:sessionId" element={<ConversationsPage />} />
           <Route path="memory" element={<MemoryPage />} />
-          <Route path="checklist" element={<ChecklistPage />} />
+          <Route path="heartbeat" element={<HeartbeatPage />} />
+          <Route path="soul" element={<SoulPage />} />
+          <Route path="user" element={<UserPage />} />
           <Route path="channels" element={<ChannelsPage />} />
           <Route path="tools" element={<ToolsPage />} />
           <Route path="oauth/callback" element={<OAuthCallbackPage />} />

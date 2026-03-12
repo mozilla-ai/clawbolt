@@ -16,7 +16,7 @@ def test_stats_empty(client: TestClient) -> None:
     assert data["total_sessions"] == 0
     assert data["messages_this_month"] == 0
     # Default HEARTBEAT.md is seeded with items on user creation
-    assert data["active_checklist_items"] >= 0
+    assert data["active_heartbeat_items"] >= 0
     assert data["total_memory_facts"] == 0
     assert data["last_conversation_at"] is None
 
@@ -38,8 +38,8 @@ def test_stats_with_data(client: TestClient, test_user: UserData) -> None:
     msg = {"direction": "inbound", "body": "Hello", "timestamp": "2025-01-15T10:01:00", "seq": 1}
     path.write_text(json.dumps(meta) + "\n" + json.dumps(msg) + "\n", encoding="utf-8")
 
-    # Create a checklist item
-    client.post("/api/user/checklist", json={"description": "Check site"})
+    # Create a heartbeat item
+    client.post("/api/user/heartbeat", json={"description": "Check site"})
 
     # Create memory
     mem_dir = Path(settings.data_dir) / str(test_user.id) / "memory"
@@ -54,6 +54,6 @@ def test_stats_with_data(client: TestClient, test_user: UserData) -> None:
     data = resp.json()
     assert data["total_sessions"] == 1
     # 3 default items + 1 added = 4
-    assert data["active_checklist_items"] >= 1
+    assert data["active_heartbeat_items"] >= 1
     assert data["total_memory_facts"] == 1
     assert data["last_conversation_at"] is not None

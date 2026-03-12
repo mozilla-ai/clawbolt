@@ -14,10 +14,10 @@ class ToolName:
     # Estimates
     GENERATE_ESTIMATE = "generate_estimate"
 
-    # Checklist
-    ADD_CHECKLIST_ITEM = "add_checklist_item"
-    LIST_CHECKLIST_ITEMS = "list_checklist_items"
-    REMOVE_CHECKLIST_ITEM = "remove_checklist_item"
+    # Heartbeat
+    ADD_HEARTBEAT_ITEM = "add_heartbeat_item"
+    LIST_HEARTBEAT_ITEMS = "list_heartbeat_items"
+    REMOVE_HEARTBEAT_ITEM = "remove_heartbeat_item"
 
     # File management
     UPLOAD_TO_STORAGE = "upload_to_storage"

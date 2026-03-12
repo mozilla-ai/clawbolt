@@ -459,12 +459,12 @@ class TestParseDecisionResponse:
         resp = _make_decision_tool_call(
             action="run",
             tasks="Check QuickBooks for unpaid invoices and report to user",
-            reasoning="Checklist item needs QB check",
+            reasoning="Heartbeat item needs QB check",
         )
         decision = _parse_decision_response(resp)
         assert decision.action == "run"
         assert "QuickBooks" in decision.tasks
-        assert decision.reasoning == "Checklist item needs QB check"
+        assert decision.reasoning == "Heartbeat item needs QB check"
 
     def test_text_response_falls_back_to_skip(self) -> None:
         resp = make_text_response("I think there is something to do.")
@@ -529,7 +529,7 @@ class TestEvaluateHeartbeatNeed:
         mock_get_session_store.return_value = mock_session_store
 
         mock_hb_store = MagicMock()
-        mock_hb_store.read_checklist_md.return_value = ""
+        mock_hb_store.read_heartbeat_md.return_value = ""
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
         mock_build_prompt.return_value = "system prompt"
@@ -592,7 +592,7 @@ class TestEvaluateHeartbeatNeed:
         mock_llm.return_value = _make_decision_tool_call(
             action="run",
             tasks="Check QuickBooks for unpaid invoices",
-            reasoning="Checklist item due",
+            reasoning="Heartbeat item due",
         )
         decision = await evaluate_heartbeat_need(user)
         assert decision.action == "run"
@@ -796,7 +796,7 @@ class TestRunHeartbeatForUser:
         mock_eval.return_value = HeartbeatDecision(
             action="run",
             tasks="Check QuickBooks for unpaid invoices",
-            reasoning="Checklist item due",
+            reasoning="Heartbeat item due",
         )
         mock_execute.return_value = "You have 2 unpaid invoices totaling $1,500."
         mock_bus.publish_outbound = AsyncMock()

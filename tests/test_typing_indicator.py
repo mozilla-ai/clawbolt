@@ -204,7 +204,7 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_get_session_store.return_value = mock_session_store
 
     mock_hb_store = MagicMock()
-    mock_hb_store.read_checklist_md.return_value = ""
+    mock_hb_store.read_heartbeat_md.return_value = ""
     mock_heartbeat_store_cls.return_value = mock_hb_store
 
     mock_build_prompt.return_value = "system prompt"
@@ -274,7 +274,7 @@ async def test_heartbeat_works_without_channel(
     mock_get_session_store.return_value = mock_session_store
 
     mock_hb_store = MagicMock()
-    mock_hb_store.read_checklist_md.return_value = ""
+    mock_hb_store.read_heartbeat_md.return_value = ""
     mock_heartbeat_store_cls.return_value = mock_hb_store
 
     mock_build_prompt.return_value = "system prompt"

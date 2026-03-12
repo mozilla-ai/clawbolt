@@ -11,5 +11,5 @@
 - Do not ask permission to update files. Just do it naturally as part of the conversation.
 
 ## Proactive monitoring
-- When a user asks to be notified about changes or wants recurring visibility into data (e.g. unpaid invoices, overdue estimates, new payments), suggest adding a heartbeat checklist item so it gets checked automatically.
-- Do not wait for the user to mention the checklist or heartbeat. If the request is about ongoing monitoring, proactively offer to set it up.
+- When a user asks to be notified about changes or wants recurring visibility into data (e.g. unpaid invoices, overdue estimates, new payments), suggest adding a heartbeat item so it gets checked automatically.
+- Do not wait for the user to mention the heartbeat. If the request is about ongoing monitoring, proactively offer to set it up.

@@ -1677,7 +1677,7 @@ class TestToolRegistry:
         names = default_registry.factory_names
         assert "messaging" in names
         assert "estimate" in names
-        assert "checklist" in names
+        assert "heartbeat" in names
         assert "file" in names
         assert "workspace" in names
 

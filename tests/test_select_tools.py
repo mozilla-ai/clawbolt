@@ -44,10 +44,10 @@ def _build_test_registry() -> ToolRegistry:
         summary="Generate professional estimates and quotes with PDF output",
     )
     registry.register(
-        "checklist",
-        lambda ctx: [_make_tool("add_checklist_item"), _make_tool("list_checklist_items")],
+        "heartbeat",
+        lambda ctx: [_make_tool("add_heartbeat_item"), _make_tool("list_heartbeat_items")],
         core=False,
-        summary="Manage recurring reminders and task checklists",
+        summary="Manage recurring reminders and task heartbeats",
     )
     registry.register(
         "file",
@@ -68,7 +68,7 @@ class TestCoreSpecialistClassification:
 
     def test_specialist_factory_names(self) -> None:
         registry = _build_test_registry()
-        assert registry.specialist_factory_names == {"estimate", "checklist", "file"}
+        assert registry.specialist_factory_names == {"estimate", "heartbeat", "file"}
 
     def test_core_defaults_to_true(self) -> None:
         registry = ToolRegistry()
@@ -93,7 +93,7 @@ class TestCreateCoreTools:
         tools = registry.create_core_tools(ctx)
         names = {t.name for t in tools}
         assert "generate_estimate" not in names
-        assert "add_checklist_item" not in names
+        assert "add_heartbeat_item" not in names
         assert "upload_to_storage" not in names
 
 
@@ -110,7 +110,7 @@ class TestAvailableSpecialistSummaries:
         )
         summaries = registry.get_available_specialist_summaries(ctx)
         assert "estimate" in summaries
-        assert "checklist" in summaries
+        assert "heartbeat" in summaries
         assert "file" in summaries
 
     def test_excludes_file_when_no_storage(self) -> None:
@@ -118,7 +118,7 @@ class TestAvailableSpecialistSummaries:
         ctx = ToolContext(user=UserData(id=1), storage=None)
         summaries = registry.get_available_specialist_summaries(ctx)
         assert "estimate" in summaries
-        assert "checklist" in summaries
+        assert "heartbeat" in summaries
         assert "file" not in summaries
 
     def test_excludes_core_factories(self) -> None:
@@ -136,12 +136,12 @@ class TestListCapabilitiesTool:
     async def test_list_all_categories(self) -> None:
         summaries = {
             "estimate": "Generate estimates",
-            "checklist": "Manage checklists",
+            "heartbeat": "Manage heartbeats",
         }
         tool = create_list_capabilities_tool(summaries)
         result = await tool.function(category=None)
         assert "estimate" in result.content
-        assert "checklist" in result.content
+        assert "heartbeat" in result.content
         assert not result.is_error
 
     @pytest.mark.asyncio
@@ -176,9 +176,9 @@ class TestListCapabilitiesTool:
         assert tool.params_model is not None
 
     def test_tool_usage_hint_lists_categories(self) -> None:
-        summaries = {"estimate": "x", "checklist": "y"}
+        summaries = {"estimate": "x", "heartbeat": "y"}
         tool = create_list_capabilities_tool(summaries)
-        assert "checklist" in tool.usage_hint
+        assert "heartbeat" in tool.usage_hint
         assert "estimate" in tool.usage_hint
 
 
@@ -197,7 +197,7 @@ class TestDefaultRegistryCoreSpecialistSplit:
 
         specialist = default_registry.specialist_factory_names
         assert "estimate" in specialist
-        assert "checklist" in specialist
+        assert "heartbeat" in specialist
         assert "file" in specialist
 
     def test_no_overlap(self) -> None:

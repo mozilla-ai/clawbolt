@@ -10,16 +10,16 @@ from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.file_store import UserData
 from backend.app.agent.tool_errors import summarize_tool_params
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
-from backend.app.agent.tools.checklist_tools import (
-    AddChecklistItemParams,
-    ListChecklistItemsParams,
-    RemoveChecklistItemParams,
-)
 from backend.app.agent.tools.estimate_tools import (
     EstimateLineItemParams,
     GenerateEstimateParams,
 )
 from backend.app.agent.tools.file_tools import OrganizeFileParams, UploadToStorageParams
+from backend.app.agent.tools.heartbeat_tools import (
+    AddHeartbeatItemParams,
+    ListHeartbeatItemsParams,
+    RemoveHeartbeatItemParams,
+)
 from backend.app.agent.tools.messaging_tools import SendMediaReplyParams, SendReplyParams
 from backend.app.agent.tools.workspace_tools import DeleteFileParams
 from tests.mocks.llm import make_text_response, make_tool_call_response
@@ -77,11 +77,11 @@ def test_estimate_tool_param_models_exist() -> None:
     assert issubclass(GenerateEstimateParams, BaseModel)
 
 
-def test_checklist_tool_param_models_exist() -> None:
-    """Checklist tool param models should be importable and valid BaseModels."""
-    assert issubclass(AddChecklistItemParams, BaseModel)
-    assert issubclass(ListChecklistItemsParams, BaseModel)
-    assert issubclass(RemoveChecklistItemParams, BaseModel)
+def test_heartbeat_tool_param_models_exist() -> None:
+    """Heartbeat tool param models should be importable and valid BaseModels."""
+    assert issubclass(AddHeartbeatItemParams, BaseModel)
+    assert issubclass(ListHeartbeatItemsParams, BaseModel)
+    assert issubclass(RemoveHeartbeatItemParams, BaseModel)
 
 
 def test_delete_file_param_model_exists() -> None:
@@ -100,16 +100,16 @@ def test_file_tool_param_models_exist() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_remove_checklist_item_coerces_string_to_int() -> None:
-    """RemoveChecklistItemParams should coerce string '42' to int 42."""
-    p = RemoveChecklistItemParams(item_id="42")  # type: ignore[arg-type]
+def test_remove_heartbeat_item_coerces_string_to_int() -> None:
+    """RemoveHeartbeatItemParams should coerce string '42' to int 42."""
+    p = RemoveHeartbeatItemParams(item_id="42")  # type: ignore[arg-type]
     assert p.item_id == 42
 
 
-def test_remove_checklist_item_rejects_non_numeric() -> None:
-    """RemoveChecklistItemParams should reject non-numeric item_id."""
+def test_remove_heartbeat_item_rejects_non_numeric() -> None:
+    """RemoveHeartbeatItemParams should reject non-numeric item_id."""
     with pytest.raises(Exception):  # noqa: B017
-        RemoveChecklistItemParams(item_id="not_a_number")  # type: ignore[arg-type]
+        RemoveHeartbeatItemParams(item_id="not_a_number")  # type: ignore[arg-type]
 
 
 def test_generate_estimate_params_accepts_valid_input() -> None:
@@ -135,10 +135,10 @@ def test_upload_to_storage_rejects_invalid_category() -> None:
         UploadToStorageParams(file_category="invalid_category")  # type: ignore[arg-type]
 
 
-def test_add_checklist_item_rejects_invalid_schedule() -> None:
-    """AddChecklistItemParams should reject invalid schedule values."""
+def test_add_heartbeat_item_rejects_invalid_schedule() -> None:
+    """AddHeartbeatItemParams should reject invalid schedule values."""
     with pytest.raises(Exception):  # noqa: B017
-        AddChecklistItemParams(description="test", schedule="monthly")  # type: ignore[arg-type]
+        AddHeartbeatItemParams(description="test", schedule="monthly")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

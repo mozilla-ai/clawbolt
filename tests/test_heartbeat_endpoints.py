@@ -1,20 +1,20 @@
-"""Tests for checklist endpoints."""
+"""Tests for heartbeat endpoints."""
 
 from fastapi.testclient import TestClient
 
 
-def test_list_checklist_defaults(client: TestClient) -> None:
+def test_list_heartbeat_defaults(client: TestClient) -> None:
     """Default HEARTBEAT.md items should appear in the listing."""
-    resp = client.get("/api/user/checklist")
+    resp = client.get("/api/user/heartbeat")
     assert resp.status_code == 200
     items = resp.json()
     # Default HEARTBEAT.md is seeded with items
     assert len(items) >= 1
 
 
-def test_create_checklist_item(client: TestClient) -> None:
+def test_create_heartbeat_item(client: TestClient) -> None:
     resp = client.post(
-        "/api/user/checklist",
+        "/api/user/heartbeat",
         json={"description": "Check job site"},
     )
     assert resp.status_code == 201
@@ -25,9 +25,9 @@ def test_create_checklist_item(client: TestClient) -> None:
     assert data["id"] > 0
 
 
-def test_create_checklist_item_custom_schedule(client: TestClient) -> None:
+def test_create_heartbeat_item_custom_schedule(client: TestClient) -> None:
     resp = client.post(
-        "/api/user/checklist",
+        "/api/user/heartbeat",
         json={"description": "Weekly review", "schedule": "weekdays"},
     )
     assert resp.status_code == 201
@@ -35,42 +35,42 @@ def test_create_checklist_item_custom_schedule(client: TestClient) -> None:
 
 
 def test_list_after_create(client: TestClient) -> None:
-    client.post("/api/user/checklist", json={"description": "Item 1"})
-    client.post("/api/user/checklist", json={"description": "Item 2"})
-    resp = client.get("/api/user/checklist")
+    client.post("/api/user/heartbeat", json={"description": "Item 1"})
+    client.post("/api/user/heartbeat", json={"description": "Item 2"})
+    resp = client.get("/api/user/heartbeat")
     assert resp.status_code == 200
     descriptions = [i["description"] for i in resp.json()]
     assert "Item 1" in descriptions
     assert "Item 2" in descriptions
 
 
-def test_delete_checklist_item(client: TestClient) -> None:
-    resp = client.post("/api/user/checklist", json={"description": "To delete"})
+def test_delete_heartbeat_item(client: TestClient) -> None:
+    resp = client.post("/api/user/heartbeat", json={"description": "To delete"})
     item_id = resp.json()["id"]
-    resp = client.delete(f"/api/user/checklist/{item_id}")
+    resp = client.delete(f"/api/user/heartbeat/{item_id}")
     assert resp.status_code == 204
     # Verify it's gone
-    resp = client.get("/api/user/checklist")
+    resp = client.get("/api/user/heartbeat")
     descriptions = [i["description"] for i in resp.json()]
     assert "To delete" not in descriptions
 
 
-def test_delete_checklist_item_not_found(client: TestClient) -> None:
-    resp = client.delete("/api/user/checklist/9999")
+def test_delete_heartbeat_item_not_found(client: TestClient) -> None:
+    resp = client.delete("/api/user/heartbeat/9999")
     assert resp.status_code == 404
 
 
-def test_create_checklist_empty_description(client: TestClient) -> None:
-    resp = client.post("/api/user/checklist", json={"description": ""})
+def test_create_heartbeat_empty_description(client: TestClient) -> None:
+    resp = client.post("/api/user/heartbeat", json={"description": ""})
     assert resp.status_code == 422
 
 
-def test_update_checklist_item(client: TestClient) -> None:
-    resp = client.post("/api/user/checklist", json={"description": "Original"})
+def test_update_heartbeat_item(client: TestClient) -> None:
+    resp = client.post("/api/user/heartbeat", json={"description": "Original"})
     item_id = resp.json()["id"]
 
     resp = client.put(
-        f"/api/user/checklist/{item_id}",
+        f"/api/user/heartbeat/{item_id}",
         json={"description": "Updated", "schedule": "weekdays", "status": "paused"},
     )
     assert resp.status_code == 200
@@ -80,16 +80,16 @@ def test_update_checklist_item(client: TestClient) -> None:
     assert data["status"] == "paused"
 
 
-def test_update_checklist_partial(client: TestClient) -> None:
+def test_update_heartbeat_partial(client: TestClient) -> None:
     """Only provided fields should change."""
     resp = client.post(
-        "/api/user/checklist",
+        "/api/user/heartbeat",
         json={"description": "My task", "schedule": "daily"},
     )
     item_id = resp.json()["id"]
 
     resp = client.put(
-        f"/api/user/checklist/{item_id}",
+        f"/api/user/heartbeat/{item_id}",
         json={"status": "completed"},
     )
     assert resp.status_code == 200
@@ -99,9 +99,9 @@ def test_update_checklist_partial(client: TestClient) -> None:
     assert data["status"] == "completed"
 
 
-def test_update_checklist_not_found(client: TestClient) -> None:
+def test_update_heartbeat_not_found(client: TestClient) -> None:
     resp = client.put(
-        "/api/user/checklist/9999",
+        "/api/user/heartbeat/9999",
         json={"description": "nope"},
     )
     assert resp.status_code == 404

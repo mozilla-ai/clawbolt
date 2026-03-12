@@ -1,25 +1,25 @@
-"""Tests for heartbeat checklist management tools."""
+"""Tests for heartbeat management tools."""
 
 import pytest
 
 from backend.app.agent.file_store import HeartbeatStore, UserData
-from backend.app.agent.tools.checklist_tools import create_checklist_tools
+from backend.app.agent.tools.heartbeat_tools import create_heartbeat_tools
 
 
 @pytest.mark.asyncio()
-async def test_add_checklist_item(test_user: UserData) -> None:
-    """add_checklist_item tool should create item and return confirmation."""
-    tools = create_checklist_tools(test_user.id)
+async def test_add_heartbeat_item(test_user: UserData) -> None:
+    """add_heartbeat_item tool should create item and return confirmation."""
+    tools = create_heartbeat_tools(test_user.id)
     add_item = tools[0].function
     result = await add_item(description="Check material prices", schedule="daily")
-    assert "Added to checklist" in result.content
+    assert "Added to heartbeat" in result.content
     assert "material prices" in result.content
     assert "daily" in result.content
     assert result.is_error is False
 
     # Verify in store
     store = HeartbeatStore(test_user.id)
-    items = await store.get_checklist()
+    items = await store.get_heartbeat_items()
     active = [i for i in items if i.status == "active"]
     # Default HEARTBEAT.md has 3 items + 1 added
     assert len(active) >= 1
@@ -30,16 +30,16 @@ async def test_add_checklist_item(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_add_checklist_item_default_schedule(
+async def test_add_heartbeat_item_default_schedule(
     test_user: UserData,
 ) -> None:
-    """add_checklist_item should default to daily schedule."""
-    tools = create_checklist_tools(test_user.id)
+    """add_heartbeat_item should default to daily schedule."""
+    tools = create_heartbeat_tools(test_user.id)
     add_item = tools[0].function
     await add_item(description="Morning check")
 
     store = HeartbeatStore(test_user.id)
-    items = await store.get_checklist()
+    items = await store.get_heartbeat_items()
     active = [i for i in items if i.status == "active"]
     added = [i for i in active if i.description == "Morning check"]
     assert len(added) == 1
@@ -47,27 +47,27 @@ async def test_add_checklist_item_default_schedule(
 
 
 @pytest.mark.asyncio()
-async def test_add_checklist_item_invalid_schedule(
+async def test_add_heartbeat_item_invalid_schedule(
     test_user: UserData,
 ) -> None:
-    """add_checklist_item should reject invalid schedule values."""
-    tools = create_checklist_tools(test_user.id)
+    """add_heartbeat_item should reject invalid schedule values."""
+    tools = create_heartbeat_tools(test_user.id)
     add_item = tools[0].function
     result = await add_item(description="Bad schedule", schedule="hourly")
     assert "Invalid schedule" in result.content
     assert result.is_error is True
 
     store = HeartbeatStore(test_user.id)
-    items = await store.get_checklist()
+    items = await store.get_heartbeat_items()
     # No "Bad schedule" item should have been added
     bad = [i for i in items if i.description == "Bad schedule"]
     assert len(bad) == 0
 
 
 @pytest.mark.asyncio()
-async def test_list_checklist_items(test_user: UserData) -> None:
-    """list_checklist_items should show active items."""
-    tools = create_checklist_tools(test_user.id)
+async def test_list_heartbeat_items(test_user: UserData) -> None:
+    """list_heartbeat_items should show active items."""
+    tools = create_heartbeat_tools(test_user.id)
     add_item = tools[0].function
     list_items = tools[1].function
 
@@ -82,9 +82,9 @@ async def test_list_checklist_items(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_list_checklist_items_with_defaults(test_user: UserData) -> None:
-    """list_checklist_items should include default HEARTBEAT.md items."""
-    tools = create_checklist_tools(test_user.id)
+async def test_list_heartbeat_items_with_defaults(test_user: UserData) -> None:
+    """list_heartbeat_items should include default HEARTBEAT.md items."""
+    tools = create_heartbeat_tools(test_user.id)
     list_items = tools[1].function
     result = await list_items()
     # Default HEARTBEAT.md has seeded items
@@ -93,12 +93,12 @@ async def test_list_checklist_items_with_defaults(test_user: UserData) -> None:
 
 @pytest.mark.asyncio()
 async def test_list_excludes_completed(test_user: UserData) -> None:
-    """list_checklist_items should not show completed items."""
+    """list_heartbeat_items should not show completed items."""
     store = HeartbeatStore(test_user.id)
-    item = await store.add_checklist_item(description="Done item", schedule="daily")
-    await store.update_checklist_item(item.id, status="completed")
+    item = await store.add_heartbeat_item(description="Done item", schedule="daily")
+    await store.update_heartbeat_item(item.id, status="completed")
 
-    tools = create_checklist_tools(test_user.id)
+    tools = create_heartbeat_tools(test_user.id)
     list_items = tools[1].function
     result = await list_items()
     # The completed item should not appear in the listing
@@ -106,16 +106,16 @@ async def test_list_excludes_completed(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_remove_checklist_item(test_user: UserData) -> None:
-    """remove_checklist_item should delete item and return confirmation."""
-    tools = create_checklist_tools(test_user.id)
+async def test_remove_heartbeat_item(test_user: UserData) -> None:
+    """remove_heartbeat_item should delete item and return confirmation."""
+    tools = create_heartbeat_tools(test_user.id)
     add_item = tools[0].function
     remove_item = tools[2].function
 
     await add_item(description="To remove")
 
     store = HeartbeatStore(test_user.id)
-    items = await store.get_checklist()
+    items = await store.get_heartbeat_items()
     added = [i for i in items if i.description == "To remove"]
     assert len(added) == 1
     item_id = added[0].id
@@ -124,17 +124,17 @@ async def test_remove_checklist_item(test_user: UserData) -> None:
     assert "Removed" in result.content
     assert result.is_error is False
 
-    items = await store.get_checklist()
+    items = await store.get_heartbeat_items()
     removed = [i for i in items if i.description == "To remove"]
     assert len(removed) == 0
 
 
 @pytest.mark.asyncio()
-async def test_remove_checklist_item_not_found(
+async def test_remove_heartbeat_item_not_found(
     test_user: UserData,
 ) -> None:
-    """remove_checklist_item should handle missing IDs."""
-    tools = create_checklist_tools(test_user.id)
+    """remove_heartbeat_item should handle missing IDs."""
+    tools = create_heartbeat_tools(test_user.id)
     remove_item = tools[2].function
     result = await remove_item(item_id=999)
     assert "not found" in result.content
@@ -145,25 +145,25 @@ async def test_remove_checklist_item_not_found(
 async def test_remove_scoped_to_user(
     test_user: UserData,
 ) -> None:
-    """remove_checklist_item should not delete another user's items.
+    """remove_heartbeat_item should not delete another user's items.
 
     Each user's HEARTBEAT.md is a separate file, so IDs are per-user.
     Attempting to remove an ID that does not exist in the current user's
-    checklist should return not-found.
+    heartbeat should return not-found.
     """
     other_store = HeartbeatStore(99)
-    await other_store.add_checklist_item(description="Other's item", schedule="daily")
-    other_items = await other_store.get_checklist()
+    await other_store.add_heartbeat_item(description="Other's item", schedule="daily")
+    other_items = await other_store.get_heartbeat_items()
     assert len(other_items) == 1
 
     # Use an ID that definitely does not exist in test_user's HEARTBEAT.md
-    tools = create_checklist_tools(test_user.id)
+    tools = create_heartbeat_tools(test_user.id)
     remove_item = tools[2].function
     result = await remove_item(item_id=9999)
     assert "not found" in result.content
     assert result.is_error is True
 
     # Item should still exist in other user's store
-    remaining = await other_store.get_checklist()
+    remaining = await other_store.get_heartbeat_items()
     other_items = [i for i in remaining if i.description == "Other's item"]
     assert len(other_items) == 1

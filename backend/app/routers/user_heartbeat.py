@@ -1,27 +1,27 @@
-"""Endpoints for managing checklist items."""
+"""Endpoints for managing heartbeat items."""
 
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.agent.file_store import HeartbeatStore, UserData
 from backend.app.auth.dependencies import get_current_user
 from backend.app.schemas import (
-    ChecklistCreateRequest,
-    ChecklistItemResponse,
-    ChecklistUpdateRequest,
+    HeartbeatCreateRequest,
+    HeartbeatItemResponse,
+    HeartbeatUpdateRequest,
 )
 
 router = APIRouter()
 
 
-@router.get("/user/checklist", response_model=list[ChecklistItemResponse])
-async def list_checklist(
+@router.get("/user/heartbeat", response_model=list[HeartbeatItemResponse])
+async def list_heartbeat(
     current_user: UserData = Depends(get_current_user),
-) -> list[ChecklistItemResponse]:
-    """List active checklist items."""
+) -> list[HeartbeatItemResponse]:
+    """List active heartbeat items."""
     store = HeartbeatStore(current_user.id)
-    items = await store.get_checklist()
+    items = await store.get_heartbeat_items()
     return [
-        ChecklistItemResponse(
+        HeartbeatItemResponse(
             id=item.id,
             description=item.description,
             schedule=item.schedule,
@@ -32,18 +32,18 @@ async def list_checklist(
     ]
 
 
-@router.post("/user/checklist", response_model=ChecklistItemResponse, status_code=201)
-async def create_checklist_item(
-    body: ChecklistCreateRequest,
+@router.post("/user/heartbeat", response_model=HeartbeatItemResponse, status_code=201)
+async def create_heartbeat_item(
+    body: HeartbeatCreateRequest,
     current_user: UserData = Depends(get_current_user),
-) -> ChecklistItemResponse:
-    """Add a new checklist item."""
+) -> HeartbeatItemResponse:
+    """Add a new heartbeat item."""
     store = HeartbeatStore(current_user.id)
-    item = await store.add_checklist_item(
+    item = await store.add_heartbeat_item(
         description=body.description,
         schedule=body.schedule,
     )
-    return ChecklistItemResponse(
+    return HeartbeatItemResponse(
         id=item.id,
         description=item.description,
         schedule=item.schedule,
@@ -52,23 +52,23 @@ async def create_checklist_item(
     )
 
 
-@router.put("/user/checklist/{item_id}", response_model=ChecklistItemResponse)
-async def update_checklist_item(
+@router.put("/user/heartbeat/{item_id}", response_model=HeartbeatItemResponse)
+async def update_heartbeat_item(
     item_id: int,
-    body: ChecklistUpdateRequest,
+    body: HeartbeatUpdateRequest,
     current_user: UserData = Depends(get_current_user),
-) -> ChecklistItemResponse:
-    """Update a checklist item."""
+) -> HeartbeatItemResponse:
+    """Update a heartbeat item."""
     store = HeartbeatStore(current_user.id)
-    updated = await store.update_checklist_item(
+    updated = await store.update_heartbeat_item(
         item_id,
         description=body.description,
         schedule=body.schedule,
         status=body.status,
     )
     if not updated:
-        raise HTTPException(status_code=404, detail="Checklist item not found")
-    return ChecklistItemResponse(
+        raise HTTPException(status_code=404, detail="Heartbeat item not found")
+    return HeartbeatItemResponse(
         id=updated.id,
         description=updated.description,
         schedule=updated.schedule,
@@ -77,13 +77,13 @@ async def update_checklist_item(
     )
 
 
-@router.delete("/user/checklist/{item_id}", status_code=204)
-async def delete_checklist_item(
+@router.delete("/user/heartbeat/{item_id}", status_code=204)
+async def delete_heartbeat_item(
     item_id: int,
     current_user: UserData = Depends(get_current_user),
 ) -> None:
-    """Remove a checklist item."""
+    """Remove a heartbeat item."""
     store = HeartbeatStore(current_user.id)
-    deleted = await store.delete_checklist_item(item_id)
+    deleted = await store.delete_heartbeat_item(item_id)
     if not deleted:
-        raise HTTPException(status_code=404, detail="Checklist item not found")
+        raise HTTPException(status_code=404, detail="Heartbeat item not found")

@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.enums import ChecklistSchedule, EstimateStatus
+from backend.app.enums import EstimateStatus, HeartbeatSchedule
 
 
 class HealthResponse(BaseModel):
@@ -61,7 +61,7 @@ class UserProfileResponse(BaseModel):
     timezone: str
     soul_text: str
     user_text: str
-    checklist_text: str
+    heartbeat_text: str
     preferred_channel: str
     channel_identifier: str
     heartbeat_opt_in: bool
@@ -77,7 +77,7 @@ class UserProfileUpdate(BaseModel):
     timezone: str | None = None
     soul_text: str | None = None
     user_text: str | None = None
-    checklist_text: str | None = None
+    heartbeat_text: str | None = None
     heartbeat_opt_in: bool | None = None
     heartbeat_frequency: str | None = None
 
@@ -121,22 +121,22 @@ class SessionDetailResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Checklist (dashboard)
+# Heartbeat (dashboard)
 # ---------------------------------------------------------------------------
 
 
-class ChecklistCreateRequest(BaseModel):
+class HeartbeatCreateRequest(BaseModel):
     description: str = Field(..., min_length=1)
-    schedule: str = ChecklistSchedule.DAILY
+    schedule: str = HeartbeatSchedule.DAILY
 
 
-class ChecklistUpdateRequest(BaseModel):
+class HeartbeatUpdateRequest(BaseModel):
     description: str | None = None
     schedule: str | None = None
     status: str | None = None
 
 
-class ChecklistItemResponse(BaseModel):
+class HeartbeatItemResponse(BaseModel):
     id: int
     description: str
     schedule: str
@@ -152,7 +152,7 @@ class ChecklistItemResponse(BaseModel):
 class UserStatsResponse(BaseModel):
     total_sessions: int
     messages_this_month: int
-    active_checklist_items: int
+    active_heartbeat_items: int
     total_memory_facts: int
     last_conversation_at: str | None
 

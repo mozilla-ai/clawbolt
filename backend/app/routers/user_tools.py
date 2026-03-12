@@ -57,8 +57,8 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         domain_group="Local Management",
         domain_group_order=1,
     ),
-    "checklist": _FactoryMeta(
-        "Manage recurring reminders and task checklists",
+    "heartbeat": _FactoryMeta(
+        "Manage recurring reminders and heartbeat items",
         domain_group="Local Management",
         domain_group_order=1,
     ),
