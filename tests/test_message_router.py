@@ -1164,6 +1164,64 @@ async def test_error_stop_reason_not_persisted_to_session(
     assert len(outbound_msgs) == 0
 
 
+# ---------------------------------------------------------------------------
+# Channel-specific to_address resolution (cross-channel routing bug)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_to_address_uses_channel_specific_identifier(
+    mock_amessages: object,
+    test_user: UserData,
+) -> None:
+    """Reply to_address should use channel-specific identifier, not stale channel_identifier.
+
+    Regression test: when a user interacts via webchat then Telegram,
+    user.channel_identifier gets overwritten with the webchat sender_id
+    (which equals the numeric user_id, e.g. "1"). Telegram replies must
+    still use the real Telegram chat_id from the user index.
+    """
+    from backend.app.agent.file_store import get_user_store
+
+    store = get_user_store()
+    telegram_chat_id = "555000111"
+
+    # Create a second user so its id (2) doesn't collide with leaked index
+    # entries from other tests that map telegram:<x> -> 1.
+    user = await store.create(
+        user_id="cross-channel-user",
+        channel_identifier="cross-channel-user",
+        preferred_channel="webchat",
+        onboarding_complete=True,
+    )
+    # Link the real Telegram chat_id in the user index
+    store.link_channel("telegram", telegram_chat_id, user.id)
+
+    session = SessionState(session_id="s", user_id=user.id, is_active=True)
+    message = StoredMessage(direction="inbound", body="hello from telegram", seq=1)
+
+    mock_amessages.return_value = make_text_response("Cross-channel reply!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        user=user,
+        session=session,
+        message=message,
+        media_urls=[],
+        channel="telegram",
+    )
+
+    # The outbound message should use the Telegram chat_id, not the user_id
+    while not message_bus.outbound.empty():
+        outbound = message_bus.outbound.get_nowait()
+        if not outbound.is_typing_indicator:
+            assert outbound.chat_id == telegram_chat_id, (
+                f"Expected Telegram chat_id '{telegram_chat_id}', "
+                f"got '{outbound.chat_id}' (stale channel_identifier)"
+            )
+            break
+
+
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_error_stop_reason_still_dispatches_reply_to_user(
