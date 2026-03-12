@@ -218,11 +218,11 @@ async def build_agent_system_prompt(
 async def build_heartbeat_system_prompt(
     user: UserData,
     recent_messages: str,
-    checklist_md: str = "",
+    heartbeat_md: str = "",
 ) -> str:
     """Assemble the system prompt for the heartbeat evaluator.
 
-    When *checklist_md* is provided, the raw HEARTBEAT.md content is
+    When *heartbeat_md* is provided, the raw HEARTBEAT.md content is
     included as a dedicated section so the LLM can evaluate which tasks
     need attention.
     """
@@ -240,8 +240,8 @@ async def build_heartbeat_system_prompt(
         recent_messages or "(no recent messages)",
     )
 
-    if checklist_md:
-        builder.add_section("User's checklist (HEARTBEAT.md)", checklist_md)
+    if heartbeat_md:
+        builder.add_section("User's heartbeat (HEARTBEAT.md)", heartbeat_md)
 
     builder.add_section(
         "Current time",

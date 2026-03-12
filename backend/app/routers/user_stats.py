@@ -11,7 +11,7 @@ from backend.app.agent.file_store import (
     get_session_store,
 )
 from backend.app.auth.dependencies import get_current_user
-from backend.app.enums import ChecklistStatus
+from backend.app.enums import HeartbeatStatus
 from backend.app.schemas import UserStatsResponse
 
 router = APIRouter()
@@ -48,9 +48,11 @@ async def get_stats(
             if msg.timestamp.startswith(month_prefix):
                 messages_this_month += 1
 
-    # Active checklist items
-    checklist = await heartbeat_store.get_checklist()
-    active_checklist_items = sum(1 for item in checklist if item.status == ChecklistStatus.ACTIVE)
+    # Active heartbeat items
+    heartbeat_items = await heartbeat_store.get_heartbeat_items()
+    active_heartbeat_items = sum(
+        1 for item in heartbeat_items if item.status == HeartbeatStatus.ACTIVE
+    )
 
     # Memory: count non-empty lines as a rough "facts" proxy
     memory_text = memory_store.read_memory()
@@ -63,7 +65,7 @@ async def get_stats(
     return UserStatsResponse(
         total_sessions=total_sessions,
         messages_this_month=messages_this_month,
-        active_checklist_items=active_checklist_items,
+        active_heartbeat_items=active_heartbeat_items,
         total_memory_facts=total_memory_facts,
         last_conversation_at=last_conversation_at,
     )

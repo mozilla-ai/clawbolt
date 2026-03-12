@@ -1,8 +1,7 @@
 import { useState, useEffect } from 'react';
-import { Navigate, useOutletContext, useParams, useNavigate } from 'react-router-dom';
+import { useOutletContext, useParams, useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
-import Textarea from '@/components/ui/textarea';
 import Button from '@/components/ui/button';
 import Select from '@/components/ui/select';
 import { Tabs, Tab } from '@heroui/tabs';
@@ -17,13 +16,6 @@ import {
   showOssSettingsTabs,
 } from '@/extensions';
 
-const RETIRED_TABS: Record<string, string> = {
-  channels: '/app/channels',
-  profile: '/app/settings/user',
-  assistant: '/app/settings/soul',
-  tools: '/app/tools',
-};
-
 export default function SettingsPage() {
   const { tab } = useParams<{ tab: string }>();
   const navigate = useNavigate();
@@ -34,14 +26,8 @@ export default function SettingsPage() {
     reloadProfile();
   }, [reloadProfile]);
 
-  // Redirect retired tab slugs
-  const redirect = tab ? RETIRED_TABS[tab] : undefined;
-  if (redirect) {
-    return <Navigate to={redirect} replace />;
-  }
-
   const extraTabs = getExtraSettingsTabs(isPremium, isAdmin);
-  const activeTab = tab || 'user';
+  const activeTab = tab || 'heartbeat';
 
   const handleTabChange = (value: string) => {
     navigate(`/app/settings/${value}`, { replace: true });
@@ -50,8 +36,6 @@ export default function SettingsPage() {
   // Build tab list
   const ossTabs = showOssSettingsTabs(isPremium)
     ? [
-        { key: 'user', label: 'User' },
-        { key: 'soul', label: 'Soul' },
         { key: 'heartbeat', label: 'Heartbeat' },
       ]
     : [];
@@ -64,26 +48,6 @@ export default function SettingsPage() {
   const renderContent = () => {
     if (premiumContent) return premiumContent;
     switch (activeTab) {
-      case 'user': return profile ? (
-        <MarkdownSettingsTab
-          profile={profile}
-          field="user_text"
-          label="About You (USER.md)"
-          description="Updated over time as your assistant learns about you."
-          placeholder="Tell your assistant about yourself: your name, phone, timezone, preferences, what projects you're working on..."
-          successMessage="User info updated"
-        />
-      ) : null;
-      case 'soul': return profile ? (
-        <MarkdownSettingsTab
-          profile={profile}
-          field="soul_text"
-          label="Personality (SOUL.md)"
-          description="Guides your assistant's personality and communication style."
-          placeholder="Describe how your assistant should behave, speak, and interact with clients. Include what it should call itself (e.g. 'Your name is Claw')..."
-          successMessage="Soul settings updated"
-        />
-      ) : null;
       case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
       default: return null;
     }
@@ -104,62 +68,6 @@ export default function SettingsPage() {
       <div className="mt-4">
         {renderContent()}
       </div>
-    </div>
-  );
-}
-
-// --- Generic Markdown Settings Tab ---
-
-function MarkdownSettingsTab({
-  profile,
-  field,
-  label,
-  description,
-  placeholder,
-  successMessage,
-}: {
-  profile: Record<string, string>;
-  field: string;
-  label: string;
-  description: string;
-  placeholder: string;
-  successMessage: string;
-}) {
-  const [text, setText] = useState(profile[field] ?? '');
-  const updateProfile = useUpdateProfile();
-
-  useEffect(() => {
-    setText(profile[field] ?? '');
-  }, [profile, field]);
-
-  const handleSave = () => {
-    updateProfile.mutate(
-      { [field]: text },
-      {
-        onSuccess: () => toast.success(successMessage),
-        onError: (e) => toast.error(e.message),
-      },
-    );
-  };
-
-  return (
-    <div className="grid gap-3">
-      <div className="flex items-center justify-between">
-        <div>
-          <label className="text-xs font-medium text-muted-foreground block mb-1">{label}</label>
-          <p className="text-xs text-muted-foreground mt-1">{description}</p>
-        </div>
-        <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
-          Save
-        </Button>
-      </div>
-      <Textarea
-        value={text}
-        onChange={(e) => setText(e.target.value)}
-        rows={6}
-        classNames={{ input: '!min-h-[65vh]' }}
-        placeholder={placeholder}
-      />
     </div>
   );
 }
@@ -231,7 +139,7 @@ function HeartbeatTab({
           </label>
         </div>
         <p className="text-xs text-muted-foreground">
-          When enabled, your assistant will proactively send you reminders and updates based on your checklist.
+          When enabled, your assistant will proactively send you reminders and updates based on your heartbeat items.
         </p>
         <Field label="Frequency">
           <Select

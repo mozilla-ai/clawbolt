@@ -1,8 +1,8 @@
 """Two-phase proactive heartbeat engine.
 
-Phase 1 (Decision): A lightweight LLM call evaluates the user's checklist,
-memory, recent messages, and current time, then decides whether any tasks
-need attention.  Uses a single ``heartbeat_decision`` tool that returns
+Phase 1 (Decision): A lightweight LLM call evaluates the user's heartbeat
+items, memory, recent messages, and current time, then decides whether any
+tasks need attention.  Uses a single ``heartbeat_decision`` tool that returns
 ``skip`` or ``run`` plus a natural-language task description.
 
 Phase 2 (Execution): When Phase 1 returns ``run``, the task description is
@@ -101,7 +101,7 @@ class HeartbeatDecisionParams(BaseModel):
 HEARTBEAT_DECISION_TOOL: dict[str, Any] = {
     "name": ToolName.HEARTBEAT_DECISION,
     "description": (
-        "Decide whether any checklist items or proactive tasks need attention right now. "
+        "Decide whether any heartbeat items or proactive tasks need attention right now. "
         "Choose 'skip' if nothing needs doing, or 'run' with a task description "
         "to hand off to the full agent for execution."
     ),
@@ -274,8 +274,9 @@ async def evaluate_heartbeat_need(
 ) -> HeartbeatDecision:
     """Phase 1: lightweight LLM call to decide whether tasks need attention.
 
-    The LLM sees the user's checklist, memory, recent messages, and current
-    time, then decides whether to skip or hand off tasks to the full agent.
+    The LLM sees the user's heartbeat items, memory, recent messages, and
+    current time, then decides whether to skip or hand off tasks to the full
+    agent.
     """
     session_store = get_session_store(user.id)
     recent = session_store.get_recent_messages(count=settings.heartbeat_recent_messages_count)
@@ -288,16 +289,16 @@ async def evaluate_heartbeat_need(
     )
 
     heartbeat_store = HeartbeatStore(user.id)
-    checklist_md = heartbeat_store.read_checklist_md()
+    heartbeat_md = heartbeat_store.read_heartbeat_md()
 
-    prompt = await build_heartbeat_system_prompt(user, recent_text, checklist_md=checklist_md)
+    prompt = await build_heartbeat_system_prompt(user, recent_text, heartbeat_md=heartbeat_md)
 
     logger.debug(
         "Heartbeat Phase 1 context for user %d: recent_messages=%d, "
-        "checklist_length=%d, system_prompt_length=%d",
+        "heartbeat_length=%d, system_prompt_length=%d",
         user.id,
         len(recent),
-        len(checklist_md),
+        len(heartbeat_md),
         len(prompt),
     )
 

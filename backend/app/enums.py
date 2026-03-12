@@ -15,12 +15,12 @@ class EstimateStatus(StrEnum):
     REJECTED = "rejected"
 
 
-class ChecklistStatus(StrEnum):
+class HeartbeatStatus(StrEnum):
     ACTIVE = "active"
     COMPLETED = "completed"
 
 
-class ChecklistSchedule(StrEnum):
+class HeartbeatSchedule(StrEnum):
     DAILY = "daily"
     WEEKDAYS = "weekdays"
     ONCE = "once"

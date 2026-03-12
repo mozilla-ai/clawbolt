@@ -21,7 +21,7 @@ from backend.app.routers import (
     health,
     oauth,
     search,
-    user_checklist,
+    user_heartbeat,
     user_memory,
     user_profile,
     user_sessions,
@@ -183,7 +183,7 @@ app.include_router(estimates.router, prefix="/api")
 app.include_router(user_profile.router, prefix="/api")
 app.include_router(user_sessions.router, prefix="/api")
 app.include_router(user_memory.router, prefix="/api")
-app.include_router(user_checklist.router, prefix="/api")
+app.include_router(user_heartbeat.router, prefix="/api")
 app.include_router(user_stats.router, prefix="/api")
 app.include_router(user_tools.router, prefix="/api")
 app.include_router(search.router, prefix="/api")

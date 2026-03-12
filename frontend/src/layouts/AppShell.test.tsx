@@ -21,7 +21,7 @@ const PROFILE_RESPONSE = {
   timezone: 'America/Los_Angeles',
   soul_text: '',
   user_text: '',
-  checklist_text: '',
+  heartbeat_text: '',
   preferred_channel: 'telegram',
   channel_identifier: '',
   heartbeat_opt_in: true,
@@ -95,7 +95,7 @@ describe('AppShell', () => {
     });
     expect(screen.getByText('Conversations')).toBeInTheDocument();
     expect(screen.getByText('Memory')).toBeInTheDocument();
-    expect(screen.getByText('Checklist')).toBeInTheDocument();
+    expect(screen.getByText('Heartbeat')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
   });
 

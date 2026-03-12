@@ -7,7 +7,7 @@ export interface UserProfile {
   timezone: string;
   soul_text: string;
   user_text: string;
-  checklist_text: string;
+  heartbeat_text: string;
   preferred_channel: string;
   channel_identifier: string;
   heartbeat_opt_in: boolean;
@@ -23,7 +23,7 @@ export interface UserProfileUpdate {
   timezone?: string;
   soul_text?: string;
   user_text?: string;
-  checklist_text?: string;
+  heartbeat_text?: string;
   heartbeat_opt_in?: boolean;
   heartbeat_frequency?: string;
 }
@@ -73,7 +73,7 @@ export interface MemoryUpdate {
   content: string;
 }
 
-export interface ChecklistItem {
+export interface HeartbeatItem {
   id: number;
   description: string;
   schedule: string;
@@ -81,7 +81,7 @@ export interface ChecklistItem {
   created_at: string;
 }
 
-export interface ChecklistItemUpdate {
+export interface HeartbeatItemUpdate {
   description?: string;
   schedule?: string;
   status?: string;

@@ -62,12 +62,12 @@ async def test_tool_config_store_get_disabled_tool_names(
     entries = [
         ToolConfigEntry(name="estimate", category="domain", enabled=False),
         ToolConfigEntry(name="file", category="domain", enabled=True),
-        ToolConfigEntry(name="checklist", category="domain", enabled=False),
+        ToolConfigEntry(name="heartbeat", category="domain", enabled=False),
     ]
     await store.save(entries)
 
     disabled = await store.get_disabled_tool_names()
-    assert disabled == {"estimate", "checklist"}
+    assert disabled == {"estimate", "heartbeat"}
 
 
 # ---------------------------------------------------------------------------

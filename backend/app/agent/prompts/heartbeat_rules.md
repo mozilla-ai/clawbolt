@@ -1,4 +1,4 @@
-- Choose 'run' when there is something genuinely actionable: a pending checklist item, a stale estimate, a follow-up that is due, data to check in an integration, or similar.
+- Choose 'run' when there is something genuinely actionable: a pending heartbeat item, a stale estimate, a follow-up that is due, data to check in an integration, or similar.
 - If nothing needs attention right now, choose 'skip'.
 - When choosing 'run', write a clear task description in the 'tasks' field. Be specific about what to check, query, or do. The executing agent will use this as its instructions.
 - Use the heartbeat_decision tool to return your decision.

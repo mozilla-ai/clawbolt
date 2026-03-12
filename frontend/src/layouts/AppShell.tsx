@@ -29,7 +29,9 @@ const NAV_ITEMS = [
   { to: '/app/chat', label: 'Chat', icon: ChatIcon, end: false },
   { to: '/app/conversations', label: 'Conversations', icon: ConversationsIcon, end: false },
   { to: '/app/memory', label: 'Memory', icon: MemoryIcon, end: false },
-  { to: '/app/checklist', label: 'Checklist', icon: ChecklistIcon, end: false },
+  { to: '/app/heartbeat', label: 'Heartbeat', icon: HeartbeatIcon, end: false },
+  { to: '/app/soul', label: 'Soul', icon: SoulIcon, end: false },
+  { to: '/app/user', label: 'User', icon: UserIcon, end: false },
   { to: '/app/channels', label: 'Channels', icon: ChannelsIcon, end: false },
   { to: '/app/tools', label: 'Tools', icon: ToolsIcon, end: false },
   { to: '/app/settings', label: 'Settings', icon: SettingsIcon, end: false },
@@ -257,10 +259,26 @@ function MemoryIcon() {
   );
 }
 
-function ChecklistIcon() {
+function HeartbeatIcon() {
   return (
     <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3.343 7.778a4.5 4.5 0 016.364 0L12 10.07l2.293-2.293a4.5 4.5 0 116.364 6.364L12 22.485l-8.657-8.343a4.5 4.5 0 010-6.364z" />
+    </svg>
+  );
+}
+
+function SoulIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
+    </svg>
+  );
+}
+
+function UserIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
     </svg>
   );
 }
