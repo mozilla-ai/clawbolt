@@ -46,7 +46,7 @@ from pydantic import BaseModel, Field
 
 from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
-from backend.app.enums import ChecklistSchedule, ChecklistStatus, EstimateStatus
+from backend.app.enums import EstimateStatus, HeartbeatSchedule, HeartbeatStatus
 
 logger = logging.getLogger(__name__)
 
@@ -64,7 +64,7 @@ class UserData(BaseModel):
     phone: str = ""
     soul_text: str = ""
     user_text: str = ""
-    checklist_text: str = ""
+    heartbeat_text: str = ""
     timezone: str = ""
     preferred_channel: str = Field(default_factory=lambda: settings.messaging_provider)
     channel_identifier: str = ""
@@ -173,16 +173,16 @@ class MediaData(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
 
 
-class ChecklistItem(BaseModel):
-    """Replaces the HeartbeatChecklistItem ORM model."""
+class HeartbeatItem(BaseModel):
+    """Replaces the HeartbeatItem ORM model."""
 
     id: int = 0
     user_id: int = 0
     description: str = ""
-    schedule: str = ChecklistSchedule.DAILY
+    schedule: str = HeartbeatSchedule.DAILY
     active_hours: str = ""
     last_triggered_at: str | None = None
-    status: str = ChecklistStatus.ACTIVE
+    status: str = HeartbeatStatus.ACTIVE
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
 
 
@@ -431,13 +431,13 @@ class UserStore:
             if raw.startswith("# User"):
                 raw = raw[len("# User") :].strip()
             user.user_text = raw
-        # Load checklist_text from HEARTBEAT.md
-        checklist_path = _user_dir(user_id) / "HEARTBEAT.md"
-        if checklist_path.exists():
-            raw = checklist_path.read_text(encoding="utf-8").strip()
-            if raw.startswith("# Checklist"):
-                raw = raw[len("# Checklist") :].strip()
-            user.checklist_text = raw
+        # Load heartbeat_text from HEARTBEAT.md
+        heartbeat_path = _user_dir(user_id) / "HEARTBEAT.md"
+        if heartbeat_path.exists():
+            raw = heartbeat_path.read_text(encoding="utf-8").strip()
+            if raw.startswith("# Heartbeat"):
+                raw = raw[len("# Heartbeat") :].strip()
+            user.heartbeat_text = raw
         return user
 
     def _save(self, user: UserData) -> None:
@@ -449,7 +449,7 @@ class UserStore:
         data = user.model_dump()
         soul_text = data.pop("soul_text", "")
         user_text = data.pop("user_text", "")
-        checklist_text = data.pop("checklist_text", "")
+        heartbeat_text = data.pop("heartbeat_text", "")
         _write_json(cdir / "user.json", data)
 
         # Save SOUL.md
@@ -474,12 +474,12 @@ class UserStore:
             )
 
         # Save HEARTBEAT.md
-        checklist_path = cdir / "HEARTBEAT.md"
-        if checklist_text:
-            checklist_path.write_text(f"# Checklist\n\n{checklist_text}\n", encoding="utf-8")
-        elif not checklist_path.exists():
-            checklist_path.write_text(
-                f"# Checklist\n\n{load_prompt('default_checklist')}\n",
+        heartbeat_path = cdir / "HEARTBEAT.md"
+        if heartbeat_text:
+            heartbeat_path.write_text(f"# Heartbeat\n\n{heartbeat_text}\n", encoding="utf-8")
+        elif not heartbeat_path.exists():
+            heartbeat_path.write_text(
+                f"# Heartbeat\n\n{load_prompt('default_heartbeat')}\n",
                 encoding="utf-8",
             )
 
@@ -1224,13 +1224,13 @@ class MediaStore(JsonListStore[MediaData]):
 class HeartbeatStore(PerUserStore):
     """File-based heartbeat storage.
 
-    Checklist items are stored in ``HEARTBEAT.md`` (the user's markdown
-    checklist file), making it the single source of truth for both the
+    Heartbeat items are stored in ``HEARTBEAT.md`` (the user's markdown
+    heartbeat file), making it the single source of truth for both the
     heartbeat engine and the UI editor.
     """
 
     @property
-    def _checklist_md_path(self) -> Path:
+    def _heartbeat_md_path(self) -> Path:
         return _user_dir(self.user_id) / "HEARTBEAT.md"
 
     @property
@@ -1239,32 +1239,32 @@ class HeartbeatStore(PerUserStore):
 
     # -- HEARTBEAT.md I/O -------------------------------------------------
 
-    def read_checklist_md(self) -> str:
+    def read_heartbeat_md(self) -> str:
         """Read raw HEARTBEAT.md content. Returns empty string if missing."""
-        if self._checklist_md_path.exists():
+        if self._heartbeat_md_path.exists():
             try:
-                return self._checklist_md_path.read_text(encoding="utf-8")
+                return self._heartbeat_md_path.read_text(encoding="utf-8")
             except OSError:
                 logger.warning("Failed to read HEARTBEAT.md for user %d", self.user_id)
         return ""
 
-    def _write_checklist_md(self, content: str) -> None:
+    def _write_heartbeat_md(self, content: str) -> None:
         """Write content to HEARTBEAT.md, creating parent dirs as needed."""
-        self._checklist_md_path.parent.mkdir(parents=True, exist_ok=True)
-        self._checklist_md_path.write_text(content, encoding="utf-8")
+        self._heartbeat_md_path.parent.mkdir(parents=True, exist_ok=True)
+        self._heartbeat_md_path.write_text(content, encoding="utf-8")
 
-    # -- Structured checklist access (reads from HEARTBEAT.md) ------------
+    # -- Structured heartbeat access (reads from HEARTBEAT.md) ------------
 
-    def _parse_checklist_md(self) -> list[dict[str, Any]]:
+    def _parse_heartbeat_md(self) -> list[dict[str, Any]]:
         """Parse HEARTBEAT.md into a list of item dicts with ids.
 
         Recognises lines matching ``- [ ] text`` or ``- [x] text`` as
-        checklist items.  An optional ``(schedule)`` suffix is extracted.
+        heartbeat items.  An optional ``(schedule)`` suffix is extracted.
         Each item gets an id derived from its 1-based position among
-        checklist items.  IDs are stable within a single read but may
+        heartbeat items.  IDs are stable within a single read but may
         shift after mutations (add/delete).
         """
-        content = self.read_checklist_md()
+        content = self.read_heartbeat_md()
         if not content:
             return []
         items: list[dict[str, Any]] = []
@@ -1275,15 +1275,15 @@ class HeartbeatStore(PerUserStore):
                 item_id += 1
                 is_checked = stripped.startswith("- [x] ")
                 text = stripped[6:].strip()
-                schedule = ChecklistSchedule.DAILY
+                schedule = HeartbeatSchedule.DAILY
                 if text.endswith(")"):
                     paren_idx = text.rfind("(")
                     if paren_idx > 0:
                         maybe_sched = text[paren_idx + 1 : -1].strip().lower()
-                        if maybe_sched in list(ChecklistSchedule):
+                        if maybe_sched in list(HeartbeatSchedule):
                             schedule = maybe_sched
                             text = text[:paren_idx].strip()
-                status = ChecklistStatus.COMPLETED if is_checked else ChecklistStatus.ACTIVE
+                status = HeartbeatStatus.COMPLETED if is_checked else HeartbeatStatus.ACTIVE
                 items.append(
                     {
                         "id": item_id,
@@ -1297,41 +1297,41 @@ class HeartbeatStore(PerUserStore):
                 )
         return items
 
-    async def get_checklist(self) -> list[ChecklistItem]:
-        """Get all checklist items parsed from HEARTBEAT.md."""
-        return [ChecklistItem.model_validate(item) for item in self._parse_checklist_md()]
+    async def get_heartbeat_items(self) -> list[HeartbeatItem]:
+        """Get all heartbeat items parsed from HEARTBEAT.md."""
+        return [HeartbeatItem.model_validate(item) for item in self._parse_heartbeat_md()]
 
-    async def add_checklist_item(
+    async def add_heartbeat_item(
         self,
         description: str,
-        schedule: str = ChecklistSchedule.DAILY,
-    ) -> ChecklistItem:
-        """Add a checklist item by appending a line to HEARTBEAT.md."""
+        schedule: str = HeartbeatSchedule.DAILY,
+    ) -> HeartbeatItem:
+        """Add a heartbeat item by appending a line to HEARTBEAT.md."""
         async with self._lock:
-            content = self.read_checklist_md()
+            content = self.read_heartbeat_md()
             if not content:
-                content = "# Checklist\n\n"
+                content = "# Heartbeat\n\n"
             if not content.endswith("\n"):
                 content += "\n"
-            schedule_note = f" ({schedule})" if schedule != ChecklistSchedule.DAILY else ""
+            schedule_note = f" ({schedule})" if schedule != HeartbeatSchedule.DAILY else ""
             content += f"- [ ] {description}{schedule_note}\n"
-            self._write_checklist_md(content)
+            self._write_heartbeat_md(content)
 
-            items = self._parse_checklist_md()
-            return ChecklistItem.model_validate(items[-1])
+            items = self._parse_heartbeat_md()
+            return HeartbeatItem.model_validate(items[-1])
 
-    async def update_checklist_item(
+    async def update_heartbeat_item(
         self,
         item_id: int,
         **fields: Any,
-    ) -> ChecklistItem | None:
-        """Update a checklist item in HEARTBEAT.md by id.
+    ) -> HeartbeatItem | None:
+        """Update a heartbeat item in HEARTBEAT.md by id.
 
         Supports updating description, schedule, and status.  When status
         changes to completed the checkbox is checked (``[x]``).
         """
         async with self._lock:
-            items = self._parse_checklist_md()
+            items = self._parse_heartbeat_md()
             target = None
             for item in items:
                 if item["id"] == item_id:
@@ -1344,27 +1344,27 @@ class HeartbeatStore(PerUserStore):
                 if v is not None:
                     target[k] = v
 
-            self._rebuild_checklist_md(items)
-            return ChecklistItem.model_validate(target)
+            self._rebuild_heartbeat_md(items)
+            return HeartbeatItem.model_validate(target)
 
-    async def delete_checklist_item(self, item_id: int) -> bool:
-        """Delete a checklist item from HEARTBEAT.md by id."""
+    async def delete_heartbeat_item(self, item_id: int) -> bool:
+        """Delete a heartbeat item from HEARTBEAT.md by id."""
         async with self._lock:
-            items = self._parse_checklist_md()
+            items = self._parse_heartbeat_md()
             original_len = len(items)
             items = [i for i in items if i["id"] != item_id]
             if len(items) == original_len:
                 return False
-            self._rebuild_checklist_md(items)
+            self._rebuild_heartbeat_md(items)
             return True
 
-    def _rebuild_checklist_md(self, items: list[dict[str, Any]]) -> None:
+    def _rebuild_heartbeat_md(self, items: list[dict[str, Any]]) -> None:
         """Rebuild HEARTBEAT.md from a list of item dicts.
 
-        Preserves non-checklist-item lines (headings, blank lines, prose)
-        from the original file and replaces only the checklist item lines.
+        Preserves non-heartbeat-item lines (headings, blank lines, prose)
+        from the original file and replaces only the heartbeat item lines.
         """
-        content = self.read_checklist_md()
+        content = self.read_heartbeat_md()
         new_lines: list[str] = []
         item_idx = 0
         for line in content.splitlines():
@@ -1372,26 +1372,26 @@ class HeartbeatStore(PerUserStore):
             if stripped.startswith("- [ ] ") or stripped.startswith("- [x] "):
                 if item_idx < len(items):
                     item = items[item_idx]
-                    checkbox = "[x]" if item.get("status") == ChecklistStatus.COMPLETED else "[ ]"
+                    checkbox = "[x]" if item.get("status") == HeartbeatStatus.COMPLETED else "[ ]"
                     desc = item["description"]
-                    sched = item.get("schedule", ChecklistSchedule.DAILY)
-                    suffix = f" ({sched})" if sched != ChecklistSchedule.DAILY else ""
+                    sched = item.get("schedule", HeartbeatSchedule.DAILY)
+                    suffix = f" ({sched})" if sched != HeartbeatSchedule.DAILY else ""
                     new_lines.append(f"- {checkbox} {desc}{suffix}")
                     item_idx += 1
             else:
                 new_lines.append(line)
         while item_idx < len(items):
             item = items[item_idx]
-            checkbox = "[x]" if item.get("status") == ChecklistStatus.COMPLETED else "[ ]"
+            checkbox = "[x]" if item.get("status") == HeartbeatStatus.COMPLETED else "[ ]"
             desc = item["description"]
-            sched = item.get("schedule", ChecklistSchedule.DAILY)
-            suffix = f" ({sched})" if sched != ChecklistSchedule.DAILY else ""
+            sched = item.get("schedule", HeartbeatSchedule.DAILY)
+            suffix = f" ({sched})" if sched != HeartbeatSchedule.DAILY else ""
             new_lines.append(f"- {checkbox} {desc}{suffix}")
             item_idx += 1
         result = "\n".join(new_lines)
         if not result.endswith("\n"):
             result += "\n"
-        self._write_checklist_md(result)
+        self._write_heartbeat_md(result)
 
     async def log_heartbeat(self) -> None:
         """Append to heartbeat log."""
