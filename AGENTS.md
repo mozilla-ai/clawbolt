@@ -44,7 +44,7 @@ data/
       user.json                      # Profile data
       SOUL.md                        # Personality/behavioral guidance
       USER.md                        # User info and preferences
-      HEARTBEAT.md                   # Heartbeat checklist (single source of truth)
+      HEARTBEAT.md                   # Heartbeat items (single source of truth)
       memory/
         MEMORY.md                    # Structured facts by category
         HISTORY.md                   # Compaction log
@@ -69,7 +69,7 @@ Key store classes in `backend/app/agent/file_store.py`:
 
 Data classes (Pydantic BaseModel, replace ORM models):
 - `UserData`, `StoredMessage`, `SessionState`, `ClientData`
-- `EstimateData`, `MediaData`, `ChecklistItem`, `HeartbeatLogEntry`, `MemoryFact`
+- `EstimateData`, `MediaData`, `HeartbeatItem`, `HeartbeatLogEntry`, `MemoryFact`
 
 ## Backwards Compatibility
 

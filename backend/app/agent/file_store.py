@@ -174,7 +174,7 @@ class MediaData(BaseModel):
 
 
 class HeartbeatItem(BaseModel):
-    """Replaces the HeartbeatItem ORM model."""
+    """A heartbeat item (task/reminder)."""
 
     id: int = 0
     user_id: int = 0
