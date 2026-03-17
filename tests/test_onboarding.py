@@ -95,32 +95,53 @@ def test_is_onboarding_needed_respects_flag() -> None:
     assert is_onboarding_needed(user) is False
 
 
-def test_provision_user_directory_creates_bootstrap() -> None:
-    """provision_user_directory should seed BOOTSTRAP.md so onboarding triggers."""
-    from backend.app.agent.user_db import provision_user_directory
+def test_provision_user_creates_bootstrap_and_seeds_db() -> None:
+    """provision_user should seed DB text columns and create BOOTSTRAP.md."""
+    from backend.app.agent.user_db import provision_user
+    from backend.app.database import SessionLocal
 
-    user = User(id="provision-test", user_id="provision-user")
-    provision_user_directory(user)
+    db = SessionLocal()
+    try:
+        user = User(id="provision-test", user_id="provision-user")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
-    user_dir = Path(settings.data_dir) / str(user.id)
-    assert (user_dir / "BOOTSTRAP.md").exists()
-    assert (user_dir / "SOUL.md").exists()
-    assert (user_dir / "USER.md").exists()
-    assert (user_dir / "HEARTBEAT.md").exists()
-    assert (user_dir / "memory").is_dir()
-    assert is_onboarding_needed(user) is True
+        provision_user(user, db)
+
+        # DB columns should be seeded
+        db.refresh(user)
+        assert user.soul_text
+        assert user.user_text
+        assert user.heartbeat_text
+
+        # BOOTSTRAP.md on disk
+        user_dir = Path(settings.data_dir) / str(user.id)
+        assert (user_dir / "BOOTSTRAP.md").exists()
+        assert is_onboarding_needed(user) is True
+    finally:
+        db.close()
 
 
 def test_provision_skips_bootstrap_when_onboarding_complete() -> None:
-    """provision_user_directory should not create BOOTSTRAP.md for onboarded users."""
-    from backend.app.agent.user_db import provision_user_directory
+    """provision_user should not create BOOTSTRAP.md for onboarded users."""
+    from backend.app.agent.user_db import provision_user
+    from backend.app.database import SessionLocal
 
-    user = User(id="provision-complete", user_id="done-user", onboarding_complete=True)
-    provision_user_directory(user)
+    db = SessionLocal()
+    try:
+        user = User(id="provision-complete", user_id="done-user", onboarding_complete=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
 
-    user_dir = Path(settings.data_dir) / str(user.id)
-    assert not (user_dir / "BOOTSTRAP.md").exists()
-    assert is_onboarding_needed(user) is False
+        provision_user(user, db)
+
+        user_dir = Path(settings.data_dir) / str(user.id)
+        assert not (user_dir / "BOOTSTRAP.md").exists()
+        assert is_onboarding_needed(user) is False
+    finally:
+        db.close()
 
 
 def test_is_onboarding_needed_bootstrap_deleted() -> None:
@@ -592,17 +613,13 @@ async def test_no_completion_message_when_already_onboarded(
 
 
 def _write_user_md(user: User, content: str) -> None:
-    """Write USER.md for the given user."""
-    cdir = Path(settings.data_dir) / str(user.id)
-    cdir.mkdir(parents=True, exist_ok=True)
-    (cdir / "USER.md").write_text(content, encoding="utf-8")
+    """Set user_text on the User object (was: write USER.md to disk)."""
+    user.user_text = content
 
 
 def _write_soul_md(user: User, content: str) -> None:
-    """Write SOUL.md for the given user."""
-    cdir = Path(settings.data_dir) / str(user.id)
-    cdir.mkdir(parents=True, exist_ok=True)
-    (cdir / "SOUL.md").write_text(content, encoding="utf-8")
+    """Set soul_text on the User object (was: write SOUL.md to disk)."""
+    user.soul_text = content
 
 
 class TestHasRealUserProfile:

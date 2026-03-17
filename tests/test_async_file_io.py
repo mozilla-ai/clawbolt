@@ -15,11 +15,12 @@ from pathlib import Path
 
 import pytest
 
+import backend.app.database as _db_module
 from backend.app.agent.dto import UserData
 from backend.app.agent.session_db import SessionStore
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
-from backend.app.config import settings
+from backend.app.models import User
 
 # ---------------------------------------------------------------------------
 # Source-level checks: verify asyncio.to_thread is used in the right places
@@ -102,15 +103,21 @@ async def test_heartbeat_log_still_works(
 
 
 @pytest.mark.asyncio()
-async def test_workspace_read_file_still_works(
+async def test_workspace_read_file_db_backed(
     test_user: UserData,
 ) -> None:
-    """Workspace read_file should still read files correctly."""
-    cdir = Path(settings.data_dir) / str(test_user.id)
-    cdir.mkdir(parents=True, exist_ok=True)
-    (cdir / "USER.md").write_text("# User\n\n- Name: Jake\n", encoding="utf-8")
+    """Workspace read_file should read USER.md from the DB."""
+    # Write user_text directly to the DB
+    db = _db_module.SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=str(test_user.id)).first()
+        assert user is not None
+        user.user_text = "# User\n\n- Name: Jake\n"
+        db.commit()
+    finally:
+        db.close()
 
-    tools = create_workspace_tools(test_user.id)
+    tools = create_workspace_tools(str(test_user.id))
     read_fn = next(t.function for t in tools if t.name == "read_file")
     result = await read_fn(path="USER.md")
     assert result.is_error is False
@@ -118,32 +125,48 @@ async def test_workspace_read_file_still_works(
 
 
 @pytest.mark.asyncio()
-async def test_workspace_write_file_still_works(
+async def test_workspace_write_file_db_backed(
     test_user: UserData,
 ) -> None:
-    """Workspace write_file should still write files correctly."""
-    cdir = Path(settings.data_dir) / str(test_user.id)
-    cdir.mkdir(parents=True, exist_ok=True)
-
-    tools = create_workspace_tools(test_user.id)
+    """Workspace write_file should write USER.md to the DB."""
+    tools = create_workspace_tools(str(test_user.id))
     write_fn = next(t.function for t in tools if t.name == "write_file")
     result = await write_fn(path="USER.md", content="# User\n\n- Name: Sarah\n")
     assert result.is_error is False
-    written = (cdir / "USER.md").read_text(encoding="utf-8")
-    assert "Sarah" in written
+
+    db = _db_module.SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=str(test_user.id)).first()
+        assert user is not None
+        assert "Sarah" in user.user_text
+    finally:
+        db.close()
 
 
 @pytest.mark.asyncio()
-async def test_workspace_edit_file_still_works(
+async def test_workspace_edit_file_db_backed(
     test_user: UserData,
 ) -> None:
-    """Workspace edit_file should still edit files correctly."""
-    cdir = Path(settings.data_dir) / str(test_user.id)
-    cdir.mkdir(parents=True, exist_ok=True)
-    (cdir / "USER.md").write_text("- Rate: $85/hr\n", encoding="utf-8")
+    """Workspace edit_file should edit USER.md in the DB."""
+    # Seed initial content
+    db = _db_module.SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=str(test_user.id)).first()
+        assert user is not None
+        user.user_text = "- Rate: $85/hr\n"
+        db.commit()
+    finally:
+        db.close()
 
-    tools = create_workspace_tools(test_user.id)
+    tools = create_workspace_tools(str(test_user.id))
     edit_fn = next(t.function for t in tools if t.name == "edit_file")
     result = await edit_fn(path="USER.md", old_text="$85/hr", new_text="$100/hr")
     assert result.is_error is False
-    assert "$100/hr" in (cdir / "USER.md").read_text(encoding="utf-8")
+
+    db = _db_module.SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=str(test_user.id)).first()
+        assert user is not None
+        assert "$100/hr" in user.user_text
+    finally:
+        db.close()

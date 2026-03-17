@@ -31,31 +31,24 @@ def _user_dir(user: User) -> Path:
 
 
 def _has_real_user_profile(user: User) -> bool:
-    """Return True if USER.md contains a filled-in name field.
+    """Return True if user_text contains a filled-in name field.
 
     The default template has ``- Name:`` with no value. If the LLM has
     written a real name (e.g. ``- Name: Nathan``), the user has been
     through the onboarding conversation even if BOOTSTRAP.md was never
     deleted.
     """
-    user_md = _user_dir(user) / "USER.md"
-    if not user_md.exists():
+    content = user.user_text or ""
+    if not content:
         return False
-    content = user_md.read_text(encoding="utf-8")
-    # Match "- Name: <something>" on the same line where <something> is non-empty
     return bool(re.search(r"^-\s*Name:[ \t]+\S", content, re.MULTILINE))
 
 
 def _has_custom_soul(user: User) -> bool:
-    """Return True if SOUL.md exists and differs from the default template.
-
-    The file store writes SOUL.md as ``# Soul\\n\\n{template}\\n``, so we
-    compare against both the raw template and the wrapped version.
-    """
-    soul_md = _user_dir(user) / "SOUL.md"
-    if not soul_md.exists():
+    """Return True if soul_text differs from the default template."""
+    content = (user.soul_text or "").strip()
+    if not content:
         return False
-    content = soul_md.read_text(encoding="utf-8").strip()
     default = load_prompt("default_soul")
     default_wrapped = f"# Soul\n\n{default}"
     return content != default and content != default_wrapped
@@ -201,8 +194,18 @@ class OnboardingSubscriber:
 
         # Heuristic fallback: BOOTSTRAP.md still exists but user profile
         # shows evidence of completed onboarding (name filled in, or
-        # SOUL.md customized).  This catches the case where the LLM got
+        # soul_text customized).  This catches the case where the LLM got
         # sidetracked and forgot to delete BOOTSTRAP.md.
+        # Re-read from DB since workspace tools may have updated text columns.
+        if self._was_onboarding:
+            db = SessionLocal()
+            try:
+                fresh = db.query(User).filter_by(id=self._user.id).first()
+                if fresh:
+                    self._user.user_text = fresh.user_text
+                    self._user.soul_text = fresh.soul_text
+            finally:
+                db.close()
         if self._was_onboarding and is_onboarding_complete_heuristic(self._user):
             logger.info(
                 "Onboarding complete for user %s: heuristic detected "
