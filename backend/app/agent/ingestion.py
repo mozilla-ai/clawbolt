@@ -105,9 +105,11 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 return user
 
         # Reuse the sole existing user (single-tenant OSS) so sessions from
-        # every channel are visible in the dashboard.
+        # every channel are visible in the dashboard.  Skip this in
+        # multi-tenant (premium) mode to avoid linking a new sender's
+        # messages to an existing user's account.
         all_users = db.query(User).all()
-        if len(all_users) == 1:
+        if len(all_users) == 1 and not settings.premium_plugin:
             user = all_users[0]
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
             user.channel_identifier = sender_id

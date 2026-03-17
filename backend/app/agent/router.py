@@ -455,6 +455,25 @@ DEFAULT_PIPELINE: list[PipelineStep] = [
     persist_outbound_step,
 ]
 
+# Premium (or other plugins) can register a custom pipeline via
+# ``set_pipeline_override()`` to inject extra steps (e.g. quota checks).
+_pipeline_override: list[PipelineStep] | None = None
+
+
+def set_pipeline_override(pipeline: list[PipelineStep]) -> None:
+    """Register a custom pipeline that replaces ``DEFAULT_PIPELINE``.
+
+    Called by the premium plugin at import time to inject quota-check
+    and usage-tracking steps into the agent pipeline.
+    """
+    global _pipeline_override
+    _pipeline_override = pipeline
+
+
+def get_active_pipeline() -> list[PipelineStep]:
+    """Return the currently active pipeline (override or default)."""
+    return _pipeline_override if _pipeline_override is not None else DEFAULT_PIPELINE
+
 
 # ---------------------------------------------------------------------------
 # Orchestrator
@@ -476,7 +495,8 @@ async def handle_inbound_message(
 
     Orchestrates discrete pipeline steps via a composable list of
     ``PipelineStep`` callables. Pass a custom ``pipeline`` to add,
-    remove, or reorder steps; defaults to ``DEFAULT_PIPELINE``.
+    remove, or reorder steps; defaults to the active pipeline (which
+    may be overridden by a premium plugin).
     """
     logger.debug(
         "Handling inbound message seq=%d for user %s, %d media attachment(s)",
@@ -510,5 +530,5 @@ async def handle_inbound_message(
         download_media=download_media,
         request_id=request_id,
     )
-    ctx = await run_pipeline(ctx, pipeline or DEFAULT_PIPELINE)
+    ctx = await run_pipeline(ctx, pipeline or get_active_pipeline())
     return ctx.response or AgentResponse(reply_text="")
