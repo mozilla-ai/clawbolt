@@ -55,7 +55,7 @@ def _invoice_to_data(inv: Invoice, items: list[InvoiceLineItem] | None = None) -
         user_id=inv.user_id,
         client_id=inv.client_id or "",
         description=inv.description,
-        total_amount=inv.total_amount,
+        total_amount=float(inv.total_amount),
         status=inv.status,
         pdf_url=inv.pdf_url,
         storage_path=inv.storage_path,
@@ -66,9 +66,9 @@ def _invoice_to_data(inv: Invoice, items: list[InvoiceLineItem] | None = None) -
             InvoiceLineItemData(
                 id=li.id,
                 description=li.description,
-                quantity=li.quantity,
-                unit_price=li.unit_price,
-                total=li.total,
+                quantity=float(li.quantity),
+                unit_price=float(li.unit_price),
+                total=float(li.total),
             )
             for li in line_items
         ],
@@ -83,7 +83,7 @@ def _estimate_to_data(e: Estimate, items: list[EstimateLineItem] | None = None) 
         user_id=e.user_id,
         client_id=e.client_id or "",
         description=e.description,
-        total_amount=e.total_amount,
+        total_amount=float(e.total_amount),
         status=e.status,
         pdf_url=e.pdf_url,
         storage_path=e.storage_path,
@@ -91,9 +91,9 @@ def _estimate_to_data(e: Estimate, items: list[EstimateLineItem] | None = None) 
             EstimateLineItemData(
                 id=li.id,
                 description=li.description,
-                quantity=li.quantity,
-                unit_price=li.unit_price,
-                total=li.total,
+                quantity=float(li.quantity),
+                unit_price=float(li.unit_price),
+                total=float(li.total),
             )
             for li in line_items
         ],
