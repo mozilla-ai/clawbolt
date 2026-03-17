@@ -60,7 +60,7 @@ class DeleteFileParams(BaseModel):
     path: str = Field(description="Relative path within your workspace (e.g. 'BOOTSTRAP.md')")
 
 
-def _resolve_path(user_id: int, relative_path: str) -> tuple[Path, str | None]:
+def _resolve_path(user_id: str, relative_path: str) -> tuple[Path, str | None]:
     """Resolve a relative path to an absolute path within the user directory.
 
     Returns (resolved_path, error_message).  error_message is None on success.
@@ -85,7 +85,7 @@ def _resolve_path(user_id: int, relative_path: str) -> tuple[Path, str | None]:
     return resolved, None
 
 
-def create_workspace_tools(user_id: int) -> list[Tool]:
+def create_workspace_tools(user_id: str) -> list[Tool]:
     """Create generic file tools scoped to the user's data directory."""
 
     async def read_file(path: str) -> ToolResult:

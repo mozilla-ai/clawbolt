@@ -8,11 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from backend.app.agent.compaction import compact_session
-from backend.app.agent.file_store import (
-    FileSessionStore,
-    SessionState,
-    get_session_store,
-)
+from backend.app.agent.file_store import SessionState
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -20,6 +16,7 @@ from backend.app.agent.messages import (
     ToolResultMessage,
     UserMessage,
 )
+from backend.app.agent.session_db import SessionStore, get_session_store
 from backend.app.config import settings
 from backend.app.enums import MessageDirection
 
@@ -44,9 +41,9 @@ class StoredToolInteraction(BaseModel):
 
 
 async def _run_compaction_in_background(
-    session_store: FileSessionStore,
+    session_store: SessionStore,
     session: SessionState,
-    user_id: int,
+    user_id: str,
     trimmed_agent_messages: list[AgentMessage],
     max_message_seq: int,
 ) -> None:
@@ -63,14 +60,14 @@ async def _run_compaction_in_background(
             await session_store.update_compaction_seq(session, compacted_seq)
         if saved:
             logger.info(
-                "Session compaction extracted %d fact(s) from %d trimmed message(s) for user %d",
+                "Session compaction extracted %d fact(s) from %d trimmed message(s) for user %s",
                 len(saved),
                 len(trimmed_agent_messages),
                 user_id,
             )
     except Exception:
         logger.exception(
-            "Session compaction failed for session %s, user %d",
+            "Session compaction failed for session %s, user %s",
             session.session_id,
             user_id,
         )
@@ -151,7 +148,7 @@ def _expand_outbound_with_tools(
 async def load_conversation_history(
     session: SessionState,
     limit: int = DEFAULT_HISTORY_LIMIT,
-    user_id: int | None = None,
+    user_id: str | None = None,
 ) -> list[AgentMessage]:
     """Load recent messages as typed message objects for LLM context.
 
@@ -238,8 +235,8 @@ async def load_conversation_history(
 
 
 async def _consolidate_previous_session(
-    session_store: FileSessionStore,
-    user_id: int,
+    session_store: SessionStore,
+    user_id: str,
     current_session_id: str,
 ) -> None:
     """Consolidate unconsolidated messages from the most recent previous session.
@@ -249,11 +246,10 @@ async def _consolidate_previous_session(
     never compacted.  This ensures short conversations (that never overflowed
     the context window) still get their facts extracted and history logged.
     """
-    for path in reversed(session_store._list_session_files()):
-        sid = path.stem
+    for sid in reversed(session_store.list_session_ids()):
         if sid == current_session_id:
             continue
-        prev = session_store._load_session(sid)
+        prev = session_store.load_session(sid)
         if prev is None or not prev.messages:
             continue
 
@@ -284,7 +280,7 @@ async def _consolidate_previous_session(
             _background_tasks.add(task)
             task.add_done_callback(_background_tasks.discard)
             logger.info(
-                "Triggered session-end consolidation for user %d: %d messages from session %s",
+                "Triggered session-end consolidation for user %s: %d messages from session %s",
                 user_id,
                 len(trimmed_agent_messages),
                 sid,
@@ -293,7 +289,7 @@ async def _consolidate_previous_session(
 
 
 async def get_or_create_conversation(
-    user_id: int,
+    user_id: str,
     external_session_id: str | None = None,
     force_new: bool = False,
 ) -> tuple[SessionState, bool]:
@@ -310,7 +306,7 @@ async def get_or_create_conversation(
     session_store = get_session_store(user_id)
 
     if not force_new and external_session_id is not None:
-        session = session_store._load_session(external_session_id)
+        session = session_store.load_session(external_session_id)
         if session is not None and session.user_id == user_id:
             return session, False
 

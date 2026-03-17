@@ -7,9 +7,9 @@ import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
 from backend.app.agent.tools.messaging_tools import create_messaging_tools
+from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -124,7 +124,7 @@ def test_messaging_tools_have_sends_reply_tag() -> None:
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_tool_call_records_include_tags(
-    mock_amessages: object, test_user: UserData
+    mock_amessages: object, test_user: User
 ) -> None:
     """Tool call records in AgentResponse should include tags from the Tool definition."""
     tool_response = make_tool_call_response(
@@ -157,9 +157,7 @@ async def test_agent_tool_call_records_include_tags(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-async def test_agent_untagged_tool_has_empty_tags(
-    mock_amessages: object, test_user: UserData
-) -> None:
+async def test_agent_untagged_tool_has_empty_tags(mock_amessages: object, test_user: User) -> None:
     """Tool without tags should produce tool_call record with empty tags set."""
     tool_response = make_tool_call_response(
         tool_calls=[
@@ -196,7 +194,7 @@ def test_delete_file_has_modifies_profile_tag() -> None:
     """delete_file tool should have MODIFIES_PROFILE tag."""
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
-    tools = create_workspace_tools(user_id=1)
+    tools = create_workspace_tools(user_id="1")
     delete_file = next(t for t in tools if t.name == "delete_file")
     assert ToolTags.MODIFIES_PROFILE in delete_file.tags
 
@@ -205,6 +203,6 @@ def test_read_file_has_no_modifies_profile_tag() -> None:
     """read_file should not have MODIFIES_PROFILE tag."""
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
-    tools = create_workspace_tools(user_id=1)
+    tools = create_workspace_tools(user_id="1")
     read_file = next(t for t in tools if t.name == "read_file")
     assert ToolTags.MODIFIES_PROFILE not in read_file.tags

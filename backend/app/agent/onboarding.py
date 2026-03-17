@@ -8,10 +8,11 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from backend.app.agent.events import AgentEndEvent, AgentEvent
-from backend.app.agent.file_store import UserData, get_user_store
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
 from backend.app.config import settings
+from backend.app.database import SessionLocal
+from backend.app.models import User
 
 if TYPE_CHECKING:
     from backend.app.agent.core import AgentResponse
@@ -19,17 +20,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _bootstrap_path(user: UserData) -> Path:
+def _bootstrap_path(user: User) -> Path:
     """Return the path to the user's BOOTSTRAP.md file."""
     return Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
 
 
-def _user_dir(user: UserData) -> Path:
+def _user_dir(user: User) -> Path:
     """Return the user's data directory."""
     return Path(settings.data_dir) / str(user.id)
 
 
-def _has_real_user_profile(user: UserData) -> bool:
+def _has_real_user_profile(user: User) -> bool:
     """Return True if USER.md contains a filled-in name field.
 
     The default template has ``- Name:`` with no value. If the LLM has
@@ -45,7 +46,7 @@ def _has_real_user_profile(user: UserData) -> bool:
     return bool(re.search(r"^-\s*Name:[ \t]+\S", content, re.MULTILINE))
 
 
-def _has_custom_soul(user: UserData) -> bool:
+def _has_custom_soul(user: User) -> bool:
     """Return True if SOUL.md exists and differs from the default template.
 
     The file store writes SOUL.md as ``# Soul\\n\\n{template}\\n``, so we
@@ -60,7 +61,7 @@ def _has_custom_soul(user: UserData) -> bool:
     return content != default and content != default_wrapped
 
 
-def is_onboarding_complete_heuristic(user: UserData) -> bool:
+def is_onboarding_complete_heuristic(user: User) -> bool:
     """Heuristic check for onboarding completion.
 
     Returns True if there is evidence that the user has been through
@@ -73,7 +74,7 @@ def is_onboarding_complete_heuristic(user: UserData) -> bool:
     return _has_real_user_profile(user) or _has_custom_soul(user)
 
 
-def is_onboarding_needed(user: UserData) -> bool:
+def is_onboarding_needed(user: User) -> bool:
     """Check if user needs onboarding.
 
     Returns False once onboarding_complete is set, or if BOOTSTRAP.md
@@ -99,7 +100,7 @@ def _get_tool_capability_descriptions() -> list[str]:
 
 
 def build_onboarding_system_prompt(
-    user: UserData,
+    user: User,
     tools: list[Any] | None = None,
 ) -> str:
     """Build system prompt for onboarding mode.
@@ -170,7 +171,7 @@ class OnboardingSubscriber:
         sub.finalize(response)
     """
 
-    def __init__(self, user: UserData, was_onboarding: bool) -> None:
+    def __init__(self, user: User, was_onboarding: bool) -> None:
         self._user = user
         self._was_onboarding = was_onboarding
 
@@ -184,12 +185,17 @@ class OnboardingSubscriber:
         if self._user.onboarding_complete:
             return
 
-        store = get_user_store()
-
         # Transition: was onboarding and BOOTSTRAP.md is now gone
         if self._was_onboarding and not _bootstrap_path(self._user).exists():
-            logger.info("Onboarding complete for user %d: BOOTSTRAP.md deleted", self._user.id)
-            await store.update(self._user.id, onboarding_complete=True)
+            logger.info("Onboarding complete for user %s: BOOTSTRAP.md deleted", self._user.id)
+            db = SessionLocal()
+            try:
+                db_user = db.query(User).filter_by(id=self._user.id).first()
+                if db_user:
+                    db_user.onboarding_complete = True
+                    db.commit()
+            finally:
+                db.close()
             self._user.onboarding_complete = True
             return
 
@@ -199,24 +205,38 @@ class OnboardingSubscriber:
         # sidetracked and forgot to delete BOOTSTRAP.md.
         if self._was_onboarding and is_onboarding_complete_heuristic(self._user):
             logger.info(
-                "Onboarding complete for user %d: heuristic detected "
+                "Onboarding complete for user %s: heuristic detected "
                 "(BOOTSTRAP.md still exists, cleaning up)",
                 self._user.id,
             )
             bootstrap = _bootstrap_path(self._user)
             if bootstrap.exists():
                 bootstrap.unlink()
-            await store.update(self._user.id, onboarding_complete=True)
+            db = SessionLocal()
+            try:
+                db_user = db.query(User).filter_by(id=self._user.id).first()
+                if db_user:
+                    db_user.onboarding_complete = True
+                    db.commit()
+            finally:
+                db.close()
             self._user.onboarding_complete = True
             return
 
         # Pre-populated user: BOOTSTRAP.md doesn't exist but flag was never set
         if not is_onboarding_needed(self._user):
             logger.info(
-                "Onboarding complete for user %d: pre-populated user",
+                "Onboarding complete for user %s: pre-populated user",
                 self._user.id,
             )
-            await store.update(self._user.id, onboarding_complete=True)
+            db = SessionLocal()
+            try:
+                db_user = db.query(User).filter_by(id=self._user.id).first()
+                if db_user:
+                    db_user.onboarding_complete = True
+                    db.commit()
+            finally:
+                db.close()
             self._user.onboarding_complete = True
 
     def finalize(self, response: AgentResponse) -> None:

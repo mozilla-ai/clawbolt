@@ -4,13 +4,9 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.app.agent.file_store import (
-    SessionState,
-    StoredMessage,
-    UserData,
-    get_memory_store,
-)
+from backend.app.agent.file_store import SessionState, StoredMessage, UserData
 from backend.app.agent.memory import build_memory_context
+from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.router import handle_inbound_message
 from tests.mocks.llm import make_text_response
 

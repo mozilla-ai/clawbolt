@@ -17,8 +17,8 @@ from typing import Any, cast
 from any_llm import amessages
 from any_llm.types.messages import MessageResponse
 
-from backend.app.agent.file_store import get_memory_store
 from backend.app.agent.llm_parsing import get_response_text
+from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
@@ -69,7 +69,7 @@ def _parse_compaction_response(raw: str) -> tuple[str, str]:
 
 
 async def compact_session(
-    user_id: int,
+    user_id: str,
     trimmed_messages: list[AgentMessage],
     max_message_seq: int | None = None,
 ) -> tuple[str, int | None]:
@@ -133,7 +133,7 @@ async def compact_session(
             ),
         )
     except Exception:
-        logger.exception("Compaction LLM call failed for user %d", user_id)
+        logger.exception("Compaction LLM call failed for user %s", user_id)
         return "", None
 
     raw_content = get_response_text(response)
@@ -142,7 +142,7 @@ async def compact_session(
     # Write updated MEMORY.md if the LLM produced content
     if memory_update:
         memory_store.write_memory(memory_update)
-        logger.info("Compaction rewrote MEMORY.md for user %d", user_id)
+        logger.info("Compaction rewrote MEMORY.md for user %s", user_id)
 
     # Append summary to HISTORY.md if the LLM produced one
     if summary:
@@ -150,8 +150,8 @@ async def compact_session(
         entry = summary.replace("[TIMESTAMP]", f"[{timestamp}]")
         try:
             await memory_store.append_history(entry)
-            logger.info("Compaction appended history entry for user %d", user_id)
+            logger.info("Compaction appended history entry for user %s", user_id)
         except Exception:
-            logger.exception("Failed to append history for user %d", user_id)
+            logger.exception("Failed to append history for user %s", user_id)
 
     return memory_update, max_message_seq

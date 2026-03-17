@@ -1,13 +1,13 @@
 """Tests for runtime webhook secret validation."""
 
-import asyncio
 from collections.abc import Generator
 from contextlib import contextmanager
 from unittest.mock import AsyncMock, patch
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import UserData, get_user_store, reset_stores
+import backend.app.database as _db_module
+from backend.app.agent.file_store import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import (
     Settings,
@@ -16,6 +16,7 @@ from backend.app.config import (
     settings,
 )
 from backend.app.main import app
+from backend.app.models import User
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from tests.mocks.telegram import make_telegram_update_payload
 
@@ -34,17 +35,22 @@ def _make_client(
     with patch.object(settings, "data_dir", data_dir):
         reset_stores()
 
-        store = get_user_store()
-        user = asyncio.get_event_loop().run_until_complete(
-            store.create(
+        db = _db_module.SessionLocal()
+        try:
+            user = User(
                 user_id="secret-test-user",
                 phone="+15550000000",
                 channel_identifier="999999",
                 preferred_channel="telegram",
             )
-        )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            db.expunge(user)
+        finally:
+            db.close()
 
-        def _override_get_current_user() -> UserData:
+        def _override_get_current_user() -> User:
             return user
 
         app.dependency_overrides[get_current_user] = _override_get_current_user

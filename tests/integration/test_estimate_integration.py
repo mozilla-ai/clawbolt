@@ -11,9 +11,10 @@ from unittest.mock import patch
 
 import pytest
 
+from backend.app.agent.client_db import EstimateStore
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.file_store import EstimateStore, UserData
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
+from backend.app.models import User
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
@@ -21,7 +22,7 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_estimate_generation_roundtrip(
-    integration_user: UserData,
+    integration_user: User,
 ) -> None:
     """Agent should call generate_estimate tool and create file store records when asked."""
     with patch("backend.app.agent.core.settings") as mock_settings:

@@ -10,42 +10,45 @@ Telegram channel must be linked to the same user so sessions appear
 in the dashboard.
 
 These tests use a TestClient that does NOT override `get_current_user`,
-exercising the real auth dependency against a pre-populated store.
+exercising the real auth dependency against the database.
 """
 
 import asyncio
-import json
 from collections.abc import Generator
-from pathlib import Path
+from datetime import UTC, datetime
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import UserData, get_user_store
+import backend.app.database as _db_module
 from backend.app.agent.ingestion import _get_or_create_user
-from backend.app.config import settings
 from backend.app.main import app
+from backend.app.models import ChatSession, Message, User
 
 
 @pytest.fixture()
-def telegram_user() -> UserData:
-    """Simulate a user created by Telegram ingestion."""
-    import asyncio
-
-    store = get_user_store()
-    return asyncio.get_event_loop().run_until_complete(
-        store.create(
+def telegram_user() -> User:
+    """Simulate a user created by Telegram ingestion (via DB)."""
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
             user_id="telegram_123456789",
             phone="+15551234567",
             channel_identifier="123456789",
             preferred_channel="telegram",
         )
-    )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+        return user
+    finally:
+        db.close()
 
 
 @pytest.fixture()
-def real_auth_client(telegram_user: UserData) -> Generator[TestClient]:
+def real_auth_client(telegram_user: User) -> Generator[TestClient]:
     """TestClient that uses the real get_current_user (no auth override).
 
     This is the critical difference from the standard ``client`` fixture in
@@ -64,41 +67,50 @@ def real_auth_client(telegram_user: UserData) -> Generator[TestClient]:
 
 
 def _create_session(
-    user: UserData,
+    user: User,
     session_id: str,
     messages: list[dict],
 ) -> None:
-    """Write a JSONL session file for the given user."""
-    base = Path(settings.data_dir) / str(user.id) / "sessions"
-    base.mkdir(parents=True, exist_ok=True)
-    lines = [
-        json.dumps(
-            {
-                "_type": "metadata",
-                "session_id": session_id,
-                "user_id": user.id,
-                "created_at": "2025-01-15T10:00:00+00:00",
-                "last_message_at": "2025-01-15T10:05:00+00:00",
-                "is_active": True,
-                "last_compacted_seq": 0,
-            }
+    """Create a session with messages in the database."""
+    db = _db_module.SessionLocal()
+    try:
+        cs = ChatSession(
+            session_id=session_id,
+            user_id=user.id,
+            is_active=True,
+            channel="",
+            last_compacted_seq=0,
+            created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
+            last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )
-    ]
-    for msg in messages:
-        lines.append(json.dumps(msg))
-    (base / f"{session_id}.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        db.add(cs)
+        db.flush()
+        for msg_data in messages:
+            ts_str = msg_data.get("timestamp", "")
+            ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(UTC)
+            msg = Message(
+                session_id=cs.id,
+                seq=msg_data.get("seq", 1),
+                direction=msg_data.get("direction", "inbound"),
+                body=msg_data.get("body", ""),
+                timestamp=ts,
+            )
+            db.add(msg)
+        db.commit()
+    finally:
+        db.close()
 
 
-def _seed_memory(user: UserData) -> None:
-    """Write a MEMORY.md for the given user."""
-    mem_dir = Path(settings.data_dir) / str(user.id) / "memory"
-    mem_dir.mkdir(parents=True, exist_ok=True)
-    (mem_dir / "MEMORY.md").write_text(
+def _seed_memory(user: User) -> None:
+    """Write memory text for the given user."""
+    from backend.app.agent.memory_db import get_memory_store
+
+    store = get_memory_store(user.id)
+    store.write_memory(
         "# Long-term Memory\n\n"
         "## Business\n"
         "- hourly_rate: 95 (confidence: 1.0)\n"
-        "- specialty: panel upgrades (confidence: 0.9)\n",
-        encoding="utf-8",
+        "- specialty: panel upgrades (confidence: 0.9)"
     )
 
 
@@ -108,7 +120,7 @@ class TestDashboardSeesTelegramData:
     def test_profile_returns_telegram_user(
         self,
         real_auth_client: TestClient,
-        telegram_user: UserData,
+        telegram_user: User,
     ) -> None:
         resp = real_auth_client.get("/api/user/profile")
         assert resp.status_code == 200
@@ -118,7 +130,7 @@ class TestDashboardSeesTelegramData:
     def test_sessions_returns_telegram_sessions(
         self,
         real_auth_client: TestClient,
-        telegram_user: UserData,
+        telegram_user: User,
     ) -> None:
         _create_session(
             telegram_user,
@@ -148,7 +160,7 @@ class TestDashboardSeesTelegramData:
     def test_memory_returns_telegram_facts(
         self,
         real_auth_client: TestClient,
-        telegram_user: UserData,
+        telegram_user: User,
     ) -> None:
         _seed_memory(telegram_user)
         resp = real_auth_client.get("/api/user/memory")
@@ -160,7 +172,7 @@ class TestDashboardSeesTelegramData:
     def test_stats_returns_telegram_stats(
         self,
         real_auth_client: TestClient,
-        telegram_user: UserData,
+        telegram_user: User,
     ) -> None:
         _create_session(
             telegram_user,
@@ -190,21 +202,30 @@ class TestMultiChannelSingleTenant:
 
     def test_telegram_links_to_existing_web_user(self) -> None:
         """When a web-created user exists, Telegram reuses it."""
-        store = get_user_store()
-        web_user = asyncio.get_event_loop().run_until_complete(
-            store.create(user_id="local@clawbolt.local")
-        )
+        db = _db_module.SessionLocal()
+        try:
+            web_user = User(user_id="local@clawbolt.local")
+            db.add(web_user)
+            db.commit()
+            db.refresh(web_user)
+            web_user_id = web_user.id
+        finally:
+            db.close()
 
         tg_user = asyncio.get_event_loop().run_until_complete(
             _get_or_create_user("telegram", "99887766")
         )
 
-        assert tg_user.id == web_user.id
+        assert tg_user.id == web_user_id
 
     def test_telegram_link_sets_channel_identifier(self) -> None:
         """Linking a Telegram chat to an existing user persists channel_identifier."""
-        store = get_user_store()
-        asyncio.get_event_loop().run_until_complete(store.create(user_id="local@clawbolt.local"))
+        db = _db_module.SessionLocal()
+        try:
+            db.add(User(user_id="local@clawbolt.local"))
+            db.commit()
+        finally:
+            db.close()
 
         tg_user = asyncio.get_event_loop().run_until_complete(
             _get_or_create_user("telegram", "11223344")
@@ -215,16 +236,21 @@ class TestMultiChannelSingleTenant:
 
     def test_telegram_sessions_visible_in_dashboard_after_web_signup(self) -> None:
         """Sessions created via Telegram appear in dashboard when web created first."""
-        store = get_user_store()
-        web_user = asyncio.get_event_loop().run_until_complete(
-            store.create(user_id="local@clawbolt.local")
-        )
+        db = _db_module.SessionLocal()
+        try:
+            web_user = User(user_id="local@clawbolt.local")
+            db.add(web_user)
+            db.commit()
+            db.refresh(web_user)
+            web_user_id = web_user.id
+        finally:
+            db.close()
 
         # Simulate Telegram ingestion linking to the same user
         tg_user = asyncio.get_event_loop().run_until_complete(
             _get_or_create_user("telegram", "55544433")
         )
-        assert tg_user.id == web_user.id
+        assert tg_user.id == web_user_id
 
         # Create a session under the (shared) user
         _create_session(
@@ -256,20 +282,28 @@ class TestMultiChannelSingleTenant:
             assert data["sessions"][0]["id"] == f"{tg_user.id}_500"
 
     def test_subsequent_telegram_lookup_uses_index(self) -> None:
-        """After linking, future messages find the user via the index."""
-        store = get_user_store()
-        asyncio.get_event_loop().run_until_complete(store.create(user_id="local@clawbolt.local"))
+        """After linking, future messages find the user via the channel route."""
+        db = _db_module.SessionLocal()
+        try:
+            db.add(User(user_id="local@clawbolt.local"))
+            db.commit()
+        finally:
+            db.close()
 
         # First call links the channel
         first = asyncio.get_event_loop().run_until_complete(
             _get_or_create_user("telegram", "11122233")
         )
-        # Second call should find via index
+        # Second call should find via channel route
         second = asyncio.get_event_loop().run_until_complete(
             _get_or_create_user("telegram", "11122233")
         )
         assert first.id == second.id
 
         # Verify only one user exists
-        all_users = asyncio.get_event_loop().run_until_complete(store.list_all())
-        assert len(all_users) == 1
+        db = _db_module.SessionLocal()
+        try:
+            all_users = db.query(User).all()
+            assert len(all_users) == 1
+        finally:
+            db.close()

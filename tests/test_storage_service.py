@@ -519,7 +519,7 @@ async def test_gdrive_move_file_not_found(
 @pytest.mark.asyncio()
 async def test_local_storage_user_subdirectory(tmp_path: Path) -> None:
     """LocalFileStorage with user_id should store files in a subdirectory."""
-    storage = LocalFileStorage(base_dir=str(tmp_path), user_id=42)
+    storage = LocalFileStorage(base_dir=str(tmp_path), user_id="42")
     await storage.upload_file(b"photo", "/Job Photos", "site.jpg")
     written = tmp_path / "42" / "Job Photos" / "site.jpg"
     assert written.exists()
@@ -529,8 +529,8 @@ async def test_local_storage_user_subdirectory(tmp_path: Path) -> None:
 @pytest.mark.asyncio()
 async def test_local_storage_users_are_isolated(tmp_path: Path) -> None:
     """Files from different users should not be visible to each other."""
-    s1 = LocalFileStorage(base_dir=str(tmp_path), user_id=1)
-    s2 = LocalFileStorage(base_dir=str(tmp_path), user_id=2)
+    s1 = LocalFileStorage(base_dir=str(tmp_path), user_id="1")
+    s2 = LocalFileStorage(base_dir=str(tmp_path), user_id="2")
 
     await s1.upload_file(b"a", "/docs", "a.txt")
     await s2.upload_file(b"b", "/docs", "b.txt")
@@ -580,7 +580,7 @@ def test_dropbox_user_prefixes_paths(mock_dbx_client: MagicMock) -> None:
     with patch(
         "backend.app.services.storage_service.dropbox.Dropbox", return_value=mock_dbx_client
     ):
-        s = DropboxStorage(access_token="fake-token", user_id=42)
+        s = DropboxStorage(access_token="fake-token", user_id="42")
     assert s._path_prefix == "/42"
     assert s._prefixed("/docs") == "/42/docs"
 
@@ -597,7 +597,7 @@ def test_dropbox_no_user_no_prefix(mock_dbx_client: MagicMock) -> None:
 
 def test_gdrive_user_path_prefix() -> None:
     """GoogleDriveStorage with user_id should store a path prefix."""
-    s = GoogleDriveStorage(credentials_json='{"token": "fake"}', user_id=42)
+    s = GoogleDriveStorage(credentials_json='{"token": "fake"}', user_id="42")
     assert s._path_prefix == "42/"
 
 

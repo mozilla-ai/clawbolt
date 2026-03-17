@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import backend.app.database as _db_module
 from backend.app.agent.compaction import (
     COMPACTION_SYSTEM_PROMPT,
     _format_messages_for_compaction,
@@ -17,16 +18,12 @@ from backend.app.agent.context import (
     get_or_create_conversation,
     load_conversation_history,
 )
-from backend.app.agent.file_store import (
-    SessionState,
-    StoredMessage,
-    UserData,
-    get_memory_store,
-    get_session_store,
-    get_user_store,
-)
+from backend.app.agent.file_store import SessionState, StoredMessage, UserData
+from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
+from backend.app.agent.session_db import get_session_store
 from backend.app.enums import MessageDirection
+from backend.app.models import User
 from tests.mocks.llm import make_text_response
 
 
@@ -497,7 +494,7 @@ async def test_compaction_runs_in_background_not_blocking(
     compaction_proceed = asyncio.Event()
 
     async def slow_compact(
-        user_id: int,
+        user_id: str,
         trimmed_messages: list[object],
         max_message_seq: int | None = None,
     ) -> tuple[str, int | None]:
@@ -542,8 +539,8 @@ async def test_compact_session_appends_history(test_user: UserData) -> None:
     assert "Rate: $100/hr" in memory_update
 
     memory_store = get_memory_store(test_user.id)
-    assert memory_store._history_path.exists()
-    history_content = memory_store._history_path.read_text(encoding="utf-8")
+    history_content = memory_store.read_history()
+    assert history_content  # non-empty
     assert "User set hourly rate to $100" in history_content
     assert "[TIMESTAMP]" not in history_content
     assert "[20" in history_content
@@ -564,7 +561,7 @@ async def test_compact_session_no_summary_skips_history(test_user: UserData) -> 
         await compact_session(test_user.id, messages, max_message_seq=2)
 
     memory_store = get_memory_store(test_user.id)
-    assert not memory_store._history_path.exists()
+    assert memory_store.read_history() == ""
 
 
 # --- Session-end consolidation tests ---
@@ -574,14 +571,21 @@ async def test_compact_session_no_summary_skips_history(test_user: UserData) -> 
 async def test_consolidate_previous_session_triggers_compaction() -> None:
     """When a new session starts, unconsolidated messages from the previous
     session should trigger background compaction."""
-    user_store = get_user_store()
-    user = await user_store.create(
-        user_id="consolidation-test",
-        phone="+15550003333",
-        channel_identifier="333",
-        preferred_channel="telegram",
-        onboarding_complete=True,
-    )
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            user_id="consolidation-test",
+            phone="+15550003333",
+            channel_identifier="333",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
 
     session_store = get_session_store(user.id)
 
@@ -614,14 +618,21 @@ async def test_consolidate_previous_session_triggers_compaction() -> None:
 @pytest.mark.asyncio()
 async def test_consolidate_previous_session_skips_already_compacted() -> None:
     """If the previous session was fully compacted, no compaction should trigger."""
-    user_store = get_user_store()
-    user = await user_store.create(
-        user_id="consolidation-skip",
-        phone="+15550004444",
-        channel_identifier="444",
-        preferred_channel="telegram",
-        onboarding_complete=True,
-    )
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            user_id="consolidation-skip",
+            phone="+15550004444",
+            channel_identifier="444",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
 
     session_store = get_session_store(user.id)
 
@@ -649,14 +660,21 @@ async def test_consolidate_previous_session_skips_already_compacted() -> None:
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_triggers_consolidation() -> None:
     """get_or_create_conversation should consolidate previous session on force_new."""
-    user_store = get_user_store()
-    user = await user_store.create(
-        user_id="conv-consolidation",
-        phone="+15550005555",
-        channel_identifier="555",
-        preferred_channel="telegram",
-        onboarding_complete=True,
-    )
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            user_id="conv-consolidation",
+            phone="+15550005555",
+            channel_identifier="555",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
 
     session_store = get_session_store(user.id)
     old_session, _ = await session_store.get_or_create_session()
@@ -675,14 +693,21 @@ async def test_get_or_create_conversation_triggers_consolidation() -> None:
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_no_consolidation_when_disabled() -> None:
     """get_or_create_conversation should skip consolidation when compaction disabled."""
-    user_store = get_user_store()
-    user = await user_store.create(
-        user_id="conv-no-consolidation",
-        phone="+15550006666",
-        channel_identifier="666",
-        preferred_channel="telegram",
-        onboarding_complete=True,
-    )
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            user_id="conv-no-consolidation",
+            phone="+15550006666",
+            channel_identifier="666",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
 
     session_store = get_session_store(user.id)
     old_session, _ = await session_store.get_or_create_session()

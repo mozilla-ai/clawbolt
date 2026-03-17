@@ -8,8 +8,8 @@ import urllib.parse
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import RedirectResponse
 
-from backend.app.agent.file_store import UserData
 from backend.app.auth.dependencies import get_current_user
+from backend.app.models import User
 from backend.app.schemas import OAuthAuthorizeResponse, OAuthStatusEntry, OAuthStatusResponse
 from backend.app.services.oauth import (
     get_oauth_config,
@@ -24,7 +24,7 @@ router = APIRouter()
 
 @router.get("/oauth/status", response_model=OAuthStatusResponse)
 async def get_oauth_status(
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> OAuthStatusResponse:
     """Return connection status for all OAuth integrations."""
     entries: list[OAuthStatusEntry] = []
@@ -43,7 +43,7 @@ async def get_oauth_status(
 @router.get("/oauth/{integration}/authorize", response_model=OAuthAuthorizeResponse)
 async def get_authorize_url(
     integration: str,
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> OAuthAuthorizeResponse:
     """Generate an authorization URL for the given integration."""
     config = get_oauth_config(integration)
@@ -103,7 +103,7 @@ async def oauth_callback(
 @router.delete("/oauth/{integration}")
 async def disconnect_integration(
     integration: str,
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
     """Disconnect an OAuth integration by removing stored tokens."""
     deleted = oauth_service.delete_token(current_user.id, integration)

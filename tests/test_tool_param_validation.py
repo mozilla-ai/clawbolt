@@ -7,7 +7,6 @@ import pytest
 from pydantic import BaseModel, Field
 
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.file_store import UserData
 from backend.app.agent.tool_errors import summarize_tool_params
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
 from backend.app.agent.tools.estimate_tools import (
@@ -22,6 +21,7 @@ from backend.app.agent.tools.heartbeat_tools import (
 )
 from backend.app.agent.tools.messaging_tools import SendMediaReplyParams, SendReplyParams
 from backend.app.agent.tools.workspace_tools import DeleteFileParams
+from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -100,16 +100,16 @@ def test_file_tool_param_models_exist() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_remove_heartbeat_item_coerces_string_to_int() -> None:
-    """RemoveHeartbeatItemParams should coerce string '42' to int 42."""
-    p = RemoveHeartbeatItemParams(item_id="42")  # type: ignore[arg-type]
-    assert p.item_id == 42
+def test_remove_heartbeat_item_accepts_string() -> None:
+    """RemoveHeartbeatItemParams should accept a string item_id."""
+    p = RemoveHeartbeatItemParams(item_id="42")
+    assert p.item_id == "42"
 
 
-def test_remove_heartbeat_item_rejects_non_numeric() -> None:
-    """RemoveHeartbeatItemParams should reject non-numeric item_id."""
-    with pytest.raises(Exception):  # noqa: B017
-        RemoveHeartbeatItemParams(item_id="not_a_number")  # type: ignore[arg-type]
+def test_remove_heartbeat_item_accepts_any_string() -> None:
+    """RemoveHeartbeatItemParams should accept any string item_id."""
+    p = RemoveHeartbeatItemParams(item_id="some_id")
+    assert p.item_id == "some_id"
 
 
 def test_generate_estimate_params_accepts_valid_input() -> None:
@@ -150,7 +150,7 @@ def test_add_heartbeat_item_rejects_invalid_schedule() -> None:
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_failure_returns_error_result(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """When params_model validation fails, agent should return a structured error."""
     # LLM sends wrong type for 'key' (int instead of string) to save_fact
@@ -196,7 +196,7 @@ async def test_agent_validation_failure_returns_error_result(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_success_calls_tool(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """When params_model validation passes, agent should call the tool normally."""
     tool_response = make_tool_call_response(
@@ -236,7 +236,7 @@ async def test_agent_validation_success_calls_tool(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_coerces_types(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Pydantic validation should coerce compatible types (e.g., str '42' to int)."""
     tool_response = make_tool_call_response(
@@ -275,7 +275,7 @@ async def test_agent_validation_coerces_types(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_validation_wrong_type_returns_field_error(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Validation error message should include the specific field that failed."""
     tool_response = make_tool_call_response(
@@ -327,7 +327,7 @@ def test_delete_file_params_accepts_valid_path() -> None:
 @patch("backend.app.agent.core.amessages")
 async def test_batch_validation_reports_all_errors_at_once(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """When multiple tool calls have invalid args, ALL errors should be returned in one round.
 
@@ -388,7 +388,7 @@ async def test_batch_validation_reports_all_errors_at_once(
 @patch("backend.app.agent.core.amessages")
 async def test_batch_validation_executes_valid_calls_alongside_invalid(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Valid tool calls should still execute even when other calls in the same batch fail."""
 
@@ -488,7 +488,7 @@ def test_summarize_tool_params_resolves_anyof_types() -> None:
 @patch("backend.app.agent.core.amessages")
 async def test_validation_error_for_missing_line_items_shows_item_structure(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """When line_items is missing, the error sent to the LLM should describe the item schema.
 

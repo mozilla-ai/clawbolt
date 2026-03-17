@@ -22,17 +22,17 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
 from backend.app.agent.context import get_or_create_conversation
-from backend.app.agent.file_store import UserData
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
 from backend.app.channels.base import BaseChannel
 from backend.app.config import settings
 from backend.app.media.download import DEFAULT_MIME_TYPE, DownloadedMedia, generate_filename
+from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 
-_SESSION_ID_RE = re.compile(r"^\d+_\d+(_\d+)?$")
+_SESSION_ID_RE = re.compile(r"^[\w-]+_\d+(_\d+)?$")
 
 
 class _ChatAccepted(BaseModel):
@@ -61,7 +61,7 @@ class WebChatChannel(BaseChannel):
             session_id: str | None = Form(default=None),
             force_new: bool = Form(default=False),
             files: list[UploadFile] = File(default=[]),
-            user: UserData = Depends(get_current_user),
+            user: User = Depends(get_current_user),
         ) -> _ChatAccepted:
             """Accept a message, publish to bus, return request_id for SSE."""
             text = message.strip()
@@ -126,7 +126,7 @@ class WebChatChannel(BaseChannel):
         @router.get("/user/chat/events/{request_id}")
         async def chat_events(
             request_id: str,
-            _user: UserData = Depends(get_current_user),
+            _user: User = Depends(get_current_user),
         ) -> StreamingResponse:
             """SSE endpoint: streams the agent reply for a given request_id."""
 

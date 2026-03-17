@@ -1,11 +1,11 @@
 import logging
 
-from backend.app.agent.file_store import UserData
+from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 
 
-def build_soul_prompt(user: UserData) -> str:
+def build_soul_prompt(user: User) -> str:
     """Build the 'soul' section of the system prompt from user profile.
 
     Returns the SOUL.md content directly. Identity info (name, personality)

@@ -22,9 +22,6 @@ from backend.app.agent.file_store import (
     SessionState,
     StoredMessage,
     ToolConfigStore,
-    UserData,
-    get_session_store,
-    get_user_store,
 )
 from backend.app.agent.messages import AgentMessage
 from backend.app.agent.onboarding import (
@@ -32,6 +29,7 @@ from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
     is_onboarding_needed,
 )
+from backend.app.agent.session_db import get_session_store
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
 from backend.app.agent.tools.registry import (
@@ -41,9 +39,11 @@ from backend.app.agent.tools.registry import (
     ensure_tool_modules_imported,
 )
 from backend.app.config import settings
+from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
+from backend.app.models import ChannelRoute, User
 from backend.app.services.storage_service import StorageBackend, get_storage_service
 
 logger = logging.getLogger(__name__)
@@ -78,7 +78,7 @@ ensure_tool_modules_imported()
 class PipelineContext:
     """Shared state passed through pipeline steps."""
 
-    user: UserData
+    user: User
     session: SessionState
     message: StoredMessage
     media_urls: list[tuple[str, str]]
@@ -105,7 +105,7 @@ PipelineStep = Callable[[PipelineContext], Awaitable[PipelineContext]]
 # ---------------------------------------------------------------------------
 
 
-def init_storage(user: UserData) -> StorageBackend | None:
+def init_storage(user: User) -> StorageBackend | None:
     """Initialize storage backend for a user.
 
     Returns the storage backend if configured, or ``None`` otherwise.
@@ -127,7 +127,7 @@ def init_storage(user: UserData) -> StorageBackend | None:
 
 
 async def prepare_media(
-    user: UserData,
+    user: User,
     message: StoredMessage,
     media_urls: list[tuple[str, str]],
     download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None,
@@ -139,7 +139,7 @@ async def prepare_media(
     """
     downloaded_media: list[DownloadedMedia] = []
     logger.debug(
-        "Preparing media for user %d, message seq=%d: %d attachment(s)",
+        "Preparing media for user %s, message seq=%d: %d attachment(s)",
         user.id,
         message.seq,
         len(media_urls),
@@ -168,7 +168,7 @@ async def prepare_media(
 async def build_message_context(
     session: SessionState,
     message: StoredMessage,
-    user: UserData,
+    user: User,
     media_urls: list[tuple[str, str]],
     downloaded_media: list[DownloadedMedia],
 ) -> str:
@@ -184,7 +184,7 @@ async def build_message_context(
         pipeline_result = await process_message_media(message.body, downloaded_media)
     except Exception:
         logger.exception(
-            "Media pipeline failed for message seq %d, user %d",
+            "Media pipeline failed for message seq %d, user %s",
             message.seq,
             user.id,
         )
@@ -205,7 +205,7 @@ async def build_message_context(
 
 
 async def run_agent(
-    user: UserData,
+    user: User,
     message: StoredMessage,
     combined_context: str,
     conversation_history: list[AgentMessage],
@@ -250,6 +250,13 @@ async def run_agent(
     tool_config_store = ToolConfigStore(user.id)
     disabled_groups = await tool_config_store.get_disabled_tool_names()
 
+    # Auto-disable local financial tools when QuickBooks is connected.
+    from backend.app.services.oauth import oauth_service
+
+    if oauth_service.is_connected(user.id, "quickbooks"):
+        auto_disabled = {"estimate", "invoice", "email"}
+        disabled_groups = (disabled_groups or set()) | auto_disabled
+
     # Start with core tools only; specialist tools are discovered on demand
     # via the list_capabilities meta-tool. Exclude user-disabled groups.
     tools = default_registry.create_core_tools(
@@ -268,7 +275,7 @@ async def run_agent(
         system_prompt_override = build_onboarding_system_prompt(user, tools=tools)
 
     logger.debug(
-        "Agent initialized for user %d, message seq=%d with %d core tools, "
+        "Agent initialized for user %s, message seq=%d with %d core tools, "
         "%d specialist categories available",
         user.id,
         message.seq,
@@ -288,21 +295,21 @@ async def run_agent(
         )
     except ContentFilterError:
         logger.warning(
-            "Content filter blocked message seq %d for user %d",
+            "Content filter blocked message seq %d for user %s",
             message.seq,
             user.id,
         )
         return AgentResponse(reply_text=CONTENT_FILTER_FALLBACK, is_error_fallback=True)
     except AuthenticationError:
         logger.critical(
-            "LLM authentication failed processing message seq %d for user %d",
+            "LLM authentication failed processing message seq %d for user %s",
             message.seq,
             user.id,
         )
         return AgentResponse(reply_text=AUTH_ERROR_FALLBACK, is_error_fallback=True)
     except Exception:
         logger.exception(
-            "Agent processing failed for message seq %d, user %d",
+            "Agent processing failed for message seq %d, user %s",
             message.seq,
             user.id,
         )
@@ -311,7 +318,7 @@ async def run_agent(
 
 async def persist_outbound(
     session: SessionState,
-    user_id: int,
+    user_id: str,
     response: AgentResponse,
 ) -> None:
     """Store the outbound message record.
@@ -455,7 +462,7 @@ DEFAULT_PIPELINE: list[PipelineStep] = [
 
 
 async def handle_inbound_message(
-    user: UserData,
+    user: User,
     session: SessionState,
     message: StoredMessage,
     media_urls: list[tuple[str, str]],
@@ -472,18 +479,22 @@ async def handle_inbound_message(
     remove, or reorder steps; defaults to ``DEFAULT_PIPELINE``.
     """
     logger.debug(
-        "Handling inbound message seq=%d for user %d, %d media attachment(s)",
+        "Handling inbound message seq=%d for user %s, %d media attachment(s)",
         message.seq,
         user.id,
         len(media_urls),
     )
-    store = get_user_store()
-    to_address = (
-        store.get_channel_identifier(user.id, channel) or user.channel_identifier or user.phone
-    )
+    db = SessionLocal()
+    try:
+        route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel).first()
+        to_address = (
+            (route.channel_identifier if route else None) or user.channel_identifier or user.phone
+        )
+    finally:
+        db.close()
     if not to_address:
         logger.error(
-            "User %d has no channel_identifier or phone -- cannot send replies",
+            "User %s has no channel_identifier or phone -- cannot send replies",
             user.id,
         )
         return AgentResponse(reply_text="")

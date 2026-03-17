@@ -10,13 +10,13 @@ import logging
 
 from any_llm.types.messages import MessageResponse
 
-from backend.app.agent.file_store import LLMUsageStore
+from backend.app.agent.stores import LLMUsageStore
 
 logger = logging.getLogger(__name__)
 
 
 def log_llm_usage(
-    user_id: int,
+    user_id: str,
     model: str,
     response: MessageResponse,
     purpose: str,
@@ -33,11 +33,11 @@ def log_llm_usage(
         store = LLMUsageStore(user_id)
         store.log(model, prompt_tokens, completion_tokens, purpose)
     except Exception:
-        logger.exception("Failed to log LLM usage for user %d", user_id)
+        logger.exception("Failed to log LLM usage for user %s", user_id)
         return
 
     logger.info(
-        "LLM usage logged: user=%d model=%s purpose=%s tokens=%d",
+        "LLM usage logged: user=%s model=%s purpose=%s tokens=%d",
         user_id,
         model,
         purpose,

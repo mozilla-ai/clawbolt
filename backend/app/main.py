@@ -9,16 +9,19 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import text
 
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.channels.webchat import WebChatChannel
 from backend.app.config import load_persistent_config, log_config_warnings, settings
+from backend.app.database import get_engine
 from backend.app.routers import (
     auth,
     estimates,
     health,
+    invoices,
     oauth,
     search,
     user_heartbeat,
@@ -108,6 +111,18 @@ async def _verify_llm_settings() -> None:
             )
 
 
+def _verify_database() -> None:
+    """Verify database connectivity at startup.
+
+    Creates the engine and runs a simple SELECT 1 to surface connection
+    errors early rather than at first user request.
+    """
+    engine = get_engine()
+    with engine.connect() as conn:
+        conn.execute(text("SELECT 1"))
+    logger.info("Database connection verified: %s", engine.url)
+
+
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
@@ -126,6 +141,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # env_file directive; this call covers bare-host / local-dev setups.
     load_dotenv()
 
+    _verify_database()
     log_config_warnings()
     await _verify_llm_settings()
     heartbeat_scheduler.start()
@@ -180,6 +196,7 @@ for _channel in get_manager().channels.values():
     app.include_router(_channel.get_router(), prefix="/api")
 
 app.include_router(estimates.router, prefix="/api")
+app.include_router(invoices.router, prefix="/api")
 app.include_router(user_profile.router, prefix="/api")
 app.include_router(user_sessions.router, prefix="/api")
 app.include_router(user_memory.router, prefix="/api")

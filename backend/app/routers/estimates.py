@@ -7,9 +7,10 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import Response
 
-from backend.app.agent.file_store import EstimateStore, UserData
+from backend.app.agent.client_db import EstimateStore
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
+from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -21,7 +22,7 @@ PDF_BASE_DIR = Path(settings.pdf_storage_dir)
 @router.get("/estimates/{estimate_id}/pdf")
 async def serve_estimate_pdf(
     estimate_id: str,
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> Response:
     """Serve a generated estimate PDF by estimate ID."""
     # Verify the estimate exists and belongs to the current user

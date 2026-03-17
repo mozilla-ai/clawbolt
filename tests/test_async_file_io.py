@@ -15,11 +15,9 @@ from pathlib import Path
 
 import pytest
 
-from backend.app.agent.file_store import (
-    FileSessionStore,
-    HeartbeatStore,
-    UserData,
-)
+from backend.app.agent.dto import UserData
+from backend.app.agent.session_db import SessionStore
+from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.config import settings
 
@@ -63,23 +61,6 @@ def test_telegram_uses_to_thread_for_read_bytes() -> None:
     )
 
 
-def test_file_store_add_message_uses_to_thread() -> None:
-    """FileSessionStore.add_message should use asyncio.to_thread for _append_jsonl."""
-    source = _source_of("backend/app/agent/file_store.py")
-    assert (
-        "asyncio.to_thread(\n                _append_jsonl" in source
-        or "asyncio.to_thread(_append_jsonl" in source
-    ), "add_message should use asyncio.to_thread for _append_jsonl"
-
-
-def test_file_store_log_heartbeat_uses_to_thread() -> None:
-    """HeartbeatStore.log_heartbeat should use asyncio.to_thread for _append_jsonl."""
-    source = _source_of("backend/app/agent/file_store.py")
-    assert "await asyncio.to_thread(_append_jsonl, self._log_path" in source, (
-        "log_heartbeat should use asyncio.to_thread for _append_jsonl"
-    )
-
-
 def test_workspace_tools_use_to_thread() -> None:
     """workspace_tools.py should use asyncio.to_thread for file I/O."""
     source = _source_of("backend/app/agent/tools/workspace_tools.py")
@@ -100,8 +81,8 @@ def test_workspace_tools_use_to_thread() -> None:
 async def test_session_store_add_message_still_works(
     test_user: UserData,
 ) -> None:
-    """FileSessionStore.add_message should still append messages correctly."""
-    store = FileSessionStore(test_user.id)
+    """SessionStore.add_message should still append messages correctly."""
+    store = SessionStore(test_user.id)
     session, _ = await store.get_or_create_session()
     msg = await store.add_message(session, direction="inbound", body="Hello from test")
     assert msg.body == "Hello from test"

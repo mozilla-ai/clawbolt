@@ -4,11 +4,11 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import backend.app.database as _db_module
 from backend.app.agent.file_store import (
     SessionState,
     StoredMessage,
     UserData,
-    get_user_store,
 )
 from backend.app.agent.onboarding import (
     _has_custom_soul,
@@ -19,6 +19,7 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
+from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -65,14 +66,14 @@ def _remove_bootstrap(user: UserData) -> None:
 
 def test_is_onboarding_needed_new_user() -> None:
     """New user with BOOTSTRAP.md should need onboarding."""
-    user = UserData(id=1, user_id="new-user", phone="+15550001111")
+    user = UserData(id="1", user_id="new-user", phone="+15550001111")
     _create_bootstrap(user)
     assert is_onboarding_needed(user) is True
 
 
 def test_is_onboarding_needed_no_bootstrap() -> None:
     """User without BOOTSTRAP.md should not need onboarding."""
-    user = UserData(id=2, user_id="no-bootstrap-user", phone="+15550002222")
+    user = UserData(id="2", user_id="no-bootstrap-user", phone="+15550002222")
     # Ensure user dir exists but no BOOTSTRAP.md
     cdir = Path(settings.data_dir) / str(user.id)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -87,7 +88,7 @@ def test_is_onboarding_needed_complete_profile(test_user: UserData) -> None:
 def test_is_onboarding_needed_respects_flag() -> None:
     """User with onboarding_complete=True should not need onboarding even with BOOTSTRAP.md."""
     user = UserData(
-        id=3,
+        id="3",
         user_id="flagged-user",
         phone="+15550007777",
         onboarding_complete=True,
@@ -98,7 +99,7 @@ def test_is_onboarding_needed_respects_flag() -> None:
 
 def test_is_onboarding_needed_bootstrap_deleted() -> None:
     """After BOOTSTRAP.md is deleted, onboarding is not needed."""
-    user = UserData(id=4, user_id="deleted-bootstrap-user", phone="+15550003333")
+    user = UserData(id="4", user_id="deleted-bootstrap-user", phone="+15550003333")
     _create_bootstrap(user)
     assert is_onboarding_needed(user) is True
     _remove_bootstrap(user)
@@ -107,7 +108,7 @@ def test_is_onboarding_needed_bootstrap_deleted() -> None:
 
 def test_build_onboarding_system_prompt_new_user() -> None:
     """Onboarding prompt for new user should include bootstrap content."""
-    user = UserData(id=5, user_id="brand-new", phone="+15550004444")
+    user = UserData(id="5", user_id="brand-new", phone="+15550004444")
     _create_bootstrap(user)
 
     prompt = build_onboarding_system_prompt(user)
@@ -116,7 +117,7 @@ def test_build_onboarding_system_prompt_new_user() -> None:
 
 def test_build_onboarding_system_prompt_includes_tool_capabilities() -> None:
     """Onboarding system prompt should inject available specialist tool descriptions."""
-    user = UserData(id=6, user_id="new-user", phone="+15550001111")
+    user = UserData(id="6", user_id="new-user", phone="+15550001111")
     _create_bootstrap(user)
 
     prompt = build_onboarding_system_prompt(user)
@@ -136,7 +137,7 @@ def test_build_onboarding_system_prompt_includes_instructions() -> None:
 
     from backend.app.agent.tools.base import Tool, ToolResult
 
-    user = UserData(id=7, user_id="instructions-test", phone="+15550005555")
+    user = UserData(id="7", user_id="instructions-test", phone="+15550005555")
     _create_bootstrap(user)
 
     class _SendReplyParams(BaseModel):
@@ -167,8 +168,25 @@ def test_build_onboarding_system_prompt_includes_instructions() -> None:
 @pytest.fixture()
 def new_user() -> UserData:
     """User with no profile, needs onboarding."""
+    import backend.app.database as _db_module
+    from backend.app.models import User as UserModel
+
+    # Create in DB so onboarding subscriber can find it
+    db = _db_module.SessionLocal()
+    try:
+        db_user = UserModel(
+            id="20",
+            user_id="new-user-onboard",
+            phone="+15559999999",
+            channel_identifier="999999999",
+        )
+        db.add(db_user)
+        db.commit()
+    finally:
+        db.close()
+
     user = UserData(
-        id=20,
+        id="20",
         user_id="new-user-onboard",
         phone="+15559999999",
         channel_identifier="999999999",
@@ -276,8 +294,13 @@ async def test_onboarding_completes_when_bootstrap_deleted(
         channel="telegram",
     )
 
-    store = get_user_store()
-    refreshed = await store.get_by_id(new_user.id)
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=new_user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -333,8 +356,22 @@ async def test_prepopulated_user_gets_onboarding_complete(
     is_onboarding_needed() returns False but onboarding_complete was never set
     because the 'if onboarding:' block was skipped entirely.
     """
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="30",
+                user_id="prepopulated-user",
+                channel_identifier="888888888",
+                preferred_channel="telegram",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
     user = UserData(
-        id=30,
+        id="30",
         user_id="prepopulated-user",
         channel_identifier="888888888",
         preferred_channel="telegram",
@@ -377,8 +414,13 @@ async def test_prepopulated_user_gets_onboarding_complete(
         channel="telegram",
     )
 
-    store = get_user_store()
-    refreshed = await store.get_by_id(user.id)
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -393,8 +435,23 @@ async def test_prepopulated_user_included_in_heartbeat(
     """User without BOOTSTRAP.md should be eligible for heartbeat after first message."""
     from backend.app.agent.heartbeat import HeartbeatDecision, run_heartbeat_for_user
 
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="31",
+                user_id="prepopulated-hb-user",
+                phone="+15550009999",
+                channel_identifier="777777777",
+                preferred_channel="telegram",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
     user = UserData(
-        id=31,
+        id="31",
         user_id="prepopulated-hb-user",
         phone="+15550009999",
         channel_identifier="777777777",
@@ -434,8 +491,13 @@ async def test_prepopulated_user_included_in_heartbeat(
         channel="telegram",
     )
 
-    store = get_user_store()
-    refreshed = await store.get_by_id(user.id)
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -522,21 +584,21 @@ class TestHasRealUserProfile:
     """Tests for _has_real_user_profile heuristic."""
 
     def test_no_user_md(self) -> None:
-        user = UserData(id=100, user_id="no-user-md")
+        user = UserData(id="100", user_id="no-user-md")
         assert _has_real_user_profile(user) is False
 
     def test_empty_name_field(self) -> None:
-        user = UserData(id=101, user_id="empty-name")
+        user = UserData(id="101", user_id="empty-name")
         _write_user_md(user, "# User\n\n- Name:\n- Timezone:\n")
         assert _has_real_user_profile(user) is False
 
     def test_filled_name_field(self) -> None:
-        user = UserData(id=102, user_id="filled-name")
+        user = UserData(id="102", user_id="filled-name")
         _write_user_md(user, "# User\n\n- Name: Nathan\n- Trade: GC\n")
         assert _has_real_user_profile(user) is True
 
     def test_default_template(self) -> None:
-        user = UserData(id=103, user_id="default-template")
+        user = UserData(id="103", user_id="default-template")
         from backend.app.agent.prompts import load_prompt
 
         _write_user_md(user, f"# User\n\n{load_prompt('default_user')}\n")
@@ -547,11 +609,11 @@ class TestHasCustomSoul:
     """Tests for _has_custom_soul heuristic."""
 
     def test_no_soul_md(self) -> None:
-        user = UserData(id=110, user_id="no-soul")
+        user = UserData(id="110", user_id="no-soul")
         assert _has_custom_soul(user) is False
 
     def test_default_soul(self) -> None:
-        user = UserData(id=111, user_id="default-soul")
+        user = UserData(id="111", user_id="default-soul")
         from backend.app.agent.prompts import load_prompt
 
         _write_soul_md(user, load_prompt("default_soul"))
@@ -559,14 +621,14 @@ class TestHasCustomSoul:
 
     def test_default_soul_wrapped(self) -> None:
         """Default soul written by _ensure_user_dir includes a '# Soul' header."""
-        user = UserData(id=113, user_id="default-soul-wrapped")
+        user = UserData(id="113", user_id="default-soul-wrapped")
         from backend.app.agent.prompts import load_prompt
 
         _write_soul_md(user, f"# Soul\n\n{load_prompt('default_soul')}")
         assert _has_custom_soul(user) is False
 
     def test_custom_soul(self) -> None:
-        user = UserData(id=112, user_id="custom-soul")
+        user = UserData(id="112", user_id="custom-soul")
         _write_soul_md(user, "# Soul\n\nI'm Clawbolt. Straight and to the point.")
         assert _has_custom_soul(user) is True
 
@@ -575,23 +637,23 @@ class TestIsOnboardingCompleteHeuristic:
     """Tests for the combined heuristic."""
 
     def test_no_evidence(self) -> None:
-        user = UserData(id=120, user_id="no-evidence")
+        user = UserData(id="120", user_id="no-evidence")
         assert is_onboarding_complete_heuristic(user) is False
 
     def test_name_only(self) -> None:
-        user = UserData(id=121, user_id="name-only")
+        user = UserData(id="121", user_id="name-only")
         _write_user_md(user, "# User\n\n- Name: Jake\n")
         assert is_onboarding_complete_heuristic(user) is True
 
     def test_soul_only(self) -> None:
-        user = UserData(id=122, user_id="soul-only")
+        user = UserData(id="122", user_id="soul-only")
         _write_soul_md(user, "# Soul\n\nCustom personality.")
         assert is_onboarding_complete_heuristic(user) is True
 
 
 def test_is_onboarding_needed_heuristic_override() -> None:
     """BOOTSTRAP.md exists but heuristic says onboarding is done."""
-    user = UserData(id=130, user_id="heuristic-user")
+    user = UserData(id="130", user_id="heuristic-user")
     _create_bootstrap(user)
     _write_user_md(user, "# User\n\n- Name: Nathan\n- Trade: GC\n")
     # BOOTSTRAP.md exists, but heuristic detects completed onboarding
@@ -600,7 +662,7 @@ def test_is_onboarding_needed_heuristic_override() -> None:
 
 def test_is_onboarding_needed_no_heuristic_evidence() -> None:
     """BOOTSTRAP.md exists and no heuristic evidence: still needs onboarding."""
-    user = UserData(id=131, user_id="fresh-user")
+    user = UserData(id="131", user_id="fresh-user")
     _create_bootstrap(user)
     # No USER.md or SOUL.md written yet
     assert is_onboarding_needed(user) is True
@@ -618,8 +680,22 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     heuristic fallback should detect that USER.md has a real name and mark
     onboarding complete.
     """
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="140",
+                user_id="sidetracked-user",
+                channel_identifier="555555555",
+                preferred_channel="telegram",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
     user = UserData(
-        id=140,
+        id="140",
         user_id="sidetracked-user",
         channel_identifier="555555555",
         preferred_channel="telegram",
@@ -679,7 +755,12 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert not bootstrap.exists()
 
-    store = get_user_store()
-    refreshed = await store.get_by_id(user.id)
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True

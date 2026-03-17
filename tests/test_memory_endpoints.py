@@ -1,21 +1,15 @@
 """Tests for memory endpoint (freeform MEMORY.md)."""
 
-from pathlib import Path
-
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import UserData
-from backend.app.config import settings
+from backend.app.agent.memory_db import get_memory_store
+from backend.app.models import User
 
 
-def _seed_memory(user: UserData) -> None:
-    """Create a MEMORY.md with test data."""
-    mem_dir = Path(settings.data_dir) / str(user.id) / "memory"
-    mem_dir.mkdir(parents=True, exist_ok=True)
-    (mem_dir / "MEMORY.md").write_text(
-        "## Pricing\n- Deck: $45/sqft\n- Fence: $20/ft\n",
-        encoding="utf-8",
-    )
+def _seed_memory(user: User) -> None:
+    """Create memory with test data."""
+    store = get_memory_store(user.id)
+    store.write_memory("## Pricing\n- Deck: $45/sqft\n- Fence: $20/ft")
 
 
 def test_get_memory_empty(client: TestClient) -> None:
@@ -24,7 +18,7 @@ def test_get_memory_empty(client: TestClient) -> None:
     assert resp.json() == {"content": ""}
 
 
-def test_get_memory(client: TestClient, test_user: UserData) -> None:
+def test_get_memory(client: TestClient, test_user: User) -> None:
     _seed_memory(test_user)
     resp = client.get("/api/user/memory")
     assert resp.status_code == 200
@@ -33,7 +27,7 @@ def test_get_memory(client: TestClient, test_user: UserData) -> None:
     assert "Fence: $20/ft" in data["content"]
 
 
-def test_update_memory(client: TestClient, test_user: UserData) -> None:
+def test_update_memory(client: TestClient, test_user: User) -> None:
     _seed_memory(test_user)
     resp = client.put(
         "/api/user/memory",

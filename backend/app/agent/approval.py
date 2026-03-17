@@ -12,6 +12,7 @@ control both immediate and future behavior.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -20,13 +21,41 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from backend.app.agent.file_store import _read_json, _user_dir, _write_json
 from backend.app.config import settings
 
 if TYPE_CHECKING:
     from backend.app.bus import OutboundMessage
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# File I/O helpers (self-contained, no file_store dependency)
+# ---------------------------------------------------------------------------
+
+
+def _user_dir(user_id: str) -> Path:
+    """Return the directory for a specific user."""
+    return Path(settings.data_dir) / str(user_id)
+
+
+def _read_json(path: Path, default: Any = None) -> Any:
+    """Read and parse a JSON file. Returns default if missing/corrupt."""
+    if not path.exists():
+        return default
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, ValueError):
+        return default
+
+
+def _write_json(path: Path, data: Any) -> None:
+    """Write data as JSON to a file atomically."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    tmp.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
+    tmp.rename(path)
+
 
 # ---------------------------------------------------------------------------
 # Enums
@@ -96,21 +125,21 @@ class ApprovalStore:
     Resolution order: resource match (exact then glob) > tool match > policy default.
     """
 
-    def _permissions_path(self, user_id: int) -> Path:
+    def _permissions_path(self, user_id: str) -> Path:
         return _user_dir(user_id) / "permissions.json"
 
-    def _load(self, user_id: int) -> dict[str, Any]:
+    def _load(self, user_id: str) -> dict[str, Any]:
         data = _read_json(self._permissions_path(user_id), default=None)
         if data is None or not isinstance(data, dict):
             return {"version": _PERMISSIONS_VERSION, "tools": {}, "resources": {}}
         return data
 
-    def _save(self, user_id: int, data: dict[str, Any]) -> None:
+    def _save(self, user_id: str, data: dict[str, Any]) -> None:
         _write_json(self._permissions_path(user_id), data)
 
     def check_permission(
         self,
-        user_id: int,
+        user_id: str,
         tool_name: str,
         resource: str | None = None,
         default: PermissionLevel = PermissionLevel.ASK,
@@ -141,7 +170,7 @@ class ApprovalStore:
 
     def set_permission(
         self,
-        user_id: int,
+        user_id: str,
         tool_name: str,
         level: PermissionLevel,
         resource: str | None = None,
@@ -181,15 +210,15 @@ class ApprovalGate:
     """
 
     def __init__(self) -> None:
-        self._pending: dict[int, PendingApproval] = {}
+        self._pending: dict[str, PendingApproval] = {}
 
-    def has_pending(self, user_id: int) -> bool:
+    def has_pending(self, user_id: str) -> bool:
         """Return True if there is a pending approval for this user."""
         return user_id in self._pending
 
     async def request_approval(
         self,
-        user_id: int,
+        user_id: str,
         tool_name: str,
         description: str,
         publish_outbound: Callable[[OutboundMessage], Awaitable[None]],
@@ -213,14 +242,14 @@ class ApprovalGate:
 
             await publish_outbound(OMsg(channel=channel, chat_id=chat_id, content=prompt))
         except Exception:
-            logger.exception("Failed to send approval prompt to user %d", user_id)
+            logger.exception("Failed to send approval prompt to user %s", user_id)
             self._pending.pop(user_id, None)
             return ApprovalDecision.DENIED
 
         try:
             await asyncio.wait_for(pending.event.wait(), timeout=timeout)
         except TimeoutError:
-            logger.info("Approval timed out for user %d, tool %s", user_id, tool_name)
+            logger.info("Approval timed out for user %s, tool %s", user_id, tool_name)
             self._pending.pop(user_id, None)
             return ApprovalDecision.DENIED
 
@@ -228,7 +257,7 @@ class ApprovalGate:
         self._pending.pop(user_id, None)
         return decision
 
-    def resolve(self, user_id: int, decision: ApprovalDecision) -> bool:
+    def resolve(self, user_id: str, decision: ApprovalDecision) -> bool:
         """Resolve a pending approval with the user's decision.
 
         Returns True if there was a pending approval to resolve.

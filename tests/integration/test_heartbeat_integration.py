@@ -11,12 +11,10 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.app.agent.file_store import (
-    EstimateStore,
-    UserData,
-    get_session_store,
-)
+from backend.app.agent.client_db import EstimateStore
+from backend.app.agent.dto import UserData
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
+from backend.app.agent.session_db import get_session_store
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 

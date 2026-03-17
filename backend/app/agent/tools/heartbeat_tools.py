@@ -32,10 +32,10 @@ class ListHeartbeatItemsParams(BaseModel):
 class RemoveHeartbeatItemParams(BaseModel):
     """Parameters for the remove_heartbeat_item tool."""
 
-    item_id: int = Field(description="ID of the heartbeat item to remove")
+    item_id: str = Field(description="ID of the heartbeat item to remove")
 
 
-def create_heartbeat_tools(user_id: int) -> list[Tool]:
+def create_heartbeat_tools(user_id: str) -> list[Tool]:
     """Create heartbeat-related tools for the agent."""
 
     async def add_heartbeat_item(
@@ -63,7 +63,7 @@ def create_heartbeat_tools(user_id: int) -> list[Tool]:
         lines = [f"- #{item.id}: {item.description} ({item.schedule})" for item in items]
         return ToolResult(content="\n".join(lines))
 
-    async def remove_heartbeat_item(item_id: int) -> ToolResult:
+    async def remove_heartbeat_item(item_id: str) -> ToolResult:
         """Remove a heartbeat item by ID."""
         store = HeartbeatStore(user_id)
         deleted = await store.delete_heartbeat_item(item_id)

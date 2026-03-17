@@ -7,19 +7,20 @@ from backend.app.agent.context import (
     get_or_create_conversation,
     load_conversation_history,
 )
-from backend.app.agent.file_store import SessionState, StoredMessage, UserData
+from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.messages import (
     AssistantMessage,
     ToolResultMessage,
     UserMessage,
 )
+from backend.app.models import User
 
 
 @pytest.fixture()
-def conversation(test_user: UserData) -> SessionState:
+def conversation(test_user: User) -> SessionState:
     import asyncio
 
-    from backend.app.agent.file_store import get_session_store
+    from backend.app.agent.session_db import get_session_store
 
     store = get_session_store(test_user.id)
     session, _is_new = asyncio.get_event_loop().run_until_complete(store.get_or_create_session())
@@ -28,7 +29,7 @@ def conversation(test_user: UserData) -> SessionState:
 
 @pytest.mark.asyncio()
 async def test_load_history_chronological_order(
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
 ) -> None:
     """History should be in chronological order."""
@@ -122,7 +123,7 @@ async def test_load_history_single_message(
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_new(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Should create a new conversation when none exists."""
     conv, is_new = await get_or_create_conversation(test_user.id)
@@ -133,7 +134,7 @@ async def test_get_or_create_conversation_new(
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_existing_active(
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
 ) -> None:
     """Should return existing active conversation."""
@@ -145,28 +146,32 @@ async def test_get_or_create_conversation_existing_active(
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_reuses_old_session(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Should reuse existing session regardless of age (persistent model)."""
-    from backend.app.agent.file_store import get_session_store
 
-    store = get_session_store(test_user.id)
-
-    # Create an old conversation by writing the session file directly
+    # Create an old conversation directly in the database
     old_time = datetime.datetime.now(datetime.UTC) - datetime.timedelta(hours=48)
     old_session_id = "old-conv"
-    path = store._session_path(old_session_id)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    meta = {
-        "_type": "metadata",
-        "session_id": old_session_id,
-        "user_id": test_user.id,
-        "created_at": old_time.isoformat(),
-        "last_message_at": old_time.isoformat(),
-        "is_active": True,
-        "last_compacted_seq": 0,
-    }
-    path.write_text(json.dumps(meta, default=str) + "\n", encoding="utf-8")
+
+    import backend.app.database as _db_module
+    from backend.app.models import ChatSession
+
+    db = _db_module.SessionLocal()
+    try:
+        cs = ChatSession(
+            session_id=old_session_id,
+            user_id=test_user.id,
+            is_active=True,
+            channel="",
+            last_compacted_seq=0,
+            created_at=old_time,
+            last_message_at=old_time,
+        )
+        db.add(cs)
+        db.commit()
+    finally:
+        db.close()
 
     conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is False
@@ -175,7 +180,7 @@ async def test_get_or_create_conversation_reuses_old_session(
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_with_external_session_id(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """New conversation should store external session ID."""
     conv, is_new = await get_or_create_conversation(
@@ -188,7 +193,7 @@ async def test_get_or_create_conversation_with_external_session_id(
 
 @pytest.mark.asyncio()
 async def test_get_or_create_conversation_force_new(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """force_new=True should always create a new session."""
     conv1, _ = await get_or_create_conversation(test_user.id)

@@ -8,11 +8,12 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.file_store import MediaStore, UserData
+from backend.app.agent.file_store import MediaStore
 from backend.app.agent.file_store import slugify as _store_slugify
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
+from backend.app.models import User
 from backend.app.services.storage_service import StorageBackend
 
 if TYPE_CHECKING:
@@ -27,6 +28,7 @@ FILENAME_SLUG_MAX_LENGTH = 30
 CATEGORY_SUBFOLDERS: dict[str, str] = {
     "job_photo": "photos",
     "estimate": "estimates",
+    "invoice": "invoices",
     "document": "documents",
     "voice_note": "voice_notes",
 }
@@ -152,7 +154,7 @@ def _extension_from_mime(mime_type: str) -> str:
 
 
 async def auto_save_media(
-    user: UserData,
+    user: User,
     storage: StorageBackend,
     downloaded_media: list[DownloadedMedia],
 ) -> list[str]:
@@ -193,7 +195,7 @@ async def auto_save_media(
 
 
 def create_file_tools(
-    user: UserData,
+    user: User,
     storage: StorageBackend,
     pending_media: dict[str, bytes] | None = None,
 ) -> list[Tool]:

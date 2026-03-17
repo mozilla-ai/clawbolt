@@ -7,13 +7,13 @@ from pathlib import Path
 
 import pytest
 
-from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import ToolResult
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.config import settings
+from backend.app.models import User
 
 
-def _get_tool_fn(user_id: int, tool_name: str) -> Callable[..., Awaitable[ToolResult]]:
+def _get_tool_fn(user_id: str, tool_name: str) -> Callable[..., Awaitable[ToolResult]]:
     """Return the async function for the named tool."""
     tools = create_workspace_tools(user_id)
     for t in tools:
@@ -23,7 +23,7 @@ def _get_tool_fn(user_id: int, tool_name: str) -> Callable[..., Awaitable[ToolRe
     raise ValueError(msg)
 
 
-def _user_dir(user: UserData) -> Path:
+def _user_dir(user: User) -> Path:
     return Path(settings.data_dir) / str(user.id)
 
 
@@ -31,7 +31,7 @@ def _user_dir(user: UserData) -> Path:
 
 
 @pytest.mark.asyncio()
-async def test_read_file_success(test_user: UserData) -> None:
+async def test_read_file_success(test_user: User) -> None:
     """read_file should return file contents."""
     cdir = _user_dir(test_user)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -44,7 +44,7 @@ async def test_read_file_success(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_read_file_not_found(test_user: UserData) -> None:
+async def test_read_file_not_found(test_user: User) -> None:
     """read_file should return error for missing file."""
     read_fn = _get_tool_fn(test_user.id, "read_file")
     result = await read_fn(path="NONEXISTENT.md")
@@ -53,7 +53,7 @@ async def test_read_file_not_found(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_read_file_rejects_non_markdown(test_user: UserData) -> None:
+async def test_read_file_rejects_non_markdown(test_user: User) -> None:
     """read_file should reject non-markdown files."""
     read_fn = _get_tool_fn(test_user.id, "read_file")
     result = await read_fn(path="user.json")
@@ -62,7 +62,7 @@ async def test_read_file_rejects_non_markdown(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_read_file_rejects_path_traversal(test_user: UserData) -> None:
+async def test_read_file_rejects_path_traversal(test_user: User) -> None:
     """read_file should reject paths that escape the user directory."""
     read_fn = _get_tool_fn(test_user.id, "read_file")
     result = await read_fn(path="../../etc/passwd.md")
@@ -73,7 +73,7 @@ async def test_read_file_rejects_path_traversal(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_write_file_creates_new(test_user: UserData) -> None:
+async def test_write_file_creates_new(test_user: User) -> None:
     """write_file should create a new file."""
     cdir = _user_dir(test_user)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -86,7 +86,7 @@ async def test_write_file_creates_new(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_write_file_overwrites(test_user: UserData) -> None:
+async def test_write_file_overwrites(test_user: User) -> None:
     """write_file should overwrite existing file."""
     cdir = _user_dir(test_user)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -98,7 +98,7 @@ async def test_write_file_overwrites(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_write_file_creates_subdirectory(test_user: UserData) -> None:
+async def test_write_file_creates_subdirectory(test_user: User) -> None:
     """write_file should create parent directories."""
     cdir = _user_dir(test_user)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -110,7 +110,7 @@ async def test_write_file_creates_subdirectory(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_write_file_rejects_non_markdown(test_user: UserData) -> None:
+async def test_write_file_rejects_non_markdown(test_user: User) -> None:
     """write_file should reject non-markdown files."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
     result = await write_fn(path="evil.json", content="{}")
@@ -118,7 +118,7 @@ async def test_write_file_rejects_non_markdown(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_write_file_rejects_path_traversal(test_user: UserData) -> None:
+async def test_write_file_rejects_path_traversal(test_user: User) -> None:
     """write_file should reject paths that escape the user directory."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
     result = await write_fn(path="../../../tmp/hack.md", content="nope")
@@ -129,7 +129,7 @@ async def test_write_file_rejects_path_traversal(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_edit_file_replaces_text(test_user: UserData) -> None:
+async def test_edit_file_replaces_text(test_user: User) -> None:
     """edit_file should replace exact text."""
     cdir = _user_dir(test_user)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -142,7 +142,7 @@ async def test_edit_file_replaces_text(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_edit_file_text_not_found(test_user: UserData) -> None:
+async def test_edit_file_text_not_found(test_user: User) -> None:
     """edit_file should return error when old_text not found."""
     cdir = _user_dir(test_user)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -155,7 +155,7 @@ async def test_edit_file_text_not_found(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_edit_file_ambiguous_match(test_user: UserData) -> None:
+async def test_edit_file_ambiguous_match(test_user: User) -> None:
     """edit_file should return error when old_text matches multiple times."""
     cdir = _user_dir(test_user)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -168,7 +168,7 @@ async def test_edit_file_ambiguous_match(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_edit_file_not_found(test_user: UserData) -> None:
+async def test_edit_file_not_found(test_user: User) -> None:
     """edit_file should return error for missing file."""
     edit_fn = _get_tool_fn(test_user.id, "edit_file")
     result = await edit_fn(path="MISSING.md", old_text="a", new_text="b")
@@ -179,7 +179,7 @@ async def test_edit_file_not_found(test_user: UserData) -> None:
 # --- Tool registration tests ---
 
 
-def test_workspace_tools_registered(test_user: UserData) -> None:
+def test_workspace_tools_registered(test_user: User) -> None:
     """create_workspace_tools should return read, write, edit, and delete tools."""
     tools = create_workspace_tools(test_user.id)
     names = [t.name for t in tools]
@@ -194,7 +194,7 @@ def test_workspace_tools_registered(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_delete_file_success(test_user: UserData) -> None:
+async def test_delete_file_success(test_user: User) -> None:
     """delete_file should remove the file."""
     cdir = _user_dir(test_user)
     cdir.mkdir(parents=True, exist_ok=True)
@@ -208,7 +208,7 @@ async def test_delete_file_success(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_delete_file_not_found(test_user: UserData) -> None:
+async def test_delete_file_not_found(test_user: User) -> None:
     """delete_file should return error for missing file."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
     result = await delete_fn(path="NONEXISTENT.md")
@@ -217,7 +217,7 @@ async def test_delete_file_not_found(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_delete_file_protected(test_user: UserData) -> None:
+async def test_delete_file_protected(test_user: User) -> None:
     """delete_file should reject protected files."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
     for protected in ("USER.md", "SOUL.md", "HEARTBEAT.md"):
@@ -227,7 +227,7 @@ async def test_delete_file_protected(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_delete_file_protected_via_path_variant(test_user: UserData) -> None:
+async def test_delete_file_protected_via_path_variant(test_user: User) -> None:
     """delete_file should catch protected files even with path variations like ./USER.md."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
     for variant in ("./USER.md", "subdir/../SOUL.md"):
@@ -237,7 +237,7 @@ async def test_delete_file_protected_via_path_variant(test_user: UserData) -> No
 
 
 @pytest.mark.asyncio()
-async def test_delete_file_rejects_non_markdown(test_user: UserData) -> None:
+async def test_delete_file_rejects_non_markdown(test_user: User) -> None:
     """delete_file should reject non-markdown files."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
     result = await delete_fn(path="user.json")
@@ -246,7 +246,7 @@ async def test_delete_file_rejects_non_markdown(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_delete_file_rejects_path_traversal(test_user: UserData) -> None:
+async def test_delete_file_rejects_path_traversal(test_user: User) -> None:
     """delete_file should reject paths that escape the user directory."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
     result = await delete_fn(path="../../etc/hack.md")

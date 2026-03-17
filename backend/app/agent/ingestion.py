@@ -25,14 +25,14 @@ from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.file_store import (
     SessionState,
     StoredMessage,
-    UserData,
-    get_session_store,
-    get_user_store,
 )
 from backend.app.agent.router import handle_inbound_message
+from backend.app.agent.session_db import get_session_store
 from backend.app.config import settings
+from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.media.download import DownloadedMedia
+from backend.app.models import ChannelRoute, User
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +58,8 @@ class InboundMessage:
 
 async def _send_error_fallback(
     channel: str,
-    user: UserData,
-    user_id: int,
+    user: User,
+    user_id: str,
 ) -> None:
     """Send a fallback error message to the user via the bus.
 
@@ -79,40 +79,55 @@ async def _send_error_fallback(
             )
         )
     except Exception:
-        logger.exception("Failed to send error fallback to user %d", user_id)
+        logger.exception("Failed to send error fallback to user %s", user_id)
 
 
-async def _get_or_create_user(channel: str, sender_id: str) -> UserData:
+async def _get_or_create_user(channel: str, sender_id: str) -> User:
     """Look up or create a user by channel-specific sender ID.
 
     In single-tenant (OSS) mode there should be exactly one user shared
     across all channels.  When a new channel arrives and a user already
     exists, link the channel to that user instead of creating a duplicate.
     """
-    store = get_user_store()
-    user = await store.get_by_channel(sender_id)
-    if user is not None:
-        return user
+    db = SessionLocal()
+    try:
+        # Look up by channel route
+        route = (
+            db.query(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id).first()
+        )
+        if route:
+            user = db.query(User).filter_by(id=route.user_id).one()
+            db.expunge(user)
+            return user
 
-    # Reuse the sole existing user (single-tenant OSS) so sessions from
-    # every channel are visible in the dashboard.
-    all_users = await store.list_all()
-    if len(all_users) == 1:
-        user = all_users[0]
-        store.link_channel(channel, sender_id, user.id)
-        user = await store.update(
-            user.id,
+        # Reuse the sole existing user (single-tenant OSS) so sessions from
+        # every channel are visible in the dashboard.
+        all_users = db.query(User).all()
+        if len(all_users) == 1:
+            user = all_users[0]
+            db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
+            user.channel_identifier = sender_id
+            user.preferred_channel = channel
+            db.commit()
+            db.refresh(user)
+            db.expunge(user)
+            return user
+
+        # Create new user
+        user = User(
+            user_id=f"{channel}_{sender_id}",
             channel_identifier=sender_id,
             preferred_channel=channel,
         )
-        return user  # type: ignore[return-value]
-
-    user = await store.create(
-        user_id=f"{channel}_{sender_id}",
-        channel_identifier=sender_id,
-        preferred_channel=channel,
-    )
-    return user
+        db.add(user)
+        db.flush()
+        db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+        return user
+    finally:
+        db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +152,7 @@ class _BatchState:
     entries: list[_BatchEntry] = field(default_factory=list)
     timer: asyncio.Task[None] | None = None
     download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None
-    user: UserData | None = None
+    user: User | None = None
     channel: str = ""
     request_id: str = ""
 
@@ -159,12 +174,12 @@ class MessageBatcher:
     def __init__(self, window_ms: int | None = None) -> None:
         window_ms = window_ms if window_ms is not None else settings.message_batch_window_ms
         self._window_ms = window_ms
-        self._states: dict[int, _BatchState] = {}
+        self._states: dict[str, _BatchState] = {}
         self._lock = asyncio.Lock()
 
     async def enqueue(
         self,
-        user: UserData,
+        user: User,
         session: SessionState,
         message: StoredMessage,
         media_urls: list[tuple[str, str]],
@@ -196,12 +211,12 @@ class MessageBatcher:
                 state.timer.cancel()
             state.timer = asyncio.create_task(self._flush_after(user.id))
 
-    async def _flush_after(self, user_id: int) -> None:
+    async def _flush_after(self, user_id: str) -> None:
         """Wait for the batch window then flush."""
         await asyncio.sleep(self._window_ms / 1000.0)
         await self._flush(user_id)
 
-    async def _flush(self, user_id: int) -> None:
+    async def _flush(self, user_id: str) -> None:
         """Process the batched messages for the user.
 
         Acquires the per-user lock, then runs the agent pipeline for
@@ -226,7 +241,7 @@ class MessageBatcher:
 
         if len(state.entries) > 1:
             logger.info(
-                "Batched %d messages for user %d, processing message seq %d",
+                "Batched %d messages for user %s, processing message seq %d",
                 len(state.entries),
                 user_id,
                 last_entry.message.seq,
@@ -235,10 +250,14 @@ class MessageBatcher:
         async with user_locks.acquire(user_id):
             try:
                 # Reload user in case it was updated
-                store = get_user_store()
-                fresh = await store.get_by_id(user_id)
-                if fresh is not None:
-                    user = fresh
+                db = SessionLocal()
+                try:
+                    fresh = db.query(User).filter_by(id=user_id).first()
+                    if fresh is not None:
+                        db.expunge(fresh)
+                        user = fresh
+                finally:
+                    db.close()
                 await handle_inbound_message(
                     user=user,
                     session=last_entry.session,
@@ -251,7 +270,7 @@ class MessageBatcher:
                 )
             except Exception:
                 logger.exception(
-                    "Agent pipeline failed for message seq %d (user %d)",
+                    "Agent pipeline failed for message seq %d (user %s)",
                     last_entry.message.seq,
                     user_id,
                 )
@@ -328,10 +347,14 @@ async def process_inbound_from_bus(
     else:
         async with user_locks.acquire(user.id):
             try:
-                store = get_user_store()
-                fresh = await store.get_by_id(user.id)
-                if fresh is not None:
-                    user = fresh
+                db = SessionLocal()
+                try:
+                    fresh = db.query(User).filter_by(id=user.id).first()
+                    if fresh is not None:
+                        db.expunge(fresh)
+                        user = fresh
+                finally:
+                    db.close()
                 await handle_inbound_message(
                     user=user,
                     session=session,
@@ -344,7 +367,7 @@ async def process_inbound_from_bus(
                 )
             except Exception:
                 logger.exception(
-                    "Agent pipeline failed for message seq %d (user %d)",
+                    "Agent pipeline failed for message seq %d (user %s)",
                     message.seq,
                     user.id,
                 )

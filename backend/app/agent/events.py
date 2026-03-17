@@ -16,7 +16,7 @@ from typing import Any
 class AgentStartEvent:
     """Emitted when the agent begins processing a message."""
 
-    user_id: int
+    user_id: str
     message_context: str
 
 

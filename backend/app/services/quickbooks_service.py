@@ -27,6 +27,14 @@ class QuickBooksService(ABC):
     async def query(self, query_str: str) -> list[dict[str, Any]]:
         """Run a QBO query and return the list of result dicts."""
 
+    @abstractmethod
+    async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Create a QBO entity (Customer, Estimate, Invoice, etc.)."""
+
+    @abstractmethod
+    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
+        """Send an invoice via QuickBooks email."""
+
 
 class QuickBooksOnlineService(QuickBooksService):
     """Concrete implementation calling the QBO REST API."""
@@ -104,3 +112,16 @@ class QuickBooksOnlineService(QuickBooksService):
             if isinstance(value, list):
                 return value
         return []
+
+    async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        path = f"/{entity_type.lower()}"
+        result = await self._request("POST", path, json=data)
+        # QBO wraps the created entity under the entity type key
+        return result.get(entity_type, result)
+
+    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
+        return await self._request(
+            "POST",
+            f"/invoice/{invoice_id}/send",
+            params={"sendTo": email},
+        )

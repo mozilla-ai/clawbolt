@@ -7,18 +7,19 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import backend.app.database as _db_module
 from backend.app.agent.file_store import (
     StoredMessage,
     UserData,
-    get_session_store,
-    get_user_store,
 )
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
+from backend.app.agent.session_db import get_session_store
 from backend.app.bus import message_bus
+from backend.app.models import User
 from tests.mocks.llm import make_text_response
 
 
-async def _get_all_messages(user_id: int) -> list[StoredMessage]:
+async def _get_all_messages(user_id: str) -> list[StoredMessage]:
     """Helper to retrieve all stored messages for a user."""
     store = get_session_store(user_id)
     session, _is_new = await store.get_or_create_session()
@@ -94,8 +95,21 @@ async def test_full_message_round_trip_new_user() -> None:
         await process_inbound_from_bus(inbound)
 
     # User was auto-created
-    store = get_user_store()
-    user = await store.get_by_channel("777888999")
+    from backend.app.models import ChannelRoute
+
+    db = _db_module.SessionLocal()
+    try:
+        route = db.query(ChannelRoute).filter_by(channel_identifier="777888999").first()
+        if route:
+            user = db.query(User).filter_by(id=route.user_id).first()
+            if user:
+                db.expunge(user)
+        else:
+            user = db.query(User).filter_by(channel_identifier="777888999").first()
+            if user:
+                db.expunge(user)
+    finally:
+        db.close()
     assert user is not None
 
     # Messages stored

@@ -5,8 +5,10 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import EstimateStore, UserData, get_user_store
+import backend.app.database as _db_module
+from backend.app.agent.client_db import EstimateStore
 from backend.app.agent.tools.estimate_tools import create_estimate_tools
+from backend.app.models import User
 from tests.mocks.storage import MockStorageBackend
 
 
@@ -24,7 +26,7 @@ def _use_tmp_pdf_dir(tmp_path: Path) -> Generator[None]:
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_creates_records(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """generate_estimate should create Estimate and EstimateLineItem records."""
     tools = create_estimate_tools(test_user)
@@ -53,7 +55,7 @@ async def test_generate_estimate_creates_records(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_with_client_info(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """generate_estimate should include client info."""
     tools = create_estimate_tools(test_user)
@@ -77,7 +79,7 @@ async def test_generate_estimate_with_client_info(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_pdf_generated(
-    test_user: UserData,
+    test_user: User,
     tmp_path: Path,
 ) -> None:
     """generate_estimate should generate a PDF (nonzero bytes)."""
@@ -103,7 +105,7 @@ async def test_generate_estimate_pdf_generated(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_sequential_numbers(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Estimate numbers should be sequential per user."""
     tools = create_estimate_tools(test_user)
@@ -124,7 +126,7 @@ async def test_generate_estimate_sequential_numbers(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_single_line_item(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Estimate with single line item should work."""
     tools = create_estimate_tools(test_user)
@@ -141,7 +143,7 @@ async def test_generate_estimate_single_line_item(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_custom_terms(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Custom terms should be accepted."""
     tools = create_estimate_tools(test_user)
@@ -158,7 +160,7 @@ async def test_generate_estimate_custom_terms(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_no_terms_omits_default(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Omitting terms should pass None to the PDF, not a hardcoded default."""
     tools = create_estimate_tools(test_user)
@@ -180,7 +182,7 @@ async def test_generate_estimate_no_terms_omits_default(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_rejects_negative_quantity(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Negative quantity should return an error instead of creating a record."""
     tools = create_estimate_tools(test_user)
@@ -201,7 +203,7 @@ async def test_generate_estimate_rejects_negative_quantity(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_rejects_negative_price(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Negative unit_price should return an error."""
     tools = create_estimate_tools(test_user)
@@ -222,7 +224,7 @@ async def test_generate_estimate_rejects_negative_price(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_rejects_non_numeric_values(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Non-numeric quantity/price should return an error."""
     tools = create_estimate_tools(test_user)
@@ -240,9 +242,7 @@ async def test_generate_estimate_rejects_non_numeric_values(
     assert len(await store.list_all()) == 0
 
 
-def test_serve_estimate_pdf_endpoint(
-    client: TestClient, test_user: UserData, tmp_path: Path
-) -> None:
+def test_serve_estimate_pdf_endpoint(client: TestClient, test_user: User, tmp_path: Path) -> None:
     """GET /api/estimates/{id}/pdf should serve existing PDF for authenticated owner."""
     import asyncio
 
@@ -279,13 +279,15 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, tmp_path: Pa
     import asyncio
 
     # Create a different user
-    user_store = get_user_store()
-    other_user = asyncio.get_event_loop().run_until_complete(
-        user_store.create(
-            user_id="other-user-999",
-            phone="+15559999999",
-        )
-    )
+    db = _db_module.SessionLocal()
+    try:
+        other_user = User(user_id="other-user-999", phone="+15559999999")
+        db.add(other_user)
+        db.commit()
+        db.refresh(other_user)
+        db.expunge(other_user)
+    finally:
+        db.close()
 
     # Create an estimate owned by the other user
     store = EstimateStore(other_user.id)
@@ -309,7 +311,7 @@ def test_serve_estimate_pdf_other_user_rejected(client: TestClient, tmp_path: Pa
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_uploads_to_cloud_storage(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """When storage is provided, estimate PDF should be uploaded to cloud storage."""
     storage = MockStorageBackend()
@@ -332,7 +334,7 @@ async def test_generate_estimate_uploads_to_cloud_storage(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_storage_uses_unsorted_without_client(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Without client info, estimate PDF should go to Unsorted in cloud storage."""
     storage = MockStorageBackend()
@@ -351,7 +353,7 @@ async def test_generate_estimate_storage_uses_unsorted_without_client(
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_no_storage_still_saves_locally(
-    test_user: UserData,
+    test_user: User,
     tmp_path: Path,
 ) -> None:
     """Without storage backend, estimate PDF should still save to local filesystem."""
@@ -387,7 +389,7 @@ def test_serve_estimate_pdf_requires_auth_dependency() -> None:
 
 @pytest.mark.asyncio()
 async def test_generate_estimate_cloud_upload_failure_does_not_kill_call(
-    test_user: UserData,
+    test_user: User,
     tmp_path: Path,
 ) -> None:
     """Cloud upload failure should be logged but not prevent local PDF generation."""

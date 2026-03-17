@@ -23,6 +23,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 |----------|---------|-------------|
 | `LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `DATA_DIR` | `data/users` | Directory for file-based user data storage |
+| `DATABASE_URL` | `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt` | PostgreSQL connection URL |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated list of allowed CORS origins |
 | `JWT_SECRET` | `change-me-in-production` | Secret key for JWT signing. **Change this in production** |
 | `JWT_EXPIRY_MINUTES` | `15` | JWT token expiry time in minutes |
@@ -132,6 +133,22 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APP_BASE_URL` | `http://localhost:8000` | Public URL where the server is reachable, used for OAuth callback URLs |
+
+## Email
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `EMAIL_PROVIDER` | | `resend` or `smtp`; leave empty to disable email sending |
+| `RESEND_API_KEY` | | API key for Resend (required when `EMAIL_PROVIDER=resend`) |
+| `EMAIL_FROM_ADDRESS` | | Sender email address |
+| `EMAIL_FROM_NAME` | | Sender display name (optional) |
+| `SMTP_HOST` | | SMTP server hostname (required when `EMAIL_PROVIDER=smtp`) |
+| `SMTP_PORT` | `587` | SMTP server port |
+| `SMTP_USERNAME` | | SMTP authentication username |
+| `SMTP_PASSWORD` | | SMTP authentication password |
+| `SMTP_USE_TLS` | `true` | Use STARTTLS for SMTP connection |
+
+When configured, the agent gains a `send_document_email` tool that can email estimates and invoices to clients with PDF attachments.
 
 ## QuickBooks Online
 

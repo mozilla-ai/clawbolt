@@ -45,10 +45,10 @@ class UserLockManager:
     """
 
     def __init__(self, expiry_seconds: float = _LOCK_EXPIRY_SECONDS) -> None:
-        self._locks: dict[int, _LockEntry] = {}
+        self._locks: dict[str, _LockEntry] = {}
         self._expiry_seconds = expiry_seconds
 
-    def acquire(self, user_id: int) -> asyncio.Lock:
+    def acquire(self, user_id: str) -> asyncio.Lock:
         """Get the lock for a user, creating one if needed.
 
         Returns the ``asyncio.Lock`` itself so callers can use

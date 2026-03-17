@@ -107,3 +107,9 @@ class MockQuickBooksService(QuickBooksService):
             rows = rows[: int(max_match.group(1))]
 
         return rows
+
+    async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError("MockQuickBooksService.create_entity not implemented")
+
+    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
+        raise NotImplementedError("MockQuickBooksService.send_invoice_email not implemented")

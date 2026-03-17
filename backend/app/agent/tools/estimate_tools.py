@@ -10,12 +10,13 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.file_store import EstimateStore, UserData, make_client_slug
+from backend.app.agent.client_db import EstimateStore, make_client_slug
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.enums import EstimateStatus
+from backend.app.models import User
 from backend.app.services.pdf_service import EstimatePDFData, generate_estimate_pdf
 from backend.app.services.storage_service import StorageBackend
 
@@ -48,7 +49,7 @@ class GenerateEstimateParams(BaseModel):
 
 
 def create_estimate_tools(
-    user: UserData,
+    user: User,
     storage: StorageBackend | None = None,
 ) -> list[Tool]:
     """Create estimate-related tools for the agent."""

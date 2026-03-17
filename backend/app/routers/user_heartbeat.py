@@ -2,8 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.agent.file_store import HeartbeatStore, UserData
+from backend.app.agent.file_store import HeartbeatStore
 from backend.app.auth.dependencies import get_current_user
+from backend.app.models import User
 from backend.app.schemas import (
     HeartbeatCreateRequest,
     HeartbeatItemResponse,
@@ -15,7 +16,7 @@ router = APIRouter()
 
 @router.get("/user/heartbeat", response_model=list[HeartbeatItemResponse])
 async def list_heartbeat(
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> list[HeartbeatItemResponse]:
     """List active heartbeat items."""
     store = HeartbeatStore(current_user.id)
@@ -35,7 +36,7 @@ async def list_heartbeat(
 @router.post("/user/heartbeat", response_model=HeartbeatItemResponse, status_code=201)
 async def create_heartbeat_item(
     body: HeartbeatCreateRequest,
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> HeartbeatItemResponse:
     """Add a new heartbeat item."""
     store = HeartbeatStore(current_user.id)
@@ -54,9 +55,9 @@ async def create_heartbeat_item(
 
 @router.put("/user/heartbeat/{item_id}", response_model=HeartbeatItemResponse)
 async def update_heartbeat_item(
-    item_id: int,
+    item_id: str,
     body: HeartbeatUpdateRequest,
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> HeartbeatItemResponse:
     """Update a heartbeat item."""
     store = HeartbeatStore(current_user.id)
@@ -79,8 +80,8 @@ async def update_heartbeat_item(
 
 @router.delete("/user/heartbeat/{item_id}", status_code=204)
 async def delete_heartbeat_item(
-    item_id: int,
-    current_user: UserData = Depends(get_current_user),
+    item_id: str,
+    current_user: User = Depends(get_current_user),
 ) -> None:
     """Remove a heartbeat item."""
     store = HeartbeatStore(current_user.id)

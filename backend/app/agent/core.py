@@ -32,7 +32,6 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from backend.app.agent.file_store import UserData
 from backend.app.agent.llm_parsing import ParsedToolCall, get_response_text, parse_tool_calls
 from backend.app.agent.messages import (
     AgentMessage,
@@ -60,6 +59,7 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
+from backend.app.models import User
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -93,7 +93,7 @@ class ClawboltAgent:
 
     def __init__(
         self,
-        user: UserData,
+        user: User,
         channel: str = "",
         publish_outbound: Callable[[Any], Awaitable[None]] | None = None,
         chat_id: str | None = None,
@@ -586,7 +586,7 @@ class ClawboltAgent:
         """Process a message through the agent loop."""
         agent_start_time = time.monotonic()
         logger.debug(
-            "Agent starting for user %d, message length=%d, history=%d messages",
+            "Agent starting for user %s, message length=%d, history=%d messages",
             self.user.id,
             len(message_context),
             len(conversation_history) if conversation_history else 0,
@@ -763,7 +763,7 @@ class ClawboltAgent:
 
         total_duration = (time.monotonic() - agent_start_time) * 1000
         logger.debug(
-            "Agent finished for user %d in %.1fms, actions=%s, reply_length=%d",
+            "Agent finished for user %s in %.1fms, actions=%s, reply_length=%d",
             self.user.id,
             total_duration,
             actions_taken or "(none)",

@@ -8,8 +8,15 @@ Clawbolt is an AI assistant for the trades. FastAPI backend with a Telegram mess
 # Install dependencies
 uv sync
 
-# Run server
+# Run server (requires PostgreSQL -- see docker-compose.yml)
 uv run uvicorn backend.app.main:app --reload
+
+# Run with Docker (starts Postgres + app, runs migrations automatically)
+docker compose up
+
+# Database migrations
+uv run alembic upgrade head
+uv run alembic revision --autogenerate -m "description"
 
 # Tests
 uv run pytest -v
@@ -24,52 +31,46 @@ uv run ty check --python .venv backend/ tests/
 
 ## Tech Stack
 
-- Python 3.11+, FastAPI, Pydantic v2
+- Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2
 - any-llm-sdk (LLM provider abstraction via `acompletion`)
 - Telegram Bot API for messaging (via python-telegram-bot), faster-whisper for audio transcription
 - ReportLab for PDF generation, Dropbox/Google Drive for file storage
-- File-based storage (JSON, JSONL, Markdown): no database required
+- PostgreSQL for all data persistence, Alembic for migrations
 - uv + hatchling build system, ruff linting, ty type checking
 
 ## Storage
 
-All data is stored as files under `data/users/` (configurable via `DATA_DIR`). No database is required.
+All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The database has 15 tables:
 
-```
-data/
-  user_index.json                    # Channel -> user_id routing
-  seen_messages.json                 # Webhook idempotency (capped at 10K)
-  users/
-    {id}/
-      user.json                      # Profile data
-      SOUL.md                        # Personality/behavioral guidance
-      USER.md                        # User info and preferences
-      HEARTBEAT.md                   # Heartbeat items (single source of truth)
-      memory/
-        MEMORY.md                    # Structured facts by category
-        HISTORY.md                   # Compaction log
-      sessions/
-        {session_id}.jsonl           # Conversation transcripts
-      clients.json                   # Client records
-      estimates/
-        {estimate_id}.json           # Estimates with line items
-      media.json                     # Media file manifest
-      heartbeat/
-        log.jsonl                    # Heartbeat send log
-      llm_usage.jsonl                # Token usage log
-```
+| Table | Purpose |
+|---|---|
+| `users` | User profiles, personality text, preferences |
+| `channel_routes` | Channel -> user routing (Telegram, webchat, etc.) |
+| `sessions` | Chat session metadata |
+| `messages` | Chat messages (FK to sessions) |
+| `clients` | Client/customer records |
+| `estimates` | Job estimates |
+| `estimate_line_items` | Individual line items within estimates |
+| `media_files` | Media file manifest |
+| `memory_documents` | Structured memory and compaction history |
+| `heartbeat_items` | Proactive follow-up items |
+| `heartbeat_logs` | Heartbeat send log |
+| `idempotency_keys` | Webhook deduplication |
+| `llm_usage_logs` | Token usage tracking |
+| `tool_configs` | Per-user tool configuration |
 
-Key store classes in `backend/app/agent/file_store.py`:
-- `UserStore` (singleton via `get_user_store()`)
-- `FileMemoryStore` (per-user via `get_memory_store(id)`)
-- `FileSessionStore` (per-user via `get_session_store(id)`)
-- `ClientStore`, `EstimateStore`, `MediaStore`, `HeartbeatStore` (instantiated per use)
-- `IdempotencyStore` (singleton via `get_idempotency_store()`)
-- `LLMUsageStore` (instantiated per use)
+Key store modules:
+- `backend/app/agent/user_db.py` -- `UserStore` (singleton via `get_user_store()`)
+- `backend/app/agent/session_db.py` -- `SessionStore` (per-user via `get_session_store(id)`)
+- `backend/app/agent/memory_db.py` -- `MemoryStore` (per-user via `get_memory_store(id)`)
+- `backend/app/agent/client_db.py` -- `ClientStore`, `EstimateStore`
+- `backend/app/agent/stores.py` -- `MediaStore`, `HeartbeatStore`, `IdempotencyStore`, `LLMUsageStore`, `ToolConfigStore`
+- `backend/app/agent/dto.py` -- Pydantic DTOs: `UserData`, `StoredMessage`, `SessionState`, `ClientData`, etc.
+- `backend/app/agent/file_store.py` -- Compatibility shim (re-exports from above modules)
+- `backend/app/database.py` -- `Base`, `SessionLocal`, `get_db()`, `get_engine()`
+- `backend/app/models.py` -- All 15 SQLAlchemy ORM model classes
 
-Data classes (Pydantic BaseModel, replace ORM models):
-- `UserData`, `StoredMessage`, `SessionState`, `ClientData`
-- `EstimateData`, `MediaData`, `HeartbeatItem`, `HeartbeatLogEntry`, `MemoryFact`
+File storage for PDFs and uploads still uses the local filesystem under `data/` (configurable via `DATA_DIR`).
 
 ## Backwards Compatibility
 
@@ -79,6 +80,7 @@ Until this project has its first production release, you do not need to be conce
 
 - All type annotations required
 - Ruff rules: `E, F, I, UP, B, SIM, ANN, RUF` (line length 100, `E501` and `B008` ignored)
+- SQLAlchemy 2.0 `mapped_column` style for all ORM models
 - Pydantic v2 for all data classes and request/response schemas
 - All routes `async def`
 - All LLM calls via any-llm `acompletion` (async)
@@ -91,7 +93,7 @@ Until this project has its first production release, you do not need to be conce
 ## Testing
 
 - pytest with FastAPI `TestClient`
-- File stores isolated per test via `tmp_path` + `settings.data_dir` patch
+- In-memory SQLite + `StaticPool` for all tests (no external database needed)
 - `reset_stores()` clears cached store singletons between tests
 - Override `get_current_user` via FastAPI dependency injection
 - Mock ALL external services: Telegram, LLM (any-llm), faster-whisper, Dropbox/Drive
@@ -99,12 +101,12 @@ Until this project has its first production release, you do not need to be conce
 
 ## Architecture
 
-- **File-based storage**: all data in JSON/JSONL/Markdown files under `data/users/`. No database. See `backend/app/agent/file_store.py`.
+- **PostgreSQL storage**: all structured data in PostgreSQL via SQLAlchemy 2.0 ORM. See `backend/app/database.py` and `backend/app/models.py`. Store modules in `backend/app/agent/` provide CRUD APIs.
 - **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). OSS is single-tenant; premium adds multi-tenant auth via plugin.
 - **`user_id` scoping** on every data class and endpoint from day one
 - **Message bus**: async inbound/outbound queues in `bus.py`. Channels publish inbound messages; the agent publishes outbound replies. The ``ChannelManager`` dispatches outbound messages to the correct channel.
 - **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `acompletion`) -> tool execution -> reply
-- **Memory**: MEMORY.md key-value facts + clients.json client records per user
+- **Memory**: Structured facts stored in `memory_documents` table + client records in `clients` table
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
 
 ## Definition of Done
@@ -133,4 +135,3 @@ cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 ### Git operations
 
 Git auth is pre-configured. Never push directly to main. Always create a branch and open a PR.
-

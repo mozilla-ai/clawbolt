@@ -5,8 +5,9 @@ import json
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.agent.file_store import UserData, get_session_store
+from backend.app.agent.session_db import get_session_store
 from backend.app.auth.dependencies import get_current_user
+from backend.app.models import User
 from backend.app.schemas import (
     SessionDetailResponse,
     SessionListResponse,
@@ -21,20 +22,19 @@ router = APIRouter()
 async def list_sessions(
     offset: int = 0,
     limit: int = 20,
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> SessionListResponse:
     """List conversation sessions for the current user."""
     store = get_session_store(current_user.id)
-    files = store._list_session_files()
+    session_ids = store.list_session_ids()
     # Most recent first
-    files = list(reversed(files))
-    total = len(files)
-    page = files[offset : offset + limit]
+    session_ids = list(reversed(session_ids))
+    total = len(session_ids)
+    page = session_ids[offset : offset + limit]
 
     summaries: list[SessionSummary] = []
-    for path in page:
-        session_id = path.stem
-        session = store._load_session(session_id)
+    for session_id in page:
+        session = store.load_session(session_id)
         if session is None:
             continue
         preview = ""
@@ -61,11 +61,11 @@ async def list_sessions(
 @router.get("/user/sessions/{session_id}", response_model=SessionDetailResponse)
 async def get_session(
     session_id: str,
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> SessionDetailResponse:
     """Get a full conversation transcript with tool interactions."""
     store = get_session_store(current_user.id)
-    session = store._load_session(session_id)
+    session = store.load_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
