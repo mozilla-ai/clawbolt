@@ -23,7 +23,7 @@ from backend.app.agent.dto import (
     MediaData,
     ToolConfigEntry,
 )
-from backend.app.database import SessionLocal
+from backend.app.database import SessionLocal, db_session
 from backend.app.enums import HeartbeatSchedule, HeartbeatStatus
 from backend.app.models import (
     HeartbeatItem,
@@ -152,8 +152,7 @@ class HeartbeatStore:
         schedule: str = HeartbeatSchedule.DAILY,
     ) -> HeartbeatItemData:
         """Insert a new HeartbeatItem row and return it as a DTO."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             # Sequential ID: str(max_id + 1) -- lock rows to prevent races
             existing_ids = [
                 row[0]
@@ -180,8 +179,6 @@ class HeartbeatStore:
             db.commit()
             db.refresh(item)
             return _heartbeat_item_to_dto(item)
-        finally:
-            db.close()
 
     async def update_heartbeat_item(
         self,
@@ -491,8 +488,7 @@ class ToolConfigStore:
 
     async def save(self, entries: list[ToolConfigEntry]) -> list[ToolConfigEntry]:
         """Replace all ToolConfig rows for this user with new entries."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             # Delete existing rows for this user
             db.query(ToolConfig).filter_by(user_id=self.user_id).delete()
 
@@ -510,8 +506,6 @@ class ToolConfigStore:
                 db.add(tc)
             db.commit()
             return entries
-        finally:
-            db.close()
 
     async def get_disabled_tool_names(self) -> set[str]:
         """Return the set of tool group names that are disabled."""

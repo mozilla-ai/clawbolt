@@ -20,7 +20,7 @@ from backend.app.agent.dto import (
     _unique_slug,
     make_client_slug,
 )
-from backend.app.database import SessionLocal
+from backend.app.database import SessionLocal, db_session
 from backend.app.enums import EstimateStatus, InvoiceStatus
 from backend.app.models import Client, Estimate, EstimateLineItem, Invoice, InvoiceLineItem
 
@@ -141,8 +141,7 @@ class ClientStore:
         folder_scheme: str = "",
     ) -> ClientData:
         """Create a new client with a slug-based ID."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             # Build slug
             base_slug = make_client_slug(name, address, folder_scheme)
             if not base_slug:
@@ -167,8 +166,6 @@ class ClientStore:
             db.commit()
             db.refresh(client)
             return _client_to_data(client)
-        finally:
-            db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -237,8 +234,7 @@ class EstimateStore:
         line_items: list[dict[str, Any]] | None = None,
     ) -> EstimateData:
         """Create a new estimate with line items."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             num = self._next_estimate_number(db)
             eid = f"EST-{num:04d}"
 
@@ -269,8 +265,6 @@ class EstimateStore:
             db.commit()
             db.refresh(estimate)
             return _estimate_to_data(estimate, orm_items)
-        finally:
-            db.close()
 
     async def update(self, estimate_id: str, **fields: Any) -> EstimateData | None:
         """Update an estimate's fields."""
@@ -358,8 +352,7 @@ class InvoiceStore:
         notes: str = "",
     ) -> InvoiceData:
         """Create a new invoice with line items."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             num = self._next_invoice_number(db)
             iid = f"INV-{num:04d}"
 
@@ -393,8 +386,6 @@ class InvoiceStore:
             db.commit()
             db.refresh(invoice)
             return _invoice_to_data(invoice, orm_items)
-        finally:
-            db.close()
 
     async def update(self, invoice_id: str, **fields: Any) -> InvoiceData | None:
         """Update an invoice's fields."""

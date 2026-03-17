@@ -17,7 +17,7 @@ from typing import Any
 from backend.app.agent.dto import UserData
 from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import SessionLocal, db_session
 from backend.app.models import User
 
 logger = logging.getLogger(__name__)
@@ -116,20 +116,16 @@ class UserStore:
 
     async def create(self, user_id: str, **fields: Any) -> UserData:
         """Create a new User row and return it as a DTO."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             user = User(user_id=user_id, **fields)
             db.add(user)
             db.commit()
             db.refresh(user)
             return _user_to_dto(user)
-        finally:
-            db.close()
 
     async def update(self, user_id: str | int, **fields: Any) -> UserData | None:
         """Update a User row by primary key."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             user = db.query(User).filter_by(id=str(user_id)).first()
             if user is None:
                 return None
@@ -139,8 +135,6 @@ class UserStore:
             db.commit()
             db.refresh(user)
             return _user_to_dto(user)
-        finally:
-            db.close()
 
     async def list_all(self) -> list[UserData]:
         """Return all users."""

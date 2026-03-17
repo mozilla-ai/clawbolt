@@ -6,10 +6,10 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
 from backend.app.agent.client_db import ClientStore
-from backend.app.agent.file_store import UserData
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.session_db import get_session_store
 from backend.app.auth.dependencies import get_current_user
+from backend.app.models import User
 
 router = APIRouter()
 
@@ -29,7 +29,7 @@ class SearchResponse(BaseModel):
 @router.get("/search", response_model=SearchResponse)
 async def search(
     q: str = Query("", min_length=0, max_length=200),
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> SearchResponse:
     """Search across conversations, memory facts, and client records."""
     query = q.strip().lower()

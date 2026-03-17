@@ -201,6 +201,15 @@ async def update_tool_config(
     saved = await store.load()
     disabled_names = {e.name for e in saved if not e.enabled}
 
+    # Check for attempts to enable auto-disabled tools
+    auto_disabled = _get_auto_disabled_groups(current_user.id)
+    for name, enabled in requested.items():
+        if enabled and name in auto_disabled:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Cannot enable '{name}': {auto_disabled[name]}",
+            )
+
     # Apply changes, ignoring core tools
     valid_factories = set(default_registry.factory_names)
     for name, enabled in requested.items():
@@ -215,7 +224,6 @@ async def update_tool_config(
             disabled_names.add(name)
 
     # Build and save the full config
-    auto_disabled = _get_auto_disabled_groups(current_user.id)
     entries = _build_tool_list(disabled_names, auto_disabled=auto_disabled)
     await store.save(entries)
 

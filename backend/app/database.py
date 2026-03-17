@@ -1,3 +1,4 @@
+import contextlib
 from collections.abc import Generator
 
 from sqlalchemy import Engine, create_engine
@@ -33,6 +34,26 @@ def SessionLocal() -> Session:
 
 class Base(DeclarativeBase):
     pass
+
+
+@contextlib.contextmanager
+def db_session() -> Generator[Session]:
+    """Context manager that provides a DB session with proper rollback on error.
+
+    Usage::
+
+        with db_session() as db:
+            db.add(obj)
+            db.commit()
+    """
+    db = SessionLocal()
+    try:
+        yield db
+    except Exception:
+        db.rollback()
+        raise
+    finally:
+        db.close()
 
 
 def get_db() -> Generator[Session]:

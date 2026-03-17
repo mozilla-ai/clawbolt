@@ -141,12 +141,27 @@ def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
     return _persist_refreshed_tokens
 
 
+def _sanitize_qbo_string(value: str) -> str:
+    """Sanitize a string for use in a QBO query literal.
+
+    QBO query language uses single-quoted string literals. This function
+    escapes single quotes (the only documented special character) and strips
+    control characters that could alter query semantics.
+    """
+    import re as _re
+
+    # Remove control characters (tabs, newlines, etc.)
+    sanitized = _re.sub(r"[\x00-\x1f\x7f]", "", value)
+    # Escape single quotes by doubling them (QBO standard)
+    return sanitized.replace("'", "''")
+
+
 async def _lookup_customer_id(
     qb_service: QuickBooksService, customer_name: str
 ) -> tuple[str | None, str | None]:
     """Look up a customer by name. Returns (customer_id, error_message)."""
     try:
-        escaped = customer_name.replace("'", "''")
+        escaped = _sanitize_qbo_string(customer_name)
         rows = await qb_service.query(
             f"SELECT Id, DisplayName FROM Customer WHERE DisplayName = '{escaped}'"
         )

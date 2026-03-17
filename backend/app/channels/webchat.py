@@ -32,7 +32,7 @@ from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 
-_SESSION_ID_RE = re.compile(r"^[\w-]+_\d+(_\d+)?$")
+_SESSION_ID_RE = re.compile(r"^[\w-]+_\d+(_[\w]+)?$")
 
 
 class _ChatAccepted(BaseModel):

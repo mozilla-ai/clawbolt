@@ -209,21 +209,32 @@ def create_invoice_tools(
         invoice_number = invoice.id
 
         # Generate and save PDF
-        await _generate_invoice_pdf_and_save(
-            user=user,
-            invoice_id=invoice_number,
-            description=description,
-            processed_items=processed_items,
-            subtotal=subtotal,
-            total_amount=total_amount,
-            client_name=client_name,
-            client_address=client_address,
-            client_slug=client_slug,
-            due_date=due_date,
-            notes=notes,
-            storage=storage,
-            invoice_store=invoice_store,
-        )
+        try:
+            await _generate_invoice_pdf_and_save(
+                user=user,
+                invoice_id=invoice_number,
+                description=description,
+                processed_items=processed_items,
+                subtotal=subtotal,
+                total_amount=total_amount,
+                client_name=client_name,
+                client_address=client_address,
+                client_slug=client_slug,
+                due_date=due_date,
+                notes=notes,
+                storage=storage,
+                invoice_store=invoice_store,
+            )
+        except Exception:
+            logger.exception("PDF generation failed for invoice %s", invoice_number)
+            return ToolResult(
+                content=(
+                    f"Invoice {invoice_number} created but PDF generation failed. "
+                    f"The invoice record exists and can be retried."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+            )
 
         return ToolResult(
             content=(
@@ -298,21 +309,32 @@ def create_invoice_tools(
                 client_address = client_data.address or None
 
         # Generate and save PDF
-        await _generate_invoice_pdf_and_save(
-            user=user,
-            invoice_id=invoice_number,
-            description=estimate.description,
-            processed_items=processed_items,
-            subtotal=estimate.total_amount,
-            total_amount=estimate.total_amount,
-            client_name=client_name,
-            client_address=client_address,
-            client_slug=client_slug,
-            due_date=due_date,
-            notes=notes,
-            storage=storage,
-            invoice_store=invoice_store,
-        )
+        try:
+            await _generate_invoice_pdf_and_save(
+                user=user,
+                invoice_id=invoice_number,
+                description=estimate.description,
+                processed_items=processed_items,
+                subtotal=estimate.total_amount,
+                total_amount=estimate.total_amount,
+                client_name=client_name,
+                client_address=client_address,
+                client_slug=client_slug,
+                due_date=due_date,
+                notes=notes,
+                storage=storage,
+                invoice_store=invoice_store,
+            )
+        except Exception:
+            logger.exception("PDF generation failed for invoice %s", invoice_number)
+            return ToolResult(
+                content=(
+                    f"Invoice {invoice_number} created from estimate {estimate_id} "
+                    f"but PDF generation failed. The invoice record exists and can be retried."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+            )
 
         return ToolResult(
             content=(

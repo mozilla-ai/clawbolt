@@ -11,7 +11,7 @@ import logging
 
 from backend.app.agent.client_db import ClientStore
 from backend.app.agent.dto import ClientData
-from backend.app.database import SessionLocal
+from backend.app.database import SessionLocal, db_session
 from backend.app.models import MemoryDocument, User
 
 logger = logging.getLogger(__name__)
@@ -48,13 +48,10 @@ class MemoryStore:
 
     def write_memory(self, content: str) -> None:
         """Write memory text (full rewrite, equivalent of MEMORY.md)."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             doc = self._get_or_create_doc(db)
             doc.memory_text = content.rstrip() + "\n"
             db.commit()
-        finally:
-            db.close()
 
     def read_history(self) -> str:
         """Read history text (equivalent of HISTORY.md)."""
@@ -72,8 +69,7 @@ class MemoryStore:
         from sqlalchemy import case as sa_case
         from sqlalchemy import literal_column
 
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             doc = self._get_or_create_doc(db)
             # Use SQL-level concatenation to avoid lost-update races
             suffix = entry + "\n"
@@ -88,8 +84,6 @@ class MemoryStore:
                 synchronize_session="fetch",
             )
             db.commit()
-        finally:
-            db.close()
 
     def read_soul(self) -> str:
         """Read soul text from User model."""
@@ -107,14 +101,11 @@ class MemoryStore:
 
     def write_soul(self, content: str) -> None:
         """Write soul text to User model."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             user = db.query(User).filter_by(id=self.user_id).first()
             if user is not None:
                 user.soul_text = f"# Soul\n\n{content}\n"
                 db.commit()
-        finally:
-            db.close()
 
     def read_user(self) -> str:
         """Read user text from User model."""
@@ -132,14 +123,11 @@ class MemoryStore:
 
     def write_user(self, content: str) -> None:
         """Write user text to User model."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             user = db.query(User).filter_by(id=self.user_id).first()
             if user is not None:
                 user.user_text = f"# User\n\n{content}\n"
                 db.commit()
-        finally:
-            db.close()
 
     async def build_memory_context(self) -> str:
         """Build memory context for injection into the agent prompt.

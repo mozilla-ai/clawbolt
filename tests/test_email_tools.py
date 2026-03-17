@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import backend.app.database as _db_module
 from backend.app.agent.client_db import EstimateStore, InvoiceStore
 from backend.app.agent.tools.email_tools import create_email_tools
 from backend.app.enums import EstimateStatus, InvoiceStatus
@@ -306,3 +308,66 @@ async def test_send_email_does_not_update_non_draft_status(test_user: User, tmp_
     updated = await store.get(estimate.id)
     assert updated is not None
     assert updated.status == EstimateStatus.ACCEPTED
+
+
+# ---------------------------------------------------------------------------
+# User scoping tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_send_email_user_scoping(test_user: User, tmp_path: Path) -> None:
+    """User A should not be able to send User B's documents via email."""
+    # Create a second user
+    db = _db_module.SessionLocal()
+    try:
+        other_user = User(
+            id=str(uuid.uuid4()),
+            user_id="other-user-002",
+            phone="+15559999999",
+            onboarding_complete=True,
+        )
+        db.add(other_user)
+        db.commit()
+        db.refresh(other_user)
+        db.expunge(other_user)
+    finally:
+        db.close()
+
+    # Create an invoice owned by other_user
+    other_store = InvoiceStore(other_user.id)
+    other_invoice = await other_store.create(
+        description="Other user invoice",
+        total_amount=1000.00,
+    )
+    # Write a PDF for it so the only gate is ownership
+    pdf_path = _write_test_pdf(tmp_path, other_user.id, other_invoice.id)
+    await other_store.update(other_invoice.id, pdf_url=str(pdf_path))
+
+    mock_email_service = AsyncMock()
+    mock_email_service.send_email.return_value = EmailResult(success=True)
+
+    with (
+        patch("backend.app.agent.tools.email_tools.settings.email_provider", "resend"),
+        patch(
+            "backend.app.agent.tools.email_tools.get_email_service",
+            return_value=mock_email_service,
+        ),
+    ):
+        # Create tools scoped to test_user (User A)
+        tools = create_email_tools(test_user)
+        send = tools[0].function
+
+        # Try to send other_user's (User B) invoice
+        result = await send(
+            recipient_email="client@example.com",
+            document_type="invoice",
+            document_id=other_invoice.id,
+        )
+
+    # Should fail because test_user doesn't own this invoice
+    assert result.is_error is True
+    assert "not found" in result.content.lower()
+
+    # Email should NOT have been sent
+    mock_email_service.send_email.assert_not_called()

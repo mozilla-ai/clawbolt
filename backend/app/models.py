@@ -256,7 +256,7 @@ class Invoice(Base):
     storage_path: Mapped[str] = mapped_column(String, default="")
     due_date: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     estimate_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("estimates.id"), nullable=True, default=None
+        String, ForeignKey("estimates.id", ondelete="SET NULL"), nullable=True, default=None
     )
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))

@@ -33,7 +33,11 @@ def upgrade() -> None:
         sa.Column("storage_path", sa.String(), server_default=""),
         sa.Column("due_date", sa.String(), nullable=True),
         sa.Column(
-            "estimate_id", sa.String(), sa.ForeignKey("estimates.id"), nullable=True, index=True
+            "estimate_id",
+            sa.String(),
+            sa.ForeignKey("estimates.id", ondelete="SET NULL"),
+            nullable=True,
+            index=True,
         ),
         sa.Column("notes", sa.Text(), server_default=""),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=_now),

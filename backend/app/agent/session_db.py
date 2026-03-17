@@ -9,13 +9,15 @@ from __future__ import annotations
 
 import datetime
 import logging
+import uuid
 from typing import Any
 
 from sqlalchemy import func
+from sqlalchemy.exc import IntegrityError
 
 from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import SessionLocal, db_session
 from backend.app.models import ChatSession, Message
 
 logger = logging.getLogger(__name__)
@@ -142,16 +144,12 @@ class SessionStore:
                     )
                     return _session_to_state(cs, messages), False
 
-            # Create new session
+            # Create new session with unique ID. Use timestamp + short UUID suffix
+            # to keep IDs readable while avoiding races.
             now = datetime.datetime.now(datetime.UTC)
             ts = int(now.timestamp())
-            session_id = f"{self.user_id}_{ts}"
-
-            # Ensure uniqueness
-            suffix = 1
-            while db.query(ChatSession).filter_by(session_id=session_id).first() is not None:
-                session_id = f"{self.user_id}_{ts}_{suffix}"
-                suffix += 1
+            short_uid = uuid.uuid4().hex[:8]
+            session_id = f"{self.user_id}_{ts}_{short_uid}"
 
             cs = ChatSession(
                 session_id=session_id,
@@ -163,7 +161,24 @@ class SessionStore:
                 last_message_at=now,
             )
             db.add(cs)
-            db.commit()
+            try:
+                db.commit()
+            except IntegrityError:
+                db.rollback()
+                # Extremely unlikely collision; retry with a new UUID
+                short_uid = uuid.uuid4().hex[:8]
+                session_id = f"{self.user_id}_{ts}_{short_uid}"
+                cs = ChatSession(
+                    session_id=session_id,
+                    user_id=self.user_id,
+                    is_active=True,
+                    channel="",
+                    last_compacted_seq=0,
+                    created_at=now,
+                    last_message_at=now,
+                )
+                db.add(cs)
+                db.commit()
             db.refresh(cs)
             return _session_to_state(cs, []), True
         finally:
@@ -181,8 +196,7 @@ class SessionStore:
         channel: str = "",
     ) -> StoredMessage:
         """Insert a message into the database and update the in-memory session."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             cs = db.query(ChatSession).filter_by(session_id=session.session_id).first()
             if cs is None:
                 # Auto-create the session row (supports in-memory-only SessionState
@@ -247,8 +261,6 @@ class SessionStore:
                 session.channel = channel
 
             return stored
-        finally:
-            db.close()
 
     async def update_message(
         self,
