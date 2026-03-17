@@ -231,12 +231,12 @@ class SessionStore:
                 db.add(cs)
                 db.flush()
 
-            # Calculate next seq (lock the session row to prevent concurrent duplicates)
+            # Lock the session row to serialize concurrent message inserts,
+            # then calculate next seq. FOR UPDATE cannot be used with aggregates
+            # in PostgreSQL, so we lock the parent row instead.
+            db.query(ChatSession).filter_by(id=cs.id).with_for_update().first()
             max_seq: int = (
-                db.query(func.max(Message.seq))
-                .filter_by(session_id=cs.id)
-                .with_for_update()
-                .scalar()
+                db.query(func.max(Message.seq)).filter_by(session_id=cs.id).scalar()
             ) or 0
             seq = max_seq + 1
             now = datetime.datetime.now(datetime.UTC)
