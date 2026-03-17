@@ -57,12 +57,11 @@ class QuickBooksOnlineService(QuickBooksService):
         self._on_token_refresh = on_token_refresh
         base = QBO_PRODUCTION_BASE if environment == "production" else QBO_SANDBOX_BASE
         self._api_base = f"{base}/v3/company/{realm_id}"
-        self._http = httpx.AsyncClient(timeout=30.0)
 
-    async def _refresh_access_token(self) -> None:
+    async def _refresh_access_token(self, client: httpx.AsyncClient) -> None:
         """Refresh the OAuth2 access token using the refresh token."""
         logger.info("Refreshing QuickBooks access token")
-        resp = await self._http.post(
+        resp = await client.post(
             QBO_TOKEN_URL,
             data={
                 "grant_type": "refresh_token",
@@ -94,15 +93,16 @@ class QuickBooksOnlineService(QuickBooksService):
             "Content-Type": "application/json",
         }
 
-        resp = await self._http.request(method, url, headers=headers, json=json, params=params)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.request(method, url, headers=headers, json=json, params=params)
 
-        if resp.status_code == 401:
-            await self._refresh_access_token()
-            headers["Authorization"] = f"Bearer {self._access_token}"
-            resp = await self._http.request(method, url, headers=headers, json=json, params=params)
+            if resp.status_code == 401:
+                await self._refresh_access_token(client)
+                headers["Authorization"] = f"Bearer {self._access_token}"
+                resp = await client.request(method, url, headers=headers, json=json, params=params)
 
-        resp.raise_for_status()
-        return resp.json()
+            resp.raise_for_status()
+            return resp.json()
 
     async def query(self, query_str: str) -> list[dict[str, Any]]:
         data = await self._request("GET", "/query", params={"query": query_str})

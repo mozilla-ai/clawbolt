@@ -90,6 +90,8 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
     across all channels.  When a new channel arrives and a user already
     exists, link the channel to that user instead of creating a duplicate.
     """
+    from sqlalchemy.exc import IntegrityError
+
     db = SessionLocal()
     try:
         # Look up by channel route
@@ -97,9 +99,10 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             db.query(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id).first()
         )
         if route:
-            user = db.query(User).filter_by(id=route.user_id).one()
-            db.expunge(user)
-            return user
+            user = db.query(User).filter_by(id=route.user_id).first()
+            if user is not None:
+                db.expunge(user)
+                return user
 
         # Reuse the sole existing user (single-tenant OSS) so sessions from
         # every channel are visible in the dashboard.
@@ -114,21 +117,41 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             db.expunge(user)
             return user
 
-        # Create new user
-        user = User(
-            user_id=f"{channel}_{sender_id}",
-            channel_identifier=sender_id,
-            preferred_channel=channel,
-        )
-        db.add(user)
-        db.flush()
-        db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
-        db.flush()
-        provision_user(user, db)
-        db.commit()
-        db.refresh(user)
-        db.expunge(user)
-        return user
+        # Create new user -- handle concurrent creation race
+        try:
+            user = User(
+                user_id=f"{channel}_{sender_id}",
+                channel_identifier=sender_id,
+                preferred_channel=channel,
+            )
+            db.add(user)
+            db.flush()
+            db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
+            db.flush()
+            provision_user(user, db)
+            db.commit()
+            db.refresh(user)
+            db.expunge(user)
+            return user
+        except IntegrityError:
+            db.rollback()
+            # Concurrent insert won the race; re-query
+            route = (
+                db.query(ChannelRoute)
+                .filter_by(channel=channel, channel_identifier=sender_id)
+                .first()
+            )
+            if route:
+                user = db.query(User).filter_by(id=route.user_id).first()
+                if user is not None:
+                    db.expunge(user)
+                    return user
+            # Fallback: look up by user_id
+            user = db.query(User).filter_by(user_id=f"{channel}_{sender_id}").first()
+            if user is not None:
+                db.expunge(user)
+                return user
+            raise
     finally:
         db.close()
 

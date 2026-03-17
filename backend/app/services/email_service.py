@@ -18,6 +18,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _sanitize_header(value: str) -> str:
+    """Strip characters that could enable SMTP header injection."""
+    return value.replace("\r", "").replace("\n", "")
+
+
 @dataclass
 class EmailAttachment:
     """An email attachment."""
@@ -61,7 +66,8 @@ class ResendEmailService(EmailService):
 
     def _from_header(self) -> str:
         if self.from_name:
-            return f"{self.from_name} <{self.from_address}>"
+            safe_name = _sanitize_header(self.from_name).replace("<", "").replace(">", "")
+            return f"{safe_name} <{self.from_address}>"
         return self.from_address
 
     async def send_email(
@@ -77,8 +83,8 @@ class ResendEmailService(EmailService):
 
         payload: dict[str, object] = {
             "from": self._from_header(),
-            "to": [to],
-            "subject": subject,
+            "to": [_sanitize_header(to)],
+            "subject": _sanitize_header(subject),
             "text": body_text,
         }
         if body_html:
@@ -140,7 +146,8 @@ class SMTPEmailService(EmailService):
 
     def _from_header(self) -> str:
         if self.from_name:
-            return f"{self.from_name} <{self.from_address}>"
+            safe_name = _sanitize_header(self.from_name).replace("<", "").replace(">", "")
+            return f"{safe_name} <{self.from_address}>"
         return self.from_address
 
     async def send_email(
@@ -157,8 +164,8 @@ class SMTPEmailService(EmailService):
         # Use "alternative" so email clients pick text or HTML, not both
         msg = MIMEMultipart("alternative") if body_html else MIMEMultipart()
         msg["From"] = self._from_header()
-        msg["To"] = to
-        msg["Subject"] = subject
+        msg["To"] = _sanitize_header(to)
+        msg["Subject"] = _sanitize_header(subject)
 
         msg.attach(MIMEText(body_text, "plain"))
         if body_html:

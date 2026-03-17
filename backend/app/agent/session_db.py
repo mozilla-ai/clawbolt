@@ -66,6 +66,17 @@ def _session_to_state(
 # ---------------------------------------------------------------------------
 
 
+_MESSAGE_UPDATABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "body",
+        "processed_context",
+        "tool_interactions_json",
+        "external_message_id",
+        "media_urls_json",
+    }
+)
+
+
 class SessionStore:
     """Database-backed session storage using ChatSession and Message ORM models."""
 
@@ -199,7 +210,11 @@ class SessionStore:
     ) -> StoredMessage:
         """Insert a message into the database and update the in-memory session."""
         with db_session() as db:
-            cs = db.query(ChatSession).filter_by(session_id=session.session_id).first()
+            cs = (
+                db.query(ChatSession)
+                .filter_by(session_id=session.session_id, user_id=self.user_id)
+                .first()
+            )
             if cs is None:
                 # Auto-create the session row (supports in-memory-only SessionState
                 # objects created outside of get_or_create_session).
@@ -271,9 +286,12 @@ class SessionStore:
         **updates: Any,
     ) -> None:
         """Update a message by seq number."""
-        db = SessionLocal()
-        try:
-            cs = db.query(ChatSession).filter_by(session_id=session.session_id).first()
+        with db_session() as db:
+            cs = (
+                db.query(ChatSession)
+                .filter_by(session_id=session.session_id, user_id=self.user_id)
+                .first()
+            )
             if cs is None:
                 return
 
@@ -282,7 +300,7 @@ class SessionStore:
                 return
 
             for key, value in updates.items():
-                if hasattr(msg, key):
+                if key in _MESSAGE_UPDATABLE_FIELDS:
                     setattr(msg, key, value)
             db.commit()
 
@@ -290,23 +308,22 @@ class SessionStore:
             for m in session.messages:
                 if m.seq == seq:
                     for k, v in updates.items():
-                        if hasattr(m, k):
+                        if k in _MESSAGE_UPDATABLE_FIELDS and hasattr(m, k):
                             setattr(m, k, v)
                     break
-        finally:
-            db.close()
 
     async def update_compaction_seq(self, session: SessionState, seq: int) -> None:
         """Update the last_compacted_seq in session metadata."""
-        db = SessionLocal()
-        try:
-            cs = db.query(ChatSession).filter_by(session_id=session.session_id).first()
+        with db_session() as db:
+            cs = (
+                db.query(ChatSession)
+                .filter_by(session_id=session.session_id, user_id=self.user_id)
+                .first()
+            )
             if cs is not None:
                 cs.last_compacted_seq = seq
                 db.commit()
             session.last_compacted_seq = seq
-        finally:
-            db.close()
 
     def _get_last_timestamp(self, direction: str) -> datetime.datetime | None:
         """Get the most recent message timestamp in the given direction."""

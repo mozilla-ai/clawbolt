@@ -6,6 +6,7 @@ These 15 tables replace the file-based storage layer in file_store.py.
 import uuid as _uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
+from decimal import Decimal
 
 from sqlalchemy import (
     Boolean,
@@ -154,7 +155,7 @@ class Message(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[int] = mapped_column(
-        Integer, ForeignKey("sessions.id"), index=True, nullable=False
+        Integer, ForeignKey("sessions.id", ondelete="CASCADE"), index=True, nullable=False
     )
     seq: Mapped[int] = mapped_column(Integer, nullable=False)
     direction: Mapped[str] = mapped_column(String, nullable=False)
@@ -189,8 +190,12 @@ class Client(Base):
     )
 
     user: Mapped["User"] = relationship("User", back_populates="clients")
-    estimates: Mapped[list["Estimate"]] = relationship("Estimate", back_populates="client")
-    invoices: Mapped[list["Invoice"]] = relationship("Invoice", back_populates="client")
+    estimates: Mapped[list["Estimate"]] = relationship(
+        "Estimate", back_populates="client", passive_deletes=True
+    )
+    invoices: Mapped[list["Invoice"]] = relationship(
+        "Invoice", back_populates="client", passive_deletes=True
+    )
 
 
 class Estimate(Base):
@@ -208,7 +213,7 @@ class Estimate(Base):
         default=None,
     )
     description: Mapped[str] = mapped_column(Text, default="")
-    total_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
     status: Mapped[str] = mapped_column(String, default="draft")
     pdf_url: Mapped[str] = mapped_column(String, default="")
     storage_path: Mapped[str] = mapped_column(String, default="")
@@ -234,9 +239,9 @@ class EstimateLineItem(Base):
         String, ForeignKey("estimates.id", ondelete="CASCADE"), index=True, nullable=False
     )
     description: Mapped[str] = mapped_column(Text, default="")
-    quantity: Mapped[float] = mapped_column(Numeric(12, 2), default=1.0)
-    unit_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
-    total: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("1.00"))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
+    total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
 
     estimate: Mapped["Estimate"] = relationship("Estimate", back_populates="line_items")
 
@@ -256,7 +261,7 @@ class Invoice(Base):
         default=None,
     )
     description: Mapped[str] = mapped_column(Text, default="")
-    total_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
+    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
     status: Mapped[str] = mapped_column(String, default="draft")
     pdf_url: Mapped[str] = mapped_column(String, default="")
     storage_path: Mapped[str] = mapped_column(String, default="")
@@ -292,9 +297,9 @@ class InvoiceLineItem(Base):
         String, ForeignKey("invoices.id", ondelete="CASCADE"), index=True, nullable=False
     )
     description: Mapped[str] = mapped_column(Text, default="")
-    quantity: Mapped[float] = mapped_column(Numeric(12, 2), default=1.0)
-    unit_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
-    total: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
+    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("1.00"))
+    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
+    total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
 
     invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="line_items")
 
@@ -385,7 +390,7 @@ class LLMUsageLog(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    cost: Mapped[float] = mapped_column(Numeric(12, 6), default=0.0)
+    cost: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0.000000"))
     purpose: Mapped[str] = mapped_column(String, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 

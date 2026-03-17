@@ -93,6 +93,25 @@ def _tool_config_to_dto(tc: ToolConfig) -> ToolConfigEntry:
 # ---------------------------------------------------------------------------
 
 
+_HEARTBEAT_ITEM_UPDATABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "description",
+        "schedule",
+        "active_hours",
+        "last_triggered_at",
+        "status",
+    }
+)
+
+_MEDIA_UPDATABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "processed_text",
+        "storage_url",
+        "storage_path",
+    }
+)
+
+
 class HeartbeatStore:
     """Database-backed heartbeat storage using HeartbeatItem and HeartbeatLog ORM models."""
 
@@ -191,7 +210,7 @@ class HeartbeatStore:
             if item is None:
                 return None
             for key, value in fields.items():
-                if value is not None and hasattr(item, key):
+                if value is not None and key in _HEARTBEAT_ITEM_UPDATABLE_FIELDS:
                     setattr(item, key, value)
             db.commit()
             db.refresh(item)
@@ -331,7 +350,7 @@ class MediaStore:
             if m is None:
                 return None
             for key, value in fields.items():
-                if value is not None and hasattr(m, key):
+                if value is not None and key in _MEDIA_UPDATABLE_FIELDS:
                     setattr(m, key, value)
             db.commit()
             db.refresh(m)

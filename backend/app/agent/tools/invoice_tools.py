@@ -292,16 +292,24 @@ def create_invoice_tools(
 
         # Create invoice linked to estimate
         invoice_store = InvoiceStore(user.id)
-        invoice = await invoice_store.create(
-            description=estimate.description,
-            total_amount=estimate.total_amount,
-            status=InvoiceStatus.DRAFT,
-            client_id=estimate.client_id or None,
-            line_items=processed_items,
-            due_date=due_date,
-            estimate_id=estimate_id,
-            notes=notes or "",
-        )
+        try:
+            invoice = await invoice_store.create(
+                description=estimate.description,
+                total_amount=estimate.total_amount,
+                status=InvoiceStatus.DRAFT,
+                client_id=estimate.client_id or None,
+                line_items=processed_items,
+                due_date=due_date,
+                estimate_id=estimate_id,
+                notes=notes or "",
+            )
+        except Exception:
+            logger.exception("Failed to create invoice from estimate %s", estimate_id)
+            return ToolResult(
+                content=f"Error: failed to create invoice from estimate {estimate_id}.",
+                is_error=True,
+                error_kind=ToolErrorKind.INTERNAL,
+            )
 
         invoice_number = invoice.id
         client_slug = estimate.client_id or None

@@ -93,6 +93,24 @@ def _user_to_dto(user: User) -> UserData:
     )
 
 
+_USER_UPDATABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "phone",
+        "timezone",
+        "preferred_channel",
+        "channel_identifier",
+        "onboarding_complete",
+        "is_active",
+        "heartbeat_opt_in",
+        "heartbeat_frequency",
+        "folder_scheme",
+        "soul_text",
+        "user_text",
+        "heartbeat_text",
+    }
+)
+
+
 class UserStore:
     """Database-backed user storage using User ORM model."""
 
@@ -130,7 +148,7 @@ class UserStore:
             if user is None:
                 return None
             for key, value in fields.items():
-                if hasattr(user, key):
+                if key in _USER_UPDATABLE_FIELDS:
                     setattr(user, key, value)
             db.commit()
             db.refresh(user)

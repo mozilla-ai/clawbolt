@@ -178,6 +178,18 @@ class ClientStore:
 # ---------------------------------------------------------------------------
 
 
+_ESTIMATE_UPDATABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "description",
+        "total_amount",
+        "status",
+        "client_id",
+        "pdf_url",
+        "storage_path",
+    }
+)
+
+
 class EstimateStore:
     """Database-backed estimate storage using Estimate and EstimateLineItem ORM models."""
 
@@ -276,7 +288,7 @@ class EstimateStore:
                 return None
 
             for key, value in fields.items():
-                if value is not None and hasattr(e, key):
+                if value is not None and key in _ESTIMATE_UPDATABLE_FIELDS:
                     setattr(e, key, value)
             db.commit()
             db.refresh(e)
@@ -288,6 +300,21 @@ class EstimateStore:
 # ---------------------------------------------------------------------------
 # InvoiceStore
 # ---------------------------------------------------------------------------
+
+
+_INVOICE_UPDATABLE_FIELDS: frozenset[str] = frozenset(
+    {
+        "description",
+        "total_amount",
+        "status",
+        "client_id",
+        "pdf_url",
+        "storage_path",
+        "due_date",
+        "estimate_id",
+        "notes",
+    }
+)
 
 
 class InvoiceStore:
@@ -391,7 +418,7 @@ class InvoiceStore:
                 return None
 
             for key, value in fields.items():
-                if value is not None and hasattr(inv, key):
+                if value is not None and key in _INVOICE_UPDATABLE_FIELDS:
                     setattr(inv, key, value)
             db.commit()
             db.refresh(inv)

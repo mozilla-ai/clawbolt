@@ -23,7 +23,6 @@ from backend.app.schemas import (
     ToolConfigResponse,
     ToolConfigUpdate,
 )
-from backend.app.services.oauth import oauth_service
 
 router = APIRouter()
 
@@ -81,11 +80,6 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
 }
 
 
-# Tool groups auto-disabled when QuickBooks is connected.
-_QB_AUTO_DISABLED_GROUPS: frozenset[str] = frozenset({"estimate", "invoice", "email"})
-_QB_AUTO_DISABLED_REASON = "Managed by QuickBooks"
-
-
 def _get_auto_disabled_groups(user_id: str) -> dict[str, str]:
     """Return a mapping of {factory_name: reason} for groups that should be auto-disabled.
 
@@ -94,25 +88,9 @@ def _get_auto_disabled_groups(user_id: str) -> dict[str, str]:
     If the token is expired or invalid, local tools remain available so users
     are never locked out of all document tools.
     """
-    result: dict[str, str] = {}
-    if not oauth_service.is_connected(user_id, "quickbooks"):
-        return result
+    from backend.app.agent.tools.quickbooks_tools import get_qb_auto_disabled_groups
 
-    # Verify the token is actually usable before auto-disabling local tools
-    token = oauth_service.load_token(user_id, "quickbooks")
-    if token is None or not token.access_token:
-        return result
-
-    # Check expiration if available (expired tokens can usually be refreshed,
-    # but if there is no refresh_token the connection is effectively dead)
-    import time
-
-    if token.expires_at and token.expires_at < time.time() and not token.refresh_token:
-        return result
-
-    for group in _QB_AUTO_DISABLED_GROUPS:
-        result[group] = _QB_AUTO_DISABLED_REASON
-    return result
+    return get_qb_auto_disabled_groups(user_id)
 
 
 def _build_tool_list(

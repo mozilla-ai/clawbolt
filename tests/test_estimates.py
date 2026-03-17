@@ -91,7 +91,7 @@ async def test_generate_estimate_pdf_generated(
         line_items=[{"description": "Service call", "quantity": 1, "unit_price": 150.00}],
     )
 
-    assert ".pdf" in result.content
+    assert "PDF saved" in result.content
 
     # Verify PDF file was actually written in the temp directory (per-user subdir)
     store = EstimateStore(test_user.id)

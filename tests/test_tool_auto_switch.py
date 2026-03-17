@@ -33,11 +33,11 @@ def test_auto_disabled_when_qb_connected(test_user: User) -> None:
     """Should return estimate, invoice, email when QB is connected with valid token."""
     with (
         patch(
-            "backend.app.routers.user_tools.oauth_service.is_connected",
+            "backend.app.agent.tools.quickbooks_tools.oauth_service.is_connected",
             return_value=True,
         ),
         patch(
-            "backend.app.routers.user_tools.oauth_service.load_token",
+            "backend.app.agent.tools.quickbooks_tools.oauth_service.load_token",
             return_value=_mock_valid_token(),
         ),
     ):
@@ -51,7 +51,7 @@ def test_auto_disabled_when_qb_connected(test_user: User) -> None:
 def test_auto_disabled_when_qb_not_connected(test_user: User) -> None:
     """Should return empty dict when QB is not connected."""
     with patch(
-        "backend.app.routers.user_tools.oauth_service.is_connected",
+        "backend.app.agent.tools.quickbooks_tools.oauth_service.is_connected",
         return_value=False,
     ):
         result = _get_auto_disabled_groups(test_user.id)
@@ -190,11 +190,11 @@ async def test_get_tool_config_shows_auto_disabled(
             patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
             patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
             patch(
-                "backend.app.routers.user_tools.oauth_service.is_connected",
+                "backend.app.agent.tools.quickbooks_tools.oauth_service.is_connected",
                 return_value=True,
             ),
             patch(
-                "backend.app.routers.user_tools.oauth_service.load_token",
+                "backend.app.agent.tools.quickbooks_tools.oauth_service.load_token",
                 return_value=_mock_valid_token(),
             ),
         ):
@@ -239,7 +239,7 @@ async def test_get_tool_config_no_auto_disabled_when_disconnected(
             patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
             patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
             patch(
-                "backend.app.routers.user_tools.oauth_service.is_connected",
+                "backend.app.agent.tools.quickbooks_tools.oauth_service.is_connected",
                 return_value=False,
             ),
         ):

@@ -108,15 +108,23 @@ def create_estimate_tools(
             or None
         )
 
-        # Create estimate via file store
+        # Create estimate via store
         estimate_store = EstimateStore(user.id)
-        estimate = await estimate_store.create(
-            description=description,
-            total_amount=total_amount,
-            status=EstimateStatus.DRAFT,
-            client_id=client_slug,
-            line_items=processed_items,
-        )
+        try:
+            estimate = await estimate_store.create(
+                description=description,
+                total_amount=total_amount,
+                status=EstimateStatus.DRAFT,
+                client_id=client_slug,
+                line_items=processed_items,
+            )
+        except Exception:
+            logger.exception("Failed to create estimate for user %s", user.id)
+            return ToolResult(
+                content="Error: failed to create estimate.",
+                is_error=True,
+                error_kind=ToolErrorKind.INTERNAL,
+            )
 
         estimate_number = estimate.id  # Already in EST-NNNN format
 
@@ -177,7 +185,7 @@ def create_estimate_tools(
             content=(
                 f"Estimate {estimate_number} generated for ${total_amount:,.2f}. "
                 f"{len(processed_items)} line item(s). "
-                f"PDF saved at {pdf_path}. "
+                f"PDF saved. "
                 f"Use send_media_reply to send it to the user."
             )
         )

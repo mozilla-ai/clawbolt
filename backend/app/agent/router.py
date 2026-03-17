@@ -251,11 +251,11 @@ async def run_agent(
     disabled_groups = await tool_config_store.get_disabled_tool_names()
 
     # Auto-disable local financial tools when QuickBooks is connected.
-    from backend.app.services.oauth import oauth_service
+    from backend.app.agent.tools.quickbooks_tools import get_qb_auto_disabled_groups
 
-    if oauth_service.is_connected(user.id, "quickbooks"):
-        auto_disabled = {"estimate", "invoice", "email"}
-        disabled_groups = (disabled_groups or set()) | auto_disabled
+    auto_disabled_map = get_qb_auto_disabled_groups(user.id)
+    if auto_disabled_map:
+        disabled_groups = (disabled_groups or set()) | set(auto_disabled_map)
 
     # Start with core tools only; specialist tools are discovered on demand
     # via the list_capabilities meta-tool. Exclude user-disabled groups.
