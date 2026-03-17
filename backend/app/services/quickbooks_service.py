@@ -130,6 +130,11 @@ class QuickBooksOnlineService(QuickBooksService):
         if not invoice_id.strip().isdigit():
             msg = f"Invalid invoice_id '{invoice_id}'. QuickBooks IDs must be numeric."
             raise ValueError(msg)
+        import re as _re
+
+        if not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            msg = f"Invalid email address: '{email}'"
+            raise ValueError(msg)
         return await self._request(
             "POST",
             f"/invoice/{invoice_id.strip()}/send",

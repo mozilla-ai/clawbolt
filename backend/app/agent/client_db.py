@@ -147,9 +147,13 @@ class ClientStore:
             if not base_slug:
                 base_slug = "client"
 
-            # Get existing IDs for uniqueness
+            # Get existing IDs for uniqueness (lock rows to prevent races)
             existing_ids = {
-                row[0] for row in db.query(Client.id).filter_by(user_id=self.user_id).all()
+                row[0]
+                for row in db.query(Client.id)
+                .filter_by(user_id=self.user_id)
+                .with_for_update()
+                .all()
             }
             cid = _unique_slug(base_slug, existing_ids)
 
@@ -210,11 +214,11 @@ class EstimateStore:
             db.close()
 
     def _next_estimate_number(self, db: object) -> int:
-        """Get the next sequential estimate number."""
+        """Get the next sequential estimate number (globally unique across all users)."""
         from sqlalchemy.orm import Session as SASession
 
         assert isinstance(db, SASession)
-        estimates = db.query(Estimate.id).filter_by(user_id=self.user_id).with_for_update().all()
+        estimates = db.query(Estimate.id).with_for_update().all()
         max_num = 0
         for (eid,) in estimates:
             if eid.startswith("EST-"):
@@ -268,8 +272,7 @@ class EstimateStore:
 
     async def update(self, estimate_id: str, **fields: Any) -> EstimateData | None:
         """Update an estimate's fields."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             e = db.query(Estimate).filter_by(id=estimate_id, user_id=self.user_id).first()
             if e is None:
                 return None
@@ -282,8 +285,6 @@ class EstimateStore:
 
             items = db.query(EstimateLineItem).filter_by(estimate_id=e.id).all()
             return _estimate_to_data(e, items)
-        finally:
-            db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -389,8 +390,7 @@ class InvoiceStore:
 
     async def update(self, invoice_id: str, **fields: Any) -> InvoiceData | None:
         """Update an invoice's fields."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             inv = db.query(Invoice).filter_by(id=invoice_id, user_id=self.user_id).first()
             if inv is None:
                 return None
@@ -403,5 +403,3 @@ class InvoiceStore:
 
             items = db.query(InvoiceLineItem).filter_by(invoice_id=inv.id).all()
             return _invoice_to_data(inv, items)
-        finally:
-            db.close()

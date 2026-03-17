@@ -78,7 +78,10 @@ class QBSendInvoiceParams(BaseModel):
     """Parameters for qb_send_invoice."""
 
     invoice_id: str = Field(description="QuickBooks Invoice ID")
-    email: str = Field(description="Email address to send the invoice to")
+    email: str = Field(
+        description="Email address to send the invoice to",
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+    )
 
 
 class QBEstimateToInvoiceParams(BaseModel):
@@ -124,19 +127,22 @@ def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
     """Return a callback that persists refreshed tokens to disk."""
 
     def _persist_refreshed_tokens(access_token: str, refresh_token: str) -> None:
-        token = oauth_service.load_token(user_id, "quickbooks")
-        if token is None:
-            token = OAuthTokenData(
-                access_token=access_token,
-                refresh_token=refresh_token,
-                realm_id=realm_id,
-            )
-        else:
-            token.access_token = access_token
-            token.refresh_token = refresh_token
-            # QBO access tokens last 1 hour
-            token.expires_at = time.time() + 3600
-        oauth_service.save_token(user_id, "quickbooks", token)
+        try:
+            token = oauth_service.load_token(user_id, "quickbooks")
+            if token is None:
+                token = OAuthTokenData(
+                    access_token=access_token,
+                    refresh_token=refresh_token,
+                    realm_id=realm_id,
+                )
+            else:
+                token.access_token = access_token
+                token.refresh_token = refresh_token
+                # QBO access tokens last 1 hour
+                token.expires_at = time.time() + 3600
+            oauth_service.save_token(user_id, "quickbooks", token)
+        except Exception:
+            logger.exception("Failed to persist refreshed QuickBooks tokens for user %s", user_id)
 
     return _persist_refreshed_tokens
 
@@ -230,7 +236,13 @@ def create_quickbooks_tools(
         import re as _re
 
         entity_match = _re.search(r"\bFROM\s+(\w+)", normalized, _re.IGNORECASE)
-        if entity_match and entity_match.group(1).upper() not in _ALLOWED_ENTITIES:
+        if not entity_match:
+            return ToolResult(
+                content="Query must include a FROM clause (e.g. SELECT * FROM Invoice).",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        if entity_match.group(1).upper() not in _ALLOWED_ENTITIES:
             return ToolResult(
                 content=f"Querying '{entity_match.group(1)}' is not allowed. "
                 f"Allowed entities: {', '.join(sorted(_ALLOWED_ENTITIES))}",

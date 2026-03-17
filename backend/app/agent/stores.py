@@ -186,8 +186,7 @@ class HeartbeatStore:
         **fields: Any,
     ) -> HeartbeatItemData | None:
         """Update a HeartbeatItem row by id."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             item = db.query(HeartbeatItem).filter_by(id=item_id, user_id=self.user_id).first()
             if item is None:
                 return None
@@ -197,31 +196,23 @@ class HeartbeatStore:
             db.commit()
             db.refresh(item)
             return _heartbeat_item_to_dto(item)
-        finally:
-            db.close()
 
     async def delete_heartbeat_item(self, item_id: str) -> bool:
         """Delete a HeartbeatItem row by id."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             item = db.query(HeartbeatItem).filter_by(id=item_id, user_id=self.user_id).first()
             if item is None:
                 return False
             db.delete(item)
             db.commit()
             return True
-        finally:
-            db.close()
 
     async def log_heartbeat(self) -> None:
         """Insert a HeartbeatLog row."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             log = HeartbeatLog(user_id=self.user_id)
             db.add(log)
             db.commit()
-        finally:
-            db.close()
 
     async def get_daily_count(self) -> int:
         """Count HeartbeatLog entries for today (UTC)."""
@@ -299,8 +290,7 @@ class MediaStore:
         message_id: str | None = None,
     ) -> MediaData:
         """Insert a new MediaFile row and return it as a DTO."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             # ID generation: "media-NNN" format -- lock rows to prevent races
             existing_ids = [
                 row[0]
@@ -333,8 +323,6 @@ class MediaStore:
             db.commit()
             db.refresh(media)
             return _media_to_dto(media)
-        finally:
-            db.close()
 
     async def update(self, media_id: str, **fields: Any) -> MediaData | None:
         """Update a MediaFile row by id."""
@@ -407,16 +395,19 @@ class IdempotencyStore:
 
     async def mark_seen(self, external_id: str) -> None:
         """Insert an IdempotencyKey row (ignore if it already exists)."""
-        db = SessionLocal()
-        try:
+        from sqlalchemy.exc import IntegrityError
+
+        with db_session() as db:
             existing = db.query(IdempotencyKey).filter_by(external_id=external_id).first()
             if existing is not None:
                 return
             key = IdempotencyKey(external_id=external_id)
             db.add(key)
-            db.commit()
-        finally:
-            db.close()
+            try:
+                db.commit()
+            except IntegrityError:
+                # Concurrent insert won the race; the key is already marked
+                db.rollback()
 
 
 # ---------------------------------------------------------------------------
@@ -443,8 +434,7 @@ class LLMUsageStore:
         as the ORM model uses input_tokens/output_tokens naming.  Sets
         provider="" and cost=0.0 since the file store did not track those.
         """
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             entry = LLMUsageLog(
                 user_id=self.user_id,
                 provider="",
@@ -457,8 +447,6 @@ class LLMUsageStore:
             )
             db.add(entry)
             db.commit()
-        finally:
-            db.close()
 
 
 # ---------------------------------------------------------------------------

@@ -118,7 +118,9 @@ class ChannelRoute(Base):
     __table_args__ = (UniqueConstraint("channel", "channel_identifier", name="uq_channel_route"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     channel: Mapped[str] = mapped_column(String, nullable=False)
     channel_identifier: Mapped[str] = mapped_column(String, nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
@@ -131,7 +133,9 @@ class ChatSession(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     channel: Mapped[str] = mapped_column(String, default="")
     last_compacted_seq: Mapped[int] = mapped_column(Integer, default=0)
@@ -168,7 +172,9 @@ class Client(Base):
     __tablename__ = "clients"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     phone: Mapped[str] = mapped_column(String, default="")
     email: Mapped[str] = mapped_column(String, default="")
@@ -183,19 +189,17 @@ class Client(Base):
     )
 
     user: Mapped["User"] = relationship("User", back_populates="clients")
-    estimates: Mapped[list["Estimate"]] = relationship(
-        "Estimate", back_populates="client", cascade="all, delete-orphan"
-    )
-    invoices: Mapped[list["Invoice"]] = relationship(
-        "Invoice", back_populates="client", cascade="all, delete-orphan"
-    )
+    estimates: Mapped[list["Estimate"]] = relationship("Estimate", back_populates="client")
+    invoices: Mapped[list["Invoice"]] = relationship("Invoice", back_populates="client")
 
 
 class Estimate(Base):
     __tablename__ = "estimates"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     client_id: Mapped[str | None] = mapped_column(
         String,
         ForeignKey("clients.id", ondelete="SET NULL"),
@@ -241,7 +245,9 @@ class Invoice(Base):
     __tablename__ = "invoices"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     client_id: Mapped[str | None] = mapped_column(
         String,
         ForeignKey("clients.id", ondelete="SET NULL"),
@@ -256,7 +262,11 @@ class Invoice(Base):
     storage_path: Mapped[str] = mapped_column(String, default="")
     due_date: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
     estimate_id: Mapped[str | None] = mapped_column(
-        String, ForeignKey("estimates.id", ondelete="SET NULL"), nullable=True, default=None
+        String,
+        ForeignKey("estimates.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        default=None,
     )
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
@@ -293,7 +303,9 @@ class MediaFile(Base):
     __tablename__ = "media_files"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     message_id: Mapped[str] = mapped_column(String, default="")
     original_url: Mapped[str] = mapped_column(Text, default="")
     mime_type: Mapped[str] = mapped_column(String, default="")
@@ -310,7 +322,7 @@ class MemoryDocument(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(
-        String, ForeignKey("users.id"), unique=True, nullable=False
+        String, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
     )
     memory_text: Mapped[str] = mapped_column(Text, default="")
     history_text: Mapped[str] = mapped_column(Text, default="")
@@ -328,7 +340,9 @@ class HeartbeatItem(Base):
     __tablename__ = "heartbeat_items"
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     description: Mapped[str] = mapped_column(Text, nullable=False)
     schedule: Mapped[str] = mapped_column(String, default="30m")
     active_hours: Mapped[str] = mapped_column(String, default="")
@@ -343,7 +357,9 @@ class HeartbeatLog(Base):
     __tablename__ = "heartbeat_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
     user: Mapped["User"] = relationship("User", back_populates="heartbeat_logs")
@@ -361,7 +377,9 @@ class LLMUsageLog(Base):
     __tablename__ = "llm_usage_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     provider: Mapped[str] = mapped_column(String, default="")
     model: Mapped[str] = mapped_column(String, default="")
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
@@ -379,7 +397,9 @@ class ToolConfig(Base):
     __table_args__ = (UniqueConstraint("user_id", "name", name="uq_tool_config_user_name"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
     name: Mapped[str] = mapped_column(String, nullable=False)
     description: Mapped[str] = mapped_column(Text, default="")
     category: Mapped[str] = mapped_column(String, default="")

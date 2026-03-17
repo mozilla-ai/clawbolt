@@ -105,7 +105,7 @@ class ResendEmailService(EmailService):
                     json=payload,
                     timeout=30.0,
                 )
-                if resp.status_code == 200:
+                if 200 <= resp.status_code < 300:
                     data = resp.json()
                     return EmailResult(success=True, message_id=data.get("id", ""))
                 return EmailResult(
@@ -154,7 +154,8 @@ class SMTPEmailService(EmailService):
         """Send email via SMTP."""
         import aiosmtplib
 
-        msg = MIMEMultipart()
+        # Use "alternative" so email clients pick text or HTML, not both
+        msg = MIMEMultipart("alternative") if body_html else MIMEMultipart()
         msg["From"] = self._from_header()
         msg["To"] = to
         msg["Subject"] = subject

@@ -76,7 +76,9 @@ class SessionStore:
         """Load a session by its string session_id."""
         db = SessionLocal()
         try:
-            cs = db.query(ChatSession).filter_by(session_id=session_id).first()
+            cs = (
+                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
+            )
             if cs is None:
                 return None
             messages = db.query(Message).filter_by(session_id=cs.id).order_by(Message.seq).all()

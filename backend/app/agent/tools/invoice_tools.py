@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
-import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -35,9 +34,6 @@ class InvoiceLineItemParams(BaseModel):
     description: str = Field(description="Description of the line item")
     quantity: float = Field(default=1, ge=0, description="Quantity")
     unit_price: float = Field(ge=0, description="Price per unit")
-
-
-_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
 class GenerateInvoiceParams(BaseModel):
@@ -110,6 +106,10 @@ async def _generate_invoice_pdf_and_save(
     pdf_dir = PDF_BASE_DIR / str(user.id) / (client_slug or "unsorted")
     pdf_dir.mkdir(parents=True, exist_ok=True)
     pdf_path = pdf_dir / f"{invoice_id}.pdf"
+
+    # Verify the resolved path stays within the base directory
+    if not pdf_path.resolve().is_relative_to(PDF_BASE_DIR.resolve()):
+        raise ValueError(f"PDF path escapes storage directory: {pdf_path}")
     await asyncio.to_thread(pdf_path.write_bytes, pdf_bytes)
 
     # Upload to cloud storage if available
@@ -196,15 +196,23 @@ def create_invoice_tools(
 
         # Create invoice via store
         invoice_store = InvoiceStore(user.id)
-        invoice = await invoice_store.create(
-            description=description,
-            total_amount=total_amount,
-            status=InvoiceStatus.DRAFT,
-            client_id=client_slug,
-            line_items=processed_items,
-            due_date=due_date,
-            notes=notes or "",
-        )
+        try:
+            invoice = await invoice_store.create(
+                description=description,
+                total_amount=total_amount,
+                status=InvoiceStatus.DRAFT,
+                client_id=client_slug,
+                line_items=processed_items,
+                due_date=due_date,
+                notes=notes or "",
+            )
+        except Exception as exc:
+            logger.exception("Failed to create invoice record")
+            return ToolResult(
+                content=f"Error creating invoice: {exc}",
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+            )
 
         invoice_number = invoice.id
 

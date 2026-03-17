@@ -97,8 +97,8 @@ def _resolve_path(user_id: str, relative_path: str) -> tuple[Path, str | None]:
     return resolved, None
 
 
-def _db_read(user_id: str, column: str) -> str:
-    """Read a DB-backed virtual file column."""
+def _db_read_sync(user_id: str, column: str) -> str:
+    """Read a DB-backed virtual file column (synchronous)."""
     db = SessionLocal()
     try:
         user = db.query(User).filter_by(id=user_id).first()
@@ -109,16 +109,25 @@ def _db_read(user_id: str, column: str) -> str:
         db.close()
 
 
-def _db_write(user_id: str, column: str, content: str) -> None:
-    """Write a DB-backed virtual file column."""
-    db = SessionLocal()
-    try:
+async def _db_read(user_id: str, column: str) -> str:
+    """Read a DB-backed virtual file column."""
+    return await asyncio.to_thread(_db_read_sync, user_id, column)
+
+
+def _db_write_sync(user_id: str, column: str, content: str) -> None:
+    """Write a DB-backed virtual file column (synchronous)."""
+    from backend.app.database import db_session
+
+    with db_session() as db:
         user = db.query(User).filter_by(id=user_id).first()
         if user is not None:
             setattr(user, column, content)
             db.commit()
-    finally:
-        db.close()
+
+
+async def _db_write(user_id: str, column: str, content: str) -> None:
+    """Write a DB-backed virtual file column."""
+    await asyncio.to_thread(_db_write_sync, user_id, column, content)
 
 
 def _canonical_name(relative_path: str) -> str | None:
@@ -142,7 +151,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         """Read a markdown file from the workspace."""
         canon = _canonical_name(path)
         if canon:
-            content = _db_read(user_id, _DB_FILE_COLUMN[canon])
+            content = await _db_read(user_id, _DB_FILE_COLUMN[canon])
             return ToolResult(content=content or "(empty)")
 
         resolved, err = _resolve_path(user_id, path)
@@ -161,7 +170,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         """Write or overwrite a markdown file in the workspace."""
         canon = _canonical_name(path)
         if canon:
-            _db_write(user_id, _DB_FILE_COLUMN[canon], content)
+            await _db_write(user_id, _DB_FILE_COLUMN[canon], content)
             return ToolResult(content=f"Wrote {path}")
 
         resolved, err = _resolve_path(user_id, path)
@@ -176,7 +185,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         canon = _canonical_name(path)
         if canon:
             column = _DB_FILE_COLUMN[canon]
-            text = _db_read(user_id, column)
+            text = await _db_read(user_id, column)
             if old_text not in text:
                 return ToolResult(
                     content=f"Text not found in {path}. Read the file first to see current contents.",
@@ -191,7 +200,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                     error_kind=ToolErrorKind.VALIDATION,
                 )
             updated = text.replace(old_text, new_text, 1)
-            _db_write(user_id, column, updated)
+            await _db_write(user_id, column, updated)
             return ToolResult(content=f"Updated {path}")
 
         resolved, err = _resolve_path(user_id, path)
