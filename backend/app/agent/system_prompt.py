@@ -11,11 +11,12 @@ import datetime
 import logging
 import zoneinfo
 
-from backend.app.agent.file_store import UserData, get_session_store
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.profile import build_soul_prompt
 from backend.app.agent.prompts import load_prompt
+from backend.app.agent.session_db import get_session_store
 from backend.app.agent.tools.base import Tool
+from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -62,18 +63,18 @@ class SystemPromptBuilder:
 # -----------------------------------------------------------------------
 
 
-def build_identity_section(user: UserData) -> str:
+def build_identity_section(user: User) -> str:
     """Build the 'About <name>' section content."""
     return build_soul_prompt(user)
 
 
-def build_user_section(user: UserData) -> str:
+def build_user_section(user: User) -> str:
     """Build the user profile section from USER.md content."""
     return user.user_text or ""
 
 
 async def build_memory_section(
-    user_id: int,
+    user_id: str,
     query: str | None = None,
 ) -> str:
     """Build the memory context section content."""
@@ -122,7 +123,7 @@ def to_local_time(
         return now
 
 
-def build_date_section(user: UserData) -> str:
+def build_date_section(user: User) -> str:
     """Build a cache-friendly date string in the user's local timezone.
 
     Uses date-only granularity (no minutes) to avoid prompt-cache busting.
@@ -132,7 +133,7 @@ def build_date_section(user: UserData) -> str:
     return local.strftime("%A, %Y-%m-%d")
 
 
-def build_local_datetime_section(user: UserData) -> str:
+def build_local_datetime_section(user: User) -> str:
     """Build a human-readable local datetime for the heartbeat evaluator."""
     now = datetime.datetime.now(datetime.UTC)
     local = to_local_time(now, user.timezone)
@@ -140,7 +141,7 @@ def build_local_datetime_section(user: UserData) -> str:
 
 
 def build_cross_session_context(
-    user_id: int,
+    user_id: str,
     current_session_id: str,
     count: int | None = None,
 ) -> str:
@@ -174,7 +175,7 @@ def build_cross_session_context(
 
 
 async def build_agent_system_prompt(
-    user: UserData,
+    user: User,
     tools: list[Tool],
     message_context: str,
     current_session_id: str = "",
@@ -216,7 +217,7 @@ async def build_agent_system_prompt(
 
 
 async def build_heartbeat_system_prompt(
-    user: UserData,
+    user: User,
     recent_messages: str,
     heartbeat_md: str = "",
 ) -> str:

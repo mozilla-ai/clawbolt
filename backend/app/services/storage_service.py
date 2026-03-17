@@ -13,8 +13,8 @@ import dropbox
 import dropbox.exceptions
 import dropbox.files
 
-from backend.app.agent.file_store import UserData
 from backend.app.config import Settings, settings
+from backend.app.models import User
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class StorageBackend(ABC):
 
 
 class DropboxStorage(StorageBackend):
-    def __init__(self, access_token: str, user_id: int | None = None) -> None:
+    def __init__(self, access_token: str, user_id: str | None = None) -> None:
         self.dbx = dropbox.Dropbox(access_token)
         self._path_prefix = f"/{user_id}" if user_id is not None else ""
 
@@ -120,7 +120,7 @@ class GoogleDriveStorage(StorageBackend):
     # Proper isolation requires creating a per-user root folder on first
     # use and passing its folder ID as the parent for all operations.
 
-    def __init__(self, credentials_json: str, user_id: int | None = None) -> None:
+    def __init__(self, credentials_json: str, user_id: str | None = None) -> None:
         self.credentials_json = credentials_json
         self._service: Any = None
         self._path_prefix = f"{user_id}/" if user_id is not None else ""
@@ -217,7 +217,7 @@ class LocalFileStorage(StorageBackend):
     def __init__(
         self,
         base_dir: str = settings.file_storage_base_dir,
-        user_id: int | None = None,
+        user_id: str | None = None,
     ) -> None:
         base = Path(base_dir).resolve()
         if user_id is not None:
@@ -270,7 +270,7 @@ class LocalFileStorage(StorageBackend):
 
 def get_storage_service(
     svc_settings: Settings | None = None,
-    user: UserData | None = None,
+    user: User | None = None,
 ) -> StorageBackend:
     """Factory: return the configured storage backend.
 

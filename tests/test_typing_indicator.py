@@ -7,10 +7,10 @@ import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.file_store import UserData
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage
+from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -28,7 +28,7 @@ class _InputParams(BaseModel):
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_sends_typing_indicator_before_llm_call(
-    mock_amessages: object, test_user: UserData
+    mock_amessages: object, test_user: User
 ) -> None:
     """Agent should send a typing indicator before each acompletion call."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
@@ -58,7 +58,7 @@ async def test_agent_sends_typing_indicator_before_llm_call(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_sends_typing_indicator_before_each_tool_round(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Agent should send typing indicator before each LLM call in multi-round tool loops."""
 
@@ -106,7 +106,7 @@ async def test_agent_sends_typing_indicator_before_each_tool_round(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_works_without_publish_outbound(
-    mock_amessages: object, test_user: UserData
+    mock_amessages: object, test_user: User
 ) -> None:
     """Agent should work correctly when no publish_outbound is provided."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
@@ -121,7 +121,7 @@ async def test_agent_works_without_publish_outbound(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_typing_indicator_failure_does_not_break_agent(
-    mock_amessages: object, test_user: UserData
+    mock_amessages: object, test_user: User
 ) -> None:
     """Agent should continue processing even if typing indicator fails."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
@@ -143,7 +143,7 @@ async def test_agent_typing_indicator_failure_does_not_break_agent(
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_no_typing_indicator_without_chat_id(
-    mock_amessages: object, test_user: UserData
+    mock_amessages: object, test_user: User
 ) -> None:
     """Agent should not send typing indicator when chat_id is not provided."""
     mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
@@ -188,7 +188,7 @@ async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_heartbeat_store_cls: MagicMock,
     mock_build_prompt: AsyncMock,
     mock_log_usage: MagicMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Heartbeat should send typing indicator before calling the LLM."""
     mock_settings.llm_model = "test-model"
@@ -258,7 +258,7 @@ async def test_heartbeat_works_without_channel(
     mock_heartbeat_store_cls: MagicMock,
     mock_build_prompt: AsyncMock,
     mock_log_usage: MagicMock,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Heartbeat should work when no channel is provided."""
     mock_settings.llm_model = "test-model"

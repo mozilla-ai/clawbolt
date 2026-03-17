@@ -17,6 +17,10 @@ dependencies = [
     "google-api-python-client>=2.0",
     "google-auth-oauthlib>=1.0",
     "faster-whisper>=1.0",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+    "alembic>=1.13",
+    "aiosmtplib>=3.0",
 ]
 
 [project.optional-dependencies]
@@ -27,6 +31,7 @@ dev = [
     "ruff>=0.5",
     "pre-commit>=3.0",
     "ty>=0.0.1a0",
+    "testcontainers[postgres]>=4.0",
 ]
 
 [build-system]

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -26,6 +26,14 @@ class QuickBooksService(ABC):
     @abstractmethod
     async def query(self, query_str: str) -> list[dict[str, Any]]:
         """Run a QBO query and return the list of result dicts."""
+
+    @abstractmethod
+    async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Create a QBO entity (Customer, Estimate, Invoice, etc.)."""
+
+    @abstractmethod
+    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
+        """Send an invoice via QuickBooks email."""
 
 
 class QuickBooksOnlineService(QuickBooksService):
@@ -49,12 +57,11 @@ class QuickBooksOnlineService(QuickBooksService):
         self._on_token_refresh = on_token_refresh
         base = QBO_PRODUCTION_BASE if environment == "production" else QBO_SANDBOX_BASE
         self._api_base = f"{base}/v3/company/{realm_id}"
-        self._http = httpx.AsyncClient(timeout=30.0)
 
-    async def _refresh_access_token(self) -> None:
+    async def _refresh_access_token(self, client: httpx.AsyncClient) -> None:
         """Refresh the OAuth2 access token using the refresh token."""
         logger.info("Refreshing QuickBooks access token")
-        resp = await self._http.post(
+        resp = await client.post(
             QBO_TOKEN_URL,
             data={
                 "grant_type": "refresh_token",
@@ -86,15 +93,16 @@ class QuickBooksOnlineService(QuickBooksService):
             "Content-Type": "application/json",
         }
 
-        resp = await self._http.request(method, url, headers=headers, json=json, params=params)
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.request(method, url, headers=headers, json=json, params=params)
 
-        if resp.status_code == 401:
-            await self._refresh_access_token()
-            headers["Authorization"] = f"Bearer {self._access_token}"
-            resp = await self._http.request(method, url, headers=headers, json=json, params=params)
+            if resp.status_code == 401:
+                await self._refresh_access_token(client)
+                headers["Authorization"] = f"Bearer {self._access_token}"
+                resp = await client.request(method, url, headers=headers, json=json, params=params)
 
-        resp.raise_for_status()
-        return resp.json()
+            resp.raise_for_status()
+            return resp.json()
 
     async def query(self, query_str: str) -> list[dict[str, Any]]:
         data = await self._request("GET", "/query", params={"query": query_str})
@@ -104,3 +112,31 @@ class QuickBooksOnlineService(QuickBooksService):
             if isinstance(value, list):
                 return value
         return []
+
+    _ALLOWED_ENTITY_TYPES: ClassVar[set[str]] = {"Customer", "Estimate", "Invoice"}
+
+    async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        if entity_type not in self._ALLOWED_ENTITY_TYPES:
+            msg = (
+                f"Entity type '{entity_type}' is not allowed. Allowed: {self._ALLOWED_ENTITY_TYPES}"
+            )
+            raise ValueError(msg)
+        path = f"/{entity_type.lower()}"
+        result = await self._request("POST", path, json=data)
+        # QBO wraps the created entity under the entity type key
+        return result.get(entity_type, result)
+
+    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
+        if not invoice_id.strip().isdigit():
+            msg = f"Invalid invoice_id '{invoice_id}'. QuickBooks IDs must be numeric."
+            raise ValueError(msg)
+        import re as _re
+
+        if not _re.match(r"^[^@\s]+@[^@\s]+\.[^@\s]+$", email):
+            msg = f"Invalid email address: '{email}'"
+            raise ValueError(msg)
+        return await self._request(
+            "POST",
+            f"/invoice/{invoice_id.strip()}/send",
+            params={"sendTo": email},
+        )

@@ -15,8 +15,8 @@ from backend.app.agent.events import (
     TurnEndEvent,
     TurnStartEvent,
 )
-from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolResult
+from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
@@ -32,7 +32,7 @@ class _KeyValueParams(BaseModel):
 
 
 @pytest.fixture()
-def agent(test_user: UserData) -> ClawboltAgent:
+def agent(test_user: User) -> ClawboltAgent:
     agent = ClawboltAgent(user=test_user)
     return agent
 
@@ -188,7 +188,7 @@ async def test_multiple_subscribers(
 
 def test_event_dataclasses_are_frozen() -> None:
     """Event dataclasses should be immutable."""
-    event = AgentStartEvent(user_id=1, message_context="test")
+    event = AgentStartEvent(user_id="1", message_context="test")
     try:
         event.user_id = 2  # type: ignore[misc]
         frozen = False

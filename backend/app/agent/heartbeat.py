@@ -25,18 +25,16 @@ from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.app.agent.context import get_or_create_conversation
-from backend.app.agent.file_store import (
-    HeartbeatStore,
-    UserData,
-    get_session_store,
-    get_user_store,
-)
+from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
+from backend.app.agent.session_db import get_session_store
 from backend.app.agent.system_prompt import build_heartbeat_system_prompt, to_local_time
 from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel, get_default_channel, get_manager
 from backend.app.config import settings
+from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
+from backend.app.models import ChannelRoute, User
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -154,7 +152,7 @@ class HeartbeatAction:
 
 
 def is_within_business_hours(
-    user: UserData,
+    user: User,
     now: datetime.datetime | None = None,
 ) -> bool:
     """Return *True* if *now* falls outside the quiet-hours window."""
@@ -268,7 +266,7 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
 
 
 async def evaluate_heartbeat_need(
-    user: UserData,
+    user: User,
     channel: str = "",
     chat_id: str = "",
 ) -> HeartbeatDecision:
@@ -294,7 +292,7 @@ async def evaluate_heartbeat_need(
     prompt = await build_heartbeat_system_prompt(user, recent_text, heartbeat_md=heartbeat_md)
 
     logger.debug(
-        "Heartbeat Phase 1 context for user %d: recent_messages=%d, "
+        "Heartbeat Phase 1 context for user %s: recent_messages=%d, "
         "heartbeat_length=%d, system_prompt_length=%d",
         user.id,
         len(recent),
@@ -343,7 +341,7 @@ async def evaluate_heartbeat_need(
 
     log_llm_usage(user.id, model, response, "heartbeat_decision")
     logger.debug(
-        "Heartbeat Phase 1 response for user %d: stop_reason=%s, blocks=%d",
+        "Heartbeat Phase 1 response for user %s: stop_reason=%s, blocks=%d",
         user.id,
         getattr(response, "stop_reason", "unknown"),
         len(response.content),
@@ -357,7 +355,7 @@ async def evaluate_heartbeat_need(
 
 
 async def execute_heartbeat_tasks(
-    user: UserData,
+    user: User,
     tasks: str,
     channel: str = "",
     chat_id: str = "",
@@ -378,7 +376,7 @@ async def execute_heartbeat_tasks(
 
     ensure_tool_modules_imported()
 
-    logger.info("Heartbeat Phase 2 starting for user %d: %.200s", user.id, tasks)
+    logger.info("Heartbeat Phase 2 starting for user %s: %.200s", user.id, tasks)
 
     publish_outbound = message_bus.publish_outbound if channel else None
 
@@ -389,7 +387,7 @@ async def execute_heartbeat_tasks(
 
         storage = init_storage(user)
     except Exception:
-        logger.debug("Heartbeat Phase 2: storage not available for user %d", user.id)
+        logger.debug("Heartbeat Phase 2: storage not available for user %s", user.id)
 
     tool_context = ToolContext(
         user=user,
@@ -417,7 +415,7 @@ async def execute_heartbeat_tasks(
     agent.register_tools(tools)
 
     logger.debug(
-        "Heartbeat Phase 2 agent for user %d initialized with %d tools",
+        "Heartbeat Phase 2 agent for user %s initialized with %d tools",
         user.id,
         len(tools),
     )
@@ -432,15 +430,15 @@ async def execute_heartbeat_tasks(
             max_tokens=heartbeat_max_tokens,
         )
     except Exception:
-        logger.exception("Heartbeat Phase 2 agent failed for user %d", user.id)
+        logger.exception("Heartbeat Phase 2 agent failed for user %s", user.id)
         return ""
 
     if response.is_error_fallback:
-        logger.warning("Heartbeat Phase 2 agent returned error fallback for user %d", user.id)
+        logger.warning("Heartbeat Phase 2 agent returned error fallback for user %s", user.id)
         return ""
 
     logger.info(
-        "Heartbeat Phase 2 completed for user %d: reply_length=%d, actions=%s",
+        "Heartbeat Phase 2 completed for user %s: reply_length=%d, actions=%s",
         user.id,
         len(response.reply_text),
         response.actions_taken or "(none)",
@@ -454,7 +452,7 @@ async def execute_heartbeat_tasks(
 # ---------------------------------------------------------------------------
 
 
-async def get_daily_heartbeat_count(user_id: int) -> int:
+async def get_daily_heartbeat_count(user_id: str) -> int:
     """Count heartbeat messages sent to a user today (UTC)."""
     heartbeat_store = HeartbeatStore(user_id)
     return await heartbeat_store.get_daily_count()
@@ -466,7 +464,7 @@ async def get_daily_heartbeat_count(user_id: int) -> int:
 
 
 async def run_heartbeat_for_user(
-    user: UserData,
+    user: User,
     channel: str,
     chat_id: str,
     max_daily: int,
@@ -480,32 +478,32 @@ async def run_heartbeat_for_user(
     """
     # Gate: onboarding must be complete
     if not user.onboarding_complete:
-        logger.debug("Heartbeat skip user %d: onboarding not complete", user.id)
+        logger.debug("Heartbeat skip user %s: onboarding not complete", user.id)
         return None
 
     # Gate: user heartbeat opt-in
     if not user.heartbeat_opt_in:
-        logger.debug("Heartbeat skip user %d: heartbeat not opted in", user.id)
+        logger.debug("Heartbeat skip user %s: heartbeat not opted in", user.id)
         return None
 
     # Gate: daily rate limit (persistent via heartbeat log)
     daily_count = await get_daily_heartbeat_count(user.id)
     if daily_count >= max_daily:
         logger.debug(
-            "Heartbeat skip user %d: daily limit reached (%d/%d)",
+            "Heartbeat skip user %s: daily limit reached (%d/%d)",
             user.id,
             daily_count,
             max_daily,
         )
         return None
 
-    logger.debug("Heartbeat evaluating user %d via LLM (channel=%s)", user.id, channel)
+    logger.debug("Heartbeat evaluating user %s via LLM (channel=%s)", user.id, channel)
 
     # -- Phase 1: decide whether tasks need attention --
     decision = await evaluate_heartbeat_need(user, channel=channel, chat_id=chat_id)
 
     logger.debug(
-        "Heartbeat Phase 1 decision for user %d: action=%s, reasoning=%s",
+        "Heartbeat Phase 1 decision for user %s: action=%s, reasoning=%s",
         user.id,
         decision.action,
         decision.reasoning,
@@ -513,7 +511,7 @@ async def run_heartbeat_for_user(
 
     if decision.action != "run" or not decision.tasks:
         logger.debug(
-            "Heartbeat skip Phase 2 for user %d: action=%s, tasks_empty=%s",
+            "Heartbeat skip Phase 2 for user %s: action=%s, tasks_empty=%s",
             user.id,
             decision.action,
             not decision.tasks,
@@ -531,7 +529,7 @@ async def run_heartbeat_for_user(
     )
 
     if not reply_text:
-        logger.debug("Heartbeat Phase 2 produced no output for user %d", user.id)
+        logger.debug("Heartbeat Phase 2 produced no output for user %s", user.id)
         return HeartbeatAction(
             action_type="no_action",
             message="",
@@ -541,7 +539,7 @@ async def run_heartbeat_for_user(
 
     # -- Deliver the agent's reply to the user --
     logger.info(
-        "Heartbeat sending message to user %d: %.100s",
+        "Heartbeat sending message to user %s: %.100s",
         user.id,
         reply_text,
     )
@@ -556,7 +554,7 @@ async def run_heartbeat_for_user(
             )
         )
     except Exception:
-        logger.exception("Heartbeat message failed for user %d", user.id)
+        logger.exception("Heartbeat message failed for user %s", user.id)
         return HeartbeatAction(
             action_type="send_message",
             message=reply_text,
@@ -594,7 +592,7 @@ async def run_heartbeat_for_user(
 _NON_PUSHABLE_CHANNELS: frozenset[str] = frozenset({"webchat"})
 
 
-def _pick_heartbeat_channel(user: UserData) -> str:
+def _pick_heartbeat_channel(user: User) -> str:
     """Select the best channel name for delivering a heartbeat message.
 
     Prefers the user's ``preferred_channel`` when it can actually push
@@ -619,7 +617,7 @@ def _pick_heartbeat_channel(user: UserData) -> str:
     for name in manager.channels:
         if name not in _NON_PUSHABLE_CHANNELS:
             logger.debug(
-                "Heartbeat for user %d: preferred channel %r is non-pushable, falling back to %r",
+                "Heartbeat for user %s: preferred channel %r is non-pushable, falling back to %r",
                 user.id,
                 preferred,
                 name,
@@ -628,7 +626,7 @@ def _pick_heartbeat_channel(user: UserData) -> str:
 
     # No pushable channels registered at all: fall back to default
     logger.warning(
-        "Heartbeat for user %d: no pushable channels registered, using default channel",
+        "Heartbeat for user %s: no pushable channels registered, using default channel",
         user.id,
     )
     return get_default_channel().name
@@ -649,7 +647,7 @@ class HeartbeatScheduler:
 
     def __init__(self) -> None:
         self._task: asyncio.Task[None] | None = None
-        self._last_tick: dict[int, datetime.datetime] = {}
+        self._last_tick: dict[str, datetime.datetime] = {}
 
     # -- public API --
 
@@ -687,14 +685,14 @@ class HeartbeatScheduler:
                 logger.exception("Heartbeat tick failed")
             await asyncio.sleep(_TICK_RESOLUTION_MINUTES * 60)
 
-    def _user_interval_minutes(self, user: UserData) -> int:
+    def _user_interval_minutes(self, user: User) -> int:
         """Return the heartbeat interval in minutes for a given user."""
         parsed = parse_frequency_to_minutes(user.heartbeat_frequency)
         if parsed is not None:
             return parsed
         return settings.heartbeat_interval_minutes
 
-    def _is_user_due(self, user: UserData, now: datetime.datetime) -> bool:
+    def _is_user_due(self, user: User, now: datetime.datetime) -> bool:
         """Return True if enough time has elapsed since the last tick for this user."""
         last = self._last_tick.get(user.id)
         if last is None:
@@ -705,8 +703,13 @@ class HeartbeatScheduler:
     async def tick(self) -> None:
         """Single heartbeat pass: evaluate due users concurrently."""
         logger.debug("Heartbeat tick starting")
-        store = get_user_store()
-        all_users = await store.list_all()
+        db = SessionLocal()
+        try:
+            all_users = db.query(User).all()
+            for u in all_users:
+                db.expunge(u)
+        finally:
+            db.close()
         users = [c for c in all_users if c.onboarding_complete]
 
         if not users:
@@ -731,7 +734,7 @@ class HeartbeatScheduler:
 
         semaphore = asyncio.Semaphore(settings.heartbeat_concurrency)
 
-        async def _process_one(user: UserData) -> None:
+        async def _process_one(user: User) -> None:
             """Process a single user."""
             async with semaphore:
                 try:
@@ -741,12 +744,20 @@ class HeartbeatScheduler:
                     # user index.  Falls back to the user's stored
                     # channel_identifier or phone when no index entry
                     # exists for the target channel.
-                    store = get_user_store()
-                    chat_id = (
-                        store.get_channel_identifier(user.id, channel_name)
-                        or user.channel_identifier
-                        or user.phone
-                    )
+                    db = SessionLocal()
+                    try:
+                        route = (
+                            db.query(ChannelRoute)
+                            .filter_by(user_id=user.id, channel=channel_name)
+                            .first()
+                        )
+                        chat_id = (
+                            (route.channel_identifier if route else None)
+                            or user.channel_identifier
+                            or user.phone
+                        )
+                    finally:
+                        db.close()
 
                     await run_heartbeat_for_user(
                         user=user,
@@ -756,7 +767,7 @@ class HeartbeatScheduler:
                     )
                     self._last_tick[user.id] = now
                 except Exception:
-                    logger.exception("Heartbeat failed for user %d", user.id)
+                    logger.exception("Heartbeat failed for user %s", user.id)
 
         results = await asyncio.gather(
             *[_process_one(c) for c in due_users],
@@ -767,7 +778,7 @@ class HeartbeatScheduler:
         for i, result in enumerate(results):
             if isinstance(result, BaseException):
                 logger.error(
-                    "Unhandled error in heartbeat for user %d: %s",
+                    "Unhandled error in heartbeat for user %s: %s",
                     due_users[i].id,
                     result,
                     exc_info=result if isinstance(result, Exception) else None,

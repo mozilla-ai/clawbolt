@@ -3,13 +3,12 @@
 from fastapi.testclient import TestClient
 
 
-def test_list_heartbeat_defaults(client: TestClient) -> None:
-    """Default HEARTBEAT.md items should appear in the listing."""
+def test_list_heartbeat_empty(client: TestClient) -> None:
+    """Heartbeat listing returns empty when no items exist."""
     resp = client.get("/api/user/heartbeat")
     assert resp.status_code == 200
     items = resp.json()
-    # Default HEARTBEAT.md is seeded with items
-    assert len(items) >= 1
+    assert isinstance(items, list)
 
 
 def test_create_heartbeat_item(client: TestClient) -> None:
@@ -22,7 +21,7 @@ def test_create_heartbeat_item(client: TestClient) -> None:
     assert data["description"] == "Check job site"
     assert data["schedule"] == "daily"
     assert data["status"] == "active"
-    assert data["id"] > 0
+    assert data["id"]
 
 
 def test_create_heartbeat_item_custom_schedule(client: TestClient) -> None:

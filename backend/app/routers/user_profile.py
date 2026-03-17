@@ -1,10 +1,12 @@
 """Endpoints for user profile management."""
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
 
-from backend.app.agent.file_store import UserData, get_user_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import save_persistent_config, settings, update_settings
+from backend.app.database import get_db
+from backend.app.models import User
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
@@ -15,7 +17,7 @@ from backend.app.schemas import (
 router = APIRouter()
 
 
-def _profile_response(c: UserData) -> UserProfileResponse:
+def _profile_response(c: User) -> UserProfileResponse:
     return UserProfileResponse(
         id=c.id,
         user_id=c.user_id,
@@ -37,7 +39,7 @@ def _profile_response(c: UserData) -> UserProfileResponse:
 
 @router.get("/user/profile", response_model=UserProfileResponse)
 async def get_profile(
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> UserProfileResponse:
     """Return the current user's profile."""
     return _profile_response(current_user)
@@ -46,19 +48,24 @@ async def get_profile(
 @router.put("/user/profile", response_model=UserProfileResponse)
 async def update_profile(
     body: UserProfileUpdate,
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
 ) -> UserProfileResponse:
     """Partial update of the current user's profile."""
     updates = body.model_dump(exclude_unset=True)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
-    store = get_user_store()
-    updated = await store.update(current_user.id, **updates)
-    if updated is None:
+    # Re-query user in the current session to avoid detached instance issues
+    user = db.query(User).filter_by(id=current_user.id).first()
+    if not user:
         raise HTTPException(status_code=404, detail="User not found")
 
-    return _profile_response(updated)
+    for key, value in updates.items():
+        setattr(user, key, value)
+    db.commit()
+    db.refresh(user)
+    return _profile_response(user)
 
 
 # ---------------------------------------------------------------------------
@@ -75,7 +82,7 @@ def _build_channel_config_response() -> ChannelConfigResponse:
 
 @router.get("/user/channels/config", response_model=ChannelConfigResponse)
 async def get_channel_config(
-    _current_user: UserData = Depends(get_current_user),
+    _current_user: User = Depends(get_current_user),
 ) -> ChannelConfigResponse:
     """Return server-level channel configuration."""
     return _build_channel_config_response()
@@ -84,7 +91,7 @@ async def get_channel_config(
 @router.put("/user/channels/config", response_model=ChannelConfigResponse)
 async def update_channel_config(
     body: ChannelConfigUpdate,
-    _current_user: UserData = Depends(get_current_user),
+    _current_user: User = Depends(get_current_user),
 ) -> ChannelConfigResponse:
     """Update server-level channel configuration."""
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}

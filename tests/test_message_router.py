@@ -4,23 +4,25 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from any_llm import AuthenticationError, ContentFilterError
 
-from backend.app.agent.file_store import SessionState, StoredMessage, UserData
+import backend.app.database as _db_module
+from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.router import (
     AUTH_ERROR_FALLBACK,
     CONTENT_FILTER_FALLBACK,
     handle_inbound_message,
 )
 from backend.app.bus import message_bus
+from backend.app.models import User
+from tests.conftest import create_test_session
 from tests.mocks.llm import make_error_response, make_text_response, make_tool_call_response
 from tests.mocks.storage import MockStorageBackend
 
 
 @pytest.fixture()
-def conversation(test_user: UserData) -> SessionState:
-    return SessionState(
-        session_id="test-conv",
+def conversation(test_user: User) -> SessionState:
+    return create_test_session(
         user_id=test_user.id,
-        is_active=True,
+        session_id="test-conv",
         messages=[
             StoredMessage(
                 direction="inbound",
@@ -49,7 +51,7 @@ def mock_download_media() -> AsyncMock:
 @patch("backend.app.agent.core.amessages")
 async def test_text_only_message(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -79,7 +81,7 @@ async def test_text_only_message(
 async def test_message_with_photo(
     mock_vision: AsyncMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
@@ -114,7 +116,7 @@ async def test_message_with_photo(
 @patch("backend.app.agent.core.amessages")
 async def test_stores_outbound_message(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -138,7 +140,7 @@ async def test_stores_outbound_message(
 @patch("backend.app.agent.core.amessages")
 async def test_stores_tool_interactions_with_outbound(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -180,7 +182,7 @@ async def test_stores_tool_interactions_with_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_no_tool_interactions_for_text_only_response(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -204,7 +206,7 @@ async def test_no_tool_interactions_for_text_only_response(
 @patch("backend.app.agent.core.amessages")
 async def test_media_download_failure_still_processes_text(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -228,7 +230,7 @@ async def test_media_download_failure_still_processes_text(
 @patch("backend.app.agent.core.amessages")
 async def test_processed_context_saved_to_message(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -255,7 +257,7 @@ async def test_file_tools_wired_when_storage_configured(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -286,7 +288,7 @@ async def test_file_tools_wired_when_storage_configured(
 async def test_file_tools_skipped_when_no_storage(
     mock_settings: MagicMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -319,7 +321,7 @@ async def test_file_tools_skipped_when_no_storage(
 async def test_pipeline_failure_note_mentions_vision(
     mock_vision: AsyncMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
@@ -374,7 +376,7 @@ async def test_pipeline_failure_note_mentions_vision(
 @patch("backend.app.agent.core.amessages")
 async def test_media_download_failure_adds_system_note_to_context(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -398,7 +400,7 @@ async def test_media_download_failure_adds_system_note_to_context(
 @patch("backend.app.agent.core.amessages")
 async def test_multiple_media_partial_download_failure_no_download_note(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -438,7 +440,7 @@ async def test_multiple_media_partial_download_failure_no_download_note(
 @patch("backend.app.agent.core.amessages")
 async def test_media_pipeline_failure_retries_with_empty_media(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
@@ -493,7 +495,7 @@ async def test_storage_exception_skips_file_tools(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -523,7 +525,7 @@ async def test_storage_exception_skips_file_tools(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_returns_fallback_reply(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -546,7 +548,7 @@ async def test_agent_processing_failure_returns_fallback_reply(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_does_not_store_fallback(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -569,7 +571,7 @@ async def test_agent_processing_failure_does_not_store_fallback(
 @patch("backend.app.agent.core.amessages")
 async def test_agent_processing_failure_dispatches_fallback_via_bus(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -595,7 +597,7 @@ async def test_agent_processing_failure_dispatches_fallback_via_bus(
 @patch("backend.app.agent.core.amessages")
 async def test_send_reply_failure_still_stores_outbound(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -622,7 +624,7 @@ async def test_send_reply_failure_still_stores_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_pipeline_failure_without_downloaded_media_skips_vision_note(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -669,13 +671,20 @@ async def test_empty_to_address_returns_early(
     inbound_message: StoredMessage,
 ) -> None:
     """User with no channel_identifier or phone should return early."""
-    # Create user with empty delivery fields
-    no_addr = UserData(
-        id=99,
-        user_id="no-addr",
-        channel_identifier="",
-        phone="",
-    )
+    # Create user with empty delivery fields (persisted so FK queries work)
+    db = _db_module.SessionLocal()
+    try:
+        no_addr = User(
+            user_id="no-addr",
+            channel_identifier="",
+            phone="",
+        )
+        db.add(no_addr)
+        db.commit()
+        db.refresh(no_addr)
+        db.expunge(no_addr)
+    finally:
+        db.close()
 
     response = await handle_inbound_message(
         user=no_addr,
@@ -694,7 +703,7 @@ async def test_empty_to_address_returns_early(
 @patch("backend.app.agent.core.amessages")
 async def test_send_media_reply_suppresses_duplicate_text(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -739,7 +748,7 @@ async def test_send_media_reply_suppresses_duplicate_text(
 @patch("backend.app.agent.core.amessages")
 async def test_typing_indicator_sent_before_agent_processing(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -771,7 +780,7 @@ async def test_typing_indicator_sent_before_agent_processing(
 @patch("backend.app.agent.core.amessages")
 async def test_typing_indicator_failure_does_not_block_processing(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -809,7 +818,7 @@ async def test_auto_save_persists_media_to_storage(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
@@ -855,7 +864,7 @@ async def test_auto_save_failure_does_not_block_processing(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
@@ -904,7 +913,7 @@ async def test_auto_save_failure_does_not_block_processing(
 @patch("backend.app.agent.core.amessages")
 async def test_content_filter_error_returns_rephrasing_message(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -933,7 +942,7 @@ async def test_content_filter_error_returns_rephrasing_message(
 @patch("backend.app.agent.core.amessages")
 async def test_authentication_error_returns_config_message(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -961,7 +970,7 @@ async def test_authentication_error_returns_config_message(
 @patch("backend.app.agent.core.amessages")
 async def test_content_filter_error_does_not_store_outbound(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -984,7 +993,7 @@ async def test_content_filter_error_does_not_store_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_authentication_error_does_not_store_outbound(
     mock_amessages: AsyncMock,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -1012,7 +1021,7 @@ async def test_authentication_error_does_not_store_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_normal_response_still_stored_as_outbound(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -1036,7 +1045,7 @@ async def test_normal_response_still_stored_as_outbound(
 @patch("backend.app.agent.core.amessages")
 async def test_error_fallback_dispatched_but_not_stored(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -1087,8 +1096,8 @@ async def test_dispatch_reply_step_suppresses_when_send_reply_succeeds() -> None
         ],
     )
     ctx = PipelineContext(
-        user=UserData(id=1, user_id="test"),
-        session=SessionState(session_id="s", user_id=1, is_active=True),
+        user=User(id="1", user_id="test"),
+        session=SessionState(session_id="s", user_id="1", is_active=True),
         message=StoredMessage(direction="inbound", body="hi", seq=1),
         media_urls=[],
         channel="telegram",
@@ -1118,8 +1127,8 @@ async def test_dispatch_reply_step_sends_when_send_reply_fails() -> None:
         ],
     )
     ctx = PipelineContext(
-        user=UserData(id=1, user_id="test"),
-        session=SessionState(session_id="s", user_id=1, is_active=True),
+        user=User(id="1", user_id="test"),
+        session=SessionState(session_id="s", user_id="1", is_active=True),
         message=StoredMessage(direction="inbound", body="hi", seq=1),
         media_urls=[],
         channel="telegram",
@@ -1143,7 +1152,7 @@ async def test_dispatch_reply_step_sends_when_send_reply_fails() -> None:
 @patch("backend.app.agent.core.amessages")
 async def test_error_stop_reason_not_persisted_to_session(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -1173,7 +1182,7 @@ async def test_error_stop_reason_not_persisted_to_session(
 @patch("backend.app.agent.core.amessages")
 async def test_to_address_uses_channel_specific_identifier(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """Reply to_address should use channel-specific identifier, not stale channel_identifier.
 
@@ -1182,23 +1191,55 @@ async def test_to_address_uses_channel_specific_identifier(
     (which equals the numeric user_id, e.g. "1"). Telegram replies must
     still use the real Telegram chat_id from the user index.
     """
-    from backend.app.agent.file_store import get_user_store
+    import backend.app.database as _db_module
+    from backend.app.models import ChannelRoute
 
-    store = get_user_store()
     telegram_chat_id = "555000111"
 
     # Create a second user so its id (2) doesn't collide with leaked index
     # entries from other tests that map telegram:<x> -> 1.
-    user = await store.create(
-        user_id="cross-channel-user",
-        channel_identifier="cross-channel-user",
-        preferred_channel="webchat",
-        onboarding_complete=True,
-    )
-    # Link the real Telegram chat_id in the user index
-    store.link_channel("telegram", telegram_chat_id, user.id)
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            user_id="cross-channel-user",
+            channel_identifier="cross-channel-user",
+            preferred_channel="webchat",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        user_id = user.id
+        # Link the real Telegram chat_id in the channel routes
+        db.add(
+            ChannelRoute(user_id=user_id, channel="telegram", channel_identifier=telegram_chat_id)
+        )
+        db.commit()
+        # Eagerly load all scalar attributes before expunging
+        _ = (
+            user.phone,
+            user.soul_text,
+            user.user_text,
+            user.heartbeat_text,
+            user.preferred_channel,
+            user.channel_identifier,
+            user.onboarding_complete,
+        )
+        db.expunge(user)
+    finally:
+        db.close()
 
-    session = SessionState(session_id="s", user_id=user.id, is_active=True)
+    # Create file-store directories for this user (hybrid period)
+    from pathlib import Path
+
+    from backend.app.config import settings
+
+    user_dir = Path(settings.data_dir) / str(user_id)
+    (user_dir / "sessions").mkdir(parents=True, exist_ok=True)
+
+    from tests.conftest import create_test_session
+
+    session = create_test_session(user_id=user_id, session_id="s")
     message = StoredMessage(direction="inbound", body="hello from telegram", seq=1)
 
     mock_amessages.return_value = make_text_response("Cross-channel reply!")  # type: ignore[union-attr]
@@ -1226,7 +1267,7 @@ async def test_to_address_uses_channel_specific_identifier(
 @patch("backend.app.agent.core.amessages")
 async def test_error_stop_reason_still_dispatches_reply_to_user(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:

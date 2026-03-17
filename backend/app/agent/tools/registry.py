@@ -22,10 +22,10 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
+from backend.app.models import User
 from backend.app.services.storage_service import StorageBackend
 
 if TYPE_CHECKING:
@@ -38,7 +38,7 @@ logger = logging.getLogger(__name__)
 class ToolContext:
     """Shared context passed to tool factories during creation."""
 
-    user: UserData
+    user: User
     storage: StorageBackend | None = None
     publish_outbound: Callable[[OutboundMessage], Awaitable[None]] | None = None
     channel: str = ""

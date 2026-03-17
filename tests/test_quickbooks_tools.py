@@ -6,13 +6,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from backend.app.agent.file_store import UserData
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.quickbooks_tools import (
     _quickbooks_factory,
     create_quickbooks_tools,
 )
 from backend.app.agent.tools.registry import ToolContext
+from backend.app.models import User
 from tests.mocks.quickbooks import MockQuickBooksService
 
 
@@ -148,15 +148,15 @@ def test_quickbooks_tools_have_params_model(qb_service: MockQuickBooksService) -
 
 
 def test_quickbooks_tools_count(qb_service: MockQuickBooksService) -> None:
-    """create_quickbooks_tools should return 1 tool."""
+    """create_quickbooks_tools should return 6 tools."""
     tools = create_quickbooks_tools(qb_service)
-    assert len(tools) == 1
+    assert len(tools) == 6
 
 
 def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
     """_quickbooks_factory should return [] when client_id/secret are empty."""
     ctx = MagicMock(spec=ToolContext)
-    user = MagicMock(spec=UserData)
+    user = MagicMock(spec=User)
     user.id = 1
     ctx.user = user
 
@@ -171,7 +171,7 @@ def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
 def test_quickbooks_factory_returns_empty_when_not_connected() -> None:
     """_quickbooks_factory should return [] when user has no OAuth token."""
     ctx = MagicMock(spec=ToolContext)
-    user = MagicMock(spec=UserData)
+    user = MagicMock(spec=User)
     user.id = 1
     ctx.user = user
 

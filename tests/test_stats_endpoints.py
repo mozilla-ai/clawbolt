@@ -1,12 +1,11 @@
 """Tests for user stats endpoint."""
 
-import json
-from pathlib import Path
+from datetime import UTC, datetime
 
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import UserData
-from backend.app.config import settings
+import backend.app.database as _db_module
+from backend.app.models import ChatSession, Message, User
 
 
 def test_stats_empty(client: TestClient) -> None:
@@ -21,33 +20,42 @@ def test_stats_empty(client: TestClient) -> None:
     assert data["last_conversation_at"] is None
 
 
-def test_stats_with_data(client: TestClient, test_user: UserData) -> None:
-    # Create a session with messages
-    base = Path(settings.data_dir) / str(test_user.id) / "sessions"
-    base.mkdir(parents=True, exist_ok=True)
-    path = base / "1_100.jsonl"
-    meta = {
-        "_type": "metadata",
-        "session_id": "1_100",
-        "user_id": test_user.id,
-        "created_at": "2025-01-15T10:00:00+00:00",
-        "last_message_at": "2025-01-15T10:05:00+00:00",
-        "is_active": True,
-        "last_compacted_seq": 0,
-    }
-    msg = {"direction": "inbound", "body": "Hello", "timestamp": "2025-01-15T10:01:00", "seq": 1}
-    path.write_text(json.dumps(meta) + "\n" + json.dumps(msg) + "\n", encoding="utf-8")
+def test_stats_with_data(client: TestClient, test_user: User) -> None:
+    # Create a session with messages in the DB
+    db = _db_module.SessionLocal()
+    try:
+        cs = ChatSession(
+            session_id="1_100",
+            user_id=test_user.id,
+            is_active=True,
+            channel="",
+            last_compacted_seq=0,
+            created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
+            last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
+        )
+        db.add(cs)
+        db.flush()
+        db.add(
+            Message(
+                session_id=cs.id,
+                seq=1,
+                direction="inbound",
+                body="Hello",
+                timestamp=datetime(2025, 1, 15, 10, 1, 0, tzinfo=UTC),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
 
     # Create a heartbeat item
     client.post("/api/user/heartbeat", json={"description": "Check site"})
 
     # Create memory
-    mem_dir = Path(settings.data_dir) / str(test_user.id) / "memory"
-    mem_dir.mkdir(parents=True, exist_ok=True)
-    (mem_dir / "MEMORY.md").write_text(
-        "# Long-term Memory\n\n## General\n- rate: 85 (confidence: 1.0)\n",
-        encoding="utf-8",
-    )
+    from backend.app.agent.memory_db import get_memory_store
+
+    store = get_memory_store(test_user.id)
+    store.write_memory("# Long-term Memory\n\n## General\n- rate: 85 (confidence: 1.0)")
 
     resp = client.get("/api/user/stats")
     assert resp.status_code == 200

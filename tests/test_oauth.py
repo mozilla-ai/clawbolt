@@ -11,10 +11,12 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import UserData, get_user_store, reset_stores
+import backend.app.database as _db_module
+from backend.app.agent.file_store import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
 from backend.app.main import app
+from backend.app.models import User
 from backend.app.services.oauth import (
     OAuthConfig,
     OAuthService,
@@ -38,9 +40,17 @@ def _isolate(tmp_path: Path) -> Generator[None]:
 
 
 @pytest.fixture()
-async def test_user() -> UserData:
-    store = get_user_store()
-    return await store.create(user_id="oauth-test-user", onboarding_complete=True)
+async def test_user() -> User:
+    db = _db_module.SessionLocal()
+    try:
+        user = User(user_id="oauth-test-user", onboarding_complete=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
+    return user
 
 
 @pytest.fixture()
@@ -62,8 +72,8 @@ def qb_config() -> OAuthConfig:
 
 
 @pytest.fixture()
-def client(test_user: UserData) -> Generator[TestClient]:
-    def _override() -> UserData:
+def client(test_user: User) -> Generator[TestClient]:
+    def _override() -> User:
         return test_user
 
     app.dependency_overrides[get_current_user] = _override
@@ -158,8 +168,8 @@ def test_save_and_load_token(oauth_svc: OAuthService) -> None:
         realm_id="realm-1",
         expires_at=time.time() + 3600,
     )
-    oauth_svc.save_token(1, "quickbooks", token)
-    loaded = oauth_svc.load_token(1, "quickbooks")
+    oauth_svc.save_token("1", "quickbooks", token)
+    loaded = oauth_svc.load_token("1", "quickbooks")
     assert loaded is not None
     assert loaded.access_token == "at-123"
     assert loaded.refresh_token == "rt-456"
@@ -168,31 +178,31 @@ def test_save_and_load_token(oauth_svc: OAuthService) -> None:
 
 def test_load_nonexistent_token(oauth_svc: OAuthService) -> None:
     """Loading a non-existent token should return None."""
-    assert oauth_svc.load_token(999, "quickbooks") is None
+    assert oauth_svc.load_token("999", "quickbooks") is None
 
 
 def test_delete_token(oauth_svc: OAuthService) -> None:
     """Deleting a token should remove the file."""
     token = OAuthTokenData(access_token="at")
-    oauth_svc.save_token(1, "quickbooks", token)
-    assert oauth_svc.is_connected(1, "quickbooks") is True
+    oauth_svc.save_token("1", "quickbooks", token)
+    assert oauth_svc.is_connected("1", "quickbooks") is True
 
-    deleted = oauth_svc.delete_token(1, "quickbooks")
+    deleted = oauth_svc.delete_token("1", "quickbooks")
     assert deleted is True
-    assert oauth_svc.is_connected(1, "quickbooks") is False
+    assert oauth_svc.is_connected("1", "quickbooks") is False
 
 
 def test_delete_nonexistent_token(oauth_svc: OAuthService) -> None:
     """Deleting a non-existent token should return False."""
-    assert oauth_svc.delete_token(999, "quickbooks") is False
+    assert oauth_svc.delete_token("999", "quickbooks") is False
 
 
 def test_is_connected(oauth_svc: OAuthService) -> None:
     """is_connected should reflect whether a token file exists."""
-    assert oauth_svc.is_connected(1, "quickbooks") is False
+    assert oauth_svc.is_connected("1", "quickbooks") is False
     token = OAuthTokenData(access_token="at")
-    oauth_svc.save_token(1, "quickbooks", token)
-    assert oauth_svc.is_connected(1, "quickbooks") is True
+    oauth_svc.save_token("1", "quickbooks", token)
+    assert oauth_svc.is_connected("1", "quickbooks") is True
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +213,7 @@ def test_is_connected(oauth_svc: OAuthService) -> None:
 def test_authorization_url_contains_params(oauth_svc: OAuthService, qb_config: OAuthConfig) -> None:
     """Authorization URL should contain client_id, state, PKCE challenge, etc."""
     with patch.object(settings, "app_base_url", "https://myapp.example.com"):
-        url = oauth_svc.get_authorization_url(qb_config, user_id=1)
+        url = oauth_svc.get_authorization_url(qb_config, user_id="1")
 
     assert "client_id=test-client-id" in url
     assert "response_type=code" in url
@@ -218,14 +228,14 @@ def test_authorization_url_uses_app_base_url(
 ) -> None:
     """The redirect_uri in the URL should use app_base_url."""
     with patch.object(settings, "app_base_url", "https://myapp.example.com"):
-        url = oauth_svc.get_authorization_url(qb_config, user_id=1)
+        url = oauth_svc.get_authorization_url(qb_config, user_id="1")
 
     assert "redirect_uri=https%3A%2F%2Fmyapp.example.com%2Fapi%2Foauth%2Fcallback" in url
 
 
 def test_authorization_url_stores_state(oauth_svc: OAuthService, qb_config: OAuthConfig) -> None:
     """Generating an auth URL should create a pending state entry."""
-    url = oauth_svc.get_authorization_url(qb_config, user_id=42)
+    url = oauth_svc.get_authorization_url(qb_config, user_id="42")
 
     # Extract state from URL
     import urllib.parse
@@ -244,7 +254,7 @@ def test_authorization_url_stores_state(oauth_svc: OAuthService, qb_config: OAut
 
 def test_expired_state_returns_none(oauth_svc: OAuthService, qb_config: OAuthConfig) -> None:
     """Expired states should return None for integration lookup."""
-    url = oauth_svc.get_authorization_url(qb_config, user_id=1)
+    url = oauth_svc.get_authorization_url(qb_config, user_id="1")
 
     import urllib.parse
 
@@ -275,7 +285,7 @@ async def test_handle_callback_exchanges_code(
     oauth_svc: OAuthService, qb_config: OAuthConfig
 ) -> None:
     """Successful callback should exchange code and store token."""
-    url = oauth_svc.get_authorization_url(qb_config, user_id=1)
+    url = oauth_svc.get_authorization_url(qb_config, user_id="1")
     import urllib.parse
 
     state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
@@ -308,7 +318,7 @@ async def test_handle_callback_exchanges_code(
     assert token.realm_id == "realm-1"
 
     # Should be persisted
-    loaded = oauth_svc.load_token(1, "quickbooks")
+    loaded = oauth_svc.load_token("1", "quickbooks")
     assert loaded is not None
     assert loaded.access_token == "new-access-token"
 
@@ -395,7 +405,7 @@ def test_oauth_disconnect_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
-def test_oauth_disconnect_success(client: TestClient, test_user: UserData) -> None:
+def test_oauth_disconnect_success(client: TestClient, test_user: User) -> None:
     """Disconnecting a connected integration should succeed."""
     # Store a token first
     token = OAuthTokenData(access_token="at")

@@ -2,8 +2,11 @@
 
 Gives the agent direct access to markdown files in the user's data
 directory (SOUL.md, USER.md, memory/, etc.), following the same pattern
-used by openclaw and nanobot.  Files are scoped to the user's
-directory for safety.
+used by openclaw and nanobot.
+
+USER.md, SOUL.md, and HEARTBEAT.md are stored as columns on the User
+DB row and presented to the agent as virtual files. All other .md files
+(BOOTSTRAP.md, memory/*, etc.) are stored on disk.
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ from pydantic import BaseModel, Field
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
+from backend.app.database import SessionLocal
+from backend.app.models import User
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -29,6 +34,13 @@ _ALLOWED_EXTENSIONS = {".md"}
 
 # Files that cannot be deleted by the agent.
 _PROTECTED_FILES = {"USER.md", "SOUL.md", "HEARTBEAT.md"}
+
+# Files stored as DB columns on User rather than on disk.
+_DB_FILE_COLUMN: dict[str, str] = {
+    "USER.md": "user_text",
+    "SOUL.md": "soul_text",
+    "HEARTBEAT.md": "heartbeat_text",
+}
 
 
 class ReadFileParams(BaseModel):
@@ -60,7 +72,7 @@ class DeleteFileParams(BaseModel):
     path: str = Field(description="Relative path within your workspace (e.g. 'BOOTSTRAP.md')")
 
 
-def _resolve_path(user_id: int, relative_path: str) -> tuple[Path, str | None]:
+def _resolve_path(user_id: str, relative_path: str) -> tuple[Path, str | None]:
     """Resolve a relative path to an absolute path within the user directory.
 
     Returns (resolved_path, error_message).  error_message is None on success.
@@ -85,11 +97,63 @@ def _resolve_path(user_id: int, relative_path: str) -> tuple[Path, str | None]:
     return resolved, None
 
 
-def create_workspace_tools(user_id: int) -> list[Tool]:
+def _db_read_sync(user_id: str, column: str) -> str:
+    """Read a DB-backed virtual file column (synchronous)."""
+    db = SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is None:
+            return ""
+        return getattr(user, column, "") or ""
+    finally:
+        db.close()
+
+
+async def _db_read(user_id: str, column: str) -> str:
+    """Read a DB-backed virtual file column."""
+    return await asyncio.to_thread(_db_read_sync, user_id, column)
+
+
+def _db_write_sync(user_id: str, column: str, content: str) -> None:
+    """Write a DB-backed virtual file column (synchronous)."""
+    from backend.app.database import db_session
+
+    with db_session() as db:
+        user = db.query(User).filter_by(id=user_id).first()
+        if user is not None:
+            setattr(user, column, content)
+            db.commit()
+
+
+async def _db_write(user_id: str, column: str, content: str) -> None:
+    """Write a DB-backed virtual file column."""
+    await asyncio.to_thread(_db_write_sync, user_id, column, content)
+
+
+def _canonical_name(relative_path: str) -> str | None:
+    """Return the canonical filename if this path refers to a DB-backed file."""
+    # Normalize paths like "./USER.md" or "USER.md" to just "USER.md"
+    try:
+        name = Path(relative_path).name
+    except (ValueError, OSError):
+        return None
+    # Only match top-level files (not memory/USER.md, ../USER.md, etc.)
+    stripped = relative_path.lstrip("./")
+    if ("/" in stripped or relative_path.startswith("..")) and name in _DB_FILE_COLUMN:
+        return None
+    return name if name in _DB_FILE_COLUMN else None
+
+
+def create_workspace_tools(user_id: str) -> list[Tool]:
     """Create generic file tools scoped to the user's data directory."""
 
     async def read_file(path: str) -> ToolResult:
         """Read a markdown file from the workspace."""
+        canon = _canonical_name(path)
+        if canon:
+            content = await _db_read(user_id, _DB_FILE_COLUMN[canon])
+            return ToolResult(content=content or "(empty)")
+
         resolved, err = _resolve_path(user_id, path)
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
@@ -104,6 +168,11 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
 
     async def write_file(path: str, content: str) -> ToolResult:
         """Write or overwrite a markdown file in the workspace."""
+        canon = _canonical_name(path)
+        if canon:
+            await _db_write(user_id, _DB_FILE_COLUMN[canon], content)
+            return ToolResult(content=f"Wrote {path}")
+
         resolved, err = _resolve_path(user_id, path)
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
@@ -113,6 +182,27 @@ def create_workspace_tools(user_id: int) -> list[Tool]:
 
     async def edit_file(path: str, old_text: str, new_text: str) -> ToolResult:
         """Replace exact text in a markdown file."""
+        canon = _canonical_name(path)
+        if canon:
+            column = _DB_FILE_COLUMN[canon]
+            text = await _db_read(user_id, column)
+            if old_text not in text:
+                return ToolResult(
+                    content=f"Text not found in {path}. Read the file first to see current contents.",
+                    is_error=True,
+                    error_kind=ToolErrorKind.NOT_FOUND,
+                )
+            count = text.count(old_text)
+            if count > 1:
+                return ToolResult(
+                    content=f"Found {count} matches in {path}. Provide more context to match uniquely.",
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
+            updated = text.replace(old_text, new_text, 1)
+            await _db_write(user_id, column, updated)
+            return ToolResult(content=f"Updated {path}")
+
         resolved, err = _resolve_path(user_id, path)
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)

@@ -34,6 +34,7 @@ def get_effective_webhook_secret(s: "Settings") -> str:
 class Settings(BaseSettings):
     log_level: str = "INFO"
     data_dir: str = "data/users"
+    database_url: str = "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt"
     cors_origins: str = "http://localhost:3000,http://localhost:8000"
     jwt_secret: str = "change-me-in-production"
     jwt_expiry_minutes: int = Field(default=15, ge=1)
@@ -95,6 +96,17 @@ class Settings(BaseSettings):
 
     # Media
     max_media_size_bytes: int = Field(default=20_971_520, ge=1)  # 20 MB
+
+    # Email
+    email_provider: str = ""  # "resend" or "smtp"; empty = disabled
+    resend_api_key: str = ""
+    email_from_address: str = ""
+    email_from_name: str = ""
+    smtp_host: str = ""
+    smtp_port: int = Field(default=587, ge=1, le=65535)
+    smtp_username: str = ""
+    smtp_password: str = ""
+    smtp_use_tls: bool = True
 
     # QuickBooks Online
     quickbooks_client_id: str = ""

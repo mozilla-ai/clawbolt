@@ -2,11 +2,12 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.enums import EstimateStatus, HeartbeatSchedule
+from backend.app.enums import EstimateStatus, HeartbeatSchedule, InvoiceStatus
 
 
 class HealthResponse(BaseModel):
     status: str
+    database: str = "ok"
 
 
 class MemoryResponse(BaseModel):
@@ -42,10 +43,35 @@ class EstimateBase(BaseModel):
 
 class EstimateResponse(EstimateBase):
     id: str
-    user_id: int
+    user_id: str
     client_id: str | None = None
     pdf_url: str = ""
     storage_path: str = ""
+    created_at: str
+
+
+class InvoiceLineItemBase(BaseModel):
+    description: str = ""
+    quantity: float = 1.0
+    unit_price: float = 0.0
+    total: float = 0.0
+
+
+class InvoiceBase(BaseModel):
+    description: str = ""
+    total_amount: float = 0.0
+    status: str = InvoiceStatus.DRAFT
+
+
+class InvoiceResponse(InvoiceBase):
+    id: str
+    user_id: str
+    client_id: str | None = None
+    pdf_url: str = ""
+    storage_path: str = ""
+    due_date: str | None = None
+    estimate_id: str | None = None
+    notes: str = ""
     created_at: str
 
 
@@ -55,7 +81,7 @@ class EstimateResponse(EstimateBase):
 
 
 class UserProfileResponse(BaseModel):
-    id: int
+    id: str
     user_id: str
     phone: str
     timezone: str
@@ -112,7 +138,7 @@ class SessionMessage(BaseModel):
 
 class SessionDetailResponse(BaseModel):
     session_id: str
-    user_id: int
+    user_id: str
     created_at: str
     last_message_at: str
     is_active: bool
@@ -137,7 +163,7 @@ class HeartbeatUpdateRequest(BaseModel):
 
 
 class HeartbeatItemResponse(BaseModel):
-    id: int
+    id: str
     description: str
     schedule: str
     status: str
@@ -184,6 +210,7 @@ class ToolConfigEntryResponse(BaseModel):
     domain_group: str = ""
     domain_group_order: int = 0
     enabled: bool
+    auto_disabled_reason: str | None = None
 
 
 class ToolConfigResponse(BaseModel):

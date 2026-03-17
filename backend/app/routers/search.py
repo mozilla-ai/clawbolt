@@ -5,13 +5,11 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from backend.app.agent.file_store import (
-    ClientStore,
-    UserData,
-    get_memory_store,
-    get_session_store,
-)
+from backend.app.agent.client_db import ClientStore
+from backend.app.agent.memory_db import get_memory_store
+from backend.app.agent.session_db import get_session_store
 from backend.app.auth.dependencies import get_current_user
+from backend.app.models import User
 
 router = APIRouter()
 
@@ -31,7 +29,7 @@ class SearchResponse(BaseModel):
 @router.get("/search", response_model=SearchResponse)
 async def search(
     q: str = Query("", min_length=0, max_length=200),
-    current_user: UserData = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> SearchResponse:
     """Search across conversations, memory facts, and client records."""
     query = q.strip().lower()
@@ -74,10 +72,9 @@ async def search(
 
     # Search session messages (by body content)
     session_store = get_session_store(current_user.id)
-    session_files = session_store._list_session_files()
-    for path in reversed(session_files[-50:]):
-        session_id = path.stem
-        session = session_store._load_session(session_id)
+    session_ids = session_store.list_session_ids()
+    for session_id in reversed(session_ids[-50:]):
+        session = session_store.load_session(session_id)
         if session is None:
             continue
         for msg in session.messages:

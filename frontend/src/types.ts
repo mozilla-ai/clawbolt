@@ -1,7 +1,7 @@
 // API response types matching backend schemas
 
 export interface UserProfile {
-  id: number;
+  id: string;
   user_id: string;
   phone: string;
   timezone: string;
@@ -57,7 +57,7 @@ export interface SessionMessage {
 
 export interface SessionDetail {
   session_id: string;
-  user_id: number;
+  user_id: string;
   created_at: string;
   last_message_at: string;
   is_active: boolean;
@@ -127,6 +127,7 @@ export interface ToolConfigEntry {
   domain_group: string;
   domain_group_order: number;
   enabled: boolean;
+  auto_disabled_reason: string | null;
 }
 
 export interface ToolConfigResponse {

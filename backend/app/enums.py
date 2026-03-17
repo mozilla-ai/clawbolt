@@ -15,6 +15,14 @@ class EstimateStatus(StrEnum):
     REJECTED = "rejected"
 
 
+class InvoiceStatus(StrEnum):
+    DRAFT = "draft"
+    SENT = "sent"
+    PAID = "paid"
+    OVERDUE = "overdue"
+    CANCELLED = "cancelled"
+
+
 class HeartbeatStatus(StrEnum):
     ACTIVE = "active"
     COMPLETED = "completed"

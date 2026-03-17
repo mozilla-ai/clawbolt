@@ -51,7 +51,7 @@ class OAuthConfig:
 class _PendingState:
     """In-memory record for a pending OAuth authorization."""
 
-    user_id: int
+    user_id: str
     integration: str
     code_verifier: str
     redirect_uri: str
@@ -107,7 +107,7 @@ def _generate_pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def _oauth_token_path(user_id: int, integration: str) -> Path:
+def _oauth_token_path(user_id: str, integration: str) -> Path:
     """Return the file path for storing an OAuth token."""
     return Path(settings.data_dir) / str(user_id) / "oauth" / f"{integration}.json"
 
@@ -134,7 +134,7 @@ class OAuthService:
     def get_authorization_url(
         self,
         config: OAuthConfig,
-        user_id: int,
+        user_id: str,
     ) -> str:
         """Build an authorization URL with PKCE and state parameter."""
         self._cleanup_expired_states()
@@ -240,7 +240,7 @@ class OAuthService:
 
     def save_token(
         self,
-        user_id: int,
+        user_id: str,
         integration: str,
         token: OAuthTokenData,
     ) -> None:
@@ -251,7 +251,7 @@ class OAuthService:
 
     def load_token(
         self,
-        user_id: int,
+        user_id: str,
         integration: str,
     ) -> OAuthTokenData | None:
         """Load token data from the user's data directory."""
@@ -267,7 +267,7 @@ class OAuthService:
 
     def delete_token(
         self,
-        user_id: int,
+        user_id: str,
         integration: str,
     ) -> bool:
         """Remove stored token data."""
@@ -277,7 +277,7 @@ class OAuthService:
             return True
         return False
 
-    def is_connected(self, user_id: int, integration: str) -> bool:
+    def is_connected(self, user_id: str, integration: str) -> bool:
         """Check if a token file exists (no refresh check)."""
         return _oauth_token_path(user_id, integration).is_file()
 

@@ -1,7 +1,7 @@
 from abc import ABC, abstractmethod
 from typing import Any
 
-from backend.app.agent.file_store import UserData
+from backend.app.models import User
 
 
 class AuthBackend(ABC):
@@ -10,8 +10,8 @@ class AuthBackend(ABC):
         """Return auth config for the frontend."""
 
     @abstractmethod
-    async def authenticate_login(self, credentials: dict[str, str]) -> UserData:
-        """Validate credentials and return UserData."""
+    async def authenticate_login(self, credentials: dict[str, str]) -> User:
+        """Validate credentials and return User."""
 
-    async def on_user_created(self, user: UserData) -> None:  # noqa: B027
+    async def on_user_created(self, user: User) -> None:  # noqa: B027
         """Hook called after new user creation. Override to seed data."""

@@ -19,10 +19,10 @@ from backend.app.agent.approval import (
     reset_approval_gate,
 )
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.file_store import UserData
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage
+from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -66,56 +66,58 @@ def _describe_fetch(args: dict[str, object]) -> str:
 class TestApprovalStore:
     def test_default_permission(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        level = store.check_permission(1, "web_search", default=PermissionLevel.ASK)
+        level = store.check_permission("1", "web_search", default=PermissionLevel.ASK)
         assert level == PermissionLevel.ASK
 
     def test_tool_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_search", PermissionLevel.AUTO)
-        level = store.check_permission(1, "web_search", default=PermissionLevel.ASK)
+        store.set_permission("1", "web_search", PermissionLevel.AUTO)
+        level = store.check_permission("1", "web_search", default=PermissionLevel.ASK)
         assert level == PermissionLevel.AUTO
 
     def test_resource_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_fetch", PermissionLevel.AUTO, resource="homedepot.com")
+        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="homedepot.com")
         level = store.check_permission(
-            1, "web_fetch", resource="homedepot.com", default=PermissionLevel.ASK
+            "1", "web_fetch", resource="homedepot.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.AUTO
 
     def test_glob_matching(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_fetch", PermissionLevel.AUTO, resource="*.gov")
+        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="*.gov")
         level = store.check_permission(
-            1, "web_fetch", resource="permits.gov", default=PermissionLevel.ASK
+            "1", "web_fetch", resource="permits.gov", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.AUTO
 
     def test_resource_priority_over_tool(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_fetch", PermissionLevel.DENY)
-        store.set_permission(1, "web_fetch", PermissionLevel.AUTO, resource="safe.com")
+        store.set_permission("1", "web_fetch", PermissionLevel.DENY)
+        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="safe.com")
         level = store.check_permission(
-            1, "web_fetch", resource="safe.com", default=PermissionLevel.ASK
+            "1", "web_fetch", resource="safe.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.AUTO
 
     def test_falls_through_to_tool_when_no_resource_match(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_fetch", PermissionLevel.DENY)
+        store.set_permission("1", "web_fetch", PermissionLevel.DENY)
         level = store.check_permission(
-            1, "web_fetch", resource="unknown.com", default=PermissionLevel.ASK
+            "1", "web_fetch", resource="unknown.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.DENY
 
     def test_persistence_round_trip(self, tmp_path: object) -> None:
         store1 = ApprovalStore()
-        store1.set_permission(1, "web_search", PermissionLevel.AUTO)
-        store1.set_permission(1, "web_fetch", PermissionLevel.DENY, resource="evil.com")
+        store1.set_permission("1", "web_search", PermissionLevel.AUTO)
+        store1.set_permission("1", "web_fetch", PermissionLevel.DENY, resource="evil.com")
 
         store2 = ApprovalStore()
-        assert store2.check_permission(1, "web_search") == PermissionLevel.AUTO
-        assert store2.check_permission(1, "web_fetch", resource="evil.com") == PermissionLevel.DENY
+        assert store2.check_permission("1", "web_search") == PermissionLevel.AUTO
+        assert (
+            store2.check_permission("1", "web_fetch", resource="evil.com") == PermissionLevel.DENY
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -178,11 +180,11 @@ class TestApprovalGate:
 
         async def _resolve_soon() -> None:
             await asyncio.sleep(0.01)
-            gate.resolve(1, ApprovalDecision.APPROVED)
+            gate.resolve("1", ApprovalDecision.APPROVED)
 
         task = asyncio.create_task(_resolve_soon())
         decision = await gate.request_approval(
-            user_id=1,
+            user_id="1",
             tool_name="test_tool",
             description="test description",
             publish_outbound=mock_publish,
@@ -192,7 +194,7 @@ class TestApprovalGate:
         )
         await task
         assert decision == ApprovalDecision.APPROVED
-        assert not gate.has_pending(1)
+        assert not gate.has_pending("1")
 
     @pytest.mark.asyncio()
     async def test_timeout_returns_denied(self) -> None:
@@ -200,7 +202,7 @@ class TestApprovalGate:
         mock_publish = AsyncMock()
 
         decision = await gate.request_approval(
-            user_id=1,
+            user_id="1",
             tool_name="test_tool",
             description="test description",
             publish_outbound=mock_publish,
@@ -209,27 +211,27 @@ class TestApprovalGate:
             timeout=0.01,
         )
         assert decision == ApprovalDecision.DENIED
-        assert not gate.has_pending(1)
+        assert not gate.has_pending("1")
 
     def test_resolve_returns_false_when_nothing_pending(self) -> None:
         gate = ApprovalGate()
-        assert gate.resolve(999, ApprovalDecision.APPROVED) is False
+        assert gate.resolve("999", ApprovalDecision.APPROVED) is False
 
     @pytest.mark.asyncio()
     async def test_has_pending(self) -> None:
         gate = ApprovalGate()
-        assert not gate.has_pending(1)
+        assert not gate.has_pending("1")
 
         mock_publish = AsyncMock()
 
         async def _check_and_resolve() -> None:
             await asyncio.sleep(0.01)
-            assert gate.has_pending(1)
-            gate.resolve(1, ApprovalDecision.DENIED)
+            assert gate.has_pending("1")
+            gate.resolve("1", ApprovalDecision.DENIED)
 
         task = asyncio.create_task(_check_and_resolve())
         await gate.request_approval(
-            user_id=1,
+            user_id="1",
             tool_name="t",
             description="d",
             publish_outbound=mock_publish,
@@ -249,7 +251,7 @@ class TestAgentApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_without_policy_executes_normally(
-        self, mock_amessages: object, test_user: UserData
+        self, mock_amessages: object, test_user: User
     ) -> None:
         """Tools without approval_policy execute unchanged."""
         tool = Tool(
@@ -270,9 +272,7 @@ class TestAgentApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
-    async def test_tool_with_auto_skips_gate(
-        self, mock_amessages: object, test_user: UserData
-    ) -> None:
+    async def test_tool_with_auto_skips_gate(self, mock_amessages: object, test_user: User) -> None:
         """Tool with AUTO default_level executes without prompting."""
         tool = Tool(
             name="echo",
@@ -293,7 +293,7 @@ class TestAgentApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_with_deny_returns_error(
-        self, mock_amessages: object, test_user: UserData
+        self, mock_amessages: object, test_user: User
     ) -> None:
         """Tool with DENY default_level returns a permission error."""
         tool = Tool(
@@ -315,7 +315,7 @@ class TestAgentApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_with_ask_approved_executes(
-        self, mock_amessages: object, test_user: UserData
+        self, mock_amessages: object, test_user: User
     ) -> None:
         """Tool with ASK that gets approved executes."""
         mock_publish = AsyncMock()
@@ -362,7 +362,7 @@ class TestAgentApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_tool_with_ask_denied_returns_error(
-        self, mock_amessages: object, test_user: UserData
+        self, mock_amessages: object, test_user: User
     ) -> None:
         """Tool with ASK that gets denied returns an error."""
         mock_publish = AsyncMock()
@@ -405,7 +405,7 @@ class TestAgentApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_always_persists_auto_to_store(
-        self, mock_amessages: object, test_user: UserData
+        self, mock_amessages: object, test_user: User
     ) -> None:
         """'always' decision persists AUTO to the approval store."""
         mock_publish = AsyncMock()
@@ -450,7 +450,7 @@ class TestAgentApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_never_persists_deny_to_store(
-        self, mock_amessages: object, test_user: UserData
+        self, mock_amessages: object, test_user: User
     ) -> None:
         """'never' decision persists DENY to the approval store."""
         mock_publish = AsyncMock()
@@ -494,9 +494,7 @@ class TestAgentApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
-    async def test_stored_auto_skips_prompt(
-        self, mock_amessages: object, test_user: UserData
-    ) -> None:
+    async def test_stored_auto_skips_prompt(self, mock_amessages: object, test_user: User) -> None:
         """A stored AUTO permission skips the approval prompt entirely."""
         mock_publish = AsyncMock()
 
@@ -541,7 +539,7 @@ class TestAgentApproval:
 
 class TestIngestionIntercept:
     @pytest.mark.asyncio()
-    async def test_approval_response_resolves_gate(self, test_user: UserData) -> None:
+    async def test_approval_response_resolves_gate(self, test_user: User) -> None:
         """An approval response resolves the gate and skips normal processing."""
         gate = get_approval_gate()
 
@@ -582,9 +580,7 @@ class TestIngestionIntercept:
         assert not gate.has_pending(test_user.id)
 
     @pytest.mark.asyncio()
-    async def test_non_approval_text_during_pending_falls_through(
-        self, test_user: UserData
-    ) -> None:
+    async def test_non_approval_text_during_pending_falls_through(self, test_user: User) -> None:
         """Unrecognized text while pending falls through to normal processing."""
         gate = get_approval_gate()
 

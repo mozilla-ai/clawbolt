@@ -4,11 +4,10 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+import backend.app.database as _db_module
 from backend.app.agent.file_store import (
     SessionState,
     StoredMessage,
-    UserData,
-    get_user_store,
 )
 from backend.app.agent.onboarding import (
     _has_custom_soul,
@@ -19,10 +18,11 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
+from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
-def _ensure_session_on_disk(user: UserData, session: SessionState) -> None:
+def _ensure_session_on_disk(user: User, session: SessionState) -> None:
     """Create the user directory and session file so file-store writes succeed."""
     cdir = Path(settings.data_dir) / str(user.id)
     sessions_dir = cdir / "sessions"
@@ -42,12 +42,11 @@ def _ensure_session_on_disk(user: UserData, session: SessionState) -> None:
     # Also write user.json so the store can reload the user
     user_json = cdir / "user.json"
     if not user_json.exists():
-        data = user.model_dump()
-        data.pop("soul_text", None)
+        data = {c.key: getattr(user, c.key) for c in user.__table__.columns if c.key != "soul_text"}
         user_json.write_text(json.dumps(data, default=str), encoding="utf-8")
 
 
-def _create_bootstrap(user: UserData) -> None:
+def _create_bootstrap(user: User) -> None:
     """Create a BOOTSTRAP.md file for the given user from the real template."""
     from backend.app.agent.prompts import load_prompt
 
@@ -56,7 +55,7 @@ def _create_bootstrap(user: UserData) -> None:
     (cdir / "BOOTSTRAP.md").write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
 
 
-def _remove_bootstrap(user: UserData) -> None:
+def _remove_bootstrap(user: User) -> None:
     """Remove BOOTSTRAP.md for the given user."""
     path = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     if path.exists():
@@ -65,29 +64,29 @@ def _remove_bootstrap(user: UserData) -> None:
 
 def test_is_onboarding_needed_new_user() -> None:
     """New user with BOOTSTRAP.md should need onboarding."""
-    user = UserData(id=1, user_id="new-user", phone="+15550001111")
+    user = User(id="1", user_id="new-user", phone="+15550001111")
     _create_bootstrap(user)
     assert is_onboarding_needed(user) is True
 
 
 def test_is_onboarding_needed_no_bootstrap() -> None:
     """User without BOOTSTRAP.md should not need onboarding."""
-    user = UserData(id=2, user_id="no-bootstrap-user", phone="+15550002222")
+    user = User(id="2", user_id="no-bootstrap-user", phone="+15550002222")
     # Ensure user dir exists but no BOOTSTRAP.md
     cdir = Path(settings.data_dir) / str(user.id)
     cdir.mkdir(parents=True, exist_ok=True)
     assert is_onboarding_needed(user) is False
 
 
-def test_is_onboarding_needed_complete_profile(test_user: UserData) -> None:
+def test_is_onboarding_needed_complete_profile(test_user: User) -> None:
     """User with onboarding_complete=True does not need onboarding."""
     assert is_onboarding_needed(test_user) is False
 
 
 def test_is_onboarding_needed_respects_flag() -> None:
     """User with onboarding_complete=True should not need onboarding even with BOOTSTRAP.md."""
-    user = UserData(
-        id=3,
+    user = User(
+        id="3",
         user_id="flagged-user",
         phone="+15550007777",
         onboarding_complete=True,
@@ -96,9 +95,58 @@ def test_is_onboarding_needed_respects_flag() -> None:
     assert is_onboarding_needed(user) is False
 
 
+def test_provision_user_creates_bootstrap_and_seeds_db() -> None:
+    """provision_user should seed DB text columns and create BOOTSTRAP.md."""
+    from backend.app.agent.user_db import provision_user
+    from backend.app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        user = User(id="provision-test", user_id="provision-user")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        provision_user(user, db)
+
+        # DB columns should be seeded
+        db.refresh(user)
+        assert user.soul_text
+        assert user.user_text
+        assert user.heartbeat_text
+
+        # BOOTSTRAP.md on disk
+        user_dir = Path(settings.data_dir) / str(user.id)
+        assert (user_dir / "BOOTSTRAP.md").exists()
+        assert is_onboarding_needed(user) is True
+    finally:
+        db.close()
+
+
+def test_provision_skips_bootstrap_when_onboarding_complete() -> None:
+    """provision_user should not create BOOTSTRAP.md for onboarded users."""
+    from backend.app.agent.user_db import provision_user
+    from backend.app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        user = User(id="provision-complete", user_id="done-user", onboarding_complete=True)
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+
+        provision_user(user, db)
+
+        user_dir = Path(settings.data_dir) / str(user.id)
+        assert not (user_dir / "BOOTSTRAP.md").exists()
+        assert is_onboarding_needed(user) is False
+    finally:
+        db.close()
+
+
 def test_is_onboarding_needed_bootstrap_deleted() -> None:
     """After BOOTSTRAP.md is deleted, onboarding is not needed."""
-    user = UserData(id=4, user_id="deleted-bootstrap-user", phone="+15550003333")
+    user = User(id="4", user_id="deleted-bootstrap-user", phone="+15550003333")
     _create_bootstrap(user)
     assert is_onboarding_needed(user) is True
     _remove_bootstrap(user)
@@ -107,7 +155,7 @@ def test_is_onboarding_needed_bootstrap_deleted() -> None:
 
 def test_build_onboarding_system_prompt_new_user() -> None:
     """Onboarding prompt for new user should include bootstrap content."""
-    user = UserData(id=5, user_id="brand-new", phone="+15550004444")
+    user = User(id="5", user_id="brand-new", phone="+15550004444")
     _create_bootstrap(user)
 
     prompt = build_onboarding_system_prompt(user)
@@ -116,7 +164,7 @@ def test_build_onboarding_system_prompt_new_user() -> None:
 
 def test_build_onboarding_system_prompt_includes_tool_capabilities() -> None:
     """Onboarding system prompt should inject available specialist tool descriptions."""
-    user = UserData(id=6, user_id="new-user", phone="+15550001111")
+    user = User(id="6", user_id="new-user", phone="+15550001111")
     _create_bootstrap(user)
 
     prompt = build_onboarding_system_prompt(user)
@@ -136,7 +184,7 @@ def test_build_onboarding_system_prompt_includes_instructions() -> None:
 
     from backend.app.agent.tools.base import Tool, ToolResult
 
-    user = UserData(id=7, user_id="instructions-test", phone="+15550005555")
+    user = User(id="7", user_id="instructions-test", phone="+15550005555")
     _create_bootstrap(user)
 
     class _SendReplyParams(BaseModel):
@@ -165,10 +213,26 @@ def test_build_onboarding_system_prompt_includes_instructions() -> None:
 
 
 @pytest.fixture()
-def new_user() -> UserData:
+def new_user() -> User:
     """User with no profile, needs onboarding."""
-    user = UserData(
-        id=20,
+    import backend.app.database as _db_module
+
+    # Create in DB so onboarding subscriber can find it
+    db = _db_module.SessionLocal()
+    try:
+        db_user = User(
+            id="20",
+            user_id="new-user-onboard",
+            phone="+15559999999",
+            channel_identifier="999999999",
+        )
+        db.add(db_user)
+        db.commit()
+    finally:
+        db.close()
+
+    user = User(
+        id="20",
         user_id="new-user-onboard",
         phone="+15559999999",
         channel_identifier="999999999",
@@ -178,7 +242,7 @@ def new_user() -> UserData:
 
 
 @pytest.fixture()
-def onboarding_session(new_user: UserData) -> SessionState:
+def onboarding_session(new_user: User) -> SessionState:
     session = SessionState(
         session_id="onboarding-session",
         user_id=new_user.id,
@@ -216,7 +280,7 @@ def mock_download_media() -> AsyncMock:
 @patch("backend.app.agent.core.amessages")
 async def test_onboarding_uses_onboarding_prompt(
     mock_amessages: object,
-    new_user: UserData,
+    new_user: User,
     onboarding_session: SessionState,
     onboarding_message: StoredMessage,
 ) -> None:
@@ -243,7 +307,7 @@ async def test_onboarding_uses_onboarding_prompt(
 @patch("backend.app.agent.core.amessages")
 async def test_onboarding_completes_when_bootstrap_deleted(
     mock_amessages: object,
-    new_user: UserData,
+    new_user: User,
     onboarding_session: SessionState,
     onboarding_message: StoredMessage,
 ) -> None:
@@ -276,8 +340,13 @@ async def test_onboarding_completes_when_bootstrap_deleted(
         channel="telegram",
     )
 
-    store = get_user_store()
-    refreshed = await store.get_by_id(new_user.id)
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=new_user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -286,7 +355,7 @@ async def test_onboarding_completes_when_bootstrap_deleted(
 @patch("backend.app.agent.core.amessages")
 async def test_complete_profile_uses_normal_prompt(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """User with complete profile should use normal agent prompt."""
     session = SessionState(
@@ -333,8 +402,22 @@ async def test_prepopulated_user_gets_onboarding_complete(
     is_onboarding_needed() returns False but onboarding_complete was never set
     because the 'if onboarding:' block was skipped entirely.
     """
-    user = UserData(
-        id=30,
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="30",
+                user_id="prepopulated-user",
+                channel_identifier="888888888",
+                preferred_channel="telegram",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    user = User(
+        id="30",
         user_id="prepopulated-user",
         channel_identifier="888888888",
         preferred_channel="telegram",
@@ -377,8 +460,13 @@ async def test_prepopulated_user_gets_onboarding_complete(
         channel="telegram",
     )
 
-    store = get_user_store()
-    refreshed = await store.get_by_id(user.id)
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -393,8 +481,23 @@ async def test_prepopulated_user_included_in_heartbeat(
     """User without BOOTSTRAP.md should be eligible for heartbeat after first message."""
     from backend.app.agent.heartbeat import HeartbeatDecision, run_heartbeat_for_user
 
-    user = UserData(
-        id=31,
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="31",
+                user_id="prepopulated-hb-user",
+                phone="+15550009999",
+                channel_identifier="777777777",
+                preferred_channel="telegram",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    user = User(
+        id="31",
         user_id="prepopulated-hb-user",
         phone="+15550009999",
         channel_identifier="777777777",
@@ -434,8 +537,13 @@ async def test_prepopulated_user_included_in_heartbeat(
         channel="telegram",
     )
 
-    store = get_user_store()
-    refreshed = await store.get_by_id(user.id)
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
 
@@ -465,7 +573,7 @@ async def test_prepopulated_user_included_in_heartbeat(
 @patch("backend.app.agent.core.amessages")
 async def test_no_completion_message_when_already_onboarded(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """No extra text should be appended for already-onboarded users."""
     session = SessionState(
@@ -504,39 +612,35 @@ async def test_no_completion_message_when_already_onboarded(
 # ---------------------------------------------------------------------------
 
 
-def _write_user_md(user: UserData, content: str) -> None:
-    """Write USER.md for the given user."""
-    cdir = Path(settings.data_dir) / str(user.id)
-    cdir.mkdir(parents=True, exist_ok=True)
-    (cdir / "USER.md").write_text(content, encoding="utf-8")
+def _write_user_md(user: User, content: str) -> None:
+    """Set user_text on the User object (was: write USER.md to disk)."""
+    user.user_text = content
 
 
-def _write_soul_md(user: UserData, content: str) -> None:
-    """Write SOUL.md for the given user."""
-    cdir = Path(settings.data_dir) / str(user.id)
-    cdir.mkdir(parents=True, exist_ok=True)
-    (cdir / "SOUL.md").write_text(content, encoding="utf-8")
+def _write_soul_md(user: User, content: str) -> None:
+    """Set soul_text on the User object (was: write SOUL.md to disk)."""
+    user.soul_text = content
 
 
 class TestHasRealUserProfile:
     """Tests for _has_real_user_profile heuristic."""
 
     def test_no_user_md(self) -> None:
-        user = UserData(id=100, user_id="no-user-md")
+        user = User(id="100", user_id="no-user-md")
         assert _has_real_user_profile(user) is False
 
     def test_empty_name_field(self) -> None:
-        user = UserData(id=101, user_id="empty-name")
+        user = User(id="101", user_id="empty-name")
         _write_user_md(user, "# User\n\n- Name:\n- Timezone:\n")
         assert _has_real_user_profile(user) is False
 
     def test_filled_name_field(self) -> None:
-        user = UserData(id=102, user_id="filled-name")
+        user = User(id="102", user_id="filled-name")
         _write_user_md(user, "# User\n\n- Name: Nathan\n- Trade: GC\n")
         assert _has_real_user_profile(user) is True
 
     def test_default_template(self) -> None:
-        user = UserData(id=103, user_id="default-template")
+        user = User(id="103", user_id="default-template")
         from backend.app.agent.prompts import load_prompt
 
         _write_user_md(user, f"# User\n\n{load_prompt('default_user')}\n")
@@ -547,11 +651,11 @@ class TestHasCustomSoul:
     """Tests for _has_custom_soul heuristic."""
 
     def test_no_soul_md(self) -> None:
-        user = UserData(id=110, user_id="no-soul")
+        user = User(id="110", user_id="no-soul")
         assert _has_custom_soul(user) is False
 
     def test_default_soul(self) -> None:
-        user = UserData(id=111, user_id="default-soul")
+        user = User(id="111", user_id="default-soul")
         from backend.app.agent.prompts import load_prompt
 
         _write_soul_md(user, load_prompt("default_soul"))
@@ -559,14 +663,14 @@ class TestHasCustomSoul:
 
     def test_default_soul_wrapped(self) -> None:
         """Default soul written by _ensure_user_dir includes a '# Soul' header."""
-        user = UserData(id=113, user_id="default-soul-wrapped")
+        user = User(id="113", user_id="default-soul-wrapped")
         from backend.app.agent.prompts import load_prompt
 
         _write_soul_md(user, f"# Soul\n\n{load_prompt('default_soul')}")
         assert _has_custom_soul(user) is False
 
     def test_custom_soul(self) -> None:
-        user = UserData(id=112, user_id="custom-soul")
+        user = User(id="112", user_id="custom-soul")
         _write_soul_md(user, "# Soul\n\nI'm Clawbolt. Straight and to the point.")
         assert _has_custom_soul(user) is True
 
@@ -575,23 +679,23 @@ class TestIsOnboardingCompleteHeuristic:
     """Tests for the combined heuristic."""
 
     def test_no_evidence(self) -> None:
-        user = UserData(id=120, user_id="no-evidence")
+        user = User(id="120", user_id="no-evidence")
         assert is_onboarding_complete_heuristic(user) is False
 
     def test_name_only(self) -> None:
-        user = UserData(id=121, user_id="name-only")
+        user = User(id="121", user_id="name-only")
         _write_user_md(user, "# User\n\n- Name: Jake\n")
         assert is_onboarding_complete_heuristic(user) is True
 
     def test_soul_only(self) -> None:
-        user = UserData(id=122, user_id="soul-only")
+        user = User(id="122", user_id="soul-only")
         _write_soul_md(user, "# Soul\n\nCustom personality.")
         assert is_onboarding_complete_heuristic(user) is True
 
 
 def test_is_onboarding_needed_heuristic_override() -> None:
     """BOOTSTRAP.md exists but heuristic says onboarding is done."""
-    user = UserData(id=130, user_id="heuristic-user")
+    user = User(id="130", user_id="heuristic-user")
     _create_bootstrap(user)
     _write_user_md(user, "# User\n\n- Name: Nathan\n- Trade: GC\n")
     # BOOTSTRAP.md exists, but heuristic detects completed onboarding
@@ -600,7 +704,7 @@ def test_is_onboarding_needed_heuristic_override() -> None:
 
 def test_is_onboarding_needed_no_heuristic_evidence() -> None:
     """BOOTSTRAP.md exists and no heuristic evidence: still needs onboarding."""
-    user = UserData(id=131, user_id="fresh-user")
+    user = User(id="131", user_id="fresh-user")
     _create_bootstrap(user)
     # No USER.md or SOUL.md written yet
     assert is_onboarding_needed(user) is True
@@ -618,8 +722,22 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     heuristic fallback should detect that USER.md has a real name and mark
     onboarding complete.
     """
-    user = UserData(
-        id=140,
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="140",
+                user_id="sidetracked-user",
+                channel_identifier="555555555",
+                preferred_channel="telegram",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    user = User(
+        id="140",
         user_id="sidetracked-user",
         channel_identifier="555555555",
         preferred_channel="telegram",
@@ -679,7 +797,12 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
     assert not bootstrap.exists()
 
-    store = get_user_store()
-    refreshed = await store.get_by_id(user.id)
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True

@@ -5,9 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.agent.file_store import SessionState, StoredMessage, UserData
+from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.ingestion import InboundMessage, MessageBatcher, process_inbound_from_bus
 from backend.app.bus import message_bus
+from backend.app.models import User
 
 
 class TestMessageBatcher:
@@ -17,9 +18,9 @@ class TestMessageBatcher:
     async def test_single_message_processed_after_window(self) -> None:
         """A single message should be processed after the batch window expires."""
         batcher = MessageBatcher(window_ms=50)
-        mock_user = UserData(id=1, channel_identifier="123", phone="")
+        mock_user = User(id="1", channel_identifier="123", phone="")
 
-        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_session = SessionState(session_id="sess-1", user_id="1")
 
         mock_message = StoredMessage(direction="inbound", body="hello")
 
@@ -46,9 +47,9 @@ class TestMessageBatcher:
     async def test_multiple_messages_batched_into_one(self) -> None:
         """Rapid-fire messages should be batched: only the last triggers the pipeline."""
         batcher = MessageBatcher(window_ms=100)
-        mock_user = UserData(id=1, channel_identifier="123", phone="")
+        mock_user = User(id="1", channel_identifier="123", phone="")
 
-        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_session = SessionState(session_id="sess-1", user_id="1")
 
         mock_msg_1 = StoredMessage(direction="inbound", body="first")
         mock_msg_2 = StoredMessage(direction="inbound", body="second")
@@ -100,11 +101,11 @@ class TestMessageBatcher:
         """Messages from different users should be processed independently."""
         batcher = MessageBatcher(window_ms=50)
 
-        mock_c1 = UserData(id=1, channel_identifier="111", phone="")
-        mock_c2 = UserData(id=2, channel_identifier="222", phone="")
+        mock_c1 = User(id="1", channel_identifier="111", phone="")
+        mock_c2 = User(id="2", channel_identifier="222", phone="")
 
-        mock_session_1 = SessionState(session_id="sess-1", user_id=1)
-        mock_session_2 = SessionState(session_id="sess-2", user_id=2)
+        mock_session_1 = SessionState(session_id="sess-1", user_id="1")
+        mock_session_2 = SessionState(session_id="sess-2", user_id="2")
 
         mock_msg_1 = StoredMessage(direction="inbound", body="from c1")
         mock_msg_2 = StoredMessage(direction="inbound", body="from c2")
@@ -132,9 +133,9 @@ class TestMessageBatcher:
     async def test_timer_resets_on_new_message(self) -> None:
         """Adding a message should reset the batch window timer."""
         batcher = MessageBatcher(window_ms=100)
-        mock_user = UserData(id=1, channel_identifier="123", phone="")
+        mock_user = User(id="1", channel_identifier="123", phone="")
 
-        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_session = SessionState(session_id="sess-1", user_id="1")
 
         mock_msg_1 = StoredMessage(direction="inbound", body="first")
         mock_msg_2 = StoredMessage(direction="inbound", body="second")
@@ -172,9 +173,9 @@ class TestMessageBatcher:
     async def test_zero_window_processes_immediately(self) -> None:
         """A zero window should process messages without batching delay."""
         batcher = MessageBatcher(window_ms=0)
-        mock_user = UserData(id=1, channel_identifier="123", phone="")
+        mock_user = User(id="1", channel_identifier="123", phone="")
 
-        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_session = SessionState(session_id="sess-1", user_id="1")
 
         mock_message = StoredMessage(direction="inbound", body="hello")
 
@@ -199,8 +200,8 @@ class TestMessageBatcher:
         """When the agent pipeline raises, a fallback error is sent via the bus."""
         batcher = MessageBatcher(window_ms=50)
 
-        mock_user = UserData(id=1, channel_identifier="123", phone="")
-        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_user = User(id="1", channel_identifier="123", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id="1")
         mock_message = StoredMessage(direction="inbound", body="hello")
 
         with (
@@ -210,12 +211,10 @@ class TestMessageBatcher:
                 side_effect=RuntimeError("LLM API down"),
             ),
             patch("backend.app.agent.ingestion.user_locks") as mock_locks,
-            patch("backend.app.agent.ingestion.get_user_store") as mock_user_store,
         ):
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
-            mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
 
             await batcher.enqueue(mock_user, mock_session, mock_message, [], "telegram")
             await asyncio.sleep(0.15)
@@ -236,8 +235,8 @@ class TestMessageBatcher:
         """When both the pipeline and bus publish fail, no exception propagates."""
         batcher = MessageBatcher(window_ms=50)
 
-        mock_user = UserData(id=1, channel_identifier="123", phone="")
-        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_user = User(id="1", channel_identifier="123", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id="1")
         mock_message = StoredMessage(direction="inbound", body="hello")
 
         mock_bus = MagicMock()
@@ -250,13 +249,11 @@ class TestMessageBatcher:
                 side_effect=RuntimeError("LLM API down"),
             ),
             patch("backend.app.agent.ingestion.user_locks") as mock_locks,
-            patch("backend.app.agent.ingestion.get_user_store") as mock_user_store,
             patch("backend.app.bus.message_bus", mock_bus),
         ):
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
-            mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
 
             # Should not raise even when both pipeline and fallback fail
             await batcher.enqueue(mock_user, mock_session, mock_message, [], "telegram")
@@ -275,8 +272,8 @@ class TestProcessInboundFallbackError:
             text="hi there",
         )
 
-        mock_user = UserData(id=1, channel_identifier="456", phone="")
-        mock_session = SessionState(session_id="sess-1", user_id=1)
+        mock_user = User(id="1", channel_identifier="456", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id="1")
         mock_message = StoredMessage(direction="inbound", body="hi there")
 
         with (
@@ -305,9 +302,6 @@ class TestProcessInboundFallbackError:
                 side_effect=RuntimeError("LLM API down"),
             ),
             patch("backend.app.agent.ingestion.user_locks") as mock_locks,
-            patch(
-                "backend.app.agent.ingestion.get_user_store",
-            ) as mock_user_store,
         ):
             mock_gate.return_value.has_pending.return_value = False
             mock_session_store = AsyncMock()
@@ -317,7 +311,6 @@ class TestProcessInboundFallbackError:
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
-            mock_user_store.return_value.get_by_id = AsyncMock(return_value=None)
 
             await process_inbound_from_bus(inbound)
 

@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.agent.file_store import UserData
 from backend.app.agent.system_prompt import (
     SystemPromptBuilder,
     build_agent_system_prompt,
@@ -20,6 +19,7 @@ from backend.app.agent.system_prompt import (
     build_tool_guidelines_section,
     to_local_time,
 )
+from backend.app.models import User
 
 
 class TestSystemPromptBuilder:
@@ -104,7 +104,7 @@ class TestSectionBuilders:
             new_callable=AsyncMock,
             return_value="client: John Doe, deck work",
         ):
-            result = await build_memory_section(user_id=1)
+            result = await build_memory_section(user_id="1")
         assert "John Doe" in result
 
     @pytest.mark.asyncio
@@ -115,7 +115,7 @@ class TestSectionBuilders:
             new_callable=AsyncMock,
             return_value="",
         ):
-            result = await build_memory_section(user_id=1)
+            result = await build_memory_section(user_id="1")
         assert result == "(No memories saved yet)"
 
     def test_build_instructions_section(self) -> None:
@@ -366,7 +366,7 @@ class TestAgentSystemPromptIncludesDate:
 class TestCrossSessionContext:
     def test_returns_empty_when_no_other_sessions(
         self,
-        test_user: "UserData",
+        test_user: "User",
     ) -> None:
         """Should return empty string when no other sessions exist."""
         result = build_cross_session_context(test_user.id, current_session_id="nonexistent_999")
@@ -375,10 +375,10 @@ class TestCrossSessionContext:
     @pytest.mark.asyncio()
     async def test_includes_messages_from_other_session(
         self,
-        test_user: "UserData",
+        test_user: "User",
     ) -> None:
         """Should include messages from sessions other than the current one."""
-        from backend.app.agent.file_store import get_session_store
+        from backend.app.agent.session_db import get_session_store
 
         store = get_session_store(test_user.id)
 
@@ -398,10 +398,10 @@ class TestCrossSessionContext:
     @pytest.mark.asyncio()
     async def test_excludes_current_session(
         self,
-        test_user: "UserData",
+        test_user: "User",
     ) -> None:
         """Should not include messages from the current session."""
-        from backend.app.agent.file_store import get_session_store
+        from backend.app.agent.session_db import get_session_store
 
         store = get_session_store(test_user.id)
 
@@ -415,10 +415,10 @@ class TestCrossSessionContext:
     @pytest.mark.asyncio()
     async def test_truncates_long_messages(
         self,
-        test_user: "UserData",
+        test_user: "User",
     ) -> None:
         """Long message bodies should be truncated."""
-        from backend.app.agent.file_store import get_session_store
+        from backend.app.agent.session_db import get_session_store
 
         store = get_session_store(test_user.id)
         session_a, _ = await store.get_or_create_session()
@@ -433,10 +433,10 @@ class TestCrossSessionContext:
     @pytest.mark.asyncio()
     async def test_agent_prompt_includes_cross_session_context(
         self,
-        test_user: "UserData",
+        test_user: "User",
     ) -> None:
         """Agent system prompt should include cross-session context when available."""
-        from backend.app.agent.file_store import get_session_store
+        from backend.app.agent.session_db import get_session_store
 
         store = get_session_store(test_user.id)
 

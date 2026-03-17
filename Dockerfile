@@ -20,8 +20,10 @@ COPY --from=ghcr.io/astral-sh/uv:latest /uv /bin/uv
 COPY pyproject.toml uv.lock ./
 RUN uv sync --frozen
 
-# Copy application code
+# Copy application code and alembic config
 COPY backend/ backend/
+COPY alembic.ini alembic.ini
+COPY alembic/ alembic/
 
 # Copy built frontend from stage 1
 COPY --from=frontend-build /app/frontend/dist ./frontend/dist

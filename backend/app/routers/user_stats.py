@@ -4,12 +4,9 @@ import datetime
 
 from fastapi import APIRouter, Depends
 
-from backend.app.agent.file_store import (
-    HeartbeatStore,
-    UserData,
-    get_memory_store,
-    get_session_store,
-)
+from backend.app.agent.file_store import HeartbeatStore, UserData
+from backend.app.agent.memory_db import get_memory_store
+from backend.app.agent.session_db import get_session_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.enums import HeartbeatStatus
 from backend.app.schemas import UserStatsResponse
@@ -27,8 +24,8 @@ async def get_stats(
     heartbeat_store = HeartbeatStore(current_user.id)
 
     # Total sessions
-    session_files = session_store._list_session_files()
-    total_sessions = len(session_files)
+    session_ids = session_store.list_session_ids()
+    total_sessions = len(session_ids)
 
     # Messages this month
     now = datetime.datetime.now(datetime.UTC)
@@ -36,8 +33,8 @@ async def get_stats(
     messages_this_month = 0
     last_conversation_at: str | None = None
 
-    for path in session_files:
-        session = session_store._load_session(path.stem)
+    for sid in session_ids:
+        session = session_store.load_session(sid)
         if session is None:
             continue
         if session.last_message_at and (

@@ -1,11 +1,9 @@
 """Tests for heartbeat_text field via the profile endpoint (HEARTBEAT.md)."""
 
-from pathlib import Path
-
 from fastapi.testclient import TestClient
 
-from backend.app.agent.file_store import get_user_store
-from backend.app.config import settings
+import backend.app.database as _db_module
+from backend.app.models import User
 
 
 def test_profile_includes_heartbeat_text(client: TestClient) -> None:
@@ -27,56 +25,61 @@ def test_update_heartbeat_text(client: TestClient) -> None:
     assert resp.json()["heartbeat_text"] == heartbeat
 
 
-def test_heartbeat_text_writes_heartbeat_md(client: TestClient) -> None:
-    """Updating heartbeat_text should create a HEARTBEAT.md file on disk."""
+def test_heartbeat_text_persists_in_db(client: TestClient) -> None:
+    """Updating heartbeat_text should persist in the database."""
     heartbeat = "- [ ] Review pending estimates"
     resp = client.put("/api/user/profile", json={"heartbeat_text": heartbeat})
     assert resp.status_code == 200
-
-    # Find the user directory (user id=1 is the test user)
-    user_dir = Path(settings.data_dir) / "1"
-    heartbeat_path = user_dir / "HEARTBEAT.md"
-    assert heartbeat_path.exists()
-    content = heartbeat_path.read_text(encoding="utf-8")
-    assert "# Heartbeat" in content
-    assert "Review pending estimates" in content
+    assert resp.json()["heartbeat_text"] == heartbeat
 
 
-async def test_heartbeat_text_round_trip_via_store() -> None:
-    """Writing heartbeat_text via the store and reading it back should work."""
-    store = get_user_store()
-    user = await store.create(
-        user_id="heartbeat-test",
-        phone="+15551112222",
-    )
+async def test_heartbeat_text_round_trip_via_db() -> None:
+    """Writing heartbeat_text via the DB and reading it back should work."""
+    db = _db_module.SessionLocal()
+    try:
+        user = User(user_id="heartbeat-test", phone="+15551112222")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        user_id = user.id
+        db.expunge(user)
+    finally:
+        db.close()
+
     # Update with heartbeat text
-    updated = await store.update(user.id, heartbeat_text="- [ ] Test item")
-    assert updated is not None
+    db = _db_module.SessionLocal()
+    try:
+        db_user = db.query(User).filter_by(id=user_id).first()
+        assert db_user is not None
+        db_user.heartbeat_text = "- [ ] Test item"
+        db.commit()
+        db.refresh(db_user)
+        db.expunge(db_user)
+        updated = db_user
+    finally:
+        db.close()
     assert updated.heartbeat_text == "- [ ] Test item"
 
-    # Re-read from disk
-    reloaded = await store.get_by_id(user.id)
-    assert reloaded is not None
+    # Re-read from DB
+    db = _db_module.SessionLocal()
+    try:
+        reloaded = db.query(User).filter_by(id=user_id).first()
+        assert reloaded is not None
+        db.expunge(reloaded)
+    finally:
+        db.close()
     assert reloaded.heartbeat_text == "- [ ] Test item"
 
-    # Verify the file on disk
-    user_dir = Path(settings.data_dir) / str(user.id)
-    heartbeat_path = user_dir / "HEARTBEAT.md"
-    assert heartbeat_path.exists()
-    content = heartbeat_path.read_text(encoding="utf-8")
-    assert "# Heartbeat" in content
-    assert "Test item" in content
 
-
-async def test_default_heartbeat_seeded_on_create() -> None:
-    """New users should get a default HEARTBEAT.md file."""
-    store = get_user_store()
-    user = await store.create(
-        user_id="default-heartbeat-test",
-        phone="+15559998888",
-    )
-    user_dir = Path(settings.data_dir) / str(user.id)
-    heartbeat_path = user_dir / "HEARTBEAT.md"
-    assert heartbeat_path.exists()
-    content = heartbeat_path.read_text(encoding="utf-8")
-    assert "# Heartbeat" in content
+async def test_new_user_heartbeat_text_empty() -> None:
+    """New users should have empty heartbeat_text by default."""
+    db = _db_module.SessionLocal()
+    try:
+        user = User(user_id="default-heartbeat-test", phone="+15559998888")
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
+    assert user.heartbeat_text == ""

@@ -14,6 +14,13 @@ class ToolName:
     # Estimates
     GENERATE_ESTIMATE = "generate_estimate"
 
+    # Invoices
+    GENERATE_INVOICE = "generate_invoice"
+    CONVERT_ESTIMATE_TO_INVOICE = "convert_estimate_to_invoice"
+
+    # Email
+    SEND_DOCUMENT_EMAIL = "send_document_email"
+
     # Heartbeat
     ADD_HEARTBEAT_ITEM = "add_heartbeat_item"
     LIST_HEARTBEAT_ITEMS = "list_heartbeat_items"
@@ -31,6 +38,11 @@ class ToolName:
 
     # QuickBooks
     QB_QUERY = "qb_query"
+    QB_CREATE_ESTIMATE = "qb_create_estimate"
+    QB_CREATE_INVOICE = "qb_create_invoice"
+    QB_CREATE_CUSTOMER = "qb_create_customer"
+    QB_SEND_INVOICE = "qb_send_invoice"
+    QB_ESTIMATE_TO_INVOICE = "qb_estimate_to_invoice"
 
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"

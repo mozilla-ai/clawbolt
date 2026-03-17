@@ -2,18 +2,19 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from backend.app.agent.file_store import SessionState, StoredMessage, UserData
+from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.router import handle_inbound_message
 from backend.app.bus import message_bus
+from backend.app.models import User
+from tests.conftest import create_test_session
 from tests.mocks.llm import make_text_response
 
 
 @pytest.fixture()
-def conversation(test_user: UserData) -> SessionState:
-    return SessionState(
-        session_id="test-conv",
+def conversation(test_user: User) -> SessionState:
+    return create_test_session(
         user_id=test_user.id,
-        is_active=True,
+        session_id="test-conv",
         messages=[
             StoredMessage(direction="inbound", body="Hello, I need help", seq=1),
         ],
@@ -38,7 +39,7 @@ def mock_download_media() -> AsyncMock:
 @patch("backend.app.agent.core.amessages")
 async def test_agent_llm_failure_returns_friendly_message(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -61,7 +62,7 @@ async def test_agent_llm_failure_returns_friendly_message(
 @patch("backend.app.agent.core.amessages")
 async def test_all_media_download_failure_adds_note(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
@@ -93,7 +94,7 @@ async def test_all_media_download_failure_adds_note(
 async def test_partial_media_success(
     mock_vision: AsyncMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -136,7 +137,7 @@ async def test_partial_media_success(
 @patch("backend.app.agent.core.amessages")
 async def test_outbound_stored_and_published_to_bus(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
 ) -> None:
@@ -169,7 +170,7 @@ async def test_outbound_stored_and_published_to_bus(
 async def test_media_pipeline_failure_falls_back_to_text(
     mock_pipeline: AsyncMock,
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     conversation: SessionState,
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
