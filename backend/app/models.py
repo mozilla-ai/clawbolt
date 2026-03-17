@@ -4,6 +4,7 @@ These 15 tables replace the file-based storage layer in file_store.py.
 """
 
 import uuid as _uuid
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from sqlalchemy import (
@@ -50,8 +51,7 @@ class User(Base):
         # Apply Python-side defaults that mirror settings for columns
         # where the DB default is a static string but the Pydantic UserData
         # used to read from settings dynamically.
-        _defaults = {
-            "id": lambda: str(_uuid.uuid4()),
+        _static_defaults: dict[str, str | bool] = {
             "phone": "",
             "timezone": "",
             "preferred_channel": settings.messaging_provider,
@@ -64,12 +64,18 @@ class User(Base):
             "soul_text": "",
             "user_text": "",
             "heartbeat_text": "",
+        }
+        _factory_defaults: dict[str, Callable[[], object]] = {
+            "id": lambda: str(_uuid.uuid4()),
             "created_at": lambda: datetime.now(UTC),
             "updated_at": lambda: datetime.now(UTC),
         }
-        for key, default in _defaults.items():
+        for key, static in _static_defaults.items():
             if key not in kwargs:
-                kwargs[key] = default() if callable(default) else default
+                kwargs[key] = static
+        for key, factory in _factory_defaults.items():
+            if key not in kwargs:
+                kwargs[key] = factory()
         super().__init__(**kwargs)
 
     channel_routes: Mapped[list["ChannelRoute"]] = relationship(

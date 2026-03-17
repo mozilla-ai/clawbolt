@@ -66,56 +66,58 @@ def _describe_fetch(args: dict[str, object]) -> str:
 class TestApprovalStore:
     def test_default_permission(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        level = store.check_permission(1, "web_search", default=PermissionLevel.ASK)
+        level = store.check_permission("1", "web_search", default=PermissionLevel.ASK)
         assert level == PermissionLevel.ASK
 
     def test_tool_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_search", PermissionLevel.AUTO)
-        level = store.check_permission(1, "web_search", default=PermissionLevel.ASK)
+        store.set_permission("1", "web_search", PermissionLevel.AUTO)
+        level = store.check_permission("1", "web_search", default=PermissionLevel.ASK)
         assert level == PermissionLevel.AUTO
 
     def test_resource_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_fetch", PermissionLevel.AUTO, resource="homedepot.com")
+        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="homedepot.com")
         level = store.check_permission(
-            1, "web_fetch", resource="homedepot.com", default=PermissionLevel.ASK
+            "1", "web_fetch", resource="homedepot.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.AUTO
 
     def test_glob_matching(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_fetch", PermissionLevel.AUTO, resource="*.gov")
+        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="*.gov")
         level = store.check_permission(
-            1, "web_fetch", resource="permits.gov", default=PermissionLevel.ASK
+            "1", "web_fetch", resource="permits.gov", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.AUTO
 
     def test_resource_priority_over_tool(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_fetch", PermissionLevel.DENY)
-        store.set_permission(1, "web_fetch", PermissionLevel.AUTO, resource="safe.com")
+        store.set_permission("1", "web_fetch", PermissionLevel.DENY)
+        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="safe.com")
         level = store.check_permission(
-            1, "web_fetch", resource="safe.com", default=PermissionLevel.ASK
+            "1", "web_fetch", resource="safe.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.AUTO
 
     def test_falls_through_to_tool_when_no_resource_match(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission(1, "web_fetch", PermissionLevel.DENY)
+        store.set_permission("1", "web_fetch", PermissionLevel.DENY)
         level = store.check_permission(
-            1, "web_fetch", resource="unknown.com", default=PermissionLevel.ASK
+            "1", "web_fetch", resource="unknown.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.DENY
 
     def test_persistence_round_trip(self, tmp_path: object) -> None:
         store1 = ApprovalStore()
-        store1.set_permission(1, "web_search", PermissionLevel.AUTO)
-        store1.set_permission(1, "web_fetch", PermissionLevel.DENY, resource="evil.com")
+        store1.set_permission("1", "web_search", PermissionLevel.AUTO)
+        store1.set_permission("1", "web_fetch", PermissionLevel.DENY, resource="evil.com")
 
         store2 = ApprovalStore()
-        assert store2.check_permission(1, "web_search") == PermissionLevel.AUTO
-        assert store2.check_permission(1, "web_fetch", resource="evil.com") == PermissionLevel.DENY
+        assert store2.check_permission("1", "web_search") == PermissionLevel.AUTO
+        assert (
+            store2.check_permission("1", "web_fetch", resource="evil.com") == PermissionLevel.DENY
+        )
 
 
 # ---------------------------------------------------------------------------

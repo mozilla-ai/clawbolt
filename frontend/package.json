@@ -32,7 +32,6 @@
     "@heroui/tooltip": "^2.2.29",
     "@tailwindcss/vite": "^4.2.0",
     "@tanstack/react-query": "^5.90.21",
-    "@testing-library/user-event": "^14.6.1",
     "framer-motion": "^12.35.2",
     "openapi-fetch": "^0.17.0",
     "react": "^19.0.0",

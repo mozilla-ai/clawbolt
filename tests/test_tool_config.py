@@ -13,6 +13,7 @@ from backend.app.agent.tools.registry import (
     default_registry,
     ensure_tool_modules_imported,
 )
+from backend.app.models import User
 
 ensure_tool_modules_imported()
 
@@ -77,7 +78,7 @@ async def test_tool_config_store_get_disabled_tool_names(
 
 def test_create_core_tools_excludes_disabled_factories() -> None:
     """create_core_tools should skip excluded factories."""
-    user = UserData(id="999", user_id="test")
+    user = User(id="999", user_id="test")
     ctx = ToolContext(user=user)
 
     all_core = default_registry.create_core_tools(ctx)
@@ -91,7 +92,7 @@ def test_create_core_tools_excludes_disabled_factories() -> None:
 
 def test_specialist_summaries_excludes_disabled_factories() -> None:
     """get_available_specialist_summaries should skip excluded factories."""
-    user = UserData(id="999", user_id="test")
+    user = User(id="999", user_id="test")
     ctx = ToolContext(user=user)
 
     all_summaries = default_registry.get_available_specialist_summaries(ctx)

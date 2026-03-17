@@ -30,7 +30,7 @@ def _create_session(
         db.add(cs)
         db.flush()
         for msg_data in messages:
-            ts_str = msg_data.get("timestamp", "")
+            ts_str = str(msg_data.get("timestamp", ""))
             ts = datetime.fromisoformat(ts_str) if ts_str else datetime.now(UTC)
             msg = Message(
                 session_id=cs.id,

@@ -10,7 +10,7 @@ services:
     volumes:
       - pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-EXEC", "pg_isready -U clawbolt"]
+      test: ["CMD-SHELL", "pg_isready -U clawbolt"]
       interval: 5s
       timeout: 5s
       retries: 5

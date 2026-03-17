@@ -77,7 +77,7 @@ def test_all_tables_created(memory_engine: Engine) -> None:
         "llm_usage_logs",
         "tool_configs",
     }
-    with memory_engine.connect() as conn:  # type: ignore[union-attr]
+    with memory_engine.connect() as conn:
         # SQLite: check sqlite_master for table names
         result = conn.execute(text("SELECT name FROM sqlite_master WHERE type='table'"))
         actual = {row[0] for row in result}

@@ -4,15 +4,16 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.app.agent.file_store import SessionState, StoredMessage, UserData
+from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.memory import build_memory_context
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.router import handle_inbound_message
+from backend.app.models import User
 from tests.mocks.llm import make_text_response
 
 
 @pytest.fixture()
-def session(test_user: UserData) -> SessionState:
+def session(test_user: User) -> SessionState:
     return SessionState(
         session_id="test-session",
         user_id=test_user.id,
@@ -25,7 +26,7 @@ def session(test_user: UserData) -> SessionState:
 @patch("backend.app.agent.core.amessages")
 async def test_system_prompt_includes_recall_guidance(
     mock_amessages: object,
-    test_user: UserData,
+    test_user: User,
     session: SessionState,
 ) -> None:
     """System prompt should include recall behavior guidance."""
@@ -54,7 +55,7 @@ async def test_system_prompt_includes_recall_guidance(
 
 @pytest.mark.asyncio()
 async def test_build_memory_context_includes_memory_content(
-    test_user: UserData,
+    test_user: User,
 ) -> None:
     """build_memory_context should include MEMORY.md content."""
     store = get_memory_store(test_user.id)
@@ -65,7 +66,7 @@ async def test_build_memory_context_includes_memory_content(
 
 
 @pytest.mark.asyncio()
-async def test_build_memory_context_empty(test_user: UserData) -> None:
+async def test_build_memory_context_empty(test_user: User) -> None:
     """build_memory_context returns empty string when no memory exists."""
     context = await build_memory_context(test_user.id)
     assert context == ""

@@ -19,11 +19,19 @@ from backend.app.agent.onboarding import (
     build_onboarding_system_prompt,
     is_onboarding_needed,
 )
+from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.config import settings
 from backend.app.models import User
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
+
+
+def _create_bootstrap(user: User) -> None:
+    """Create a BOOTSTRAP.md file for the given user from the real template."""
+    user_dir = Path(settings.data_dir) / str(user.id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+    (user_dir / "BOOTSTRAP.md").write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
 
 
 @pytest.mark.integration()
@@ -46,6 +54,7 @@ async def test_onboarding_extracts_profile_from_intro() -> None:
     finally:
         db.close()
 
+    _create_bootstrap(user)
     assert is_onboarding_needed(user)
 
     with patch("backend.app.agent.core.settings") as mock_settings:

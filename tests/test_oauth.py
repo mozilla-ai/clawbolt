@@ -168,8 +168,8 @@ def test_save_and_load_token(oauth_svc: OAuthService) -> None:
         realm_id="realm-1",
         expires_at=time.time() + 3600,
     )
-    oauth_svc.save_token(1, "quickbooks", token)
-    loaded = oauth_svc.load_token(1, "quickbooks")
+    oauth_svc.save_token("1", "quickbooks", token)
+    loaded = oauth_svc.load_token("1", "quickbooks")
     assert loaded is not None
     assert loaded.access_token == "at-123"
     assert loaded.refresh_token == "rt-456"
@@ -178,31 +178,31 @@ def test_save_and_load_token(oauth_svc: OAuthService) -> None:
 
 def test_load_nonexistent_token(oauth_svc: OAuthService) -> None:
     """Loading a non-existent token should return None."""
-    assert oauth_svc.load_token(999, "quickbooks") is None
+    assert oauth_svc.load_token("999", "quickbooks") is None
 
 
 def test_delete_token(oauth_svc: OAuthService) -> None:
     """Deleting a token should remove the file."""
     token = OAuthTokenData(access_token="at")
-    oauth_svc.save_token(1, "quickbooks", token)
-    assert oauth_svc.is_connected(1, "quickbooks") is True
+    oauth_svc.save_token("1", "quickbooks", token)
+    assert oauth_svc.is_connected("1", "quickbooks") is True
 
-    deleted = oauth_svc.delete_token(1, "quickbooks")
+    deleted = oauth_svc.delete_token("1", "quickbooks")
     assert deleted is True
-    assert oauth_svc.is_connected(1, "quickbooks") is False
+    assert oauth_svc.is_connected("1", "quickbooks") is False
 
 
 def test_delete_nonexistent_token(oauth_svc: OAuthService) -> None:
     """Deleting a non-existent token should return False."""
-    assert oauth_svc.delete_token(999, "quickbooks") is False
+    assert oauth_svc.delete_token("999", "quickbooks") is False
 
 
 def test_is_connected(oauth_svc: OAuthService) -> None:
     """is_connected should reflect whether a token file exists."""
-    assert oauth_svc.is_connected(1, "quickbooks") is False
+    assert oauth_svc.is_connected("1", "quickbooks") is False
     token = OAuthTokenData(access_token="at")
-    oauth_svc.save_token(1, "quickbooks", token)
-    assert oauth_svc.is_connected(1, "quickbooks") is True
+    oauth_svc.save_token("1", "quickbooks", token)
+    assert oauth_svc.is_connected("1", "quickbooks") is True
 
 
 # ---------------------------------------------------------------------------
@@ -318,7 +318,7 @@ async def test_handle_callback_exchanges_code(
     assert token.realm_id == "realm-1"
 
     # Should be persisted
-    loaded = oauth_svc.load_token(1, "quickbooks")
+    loaded = oauth_svc.load_token("1", "quickbooks")
     assert loaded is not None
     assert loaded.access_token == "new-access-token"
 

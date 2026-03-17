@@ -12,9 +12,9 @@ from unittest.mock import patch
 import pytest
 
 from backend.app.agent.client_db import EstimateStore
-from backend.app.agent.dto import UserData
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
 from backend.app.agent.session_db import get_session_store
+from backend.app.models import User
 
 from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 
@@ -22,7 +22,7 @@ from .conftest import _ANTHROPIC_MODEL, skip_without_anthropic_key
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_heartbeat_evaluate_returns_valid_action(
-    onboarded_user: UserData,
+    onboarded_user: User,
 ) -> None:
     """evaluate_heartbeat_need() should return a valid HeartbeatDecision from a real LLM."""
     with patch("backend.app.agent.heartbeat.settings") as mock_settings:
@@ -44,7 +44,7 @@ async def test_heartbeat_evaluate_returns_valid_action(
 @pytest.mark.integration()
 @skip_without_anthropic_key
 async def test_heartbeat_evaluate_with_context(
-    onboarded_user: UserData,
+    onboarded_user: User,
 ) -> None:
     """Heartbeat should handle a user with real conversation history and pending estimates."""
     # Set up conversation with messages via file store
