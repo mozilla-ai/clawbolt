@@ -9,7 +9,7 @@ from .config import settings
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
-_lock = threading.Lock()
+_lock = threading.RLock()
 
 
 def get_engine() -> Engine:
