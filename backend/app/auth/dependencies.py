@@ -1,6 +1,7 @@
 from fastapi import Depends
 from sqlalchemy.orm import Session
 
+from backend.app.agent.user_db import provision_user_directory
 from backend.app.database import get_db
 from backend.app.models import User
 
@@ -22,4 +23,5 @@ async def get_current_user(db: Session = Depends(get_db)) -> User:
     db.add(user)
     db.commit()
     db.refresh(user)
+    provision_user_directory(user)
     return user

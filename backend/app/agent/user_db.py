@@ -11,13 +11,59 @@ and client_db.py.
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
 
 from backend.app.agent.dto import UserData
+from backend.app.agent.prompts import load_prompt
+from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.models import User
 
 logger = logging.getLogger(__name__)
+
+
+def provision_user_directory(user: User) -> None:
+    """Create the on-disk workspace for a new user.
+
+    Seeds SOUL.md, USER.md, HEARTBEAT.md, and BOOTSTRAP.md with default
+    templates. This was previously handled by the file-based UserStore._save().
+    """
+    user_dir = Path(settings.data_dir) / str(user.id)
+    user_dir.mkdir(parents=True, exist_ok=True)
+
+    # SOUL.md
+    soul_path = user_dir / "SOUL.md"
+    if not soul_path.exists():
+        soul_path.write_text(f"# Soul\n\n{load_prompt('default_soul')}\n", encoding="utf-8")
+
+    # USER.md
+    user_path = user_dir / "USER.md"
+    if not user_path.exists():
+        user_path.write_text(f"# User\n\n{load_prompt('default_user')}\n", encoding="utf-8")
+
+    # HEARTBEAT.md
+    heartbeat_path = user_dir / "HEARTBEAT.md"
+    if not heartbeat_path.exists():
+        heartbeat_path.write_text(
+            f"# Heartbeat\n\n{load_prompt('default_heartbeat')}\n", encoding="utf-8"
+        )
+
+    # BOOTSTRAP.md (onboarding prompt)
+    bootstrap_path = user_dir / "BOOTSTRAP.md"
+    if not bootstrap_path.exists() and not user.onboarding_complete:
+        bootstrap_path.write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
+
+    # Subdirectories
+    (user_dir / "memory").mkdir(exist_ok=True)
+    (user_dir / "sessions").mkdir(exist_ok=True)
+    (user_dir / "estimates").mkdir(exist_ok=True)
+    (user_dir / "heartbeat").mkdir(exist_ok=True)
+
+    # Initialize MEMORY.md
+    mem_path = user_dir / "memory" / "MEMORY.md"
+    if not mem_path.exists():
+        mem_path.write_text("", encoding="utf-8")
 
 
 def _user_to_dto(user: User) -> UserData:

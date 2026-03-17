@@ -28,6 +28,7 @@ from backend.app.agent.file_store import (
 )
 from backend.app.agent.router import handle_inbound_message
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.user_db import provision_user_directory
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
@@ -124,6 +125,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
         db.commit()
         db.refresh(user)
+        provision_user_directory(user)
         db.expunge(user)
         return user
     finally:
