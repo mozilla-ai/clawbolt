@@ -8,6 +8,7 @@ in-memory DTOs.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from typing import Any
 
@@ -218,15 +219,12 @@ class EstimateStore:
         from sqlalchemy.orm import Session as SASession
 
         assert isinstance(db, SASession)
-        estimates = db.query(Estimate.id).with_for_update().all()
+        # Filter to only EST-* rows to reduce lock scope
+        rows = db.query(Estimate.id).filter(Estimate.id.like("EST-%")).with_for_update().all()
         max_num = 0
-        for (eid,) in estimates:
-            if eid.startswith("EST-"):
-                try:
-                    num = int(eid[4:])
-                    max_num = max(max_num, num)
-                except ValueError:
-                    pass
+        for (eid,) in rows:
+            with contextlib.suppress(ValueError):
+                max_num = max(max_num, int(eid[4:]))
         return max_num + 1
 
     async def create(
@@ -330,15 +328,12 @@ class InvoiceStore:
         from sqlalchemy.orm import Session as SASession
 
         assert isinstance(db, SASession)
-        invoices = db.query(Invoice.id).with_for_update().all()
+        # Filter to only INV-* rows to reduce lock scope
+        rows = db.query(Invoice.id).filter(Invoice.id.like("INV-%")).with_for_update().all()
         max_num = 0
-        for (iid,) in invoices:
-            if iid.startswith("INV-"):
-                try:
-                    num = int(iid[4:])
-                    max_num = max(max_num, num)
-                except ValueError:
-                    pass
+        for (iid,) in rows:
+            with contextlib.suppress(ValueError):
+                max_num = max(max_num, int(iid[4:]))
         return max_num + 1
 
     async def create(

@@ -142,6 +142,15 @@ def create_estimate_tools(
         pdf_dir = PDF_BASE_DIR / str(user.id) / (client_slug or "unsorted")
         pdf_dir.mkdir(parents=True, exist_ok=True)
         pdf_path = pdf_dir / f"{estimate.id}.pdf"
+
+        # Path traversal prevention
+        if not pdf_path.resolve().is_relative_to(PDF_BASE_DIR.resolve()):
+            return ToolResult(
+                content="Error: PDF path escapes storage directory.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
         await asyncio.to_thread(pdf_path.write_bytes, pdf_bytes)
 
         # Also upload to cloud storage if available

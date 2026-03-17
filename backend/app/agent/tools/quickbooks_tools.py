@@ -411,7 +411,7 @@ def create_quickbooks_tools(
 
         # Load the estimate to get its details
         try:
-            safe_id = estimate_id.strip()
+            safe_id = _sanitize_qbo_string(estimate_id.strip())
             rows = await qb_service.query(f"SELECT * FROM Estimate WHERE Id = '{safe_id}'")
         except Exception as exc:
             return ToolResult(

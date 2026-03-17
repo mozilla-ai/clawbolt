@@ -326,8 +326,7 @@ class MediaStore:
 
     async def update(self, media_id: str, **fields: Any) -> MediaData | None:
         """Update a MediaFile row by id."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             m = db.query(MediaFile).filter_by(id=media_id, user_id=self.user_id).first()
             if m is None:
                 return None
@@ -337,8 +336,6 @@ class MediaStore:
             db.commit()
             db.refresh(m)
             return _media_to_dto(m)
-        finally:
-            db.close()
 
     async def get_by_url(self, original_url: str) -> MediaData | None:
         """Query a MediaFile by original_url."""

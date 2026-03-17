@@ -1,4 +1,5 @@
 import contextlib
+import threading
 from collections.abc import Generator
 
 from sqlalchemy import Engine, create_engine
@@ -8,13 +9,16 @@ from .config import settings
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
+_lock = threading.Lock()
 
 
 def get_engine() -> Engine:
     """Return the singleton engine, creating it on first call."""
     global _engine
     if _engine is None:
-        _engine = create_engine(settings.database_url, pool_pre_ping=True)
+        with _lock:
+            if _engine is None:
+                _engine = create_engine(settings.database_url, pool_pre_ping=True)
     return _engine
 
 
@@ -22,7 +26,9 @@ def get_session_factory() -> sessionmaker[Session]:
     """Return the singleton session factory, creating it on first call."""
     global _SessionLocal
     if _SessionLocal is None:
-        _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=get_engine())
+        with _lock:
+            if _SessionLocal is None:
+                _SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=get_engine())
     return _SessionLocal
 
 
