@@ -93,7 +93,7 @@ Until this project has its first production release, you do not need to be conce
 ## Testing
 
 - pytest with FastAPI `TestClient`
-- In-memory SQLite + `StaticPool` for all tests (no external database needed)
+- PostgreSQL for all tests (requires a local `clawbolt_test` database; see conftest.py)
 - `reset_stores()` clears cached store singletons between tests
 - Override `get_current_user` via FastAPI dependency injection
 - Mock ALL external services: Telegram, LLM (any-llm), faster-whisper, Dropbox/Drive

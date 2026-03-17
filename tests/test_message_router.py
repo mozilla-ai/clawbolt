@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from any_llm import AuthenticationError, ContentFilterError
 
+import backend.app.database as _db_module
 from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.router import (
     AUTH_ERROR_FALLBACK,
@@ -670,13 +671,20 @@ async def test_empty_to_address_returns_early(
     inbound_message: StoredMessage,
 ) -> None:
     """User with no channel_identifier or phone should return early."""
-    # Create user with empty delivery fields
-    no_addr = User(
-        id=99,
-        user_id="no-addr",
-        channel_identifier="",
-        phone="",
-    )
+    # Create user with empty delivery fields (persisted so FK queries work)
+    db = _db_module.SessionLocal()
+    try:
+        no_addr = User(
+            user_id="no-addr",
+            channel_identifier="",
+            phone="",
+        )
+        db.add(no_addr)
+        db.commit()
+        db.refresh(no_addr)
+        db.expunge(no_addr)
+    finally:
+        db.close()
 
     response = await handle_inbound_message(
         user=no_addr,

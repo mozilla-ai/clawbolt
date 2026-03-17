@@ -194,6 +194,16 @@ def create_invoice_tools(
             or None
         )
 
+        # Ensure client record exists when client info is provided
+        if client_slug and client_name:
+            client_store = ClientStore(user.id)
+            existing = await client_store.get(client_slug)
+            if existing is None:
+                await client_store.create(
+                    name=client_name,
+                    address=client_address or "",
+                )
+
         # Create invoice via store
         invoice_store = InvoiceStore(user.id)
         try:

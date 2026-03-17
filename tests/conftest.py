@@ -5,9 +5,8 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy import Engine, create_engine
+from sqlalchemy.orm import sessionmaker
 
 import backend.app.database as _db_module
 from backend.app.agent.approval import reset_approval_gate
@@ -17,33 +16,48 @@ from backend.app.agent.session_db import reset_session_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
 from backend.app.config import settings
-from backend.app.database import Base, get_db
+from backend.app.database import Base
 from backend.app.main import app
 from backend.app.models import ChatSession, Message, User
 from backend.app.services.rate_limiter import webhook_rate_limiter
 
+_TEST_DB_URL = "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+
+
+@pytest.fixture(scope="session")
+def _pg_engine() -> Generator[Engine]:
+    """Session-scoped PostgreSQL engine. Tables are created once per test run."""
+    engine = create_engine(_TEST_DB_URL, pool_pre_ping=True)
+    Base.metadata.drop_all(engine)
+    Base.metadata.create_all(engine)
+    yield engine
+    Base.metadata.drop_all(engine)
+    engine.dispose()
+
 
 @pytest.fixture(autouse=True)
-def _isolate_stores(tmp_path: Path) -> Generator[None]:
-    """Isolate file stores AND provide a per-test SQLite database.
+def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
+    """Per-test isolation using PostgreSQL with transaction rollback.
 
-    Patches the database module's engine and session factory so all code
-    (including _get_or_create_user, get_current_user, etc.) uses a
-    per-test in-memory SQLite DB.
+    Opens a connection, begins a transaction, and binds the session factory
+    to it with join_transaction_block=True. Store code calls SessionLocal()
+    and commit() normally, but commits only affect a subtransaction. After
+    the test, the outer transaction is rolled back, leaving a clean DB.
     """
-    # Set up per-test SQLite database (StaticPool so all connections share the same DB)
-    test_engine = create_engine(
-        "sqlite:///:memory:",
-        connect_args={"check_same_thread": False},
-        poolclass=StaticPool,
+    connection = _pg_engine.connect()
+    transaction = connection.begin()
+
+    test_session_factory = sessionmaker(
+        autocommit=False,
+        autoflush=False,
+        bind=connection,
+        join_transaction_mode="conditional_savepoint",
     )
-    Base.metadata.create_all(test_engine)
-    test_session_factory = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
 
     old_engine = _db_module._engine
     old_factory = _db_module._SessionLocal
 
-    _db_module._engine = test_engine
+    _db_module._engine = _pg_engine
     _db_module._SessionLocal = test_session_factory
 
     # Set up per-test file store isolation
@@ -54,6 +68,13 @@ def _isolate_stores(tmp_path: Path) -> Generator[None]:
         reset_approval_gate()
         yield
 
+    # Rollback undoes all data written during the test.
+    # The transaction may already be deassociated if a test triggered
+    # an IntegrityError (e.g. unique constraint tests), so check first.
+    if transaction.is_active:
+        transaction.rollback()
+    connection.close()
+
     # Restore
     _db_module._engine = old_engine
     _db_module._SessionLocal = old_factory
@@ -61,12 +82,11 @@ def _isolate_stores(tmp_path: Path) -> Generator[None]:
     reset_session_stores()
     reset_memory_stores()
     reset_approval_gate()
-    test_engine.dispose()
 
 
 @pytest.fixture()
 async def test_user(tmp_path: Path) -> User:
-    """Create a test user in the per-test SQLite database.
+    """Create a test user in the per-test PostgreSQL transaction.
 
     Also creates the file-store directory structure so per-user stores
     (sessions, memory, etc.) can still write files during the hybrid period.
@@ -185,93 +205,6 @@ def client(test_user: User) -> Generator[TestClient]:
         patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
         # Disable message batching in tests: the async batcher creates
         # fire-and-forget tasks that outlive the synchronous TestClient lifecycle.
-        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
-        TestClient(app) as c,
-    ):
-        yield c
-    app.dependency_overrides.clear()
-
-
-# ---------------------------------------------------------------------------
-# PostgreSQL test infrastructure
-# ---------------------------------------------------------------------------
-
-_TEST_DB_URL = "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
-
-
-@pytest.fixture(scope="session")
-def postgres_engine() -> Generator:
-    """Session-scoped Postgres engine. Uses testcontainers if available,
-    otherwise falls back to a local Postgres instance."""
-    try:
-        from testcontainers.postgres import PostgresContainer
-
-        with PostgresContainer("postgres:16-alpine") as pg:
-            engine = create_engine(pg.get_connection_url(), pool_pre_ping=True)
-            Base.metadata.create_all(engine)
-            yield engine
-            engine.dispose()
-    except Exception:
-        # Fallback: use a local Postgres if testcontainers isn't available
-        # (e.g. no Docker in CI, use services: postgres instead)
-        engine = create_engine(_TEST_DB_URL, pool_pre_ping=True)
-        Base.metadata.create_all(engine)
-        yield engine
-        engine.dispose()
-
-
-@pytest.fixture()
-def db_session(postgres_engine: object) -> Generator[Session]:
-    """Function-scoped DB session with savepoint rollback for test isolation."""
-    connection = postgres_engine.connect()  # type: ignore[union-attr]
-    transaction = connection.begin()
-    session_factory = sessionmaker(bind=connection)
-    session = session_factory()
-
-    # Start a nested savepoint so the test can commit within the session
-    session.begin_nested()
-
-    yield session
-
-    session.close()
-    transaction.rollback()
-    connection.close()
-
-
-@pytest.fixture()
-def db_test_user(db_session: Session) -> User:
-    """Create a User row in the test database."""
-    user = User(
-        user_id="test-user-001",
-        phone="+15551234567",
-        channel_identifier="123456789",
-        preferred_channel="telegram",
-        onboarding_complete=True,
-    )
-    db_session.add(user)
-    db_session.flush()
-    return user
-
-
-@pytest.fixture()
-def db_client(db_session: Session, db_test_user: User) -> Generator[TestClient]:
-    """FastAPI test client with DB session and user overrides."""
-
-    def _override_get_db() -> Generator[Session]:
-        yield db_session
-
-    def _override_get_current_user() -> User:
-        return db_test_user
-
-    webhook_rate_limiter.reset()
-    app.dependency_overrides[get_db] = _override_get_db
-    app.dependency_overrides[get_current_user] = _override_get_current_user
-    with (
-        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
-        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
-        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_ids", "*"),
-        patch("backend.app.channels.telegram.settings.telegram_allowed_usernames", ""),
-        patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
         patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
         TestClient(app) as c,
     ):

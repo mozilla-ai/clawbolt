@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.client_db import EstimateStore, make_client_slug
+from backend.app.agent.client_db import ClientStore, EstimateStore, make_client_slug
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.agent.tools.names import ToolName
@@ -107,6 +107,16 @@ def create_estimate_tools(
             )
             or None
         )
+
+        # Ensure client record exists when client info is provided
+        if client_slug and client_name:
+            client_store = ClientStore(user.id)
+            existing = await client_store.get(client_slug)
+            if existing is None:
+                await client_store.create(
+                    name=client_name,
+                    address=client_address or "",
+                )
 
         # Create estimate via store
         estimate_store = EstimateStore(user.id)

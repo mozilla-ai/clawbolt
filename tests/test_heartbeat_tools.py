@@ -2,6 +2,7 @@
 
 import pytest
 
+import backend.app.database as _db_module
 from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.tools.heartbeat_tools import create_heartbeat_tools
 from backend.app.models import User
@@ -136,7 +137,7 @@ async def test_remove_heartbeat_item_not_found(
     """remove_heartbeat_item should handle missing IDs."""
     tools = create_heartbeat_tools(test_user.id)
     remove_item = tools[2].function
-    result = await remove_item(item_id=999)
+    result = await remove_item(item_id="999")
     assert "not found" in result.content
     assert result.is_error is True
 
@@ -151,15 +152,27 @@ async def test_remove_scoped_to_user(
     Attempting to remove an ID that does not exist in the current user's
     heartbeat should return not-found.
     """
-    other_store = HeartbeatStore("99")
+    # Create other user in DB so FK constraints are satisfied
+    db = _db_module.SessionLocal()
+    try:
+        other_user = User(user_id="hb-other-99", phone="+15559999999")
+        db.add(other_user)
+        db.commit()
+        db.refresh(other_user)
+        other_id = other_user.id
+        db.expunge(other_user)
+    finally:
+        db.close()
+
+    other_store = HeartbeatStore(other_id)
     await other_store.add_heartbeat_item(description="Other's item", schedule="daily")
     other_items = await other_store.get_heartbeat_items()
     assert len(other_items) == 1
 
-    # Use an ID that definitely does not exist in test_user's HEARTBEAT.md
+    # Use an ID that definitely does not exist in test_user's heartbeat
     tools = create_heartbeat_tools(test_user.id)
     remove_item = tools[2].function
-    result = await remove_item(item_id=9999)
+    result = await remove_item(item_id="9999")
     assert "not found" in result.content
     assert result.is_error is True
 

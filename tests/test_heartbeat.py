@@ -10,9 +10,6 @@ import pytest
 from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
 
 import backend.app.database as _db_module
-from backend.app.agent.file_store import (
-    UserData,
-)
 from backend.app.agent.heartbeat import (
     _NON_PUSHABLE_CHANNELS,
     COMPOSE_MESSAGE_TOOL,
@@ -43,23 +40,39 @@ from tests.mocks.llm import make_text_response, make_tool_call_response
 
 @pytest.fixture()
 def user() -> User:
-    return User(
-        id="1",
-        user_id="hb-user-001",
-        phone="+15559990000",
-        onboarding_complete=True,
-    )
+    db = _db_module.SessionLocal()
+    try:
+        u = User(
+            user_id="hb-user-001",
+            phone="+15559990000",
+            onboarding_complete=True,
+        )
+        db.add(u)
+        db.commit()
+        db.refresh(u)
+        db.expunge(u)
+        return u
+    finally:
+        db.close()
 
 
 @pytest.fixture()
 def user_with_timezone() -> User:
-    return User(
-        id="3",
-        user_id="hb-user-003",
-        phone="+15559990002",
-        timezone="America/Los_Angeles",
-        onboarding_complete=True,
-    )
+    db = _db_module.SessionLocal()
+    try:
+        u = User(
+            user_id="hb-user-003",
+            phone="+15559990002",
+            timezone="America/Los_Angeles",
+            onboarding_complete=True,
+        )
+        db.add(u)
+        db.commit()
+        db.refresh(u)
+        db.expunge(u)
+        return u
+    finally:
+        db.close()
 
 
 def _make_heartbeat_tool_call(
@@ -924,18 +937,27 @@ class TestGetDailyHeartbeatCount:
         """Logs from other users should not count."""
         from backend.app.agent.stores import HeartbeatStore
 
-        other = UserData(
-            id="60",
-            user_id="hb-other",
-            phone="+15551112222",
-            onboarding_complete=True,
-        )
+        # Create other user in DB so FK constraints are satisfied
+        db = _db_module.SessionLocal()
+        try:
+            other_user = User(
+                user_id="hb-other",
+                phone="+15551112222",
+                onboarding_complete=True,
+            )
+            db.add(other_user)
+            db.commit()
+            db.refresh(other_user)
+            other_id = other_user.id
+            db.expunge(other_user)
+        finally:
+            db.close()
 
-        other_store = HeartbeatStore(other.id)
+        other_store = HeartbeatStore(other_id)
         await other_store.log_heartbeat()
 
         assert await get_daily_heartbeat_count(user.id) == 0
-        assert await get_daily_heartbeat_count(other.id) == 1
+        assert await get_daily_heartbeat_count(other_id) == 1
 
 
 # ---------------------------------------------------------------------------
