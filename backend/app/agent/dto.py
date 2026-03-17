@@ -12,7 +12,7 @@ import re
 from pydantic import BaseModel, Field
 
 from backend.app.config import settings
-from backend.app.enums import EstimateStatus, HeartbeatSchedule, HeartbeatStatus, InvoiceStatus
+from backend.app.enums import EstimateStatus, HeartbeatStatus, InvoiceStatus
 
 
 class UserData(BaseModel):
@@ -162,7 +162,7 @@ class HeartbeatItemData(BaseModel):
     id: str = ""
     user_id: str = ""
     description: str = ""
-    schedule: str = HeartbeatSchedule.DAILY
+    schedule: str = "30m"
     active_hours: str = ""
     last_triggered_at: str | None = None
     status: str = HeartbeatStatus.ACTIVE

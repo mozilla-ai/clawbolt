@@ -146,7 +146,7 @@ async def _lookup_customer_id(
 ) -> tuple[str | None, str | None]:
     """Look up a customer by name. Returns (customer_id, error_message)."""
     try:
-        escaped = customer_name.replace("'", "\\'")
+        escaped = customer_name.replace("'", "''")
         rows = await qb_service.query(
             f"SELECT Id, DisplayName FROM Customer WHERE DisplayName = '{escaped}'"
         )
@@ -183,12 +183,42 @@ def create_quickbooks_tools(
 ) -> list[Tool]:
     """Create QuickBooks-related tools for the agent."""
 
+    # Entities allowed in qb_query to prevent exfiltration of sensitive data
+    _ALLOWED_ENTITIES = {
+        "INVOICE",
+        "ESTIMATE",
+        "CUSTOMER",
+        "ITEM",
+        "PAYMENT",
+        "BILL",
+        "VENDOR",
+        "SALESRECEIPT",
+        "CREDITMEMO",
+        "PURCHASEORDER",
+        "TIMEACTIVITY",
+        "DEPOSIT",
+        "TRANSFER",
+        "JOURNALENTRY",
+    }
+
     async def qb_query(query: str) -> ToolResult:
         """Run a read-only query against QuickBooks Online."""
         normalized = query.strip()
         if not normalized.upper().startswith("SELECT"):
             return ToolResult(
                 content="Only SELECT queries are supported.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        # Validate entity type against allowlist
+        import re as _re
+
+        entity_match = _re.search(r"\bFROM\s+(\w+)", normalized, _re.IGNORECASE)
+        if entity_match and entity_match.group(1).upper() not in _ALLOWED_ENTITIES:
+            return ToolResult(
+                content=f"Querying '{entity_match.group(1)}' is not allowed. "
+                f"Allowed entities: {', '.join(sorted(_ALLOWED_ENTITIES))}",
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
@@ -344,9 +374,18 @@ def create_quickbooks_tools(
 
     async def qb_estimate_to_invoice(estimate_id: str) -> ToolResult:
         """Convert a QuickBooks estimate to an invoice."""
+        # Validate estimate_id is numeric (QBO IDs are numeric strings)
+        if not estimate_id.strip().isdigit():
+            return ToolResult(
+                content=f"Invalid estimate ID '{estimate_id}'. QuickBooks IDs must be numeric.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
         # Load the estimate to get its details
         try:
-            rows = await qb_service.query(f"SELECT * FROM Estimate WHERE Id = '{estimate_id}'")
+            safe_id = estimate_id.strip()
+            rows = await qb_service.query(f"SELECT * FROM Estimate WHERE Id = '{safe_id}'")
         except Exception as exc:
             return ToolResult(
                 content=f"Failed to load estimate: {exc}",

@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -14,16 +14,32 @@ from backend.app.routers.user_tools import (
     _get_auto_disabled_groups,
 )
 
+
+def _mock_valid_token() -> MagicMock:
+    """Create a mock token with valid access_token and refresh_token."""
+    token = MagicMock()
+    token.access_token = "valid-access-token"
+    token.refresh_token = "valid-refresh-token"
+    token.expires_at = None
+    return token
+
+
 # ---------------------------------------------------------------------------
 # _get_auto_disabled_groups
 # ---------------------------------------------------------------------------
 
 
 def test_auto_disabled_when_qb_connected(test_user: User) -> None:
-    """Should return estimate, invoice, email when QB is connected."""
-    with patch(
-        "backend.app.routers.user_tools.oauth_service.is_connected",
-        return_value=True,
+    """Should return estimate, invoice, email when QB is connected with valid token."""
+    with (
+        patch(
+            "backend.app.routers.user_tools.oauth_service.is_connected",
+            return_value=True,
+        ),
+        patch(
+            "backend.app.routers.user_tools.oauth_service.load_token",
+            return_value=_mock_valid_token(),
+        ),
     ):
         result = _get_auto_disabled_groups(test_user.id)
 
@@ -176,6 +192,10 @@ async def test_get_tool_config_shows_auto_disabled(
             patch(
                 "backend.app.routers.user_tools.oauth_service.is_connected",
                 return_value=True,
+            ),
+            patch(
+                "backend.app.routers.user_tools.oauth_service.load_token",
+                return_value=_mock_valid_token(),
             ),
         ):
             client = TestClient(app)

@@ -200,8 +200,13 @@ class SessionStore:
                 db.add(cs)
                 db.flush()
 
-            # Calculate next seq
-            max_seq: int = db.query(func.max(Message.seq)).filter_by(session_id=cs.id).scalar() or 0
+            # Calculate next seq (lock the session row to prevent concurrent duplicates)
+            max_seq: int = (
+                db.query(func.max(Message.seq))
+                .filter_by(session_id=cs.id)
+                .with_for_update()
+                .scalar()
+            ) or 0
             seq = max_seq + 1
             now = datetime.datetime.now(datetime.UTC)
 

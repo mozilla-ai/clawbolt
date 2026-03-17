@@ -217,7 +217,7 @@ class EstimateStore:
         from sqlalchemy.orm import Session as SASession
 
         assert isinstance(db, SASession)
-        estimates = db.query(Estimate.id).filter_by(user_id=self.user_id).all()
+        estimates = db.query(Estimate.id).filter_by(user_id=self.user_id).with_for_update().all()
         max_num = 0
         for (eid,) in estimates:
             if eid.startswith("EST-"):
@@ -245,7 +245,7 @@ class EstimateStore:
             estimate = Estimate(
                 id=eid,
                 user_id=self.user_id,
-                client_id=client_id or "",
+                client_id=client_id or None,
                 description=description,
                 total_amount=total_amount,
                 status=status,
@@ -331,11 +331,11 @@ class InvoiceStore:
             db.close()
 
     def _next_invoice_number(self, db: object) -> int:
-        """Get the next sequential invoice number (globally unique)."""
+        """Get the next sequential invoice number (globally unique across all users)."""
         from sqlalchemy.orm import Session as SASession
 
         assert isinstance(db, SASession)
-        invoices = db.query(Invoice.id).all()
+        invoices = db.query(Invoice.id).with_for_update().all()
         max_num = 0
         for (iid,) in invoices:
             if iid.startswith("INV-"):
@@ -366,7 +366,7 @@ class InvoiceStore:
             invoice = Invoice(
                 id=iid,
                 user_id=self.user_id,
-                client_id=client_id or "",
+                client_id=client_id or None,
                 description=description,
                 total_amount=total_amount,
                 status=status,

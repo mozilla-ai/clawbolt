@@ -10,9 +10,9 @@ from datetime import UTC, datetime
 from sqlalchemy import (
     Boolean,
     DateTime,
-    Float,
     ForeignKey,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -176,9 +176,19 @@ class Client(Base):
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
     user: Mapped["User"] = relationship("User", back_populates="clients")
-    estimates: Mapped[list["Estimate"]] = relationship("Estimate", back_populates="client")
-    invoices: Mapped[list["Invoice"]] = relationship("Invoice", back_populates="client")
+    estimates: Mapped[list["Estimate"]] = relationship(
+        "Estimate", back_populates="client", cascade="all, delete-orphan"
+    )
+    invoices: Mapped[list["Invoice"]] = relationship(
+        "Invoice", back_populates="client", cascade="all, delete-orphan"
+    )
 
 
 class Estimate(Base):
@@ -186,15 +196,24 @@ class Estimate(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
-    client_id: Mapped[str] = mapped_column(
-        String, ForeignKey("clients.id"), index=True, nullable=True, default=""
+    client_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        default=None,
     )
     description: Mapped[str] = mapped_column(Text, default="")
-    total_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    total_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
     status: Mapped[str] = mapped_column(String, default="draft")
     pdf_url: Mapped[str] = mapped_column(String, default="")
     storage_path: Mapped[str] = mapped_column(String, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="estimates")
     client: Mapped["Client | None"] = relationship("Client", back_populates="estimates")
@@ -208,12 +227,12 @@ class EstimateLineItem(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     estimate_id: Mapped[str] = mapped_column(
-        String, ForeignKey("estimates.id"), index=True, nullable=False
+        String, ForeignKey("estimates.id", ondelete="CASCADE"), index=True, nullable=False
     )
     description: Mapped[str] = mapped_column(Text, default="")
-    quantity: Mapped[float] = mapped_column(Float, default=1.0)
-    unit_price: Mapped[float] = mapped_column(Float, default=0.0)
-    total: Mapped[float] = mapped_column(Float, default=0.0)
+    quantity: Mapped[float] = mapped_column(Numeric(12, 2), default=1.0)
+    unit_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
+    total: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
 
     estimate: Mapped["Estimate"] = relationship("Estimate", back_populates="line_items")
 
@@ -223,11 +242,15 @@ class Invoice(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     user_id: Mapped[str] = mapped_column(String, ForeignKey("users.id"), index=True, nullable=False)
-    client_id: Mapped[str] = mapped_column(
-        String, ForeignKey("clients.id"), index=True, nullable=True, default=""
+    client_id: Mapped[str | None] = mapped_column(
+        String,
+        ForeignKey("clients.id", ondelete="SET NULL"),
+        index=True,
+        nullable=True,
+        default=None,
     )
     description: Mapped[str] = mapped_column(Text, default="")
-    total_amount: Mapped[float] = mapped_column(Float, default=0.0)
+    total_amount: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
     status: Mapped[str] = mapped_column(String, default="draft")
     pdf_url: Mapped[str] = mapped_column(String, default="")
     storage_path: Mapped[str] = mapped_column(String, default="")
@@ -237,10 +260,15 @@ class Invoice(Base):
     )
     notes: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="invoices")
     client: Mapped["Client | None"] = relationship("Client", back_populates="invoices")
-    estimate: Mapped["Estimate | None"] = relationship("Estimate")
+    estimate: Mapped["Estimate | None"] = relationship("Estimate", viewonly=True)
     line_items: Mapped[list["InvoiceLineItem"]] = relationship(
         "InvoiceLineItem", back_populates="invoice", cascade="all, delete-orphan"
     )
@@ -251,12 +279,12 @@ class InvoiceLineItem(Base):
 
     id: Mapped[str] = mapped_column(String, primary_key=True)
     invoice_id: Mapped[str] = mapped_column(
-        String, ForeignKey("invoices.id"), index=True, nullable=False
+        String, ForeignKey("invoices.id", ondelete="CASCADE"), index=True, nullable=False
     )
     description: Mapped[str] = mapped_column(Text, default="")
-    quantity: Mapped[float] = mapped_column(Float, default=1.0)
-    unit_price: Mapped[float] = mapped_column(Float, default=0.0)
-    total: Mapped[float] = mapped_column(Float, default=0.0)
+    quantity: Mapped[float] = mapped_column(Numeric(12, 2), default=1.0)
+    unit_price: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
+    total: Mapped[float] = mapped_column(Numeric(12, 2), default=0.0)
 
     invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="line_items")
 
@@ -339,7 +367,7 @@ class LLMUsageLog(Base):
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
-    cost: Mapped[float] = mapped_column(Float, default=0.0)
+    cost: Mapped[float] = mapped_column(Numeric(12, 6), default=0.0)
     purpose: Mapped[str] = mapped_column(String, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 

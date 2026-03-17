@@ -117,7 +117,7 @@ async def test_generate_invoice_pdf_generated(
         line_items=[{"description": "Service call", "quantity": 1, "unit_price": 150.00}],
     )
 
-    assert ".pdf" in result.content
+    assert "PDF saved" in result.content
 
     store = InvoiceStore(test_user.id)
     invoices = await store.list_all()
@@ -445,7 +445,7 @@ def test_serve_invoice_pdf_endpoint(client: TestClient, test_user: User, tmp_pat
 
 def test_serve_invoice_pdf_not_found(client: TestClient) -> None:
     """GET /api/invoices/{id}/pdf should return 404 for missing invoice."""
-    response = client.get("/api/invoices/99999/pdf")
+    response = client.get("/api/invoices/INV-9999/pdf")
     assert response.status_code == 404
 
 

@@ -1,6 +1,7 @@
 import asyncio
 import io
 from dataclasses import dataclass
+from xml.sax.saxutils import escape as _xml_escape
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -63,31 +64,33 @@ def _build_pdf(data: EstimatePDFData) -> bytes:
     elements.append(Paragraph("ESTIMATE", title_style))
     elements.append(Spacer(1, PDF_SPACER_SMALL))
 
-    # User info
+    # User info -- escape user-provided strings to prevent ReportLab XML parse errors
     info_style = styles["Normal"]
-    elements.append(Paragraph(f"<b>{data.owner_name}</b>", info_style))
+    elements.append(Paragraph(f"<b>{_xml_escape(data.owner_name)}</b>", info_style))
     if data.owner_trade:
-        elements.append(Paragraph(data.owner_trade, info_style))
+        elements.append(Paragraph(_xml_escape(data.owner_trade), info_style))
     if data.owner_phone:
-        elements.append(Paragraph(data.owner_phone, info_style))
+        elements.append(Paragraph(_xml_escape(data.owner_phone), info_style))
     elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Date and estimate number
-    elements.append(Paragraph(f"Date: {data.estimate_date}", info_style))
-    elements.append(Paragraph(f"Estimate #: {data.estimate_number}", info_style))
+    elements.append(Paragraph(f"Date: {_xml_escape(data.estimate_date)}", info_style))
+    elements.append(Paragraph(f"Estimate #: {_xml_escape(data.estimate_number)}", info_style))
     elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Client info
     if data.client_name:
-        elements.append(Paragraph(f"<b>For:</b> {data.client_name}", info_style))
+        elements.append(Paragraph(f"<b>For:</b> {_xml_escape(data.client_name)}", info_style))
     if data.client_address:
-        elements.append(Paragraph(data.client_address, info_style))
+        elements.append(Paragraph(_xml_escape(data.client_address), info_style))
     if data.client_name or data.client_address:
         elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Description
     if data.description:
-        elements.append(Paragraph(f"<b>Description:</b> {data.description}", info_style))
+        elements.append(
+            Paragraph(f"<b>Description:</b> {_xml_escape(data.description)}", info_style)
+        )
         elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Line items table
@@ -152,7 +155,7 @@ def _build_pdf(data: EstimatePDFData) -> bytes:
     if data.terms:
         elements.append(Spacer(1, PDF_SPACER_LARGE))
         elements.append(Paragraph("<b>Terms:</b>", info_style))
-        elements.append(Paragraph(data.terms, info_style))
+        elements.append(Paragraph(_xml_escape(data.terms), info_style))
 
     doc.build(elements)
     return buf.getvalue()
@@ -205,33 +208,35 @@ def _build_invoice_pdf(data: InvoicePDFData) -> bytes:
     elements.append(Paragraph("INVOICE", title_style))
     elements.append(Spacer(1, PDF_SPACER_SMALL))
 
-    # User info
+    # User info -- escape user-provided strings to prevent ReportLab XML parse errors
     info_style = styles["Normal"]
-    elements.append(Paragraph(f"<b>{data.owner_name}</b>", info_style))
+    elements.append(Paragraph(f"<b>{_xml_escape(data.owner_name)}</b>", info_style))
     if data.owner_trade:
-        elements.append(Paragraph(data.owner_trade, info_style))
+        elements.append(Paragraph(_xml_escape(data.owner_trade), info_style))
     if data.owner_phone:
-        elements.append(Paragraph(data.owner_phone, info_style))
+        elements.append(Paragraph(_xml_escape(data.owner_phone), info_style))
     elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Date and invoice number
-    elements.append(Paragraph(f"Date: {data.invoice_date}", info_style))
-    elements.append(Paragraph(f"Invoice #: {data.invoice_number}", info_style))
+    elements.append(Paragraph(f"Date: {_xml_escape(data.invoice_date)}", info_style))
+    elements.append(Paragraph(f"Invoice #: {_xml_escape(data.invoice_number)}", info_style))
     if data.due_date:
-        elements.append(Paragraph(f"Due Date: {data.due_date}", info_style))
+        elements.append(Paragraph(f"Due Date: {_xml_escape(data.due_date)}", info_style))
     elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Client info
     if data.client_name:
-        elements.append(Paragraph(f"<b>Bill To:</b> {data.client_name}", info_style))
+        elements.append(Paragraph(f"<b>Bill To:</b> {_xml_escape(data.client_name)}", info_style))
     if data.client_address:
-        elements.append(Paragraph(data.client_address, info_style))
+        elements.append(Paragraph(_xml_escape(data.client_address), info_style))
     if data.client_name or data.client_address:
         elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Description
     if data.description:
-        elements.append(Paragraph(f"<b>Description:</b> {data.description}", info_style))
+        elements.append(
+            Paragraph(f"<b>Description:</b> {_xml_escape(data.description)}", info_style)
+        )
         elements.append(Spacer(1, PDF_SPACER_SMALL))
 
     # Line items table
@@ -296,7 +301,7 @@ def _build_invoice_pdf(data: InvoicePDFData) -> bytes:
     if data.notes:
         elements.append(Spacer(1, PDF_SPACER_LARGE))
         elements.append(Paragraph("<b>Notes:</b>", info_style))
-        elements.append(Paragraph(data.notes, info_style))
+        elements.append(Paragraph(_xml_escape(data.notes), info_style))
 
     doc.build(elements)
     return buf.getvalue()

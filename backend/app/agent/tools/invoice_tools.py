@@ -5,12 +5,13 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.client_db import EstimateStore, InvoiceStore, make_client_slug
+from backend.app.agent.client_db import ClientStore, EstimateStore, InvoiceStore, make_client_slug
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.file_tools import build_folder_path
 from backend.app.agent.tools.names import ToolName
@@ -36,17 +37,23 @@ class InvoiceLineItemParams(BaseModel):
     unit_price: float = Field(ge=0, description="Price per unit")
 
 
+_DATE_RE = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 class GenerateInvoiceParams(BaseModel):
     """Parameters for the generate_invoice tool."""
 
     description: str = Field(description="Brief description of the work")
     line_items: list[InvoiceLineItemParams] = Field(
         description="Line items for the invoice",
+        min_length=1,
     )
     client_name: str | None = Field(default=None, description="Client name (optional)")
     client_address: str | None = Field(default=None, description="Client address (optional)")
     due_date: str | None = Field(
-        default=None, description="Due date in YYYY-MM-DD format (optional)"
+        default=None,
+        description="Due date in YYYY-MM-DD format (optional)",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
     )
     notes: str | None = Field(default=None, description="Additional notes (optional)")
 
@@ -56,7 +63,9 @@ class ConvertEstimateToInvoiceParams(BaseModel):
 
     estimate_id: str = Field(description="Estimate ID to convert (e.g. EST-0001)")
     due_date: str | None = Field(
-        default=None, description="Due date in YYYY-MM-DD format (optional)"
+        default=None,
+        description="Due date in YYYY-MM-DD format (optional)",
+        pattern=r"^\d{4}-\d{2}-\d{2}$",
     )
     notes: str | None = Field(default=None, description="Additional notes (optional)")
 
@@ -200,7 +209,7 @@ def create_invoice_tools(
         invoice_number = invoice.id
 
         # Generate and save PDF
-        pdf_path = await _generate_invoice_pdf_and_save(
+        await _generate_invoice_pdf_and_save(
             user=user,
             invoice_id=invoice_number,
             description=description,
@@ -220,7 +229,7 @@ def create_invoice_tools(
             content=(
                 f"Invoice {invoice_number} generated for ${total_amount:,.2f}. "
                 f"{len(processed_items)} line item(s). "
-                f"PDF saved at {pdf_path}. "
+                f"PDF saved. "
                 f"Use send_media_reply to send it to the user."
             )
         )
@@ -278,12 +287,18 @@ def create_invoice_tools(
         invoice_number = invoice.id
         client_slug = estimate.client_id or None
 
-        # Resolve client name/address for PDF (not stored on estimate directly)
+        # Resolve client name/address for PDF from client record
         client_name = None
         client_address = None
+        if estimate.client_id:
+            client_store = ClientStore(user.id)
+            client_data = await client_store.get(estimate.client_id)
+            if client_data:
+                client_name = client_data.name or None
+                client_address = client_data.address or None
 
         # Generate and save PDF
-        pdf_path = await _generate_invoice_pdf_and_save(
+        await _generate_invoice_pdf_and_save(
             user=user,
             invoice_id=invoice_number,
             description=estimate.description,
@@ -304,7 +319,7 @@ def create_invoice_tools(
                 f"Invoice {invoice_number} created from estimate {estimate_id} "
                 f"for ${estimate.total_amount:,.2f}. "
                 f"{len(processed_items)} line item(s). "
-                f"PDF saved at {pdf_path}. "
+                f"PDF saved. "
                 f"Use send_media_reply to send it to the user."
             )
         )

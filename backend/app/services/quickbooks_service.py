@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -113,15 +113,25 @@ class QuickBooksOnlineService(QuickBooksService):
                 return value
         return []
 
+    _ALLOWED_ENTITY_TYPES: ClassVar[set[str]] = {"Customer", "Estimate", "Invoice"}
+
     async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        if entity_type not in self._ALLOWED_ENTITY_TYPES:
+            msg = (
+                f"Entity type '{entity_type}' is not allowed. Allowed: {self._ALLOWED_ENTITY_TYPES}"
+            )
+            raise ValueError(msg)
         path = f"/{entity_type.lower()}"
         result = await self._request("POST", path, json=data)
         # QBO wraps the created entity under the entity type key
         return result.get(entity_type, result)
 
     async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
+        if not invoice_id.strip().isdigit():
+            msg = f"Invalid invoice_id '{invoice_id}'. QuickBooks IDs must be numeric."
+            raise ValueError(msg)
         return await self._request(
             "POST",
-            f"/invoice/{invoice_id}/send",
+            f"/invoice/{invoice_id.strip()}/send",
             params={"sendTo": email},
         )

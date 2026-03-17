@@ -28,7 +28,10 @@ logger = logging.getLogger(__name__)
 class SendDocumentEmailParams(BaseModel):
     """Parameters for the send_document_email tool."""
 
-    recipient_email: str = Field(description="Email address to send to")
+    recipient_email: str = Field(
+        description="Email address to send to",
+        pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
+    )
     document_type: Literal["estimate", "invoice"] = Field(description="Type of document to send")
     document_id: str = Field(description="Document ID (e.g. EST-0001 or INV-0001)")
     subject: str | None = Field(
@@ -93,10 +96,17 @@ def create_email_tools(user: User) -> list[Tool]:
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
-        pdf_file = Path(pdf_path)
+        pdf_file = Path(pdf_path).resolve()
+        # Verify the resolved path is under the expected PDF storage directory
+        if not pdf_file.is_relative_to(PDF_BASE_DIR.resolve()):
+            return ToolResult(
+                content="Error: PDF path is outside allowed storage directory.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
         if not pdf_file.exists():
             return ToolResult(
-                content=f"Error: PDF file not found at {pdf_path}.",
+                content=f"Error: PDF file not found for {doc_label}.",
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
@@ -136,20 +146,20 @@ def create_email_tools(user: User) -> list[Tool]:
             )
 
         # Update document status to "sent" if still draft
+        status_updated = False
         if document_type == "estimate":
-            est_store = EstimateStore(user.id)
-            est = await est_store.get(document_id)
+            est = await store.get(document_id)
             if est and est.status == EstimateStatus.DRAFT:
-                await est_store.update(document_id, status=EstimateStatus.SENT)
+                await store.update(document_id, status=EstimateStatus.SENT)
+                status_updated = True
         elif document_type == "invoice":
-            inv_store2 = InvoiceStore(user.id)
-            inv = await inv_store2.get(document_id)
+            inv = await inv_store.get(document_id)
             if inv and inv.status == InvoiceStatus.DRAFT:
-                await inv_store2.update(document_id, status=InvoiceStatus.SENT)
+                await inv_store.update(document_id, status=InvoiceStatus.SENT)
+                status_updated = True
 
-        return ToolResult(
-            content=(f"{doc_label} sent to {recipient_email}. Document status updated to 'sent'.")
-        )
+        status_msg = " Document status updated to 'sent'." if status_updated else ""
+        return ToolResult(content=f"{doc_label} sent to {recipient_email}.{status_msg}")
 
     return [
         Tool(

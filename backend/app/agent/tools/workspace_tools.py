@@ -128,8 +128,9 @@ def _canonical_name(relative_path: str) -> str | None:
         name = Path(relative_path).name
     except (ValueError, OSError):
         return None
-    # Only match top-level files (not memory/USER.md etc.)
-    if "/" in relative_path.replace("./", "") and name in _DB_FILE_COLUMN:
+    # Only match top-level files (not memory/USER.md, ../USER.md, etc.)
+    stripped = relative_path.lstrip("./")
+    if ("/" in stripped or relative_path.startswith("..")) and name in _DB_FILE_COLUMN:
         return None
     return name if name in _DB_FILE_COLUMN else None
 

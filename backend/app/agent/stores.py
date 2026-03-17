@@ -100,17 +100,14 @@ class HeartbeatStore:
         self.user_id = user_id
 
     def read_heartbeat_md(self) -> str:
-        """Reconstruct heartbeat markdown from DB rows (or User.heartbeat_text).
+        """Reconstruct heartbeat markdown from HeartbeatItem DB rows.
 
-        Falls back to User.heartbeat_text if present, otherwise builds
-        markdown from HeartbeatItem rows.
+        Always rebuilds from HeartbeatItem rows so that CRUD operations
+        on items are immediately reflected. Falls back to User.heartbeat_text
+        only when no items exist (e.g. freshly provisioned user).
         """
         db = SessionLocal()
         try:
-            user = db.query(User).filter_by(id=self.user_id).first()
-            if user is not None and user.heartbeat_text:
-                return user.heartbeat_text
-
             items = (
                 db.query(HeartbeatItem)
                 .filter_by(user_id=self.user_id)
@@ -118,6 +115,10 @@ class HeartbeatStore:
                 .all()
             )
             if not items:
+                # Fall back to User.heartbeat_text for freshly provisioned users
+                user = db.query(User).filter_by(id=self.user_id).first()
+                if user is not None and user.heartbeat_text:
+                    return user.heartbeat_text
                 return ""
 
             lines = ["# Heartbeat", ""]
@@ -153,9 +154,13 @@ class HeartbeatStore:
         """Insert a new HeartbeatItem row and return it as a DTO."""
         db = SessionLocal()
         try:
-            # Sequential ID: str(max_id + 1)
+            # Sequential ID: str(max_id + 1) -- lock rows to prevent races
             existing_ids = [
-                row[0] for row in db.query(HeartbeatItem.id).filter_by(user_id=self.user_id).all()
+                row[0]
+                for row in db.query(HeartbeatItem.id)
+                .filter_by(user_id=self.user_id)
+                .with_for_update()
+                .all()
             ]
             max_num = 0
             for eid in existing_ids:
@@ -299,9 +304,13 @@ class MediaStore:
         """Insert a new MediaFile row and return it as a DTO."""
         db = SessionLocal()
         try:
-            # ID generation: "media-NNN" format
+            # ID generation: "media-NNN" format -- lock rows to prevent races
             existing_ids = [
-                row[0] for row in db.query(MediaFile.id).filter_by(user_id=self.user_id).all()
+                row[0]
+                for row in db.query(MediaFile.id)
+                .filter_by(user_id=self.user_id)
+                .with_for_update()
+                .all()
             ]
             max_num = 0
             for mid in existing_ids:

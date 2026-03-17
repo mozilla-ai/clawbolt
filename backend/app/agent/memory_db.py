@@ -69,11 +69,24 @@ class MemoryStore:
 
     async def append_history(self, entry: str) -> None:
         """Append an entry to history text (equivalent of HISTORY.md)."""
+        from sqlalchemy import case as sa_case
+        from sqlalchemy import literal_column
+
         db = SessionLocal()
         try:
             doc = self._get_or_create_doc(db)
-            current = doc.history_text or ""
-            doc.history_text = current + entry + "\n"
+            # Use SQL-level concatenation to avoid lost-update races
+            suffix = entry + "\n"
+            db.query(MemoryDocument).filter_by(id=doc.id).update(
+                {
+                    MemoryDocument.history_text: sa_case(
+                        (MemoryDocument.history_text.is_(None), literal_column("''")),
+                        else_=MemoryDocument.history_text,
+                    )
+                    + suffix
+                },
+                synchronize_session="fetch",
+            )
             db.commit()
         finally:
             db.close()
