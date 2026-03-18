@@ -24,7 +24,7 @@ from fastapi.testclient import TestClient
 import backend.app.database as _db_module
 from backend.app.agent.ingestion import _get_or_create_user
 from backend.app.main import app
-from backend.app.models import ChatSession, Message, User
+from backend.app.models import ChannelRoute, ChatSession, Message, User
 
 
 @pytest.fixture()
@@ -300,5 +300,131 @@ class TestMultiChannelSingleTenant:
         try:
             all_users = db.query(User).all()
             assert len(all_users) == 1
+        finally:
+            db.close()
+
+
+class TestPremiumWebchatIdentity:
+    """Premium webchat sends sender_id = user.id (the PK).
+
+    Regression test for the bug where premium webchat messages disappeared
+    because _get_or_create_user created a phantom duplicate user instead
+    of linking to the existing JWT-authenticated user.
+    """
+
+    def test_webchat_reuses_existing_user_by_pk(self) -> None:
+        """When sender_id matches an existing user PK, reuse that user."""
+        db = _db_module.SessionLocal()
+        try:
+            user = User(user_id="google_oauth_user@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            original_id = user.id
+        finally:
+            db.close()
+
+        # Premium mode: sender_id is the user's PK (UUID)
+        with patch(
+            "backend.app.agent.ingestion.settings.premium_plugin",
+            "clawbolt_premium.plugin",
+        ):
+            resolved = asyncio.get_event_loop().run_until_complete(
+                _get_or_create_user("webchat", original_id)
+            )
+
+        assert resolved.id == original_id
+
+        # Verify no duplicate user was created
+        db = _db_module.SessionLocal()
+        try:
+            assert db.query(User).count() == 1
+        finally:
+            db.close()
+
+    def test_webchat_creates_channel_route(self) -> None:
+        """Matching by PK should also create a ChannelRoute for future lookups."""
+        db = _db_module.SessionLocal()
+        try:
+            user = User(user_id="google_oauth_user@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            original_id = user.id
+        finally:
+            db.close()
+
+        with patch(
+            "backend.app.agent.ingestion.settings.premium_plugin",
+            "clawbolt_premium.plugin",
+        ):
+            asyncio.get_event_loop().run_until_complete(
+                _get_or_create_user("webchat", original_id)
+            )
+
+        # A ChannelRoute should now exist
+        db = _db_module.SessionLocal()
+        try:
+            route = (
+                db.query(ChannelRoute)
+                .filter_by(channel="webchat", channel_identifier=original_id)
+                .first()
+            )
+            assert route is not None
+            assert route.user_id == original_id
+        finally:
+            db.close()
+
+    def test_webchat_second_message_uses_channel_route(self) -> None:
+        """After the first PK match creates a route, subsequent lookups use it."""
+        db = _db_module.SessionLocal()
+        try:
+            user = User(user_id="google_oauth_user@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            original_id = user.id
+        finally:
+            db.close()
+
+        with patch(
+            "backend.app.agent.ingestion.settings.premium_plugin",
+            "clawbolt_premium.plugin",
+        ):
+            first = asyncio.get_event_loop().run_until_complete(
+                _get_or_create_user("webchat", original_id)
+            )
+            second = asyncio.get_event_loop().run_until_complete(
+                _get_or_create_user("webchat", original_id)
+            )
+
+        assert first.id == second.id == original_id
+
+    def test_premium_skips_single_tenant_reuse(self) -> None:
+        """In premium mode, a new sender should NOT reuse the sole existing user."""
+        db = _db_module.SessionLocal()
+        try:
+            user = User(user_id="existing_premium_user@example.com")
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            existing_id = user.id
+        finally:
+            db.close()
+
+        # A truly new sender (not matching any PK) should create a new user
+        with patch(
+            "backend.app.agent.ingestion.settings.premium_plugin",
+            "clawbolt_premium.plugin",
+        ):
+            new_user = asyncio.get_event_loop().run_until_complete(
+                _get_or_create_user("telegram", "999888777")
+            )
+
+        assert new_user.id != existing_id
+
+        db = _db_module.SessionLocal()
+        try:
+            assert db.query(User).count() == 2
         finally:
             db.close()
