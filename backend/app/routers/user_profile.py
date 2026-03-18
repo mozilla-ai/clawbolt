@@ -1,6 +1,6 @@
 """Endpoints for user profile management."""
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from backend.app.auth.dependencies import get_current_user
@@ -12,9 +12,11 @@ from backend.app.schemas import (
     ChannelConfigUpdate,
     ModelConfigResponse,
     ModelConfigUpdate,
+    ProviderInfo,
     UserProfileResponse,
     UserProfileUpdate,
 )
+from backend.app.services.llm_service import get_configured_providers, get_models
 
 router = APIRouter()
 
@@ -167,3 +169,29 @@ async def update_model_config(
 
     save_persistent_config(updates)
     return _build_model_config_response()
+
+
+# ---------------------------------------------------------------------------
+# Provider / model enumeration
+# ---------------------------------------------------------------------------
+
+
+@router.get("/user/providers", response_model=list[ProviderInfo])
+async def list_providers(
+    _current_user: User = Depends(get_current_user),
+) -> list[ProviderInfo]:
+    """List available LLM providers from any-llm."""
+    return get_configured_providers()
+
+
+@router.get("/user/providers/{provider}/models")
+async def list_provider_models(
+    provider: str,
+    api_base: str | None = Query(None),
+    _current_user: User = Depends(get_current_user),
+) -> list[str]:
+    """List available models for a provider."""
+    try:
+        return await get_models(provider, api_base=api_base)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to list models: {exc}") from exc

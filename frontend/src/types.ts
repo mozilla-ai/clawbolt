@@ -160,3 +160,8 @@ export interface OAuthAuthorizeResponse {
   url: string;
   integration: string;
 }
+
+export interface ProviderInfo {
+  name: string;
+  local: boolean;
+}

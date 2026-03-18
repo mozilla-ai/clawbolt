@@ -13,6 +13,7 @@ import type {
   ModelConfigUpdate,
   OAuthAuthorizeResponse,
   OAuthStatusResponse,
+  ProviderInfo,
   SessionDetail,
   SessionListResponse,
   ToolConfigResponse,
@@ -114,6 +115,15 @@ const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
+
+  // Providers & models
+  listProviders: () => _fetch<ProviderInfo[]>('/api/user/providers'),
+  listProviderModels: (provider: string, apiBase?: string) => {
+    const params = new URLSearchParams();
+    if (apiBase) params.set('api_base', apiBase);
+    const qs = params.toString();
+    return _fetch<string[]>(`/api/user/providers/${encodeURIComponent(provider)}/models${qs ? `?${qs}` : ''}`);
+  },
 
   // Tool config
   getToolConfig: () => _fetch<ToolConfigResponse>('/api/user/tools'),

@@ -1,5 +1,7 @@
 """Tests for user profile endpoints."""
 
+from unittest.mock import AsyncMock, patch
+
 from fastapi.testclient import TestClient
 
 from backend.app.config import settings
@@ -109,3 +111,61 @@ def test_update_model_config_vision(client: TestClient) -> None:
 def test_update_model_config_empty_body(client: TestClient) -> None:
     resp = client.put("/api/user/model/config", json={})
     assert resp.status_code == 400
+
+
+# ---------------------------------------------------------------------------
+# Provider / model listing
+# ---------------------------------------------------------------------------
+
+
+def test_list_providers(client: TestClient) -> None:
+    """GET /user/providers returns the any-llm provider list."""
+    resp = client.get("/api/user/providers")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert isinstance(data, list)
+    assert len(data) > 0
+    names = [p["name"] for p in data]
+    assert "anthropic" in names
+    assert "openai" in names
+    # Hidden meta-providers should not appear
+    assert "platform" not in names
+    assert "gateway" not in names
+
+
+def test_provider_has_local_flag(client: TestClient) -> None:
+    """Providers include a local flag distinguishing local vs cloud."""
+    resp = client.get("/api/user/providers")
+    data = resp.json()
+    by_name = {p["name"]: p for p in data}
+    assert by_name["anthropic"]["local"] is False
+    assert by_name["openai"]["local"] is False
+    assert by_name["ollama"]["local"] is True
+
+
+@patch(
+    "backend.app.routers.user_profile.get_models",
+    new_callable=AsyncMock,
+)
+def test_list_provider_models(mock_get_models: AsyncMock, client: TestClient) -> None:
+    """GET /user/providers/{provider}/models returns model list."""
+    mock_get_models.return_value = ["claude-sonnet-4-20250514", "claude-haiku-4-5-20251001"]
+    resp = client.get("/api/user/providers/anthropic/models")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "claude-sonnet-4-20250514" in data
+    assert "claude-haiku-4-5-20251001" in data
+
+
+@patch(
+    "backend.app.routers.user_profile.get_models",
+    new_callable=AsyncMock,
+)
+def test_list_provider_models_error_returns_502(
+    mock_get_models: AsyncMock, client: TestClient
+) -> None:
+    """GET /user/providers/{provider}/models returns 502 on failure."""
+    mock_get_models.side_effect = RuntimeError("Connection refused")
+    resp = client.get("/api/user/providers/badprovider/models")
+    assert resp.status_code == 502
+    assert "Failed to list models" in resp.json()["detail"]

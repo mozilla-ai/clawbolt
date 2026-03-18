@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { useOutletContext, useParams, useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
@@ -7,6 +7,7 @@ import Select from '@/components/ui/select';
 import { Tabs, Tab } from '@heroui/tabs';
 import Checkbox from '@/components/ui/checkbox';
 import Field from '@/components/ui/field';
+import api from '@/api';
 import { toast } from '@/lib/toast';
 import { useModelConfig, useUpdateModelConfig, useUpdateProfile } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
@@ -76,9 +77,138 @@ export default function SettingsPage() {
 
 // --- Model Tab ---
 
+/** Hook to fetch the list of providers once and cache it. */
+function useProviders() {
+  const [providers, setProviders] = useState<{ name: string; local: boolean }[]>([]);
+  useEffect(() => {
+    api.listProviders().then(setProviders).catch(() => {});
+  }, []);
+  return providers;
+}
+
+/**
+ * Hook that fetches models whenever the provider (or apiBase for local providers) changes.
+ * Returns { models, loading, error }.
+ */
+function useProviderModels(provider: string, isLocal: boolean) {
+  const [models, setModels] = useState<string[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+
+  const fetchModels = useCallback((prov: string, base: string) => {
+    if (!prov) return;
+    setLoading(true);
+    setError('');
+    api.listProviderModels(prov, base || undefined)
+      .then((list) => { setModels(list); })
+      .catch((err) => { setError((err as Error).message); setModels([]); })
+      .finally(() => setLoading(false));
+  }, []);
+
+  // Auto-fetch for cloud providers when provider changes
+  useEffect(() => {
+    if (!provider || isLocal) { setModels([]); return; }
+    fetchModels(provider, '');
+  }, [provider, isLocal, fetchModels]);
+
+  return { models, loading, error, fetchModels };
+}
+
+/** A provider + model picker row. */
+function ProviderModelPicker({
+  providers,
+  providerValue,
+  modelValue,
+  apiBaseValue,
+  onProviderChange,
+  onModelChange,
+  onApiBaseChange,
+  showApiBase,
+  placeholderModel,
+}: {
+  providers: { name: string; local: boolean }[];
+  providerValue: string;
+  modelValue: string;
+  apiBaseValue?: string;
+  onProviderChange: (v: string) => void;
+  onModelChange: (v: string) => void;
+  onApiBaseChange?: (v: string) => void;
+  showApiBase?: boolean;
+  placeholderModel?: string;
+}) {
+  const isLocal = providers.find((p) => p.name === providerValue)?.local ?? false;
+  const { models, loading, error, fetchModels } = useProviderModels(providerValue, isLocal);
+
+  return (
+    <div className="grid gap-4">
+      <Field label="Provider">
+        <Select
+          value={providerValue}
+          onChange={(e) => {
+            onProviderChange(e.target.value);
+            onModelChange('');
+          }}
+        >
+          <option value="">Select provider...</option>
+          {providers.map((p) => (
+            <option key={p.name} value={p.name}>{p.name}</option>
+          ))}
+        </Select>
+      </Field>
+
+      {providerValue && isLocal && showApiBase && (
+        <Field label="API Base URL">
+          <div className="flex gap-2">
+            <Input
+              value={apiBaseValue ?? ''}
+              onChange={(e) => onApiBaseChange?.(e.target.value)}
+              placeholder="e.g. http://localhost:1234/v1"
+              className="flex-1"
+            />
+            <Button
+              variant="secondary"
+              onClick={() => fetchModels(providerValue, apiBaseValue ?? '')}
+              disabled={!apiBaseValue || loading}
+            >
+              {loading ? 'Fetching...' : 'Fetch Models'}
+            </Button>
+          </div>
+          <p className="text-xs text-muted-foreground mt-1">
+            Custom API endpoint for local models or proxies.
+          </p>
+        </Field>
+      )}
+
+      <Field label="Model">
+        {loading ? (
+          <Select disabled><option value="">Loading models...</option></Select>
+        ) : models.length > 0 ? (
+          <Select
+            value={modelValue}
+            onChange={(e) => onModelChange(e.target.value)}
+          >
+            <option value="">{placeholderModel ?? 'Select model...'}</option>
+            {models.map((m) => (
+              <option key={m} value={m}>{m}</option>
+            ))}
+          </Select>
+        ) : (
+          <Input
+            value={modelValue}
+            onChange={(e) => onModelChange(e.target.value)}
+            placeholder={placeholderModel ?? 'e.g. gpt-4o, claude-sonnet-4-20250514'}
+          />
+        )}
+        {error && <p className="text-xs text-danger mt-1">{error}</p>}
+      </Field>
+    </div>
+  );
+}
+
 function ModelTab() {
   const { data: config, isLoading } = useModelConfig();
   const updateConfig = useUpdateModelConfig();
+  const providers = useProviders();
 
   const [form, setForm] = useState({
     llm_provider: '',
@@ -127,27 +257,23 @@ function ModelTab() {
     );
   };
 
-  const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
-    setForm((prev) => ({ ...prev, [key]: e.target.value }));
+  const set = (key: string, value: string) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
 
   return (
     <div className="grid gap-6">
       <Card>
         <h3 className="text-sm font-medium mb-3">Primary Model</h3>
-        <div className="grid gap-4">
-          <Field label="Provider">
-            <Input value={form.llm_provider} onChange={set('llm_provider')} placeholder="e.g. openai, anthropic, openrouter" />
-          </Field>
-          <Field label="Model">
-            <Input value={form.llm_model} onChange={set('llm_model')} placeholder="e.g. gpt-4o, claude-sonnet-4-20250514" />
-          </Field>
-          <Field label="API Base URL">
-            <Input value={form.llm_api_base} onChange={set('llm_api_base')} placeholder="e.g. http://localhost:1234/v1 (optional)" />
-            <p className="text-xs text-muted-foreground mt-1">
-              Custom API endpoint for local models or proxies. Leave blank for default.
-            </p>
-          </Field>
-        </div>
+        <ProviderModelPicker
+          providers={providers}
+          providerValue={form.llm_provider}
+          modelValue={form.llm_model}
+          apiBaseValue={form.llm_api_base}
+          onProviderChange={(v) => set('llm_provider', v)}
+          onModelChange={(v) => set('llm_model', v)}
+          onApiBaseChange={(v) => set('llm_api_base', v)}
+          showApiBase
+        />
       </Card>
 
       <Card>
@@ -157,23 +283,33 @@ function ModelTab() {
         </p>
         <div className="grid gap-4">
           <Field label="Vision Model">
-            <Input value={form.vision_model} onChange={set('vision_model')} placeholder="Same as primary" />
+            <Input
+              value={form.vision_model}
+              onChange={(e) => set('vision_model', e.target.value)}
+              placeholder="Same as primary"
+            />
           </Field>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Heartbeat Provider">
-              <Input value={form.heartbeat_provider} onChange={set('heartbeat_provider')} placeholder="Same as primary" />
-            </Field>
-            <Field label="Heartbeat Model">
-              <Input value={form.heartbeat_model} onChange={set('heartbeat_model')} placeholder="Same as primary" />
-            </Field>
+          <div className="border-t pt-4">
+            <p className="text-xs font-medium mb-3">Heartbeat</p>
+            <ProviderModelPicker
+              providers={providers}
+              providerValue={form.heartbeat_provider}
+              modelValue={form.heartbeat_model}
+              onProviderChange={(v) => set('heartbeat_provider', v)}
+              onModelChange={(v) => set('heartbeat_model', v)}
+              placeholderModel="Same as primary"
+            />
           </div>
-          <div className="grid grid-cols-2 gap-4">
-            <Field label="Compaction Provider">
-              <Input value={form.compaction_provider} onChange={set('compaction_provider')} placeholder="Same as primary" />
-            </Field>
-            <Field label="Compaction Model">
-              <Input value={form.compaction_model} onChange={set('compaction_model')} placeholder="Same as primary" />
-            </Field>
+          <div className="border-t pt-4">
+            <p className="text-xs font-medium mb-3">Compaction</p>
+            <ProviderModelPicker
+              providers={providers}
+              providerValue={form.compaction_provider}
+              modelValue={form.compaction_model}
+              onProviderChange={(v) => set('compaction_provider', v)}
+              onModelChange={(v) => set('compaction_model', v)}
+              placeholderModel="Same as primary"
+            />
           </div>
         </div>
       </Card>
