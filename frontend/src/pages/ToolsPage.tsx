@@ -7,7 +7,7 @@ import { Divider } from '@heroui/divider';
 import { toast } from '@/lib/toast';
 import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect } from '@/hooks/queries';
 import api from '@/api';
-import type { ToolConfigEntry, OAuthStatusEntry, SubToolEntry } from '@/types';
+import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
 // Map tool factory names to OAuth integration names.
 const TOOL_OAUTH_MAP: Record<string, string> = {
@@ -49,9 +49,9 @@ export default function ToolsPage() {
     });
   };
 
-  const handleSubToolToggle = (tool: ToolConfigEntry, subToolName: string, enabled: boolean) => {
+  const handleSubToolToggle = (tool: ToolConfigEntryResponse, subToolName: string, enabled: boolean) => {
     // Compute the new disabled list from current sub_tools state
-    const currentlyDisabled = tool.sub_tools
+    const currentlyDisabled = (tool.sub_tools ?? [])
       .filter((st) => !st.enabled)
       .map((st) => st.name);
 
@@ -102,11 +102,11 @@ export default function ToolsPage() {
     );
   }
 
-  const coreTools = tools.filter((t: ToolConfigEntry) => t.category === 'core');
-  const domainTools = tools.filter((t: ToolConfigEntry) => t.category === 'domain');
+  const coreTools = tools.filter((t: ToolConfigEntryResponse) => t.category === 'core');
+  const domainTools = tools.filter((t: ToolConfigEntryResponse) => t.category === 'domain');
 
   // Group domain tools by domain_group, sorted by domain_group_order
-  const domainGroups: Record<string, ToolConfigEntry[]> = {};
+  const domainGroups: Record<string, ToolConfigEntryResponse[]> = {};
   const groupOrder: Record<string, number> = {};
   for (const tool of domainTools) {
     const group = tool.domain_group || 'Other';
@@ -120,7 +120,7 @@ export default function ToolsPage() {
     (a, b) => (groupOrder[a] ?? 0) - (groupOrder[b] ?? 0) || a.localeCompare(b),
   );
 
-  const renderSubTools = (tool: ToolConfigEntry) => {
+  const renderSubTools = (tool: ToolConfigEntryResponse) => {
     if (!tool.sub_tools || tool.sub_tools.length === 0) return null;
     const isExpanded = expandedTools.has(tool.name);
     return (
@@ -144,7 +144,7 @@ export default function ToolsPage() {
         </Button>
         {isExpanded && (
           <div className="ml-4 mt-1 border-l border-border pl-3 space-y-1">
-            {tool.sub_tools.map((st: SubToolEntry) => (
+            {tool.sub_tools.map((st: SubToolEntryResponse) => (
               <div key={st.name} className="flex items-center justify-between py-1">
                 <div className="flex-1 min-w-0">
                   <span className="text-xs font-mono">{st.name}</span>

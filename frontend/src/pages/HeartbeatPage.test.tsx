@@ -91,7 +91,7 @@ describe('HeartbeatPage', () => {
 
     await waitFor(() => {
       expect(mockApi.updateProfile).toHaveBeenCalled();
-      expect(mockApi.updateProfile.mock.calls[0][0]).toEqual({
+      expect(mockApi.updateProfile.mock.calls[0]?.[0]).toEqual({
         heartbeat_text: 'Updated notes',
       });
     });

@@ -1,25 +1,25 @@
 import type {
   AuthConfig,
   AuthUser,
-  ChannelConfig,
-  ChannelConfigUpdate,
   ChatAccepted,
   ChatResponse,
-  UserProfile,
+  UserProfileResponse,
   UserProfileUpdate,
-  MemoryData,
+  MemoryResponse,
   MemoryUpdate,
-  ModelConfig,
+  ChannelConfigResponse,
+  ChannelConfigUpdate,
+  ModelConfigResponse,
   ModelConfigUpdate,
   OAuthAuthorizeResponse,
   OAuthStatusResponse,
   ProviderInfo,
-  SessionDetail,
+  SessionDetailResponse,
   SessionListResponse,
   ToolConfigResponse,
   ToolConfigUpdateEntry,
 } from '@/types';
-import { getAccessToken, setAccessToken, setRefreshToken } from '@/lib/api-client';
+import client, { getAccessToken, setAccessToken, setRefreshToken } from '@/lib/api-client';
 import { tryRestoreSession as _tryRestoreSession } from '@/extensions';
 
 // --- Shared helpers ---
@@ -32,29 +32,10 @@ function _getAuthHeaders(): Record<string, string> {
   return {};
 }
 
-async function _fetch<T>(url: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(url, {
-    ...init,
-    headers: { ...init?.headers, ..._getAuthHeaders() },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const b = body as { detail?: string };
-    throw new Error(b.detail || `Request failed: ${res.status}`);
-  }
-  return res.json() as Promise<T>;
-}
-
-async function _fetchVoid(url: string, init?: RequestInit): Promise<void> {
-  const res = await fetch(url, {
-    ...init,
-    headers: { ...init?.headers, ..._getAuthHeaders() },
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({}));
-    const b = body as { detail?: string };
-    throw new Error(b.detail || `Request failed: ${res.status}`);
-  }
+/** Throw a typed Error from an openapi-fetch error body. */
+function _throwApiError(error: unknown, fallback: string): never {
+  const b = error as { detail?: string };
+  throw new Error(b.detail || fallback);
 }
 
 // --- Auth API ---
@@ -75,73 +56,126 @@ const api = {
   tryRestoreSession: _tryRestoreSession as () => Promise<AuthUser | null>,
 
   // Profile
-  getProfile: () => _fetch<UserProfile>('/api/user/profile'),
-  updateProfile: (body: UserProfileUpdate) =>
-    _fetch<UserProfile>('/api/user/profile', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+  getProfile: async () => {
+    const { data, error } = await client.GET('/api/user/profile');
+    if (error) _throwApiError(error, 'Failed to get profile');
+    return data as UserProfileResponse;
+  },
+  updateProfile: async (body: UserProfileUpdate) => {
+    const { data, error } = await client.PUT('/api/user/profile', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to update profile');
+    return data as UserProfileResponse;
+  },
 
   // Sessions
-  listSessions: (offset = 0, limit = 20) =>
-    _fetch<SessionListResponse>(`/api/user/sessions?offset=${offset}&limit=${limit}`),
-  getSession: (sessionId: string) =>
-    _fetch<SessionDetail>(`/api/user/sessions/${encodeURIComponent(sessionId)}`),
+  listSessions: async (offset = 0, limit = 20) => {
+    const { data, error } = await client.GET('/api/user/sessions', {
+      params: { query: { offset, limit } },
+    });
+    if (error) _throwApiError(error, 'Failed to list sessions');
+    return data as SessionListResponse;
+  },
+  getSession: async (sessionId: string) => {
+    const { data, error } = await client.GET('/api/user/sessions/{session_id}', {
+      params: { path: { session_id: sessionId } },
+    });
+    if (error) _throwApiError(error, 'Failed to get session');
+    return data as SessionDetailResponse;
+  },
 
   // Memory
-  getMemory: () => _fetch<MemoryData>('/api/user/memory'),
-  updateMemory: (body: MemoryUpdate) =>
-    _fetch<MemoryData>('/api/user/memory', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+  getMemory: async () => {
+    const { data, error } = await client.GET('/api/user/memory');
+    if (error) _throwApiError(error, 'Failed to get memory');
+    return data as MemoryResponse;
+  },
+  updateMemory: async (body: MemoryUpdate) => {
+    const { data, error } = await client.PUT('/api/user/memory', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to update memory');
+    return data as MemoryResponse;
+  },
 
   // Channel config
-  getChannelConfig: () => _fetch<ChannelConfig>('/api/user/channels/config'),
-  updateChannelConfig: (body: ChannelConfigUpdate) =>
-    _fetch<ChannelConfig>('/api/user/channels/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+  getChannelConfig: async () => {
+    const { data, error } = await client.GET('/api/user/channels/config');
+    if (error) _throwApiError(error, 'Failed to get channel config');
+    return data as ChannelConfigResponse;
+  },
+  updateChannelConfig: async (body: ChannelConfigUpdate) => {
+    const { data, error } = await client.PUT('/api/user/channels/config', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to update channel config');
+    return data as ChannelConfigResponse;
+  },
 
   // Model config
-  getModelConfig: () => _fetch<ModelConfig>('/api/user/model/config'),
-  updateModelConfig: (body: ModelConfigUpdate) =>
-    _fetch<ModelConfig>('/api/user/model/config', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
+  getModelConfig: async () => {
+    const { data, error } = await client.GET('/api/user/model/config');
+    if (error) _throwApiError(error, 'Failed to get model config');
+    return data as ModelConfigResponse;
+  },
+  updateModelConfig: async (body: ModelConfigUpdate) => {
+    const { data, error } = await client.PUT('/api/user/model/config', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to update model config');
+    return data as ModelConfigResponse;
+  },
 
   // Providers & models
-  listProviders: () => _fetch<ProviderInfo[]>('/api/user/providers'),
-  listProviderModels: (provider: string, apiBase?: string) => {
-    const params = new URLSearchParams();
-    if (apiBase) params.set('api_base', apiBase);
-    const qs = params.toString();
-    return _fetch<string[]>(`/api/user/providers/${encodeURIComponent(provider)}/models${qs ? `?${qs}` : ''}`);
+  listProviders: async () => {
+    const { data, error } = await client.GET('/api/user/providers');
+    if (error) _throwApiError(error, 'Failed to list providers');
+    return data as ProviderInfo[];
+  },
+  listProviderModels: async (provider: string, apiBase?: string) => {
+    const { data, error } = await client.GET('/api/user/providers/{provider}/models', {
+      params: { path: { provider }, query: { api_base: apiBase } },
+    });
+    if (error) _throwApiError(error, 'Failed to list provider models');
+    return data as string[];
   },
 
   // Tool config
-  getToolConfig: () => _fetch<ToolConfigResponse>('/api/user/tools'),
-  updateToolConfig: (tools: ToolConfigUpdateEntry[]) =>
-    _fetch<ToolConfigResponse>('/api/user/tools', {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ tools }),
-    }),
+  getToolConfig: async () => {
+    const { data, error } = await client.GET('/api/user/tools');
+    if (error) _throwApiError(error, 'Failed to get tool config');
+    return data as ToolConfigResponse;
+  },
+  updateToolConfig: async (tools: ToolConfigUpdateEntry[]) => {
+    const { data, error } = await client.PUT('/api/user/tools', {
+      body: { tools } as never,
+    });
+    if (error) _throwApiError(error, 'Failed to update tool config');
+    return data as ToolConfigResponse;
+  },
 
   // OAuth
-  getOAuthStatus: () => _fetch<OAuthStatusResponse>('/api/oauth/status'),
-  getOAuthAuthorizeUrl: (integration: string) =>
-    _fetch<OAuthAuthorizeResponse>(`/api/oauth/${encodeURIComponent(integration)}/authorize`),
-  disconnectOAuth: (integration: string) =>
-    _fetchVoid(`/api/oauth/${encodeURIComponent(integration)}`, { method: 'DELETE' }),
+  getOAuthStatus: async () => {
+    const { data, error } = await client.GET('/api/oauth/status');
+    if (error) _throwApiError(error, 'Failed to get OAuth status');
+    return data as OAuthStatusResponse;
+  },
+  getOAuthAuthorizeUrl: async (integration: string) => {
+    const { data, error } = await client.GET('/api/oauth/{integration}/authorize', {
+      params: { path: { integration } },
+    });
+    if (error) _throwApiError(error, 'Failed to get OAuth authorize URL');
+    return data as OAuthAuthorizeResponse;
+  },
+  disconnectOAuth: async (integration: string) => {
+    const { error } = await client.DELETE('/api/oauth/{integration}', {
+      params: { path: { integration } },
+    });
+    if (error) _throwApiError(error, 'Failed to disconnect OAuth');
+  },
 
-  // Chat (async: POST submits, SSE delivers reply)
+  // Chat (async: POST submits, SSE delivers reply -- stays manual)
   sendChatMessage: async (
     message: string,
     sessionId?: string,
@@ -163,11 +197,18 @@ const api = {
       }
     }
 
-    // Step 1: Submit message to bus
-    const accepted = await _fetch<ChatAccepted>('/api/user/chat', {
+    // Step 1: Submit message to bus (raw fetch for multipart/form-data)
+    const submitRes = await fetch('/api/user/chat', {
       method: 'POST',
+      headers: _getAuthHeaders(),
       body: formData,
     });
+    if (!submitRes.ok) {
+      const body = await submitRes.json().catch(() => ({}));
+      const b = body as { detail?: string };
+      throw new Error(b.detail || `Request failed: ${submitRes.status}`);
+    }
+    const accepted = (await submitRes.json()) as ChatAccepted;
 
     // Step 2: Open SSE connection to receive the reply
     return new Promise<ChatResponse>((resolve, reject) => {

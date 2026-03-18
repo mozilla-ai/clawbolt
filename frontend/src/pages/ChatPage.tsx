@@ -156,7 +156,7 @@ export default function ChatPage() {
       role: m.direction === 'inbound' ? 'user' : 'assistant',
       body: m.body,
       timestamp: new Date(m.timestamp),
-      toolInteractions: m.tool_interactions.length > 0 ? m.tool_interactions : undefined,
+      toolInteractions: m.tool_interactions && m.tool_interactions.length > 0 ? m.tool_interactions : undefined,
     }));
     setMessages(loaded);
   }, [sessionDetail]);

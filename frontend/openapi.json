@@ -1,0 +1,1757 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "Clawbolt",
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/health": {
+      "get": {
+        "summary": "Health Check",
+        "operationId": "health_check_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/auth/config": {
+      "get": {
+        "summary": "Auth Config",
+        "operationId": "auth_config_api_auth_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": true,
+                  "type": "object",
+                  "title": "Response Auth Config Api Auth Config Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/oauth/status": {
+      "get": {
+        "summary": "Get Oauth Status",
+        "description": "Return connection status for all OAuth integrations.",
+        "operationId": "get_oauth_status_api_oauth_status_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthStatusResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/oauth/{integration}/authorize": {
+      "get": {
+        "summary": "Get Authorize Url",
+        "description": "Generate an authorization URL for the given integration.",
+        "operationId": "get_authorize_url_api_oauth__integration__authorize_get",
+        "parameters": [
+          {
+            "name": "integration",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Integration"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/OAuthAuthorizeResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/oauth/callback": {
+      "get": {
+        "summary": "Oauth Callback",
+        "description": "Handle OAuth provider redirect after user authorization.\n\nThe provider redirects here with an authorization code and the state\nparameter we generated earlier. We exchange the code for tokens,\npersist them, and redirect the user to the frontend success page.",
+        "operationId": "oauth_callback_api_oauth_callback_get",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Code"
+            }
+          },
+          {
+            "name": "state",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "State"
+            }
+          },
+          {
+            "name": "realmId",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Realmid"
+            }
+          },
+          {
+            "name": "error",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Error"
+            }
+          },
+          {
+            "name": "error_description",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "default": "",
+              "title": "Error Description"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/oauth/{integration}": {
+      "delete": {
+        "summary": "Disconnect Integration",
+        "description": "Disconnect an OAuth integration by removing stored tokens.",
+        "operationId": "disconnect_integration_api_oauth__integration__delete",
+        "parameters": [
+          {
+            "name": "integration",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Integration"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "type": "string"
+                  },
+                  "title": "Response Disconnect Integration Api Oauth  Integration  Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/webhooks/telegram": {
+      "post": {
+        "summary": "Telegram Inbound",
+        "description": "Receive inbound messages from Telegram.",
+        "operationId": "telegram_inbound_api_webhooks_telegram_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/chat": {
+      "post": {
+        "tags": [
+          "webchat"
+        ],
+        "summary": "Send Chat Message",
+        "description": "Accept a message, publish to bus, return request_id for SSE.",
+        "operationId": "send_chat_message_api_user_chat_post",
+        "requestBody": {
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "$ref": "#/components/schemas/Body_send_chat_message_api_user_chat_post"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/_ChatAccepted"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/chat/events/{request_id}": {
+      "get": {
+        "tags": [
+          "webchat"
+        ],
+        "summary": "Chat Events",
+        "description": "SSE endpoint: streams tool-call events then the final reply.",
+        "operationId": "chat_events_api_user_chat_events__request_id__get",
+        "parameters": [
+          {
+            "name": "request_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Request Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/profile": {
+      "get": {
+        "summary": "Get Profile",
+        "description": "Return the current user's profile.",
+        "operationId": "get_profile_api_user_profile_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Profile",
+        "description": "Partial update of the current user's profile.",
+        "operationId": "update_profile_api_user_profile_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UserProfileUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserProfileResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/channels/config": {
+      "get": {
+        "summary": "Get Channel Config",
+        "description": "Return server-level channel configuration.",
+        "operationId": "get_channel_config_api_user_channels_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Channel Config",
+        "description": "Update server-level channel configuration.",
+        "operationId": "update_channel_config_api_user_channels_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/model/config": {
+      "get": {
+        "summary": "Get Model Config",
+        "description": "Return server-level LLM model configuration.",
+        "operationId": "get_model_config_api_user_model_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Model Config",
+        "description": "Update server-level LLM model configuration.",
+        "operationId": "update_model_config_api_user_model_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ModelConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/providers": {
+      "get": {
+        "summary": "List Providers",
+        "description": "List available LLM providers from any-llm.",
+        "operationId": "list_providers_api_user_providers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "items": {
+                    "$ref": "#/components/schemas/ProviderInfo"
+                  },
+                  "type": "array",
+                  "title": "Response List Providers Api User Providers Get"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/providers/{provider}/models": {
+      "get": {
+        "summary": "List Provider Models",
+        "description": "List available models for a provider.",
+        "operationId": "list_provider_models_api_user_providers__provider__models_get",
+        "parameters": [
+          {
+            "name": "provider",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Provider"
+            }
+          },
+          {
+            "name": "api_base",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Api Base"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  },
+                  "title": "Response List Provider Models Api User Providers  Provider  Models Get"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/sessions": {
+      "get": {
+        "summary": "List Sessions",
+        "description": "List conversation sessions for the current user.",
+        "operationId": "list_sessions_api_user_sessions_get",
+        "parameters": [
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "default": 20,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/sessions/{session_id}": {
+      "get": {
+        "summary": "Get Session",
+        "description": "Get a full conversation transcript with tool interactions.",
+        "operationId": "get_session_api_user_sessions__session_id__get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionDetailResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/memory": {
+      "get": {
+        "summary": "Get Memory",
+        "description": "Return the raw MEMORY.md content.",
+        "operationId": "get_memory_api_user_memory_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Memory",
+        "description": "Overwrite MEMORY.md with new content.",
+        "operationId": "update_memory_api_user_memory_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/MemoryUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MemoryResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/tools": {
+      "get": {
+        "summary": "Get Tool Config",
+        "description": "Return the current tool configuration for the user.",
+        "operationId": "get_tool_config_api_user_tools_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Tool Config",
+        "description": "Update tool configuration for the user.\n\nOnly domain-specific tools can be toggled. Attempts to disable\ncore tools are silently ignored.\n\nEach entry may include ``disabled_sub_tools`` to control individual\ntools within a factory group.",
+        "operationId": "update_tool_config_api_user_tools_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ToolConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ToolConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/search": {
+      "get": {
+        "summary": "Search",
+        "description": "Search across conversations and memory facts.",
+        "operationId": "search_api_search_get",
+        "parameters": [
+          {
+            "name": "q",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "minLength": 0,
+              "maxLength": 200,
+              "default": "",
+              "title": "Q"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SearchResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "Body_send_chat_message_api_user_chat_post": {
+        "properties": {
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": ""
+          },
+          "session_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Session Id"
+          },
+          "force_new": {
+            "type": "boolean",
+            "title": "Force New",
+            "default": false
+          },
+          "files": {
+            "items": {
+              "type": "string",
+              "contentMediaType": "application/octet-stream"
+            },
+            "type": "array",
+            "title": "Files",
+            "default": []
+          }
+        },
+        "type": "object",
+        "title": "Body_send_chat_message_api_user_chat_post"
+      },
+      "ChannelConfigResponse": {
+        "properties": {
+          "telegram_bot_token_set": {
+            "type": "boolean",
+            "title": "Telegram Bot Token Set"
+          },
+          "telegram_allowed_usernames": {
+            "type": "string",
+            "title": "Telegram Allowed Usernames"
+          }
+        },
+        "type": "object",
+        "required": [
+          "telegram_bot_token_set",
+          "telegram_allowed_usernames"
+        ],
+        "title": "ChannelConfigResponse"
+      },
+      "ChannelConfigUpdate": {
+        "properties": {
+          "telegram_bot_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Telegram Bot Token"
+          },
+          "telegram_allowed_usernames": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Telegram Allowed Usernames"
+          }
+        },
+        "type": "object",
+        "title": "ChannelConfigUpdate"
+      },
+      "HTTPValidationError": {
+        "properties": {
+          "detail": {
+            "items": {
+              "$ref": "#/components/schemas/ValidationError"
+            },
+            "type": "array",
+            "title": "Detail"
+          }
+        },
+        "type": "object",
+        "title": "HTTPValidationError"
+      },
+      "HealthResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "database": {
+            "type": "string",
+            "title": "Database",
+            "default": "ok"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "HealthResponse"
+      },
+      "MemoryResponse": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "MemoryResponse"
+      },
+      "MemoryUpdate": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "MemoryUpdate"
+      },
+      "ModelConfigResponse": {
+        "properties": {
+          "llm_provider": {
+            "type": "string",
+            "title": "Llm Provider"
+          },
+          "llm_model": {
+            "type": "string",
+            "title": "Llm Model"
+          },
+          "llm_api_base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Api Base"
+          },
+          "vision_model": {
+            "type": "string",
+            "title": "Vision Model"
+          },
+          "vision_provider": {
+            "type": "string",
+            "title": "Vision Provider"
+          },
+          "heartbeat_model": {
+            "type": "string",
+            "title": "Heartbeat Model"
+          },
+          "heartbeat_provider": {
+            "type": "string",
+            "title": "Heartbeat Provider"
+          },
+          "compaction_model": {
+            "type": "string",
+            "title": "Compaction Model"
+          },
+          "compaction_provider": {
+            "type": "string",
+            "title": "Compaction Provider"
+          }
+        },
+        "type": "object",
+        "required": [
+          "llm_provider",
+          "llm_model",
+          "llm_api_base",
+          "vision_model",
+          "vision_provider",
+          "heartbeat_model",
+          "heartbeat_provider",
+          "compaction_model",
+          "compaction_provider"
+        ],
+        "title": "ModelConfigResponse"
+      },
+      "ModelConfigUpdate": {
+        "properties": {
+          "llm_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Provider"
+          },
+          "llm_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Model"
+          },
+          "llm_api_base": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Llm Api Base"
+          },
+          "vision_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vision Model"
+          },
+          "vision_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Vision Provider"
+          },
+          "heartbeat_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Model"
+          },
+          "heartbeat_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Provider"
+          },
+          "compaction_model": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compaction Model"
+          },
+          "compaction_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Compaction Provider"
+          }
+        },
+        "type": "object",
+        "title": "ModelConfigUpdate"
+      },
+      "OAuthAuthorizeResponse": {
+        "properties": {
+          "url": {
+            "type": "string",
+            "title": "Url"
+          },
+          "integration": {
+            "type": "string",
+            "title": "Integration"
+          }
+        },
+        "type": "object",
+        "required": [
+          "url",
+          "integration"
+        ],
+        "title": "OAuthAuthorizeResponse"
+      },
+      "OAuthStatusEntry": {
+        "properties": {
+          "integration": {
+            "type": "string",
+            "title": "Integration"
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured"
+          },
+          "connected": {
+            "type": "boolean",
+            "title": "Connected"
+          }
+        },
+        "type": "object",
+        "required": [
+          "integration",
+          "configured",
+          "connected"
+        ],
+        "title": "OAuthStatusEntry"
+      },
+      "OAuthStatusResponse": {
+        "properties": {
+          "integrations": {
+            "items": {
+              "$ref": "#/components/schemas/OAuthStatusEntry"
+            },
+            "type": "array",
+            "title": "Integrations"
+          }
+        },
+        "type": "object",
+        "required": [
+          "integrations"
+        ],
+        "title": "OAuthStatusResponse"
+      },
+      "ProviderInfo": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "local": {
+            "type": "boolean",
+            "title": "Local"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "local"
+        ],
+        "title": "ProviderInfo"
+      },
+      "SearchResponse": {
+        "properties": {
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            },
+            "type": "array",
+            "title": "Results"
+          },
+          "query": {
+            "type": "string",
+            "title": "Query"
+          }
+        },
+        "type": "object",
+        "required": [
+          "results",
+          "query"
+        ],
+        "title": "SearchResponse"
+      },
+      "SearchResult": {
+        "properties": {
+          "type": {
+            "type": "string",
+            "title": "Type"
+          },
+          "title": {
+            "type": "string",
+            "title": "Title"
+          },
+          "preview": {
+            "type": "string",
+            "title": "Preview"
+          },
+          "url": {
+            "type": "string",
+            "title": "Url"
+          }
+        },
+        "type": "object",
+        "required": [
+          "type",
+          "title",
+          "preview",
+          "url"
+        ],
+        "title": "SearchResult"
+      },
+      "SessionDetailResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "last_message_at": {
+            "type": "string",
+            "title": "Last Message At"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "default": ""
+          },
+          "messages": {
+            "items": {
+              "$ref": "#/components/schemas/SessionMessage"
+            },
+            "type": "array",
+            "title": "Messages"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "user_id",
+          "created_at",
+          "last_message_at",
+          "is_active",
+          "messages"
+        ],
+        "title": "SessionDetailResponse"
+      },
+      "SessionListResponse": {
+        "properties": {
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionSummary"
+            },
+            "type": "array",
+            "title": "Sessions"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "offset": {
+            "type": "integer",
+            "title": "Offset"
+          },
+          "limit": {
+            "type": "integer",
+            "title": "Limit"
+          }
+        },
+        "type": "object",
+        "required": [
+          "sessions",
+          "total",
+          "offset",
+          "limit"
+        ],
+        "title": "SessionListResponse"
+      },
+      "SessionMessage": {
+        "properties": {
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          },
+          "direction": {
+            "type": "string",
+            "title": "Direction"
+          },
+          "body": {
+            "type": "string",
+            "title": "Body",
+            "default": ""
+          },
+          "timestamp": {
+            "type": "string",
+            "title": "Timestamp"
+          },
+          "tool_interactions": {
+            "items": {
+              "additionalProperties": true,
+              "type": "object"
+            },
+            "type": "array",
+            "title": "Tool Interactions"
+          }
+        },
+        "type": "object",
+        "required": [
+          "seq",
+          "direction",
+          "timestamp"
+        ],
+        "title": "SessionMessage"
+      },
+      "SessionSummary": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "start_time": {
+            "type": "string",
+            "title": "Start Time"
+          },
+          "message_count": {
+            "type": "integer",
+            "title": "Message Count"
+          },
+          "last_message_preview": {
+            "type": "string",
+            "title": "Last Message Preview",
+            "default": ""
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "start_time",
+          "message_count"
+        ],
+        "title": "SessionSummary"
+      },
+      "SubToolEntryResponse": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "enabled"
+        ],
+        "title": "SubToolEntryResponse"
+      },
+      "ToolConfigEntryResponse": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "description": {
+            "type": "string",
+            "title": "Description"
+          },
+          "category": {
+            "type": "string",
+            "title": "Category"
+          },
+          "domain_group": {
+            "type": "string",
+            "title": "Domain Group",
+            "default": ""
+          },
+          "domain_group_order": {
+            "type": "integer",
+            "title": "Domain Group Order",
+            "default": 0
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "sub_tools": {
+            "items": {
+              "$ref": "#/components/schemas/SubToolEntryResponse"
+            },
+            "type": "array",
+            "title": "Sub Tools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "description",
+          "category",
+          "enabled"
+        ],
+        "title": "ToolConfigEntryResponse"
+      },
+      "ToolConfigResponse": {
+        "properties": {
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/ToolConfigEntryResponse"
+            },
+            "type": "array",
+            "title": "Tools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tools"
+        ],
+        "title": "ToolConfigResponse"
+      },
+      "ToolConfigUpdate": {
+        "properties": {
+          "tools": {
+            "items": {
+              "$ref": "#/components/schemas/ToolConfigUpdateEntry"
+            },
+            "type": "array",
+            "title": "Tools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "tools"
+        ],
+        "title": "ToolConfigUpdate"
+      },
+      "ToolConfigUpdateEntry": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "disabled_sub_tools": {
+            "anyOf": [
+              {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Disabled Sub Tools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "enabled"
+        ],
+        "title": "ToolConfigUpdateEntry"
+      },
+      "UserProfileResponse": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "phone": {
+            "type": "string",
+            "title": "Phone"
+          },
+          "timezone": {
+            "type": "string",
+            "title": "Timezone"
+          },
+          "soul_text": {
+            "type": "string",
+            "title": "Soul Text"
+          },
+          "user_text": {
+            "type": "string",
+            "title": "User Text"
+          },
+          "heartbeat_text": {
+            "type": "string",
+            "title": "Heartbeat Text"
+          },
+          "preferred_channel": {
+            "type": "string",
+            "title": "Preferred Channel"
+          },
+          "channel_identifier": {
+            "type": "string",
+            "title": "Channel Identifier"
+          },
+          "heartbeat_opt_in": {
+            "type": "boolean",
+            "title": "Heartbeat Opt In"
+          },
+          "heartbeat_frequency": {
+            "type": "string",
+            "title": "Heartbeat Frequency"
+          },
+          "onboarding_complete": {
+            "type": "boolean",
+            "title": "Onboarding Complete"
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "updated_at": {
+            "type": "string",
+            "title": "Updated At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "phone",
+          "timezone",
+          "soul_text",
+          "user_text",
+          "heartbeat_text",
+          "preferred_channel",
+          "channel_identifier",
+          "heartbeat_opt_in",
+          "heartbeat_frequency",
+          "onboarding_complete",
+          "is_active",
+          "created_at",
+          "updated_at"
+        ],
+        "title": "UserProfileResponse"
+      },
+      "UserProfileUpdate": {
+        "properties": {
+          "phone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Phone"
+          },
+          "timezone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Timezone"
+          },
+          "soul_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Soul Text"
+          },
+          "user_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "User Text"
+          },
+          "heartbeat_text": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Text"
+          },
+          "heartbeat_opt_in": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Opt In"
+          },
+          "heartbeat_frequency": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Frequency"
+          }
+        },
+        "type": "object",
+        "title": "UserProfileUpdate"
+      },
+      "ValidationError": {
+        "properties": {
+          "loc": {
+            "items": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                }
+              ]
+            },
+            "type": "array",
+            "title": "Location"
+          },
+          "msg": {
+            "type": "string",
+            "title": "Message"
+          },
+          "type": {
+            "type": "string",
+            "title": "Error Type"
+          },
+          "input": {
+            "title": "Input"
+          },
+          "ctx": {
+            "type": "object",
+            "title": "Context"
+          }
+        },
+        "type": "object",
+        "required": [
+          "loc",
+          "msg",
+          "type"
+        ],
+        "title": "ValidationError"
+      },
+      "_ChatAccepted": {
+        "properties": {
+          "request_id": {
+            "type": "string",
+            "title": "Request Id"
+          },
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "request_id",
+          "session_id"
+        ],
+        "title": "_ChatAccepted"
+      }
+    }
+  }
+}

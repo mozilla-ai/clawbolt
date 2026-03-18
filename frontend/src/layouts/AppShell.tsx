@@ -15,11 +15,11 @@ import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import { useProfile } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
-import type { UserProfile, SessionSummary } from '@/types';
+import type { UserProfileResponse, SessionSummary } from '@/types';
 
 /** Context value provided to child routes via useOutletContext(). */
 export interface AppShellContext {
-  profile: UserProfile | null;
+  profile: UserProfileResponse | null;
   reloadProfile: () => void;
   isPremium: boolean;
   isAdmin: boolean;

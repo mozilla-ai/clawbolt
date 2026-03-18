@@ -229,7 +229,7 @@ function MessageBubble({ message }: { message: SessionMessage }) {
       >
         <p className="text-sm whitespace-pre-wrap">{message.body}</p>
 
-        {message.tool_interactions.length > 0 && (
+        {message.tool_interactions && message.tool_interactions.length > 0 && (
           <div className="mt-2 space-y-1">
             {message.tool_interactions.map((tool, i) => (
               <div
