@@ -66,6 +66,7 @@ def test_get_model_config(client: TestClient) -> None:
     assert "llm_model" in data
     assert "llm_provider" in data
     assert "vision_model" in data
+    assert "vision_provider" in data
     assert "heartbeat_model" in data
     assert "heartbeat_provider" in data
     assert "compaction_model" in data

@@ -137,6 +137,7 @@ def _build_model_config_response() -> ModelConfigResponse:
         llm_model=settings.llm_model,
         llm_api_base=settings.llm_api_base,
         vision_model=settings.vision_model,
+        vision_provider=settings.vision_provider,
         heartbeat_model=settings.heartbeat_model,
         heartbeat_provider=settings.heartbeat_provider,
         compaction_model=settings.compaction_model,

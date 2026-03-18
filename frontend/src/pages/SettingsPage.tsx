@@ -215,6 +215,7 @@ function ModelTab() {
     llm_model: '',
     llm_api_base: '',
     vision_model: '',
+    vision_provider: '',
     heartbeat_model: '',
     heartbeat_provider: '',
     compaction_model: '',
@@ -228,6 +229,7 @@ function ModelTab() {
         llm_model: config.llm_model,
         llm_api_base: config.llm_api_base ?? '',
         vision_model: config.vision_model,
+        vision_provider: config.vision_provider,
         heartbeat_model: config.heartbeat_model,
         heartbeat_provider: config.heartbeat_provider,
         compaction_model: config.compaction_model,
@@ -245,6 +247,7 @@ function ModelTab() {
         llm_model: form.llm_model,
         llm_api_base: form.llm_api_base || undefined,
         vision_model: form.vision_model,
+        vision_provider: form.vision_provider,
         heartbeat_model: form.heartbeat_model,
         heartbeat_provider: form.heartbeat_provider,
         compaction_model: form.compaction_model,
@@ -282,13 +285,17 @@ function ModelTab() {
           Leave blank to use the primary model for each task.
         </p>
         <div className="grid gap-4">
-          <Field label="Vision Model">
-            <Input
-              value={form.vision_model}
-              onChange={(e) => set('vision_model', e.target.value)}
-              placeholder="Same as primary"
+          <div>
+            <p className="text-xs font-medium mb-3">Vision</p>
+            <ProviderModelPicker
+              providers={providers}
+              providerValue={form.vision_provider}
+              modelValue={form.vision_model}
+              onProviderChange={(v) => set('vision_provider', v)}
+              onModelChange={(v) => set('vision_model', v)}
+              placeholderModel="Same as primary"
             />
-          </Field>
+          </div>
           <div className="border-t pt-4">
             <p className="text-xs font-medium mb-3">Heartbeat</p>
             <ProviderModelPicker
