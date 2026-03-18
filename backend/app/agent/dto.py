@@ -32,6 +32,8 @@ class UserData(BaseModel):
     heartbeat_opt_in: bool = True
     heartbeat_frequency: str = Field(default_factory=lambda: settings.heartbeat_default_frequency)
     folder_scheme: str = Field(default_factory=lambda: settings.default_folder_scheme)
+    llm_model: str = ""
+    llm_provider: str = ""
     created_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.UTC)
     )

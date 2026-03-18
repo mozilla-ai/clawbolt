@@ -92,6 +92,8 @@ class UserProfileResponse(BaseModel):
     channel_identifier: str
     heartbeat_opt_in: bool
     heartbeat_frequency: str
+    llm_model: str
+    llm_provider: str
     onboarding_complete: bool
     is_active: bool
     created_at: str
@@ -106,6 +108,8 @@ class UserProfileUpdate(BaseModel):
     heartbeat_text: str | None = None
     heartbeat_opt_in: bool | None = None
     heartbeat_frequency: str | None = None
+    llm_model: str | None = None
+    llm_provider: str | None = None
 
 
 # ---------------------------------------------------------------------------

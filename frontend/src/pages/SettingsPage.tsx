@@ -27,7 +27,7 @@ export default function SettingsPage() {
   }, [reloadProfile]);
 
   const extraTabs = getExtraSettingsTabs(isPremium, isAdmin);
-  const activeTab = tab || 'heartbeat';
+  const activeTab = tab || 'model';
 
   const handleTabChange = (value: string) => {
     navigate(`/app/settings/${value}`, { replace: true });
@@ -36,6 +36,7 @@ export default function SettingsPage() {
   // Build tab list
   const ossTabs = showOssSettingsTabs(isPremium)
     ? [
+        { key: 'model', label: 'Model' },
         { key: 'heartbeat', label: 'Heartbeat' },
       ]
     : [];
@@ -48,6 +49,7 @@ export default function SettingsPage() {
   const renderContent = () => {
     if (premiumContent) return premiumContent;
     switch (activeTab) {
+      case 'model': return profile ? <ModelTab profile={profile} /> : null;
       case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
       default: return null;
     }
@@ -69,6 +71,69 @@ export default function SettingsPage() {
         {renderContent()}
       </div>
     </div>
+  );
+}
+
+// --- Model Tab ---
+
+function ModelTab({
+  profile,
+}: {
+  profile: { llm_model: string; llm_provider: string };
+}) {
+  const [form, setForm] = useState({
+    llm_model: profile.llm_model,
+    llm_provider: profile.llm_provider,
+  });
+  const updateProfile = useUpdateProfile();
+
+  useEffect(() => {
+    setForm({
+      llm_model: profile.llm_model,
+      llm_provider: profile.llm_provider,
+    });
+  }, [profile.llm_model, profile.llm_provider]);
+
+  const handleSave = () => {
+    updateProfile.mutate(
+      {
+        llm_model: form.llm_model,
+        llm_provider: form.llm_provider,
+      },
+      {
+        onSuccess: () => toast.success('Model settings updated'),
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <div className="grid gap-4">
+        <p className="text-xs text-muted-foreground">
+          Override the default model and provider for your assistant. Leave blank to use the server defaults.
+        </p>
+        <Field label="Provider">
+          <Input
+            value={form.llm_provider}
+            onChange={(e) => setForm((prev) => ({ ...prev, llm_provider: e.target.value }))}
+            placeholder="e.g. openai, anthropic, openrouter"
+          />
+        </Field>
+        <Field label="Model">
+          <Input
+            value={form.llm_model}
+            onChange={(e) => setForm((prev) => ({ ...prev, llm_model: e.target.value }))}
+            placeholder="e.g. gpt-4o, claude-sonnet-4-20250514"
+          />
+        </Field>
+        <div className="flex justify-end">
+          <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
+            Save Model Settings
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }
 

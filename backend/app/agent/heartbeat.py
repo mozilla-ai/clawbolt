@@ -316,8 +316,8 @@ async def evaluate_heartbeat_need(
         except Exception:
             logger.debug("Failed to send heartbeat typing indicator to %s", chat_id)
 
-    model = settings.heartbeat_model or settings.llm_model
-    provider = settings.heartbeat_provider or settings.llm_provider
+    model = settings.heartbeat_model or user.llm_model or settings.llm_model
+    provider = settings.heartbeat_provider or user.llm_provider or settings.llm_provider
 
     response = cast(
         MessageResponse,

@@ -1962,3 +1962,46 @@ async def test_agent_empty_reply_reprompt_only_once(
     assert mock_amessages.call_count == 3  # type: ignore[union-attr]
     # Reply is empty since both attempts produced nothing
     assert response.reply_text == ""
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_uses_user_model_override(mock_amessages: object, test_user: User) -> None:
+    """Agent should use the user's llm_model/llm_provider when set."""
+    mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+
+    test_user.llm_model = "my-custom-model"
+    test_user.llm_provider = "my-custom-provider"
+
+    agent = ClawboltAgent(user=test_user)
+    await agent.process_message("Hi")
+
+    call_kwargs = mock_amessages.call_args.kwargs  # type: ignore[union-attr]
+    assert call_kwargs["model"] == "my-custom-model"
+    assert call_kwargs["provider"] == "my-custom-provider"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_falls_back_to_settings_model(mock_amessages: object, test_user: User) -> None:
+    """Agent should use global settings when user has no model override."""
+    mock_amessages.return_value = make_text_response("Hello!")  # type: ignore[union-attr]
+
+    # Ensure user fields are empty (default)
+    test_user.llm_model = ""
+    test_user.llm_provider = ""
+
+    agent = ClawboltAgent(user=test_user)
+    with patch("backend.app.agent.core.settings") as mock_settings:
+        mock_settings.llm_model = "default-model"
+        mock_settings.llm_provider = "default-provider"
+        mock_settings.llm_api_base = None
+        mock_settings.llm_max_tokens_agent = 500
+        mock_settings.max_tool_rounds = 10
+        mock_settings.llm_max_retries = 3
+        mock_settings.max_input_tokens = 120_000
+        await agent.process_message("Hi")
+
+    call_kwargs = mock_amessages.call_args.kwargs  # type: ignore[union-attr]
+    assert call_kwargs["model"] == "default-model"
+    assert call_kwargs["provider"] == "default-provider"

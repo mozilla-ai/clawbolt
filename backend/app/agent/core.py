@@ -318,10 +318,12 @@ class ClawboltAgent:
         effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
         system, msg_dicts = messages_to_messages_api(messages)
         tool_count = len(tool_schemas) if tool_schemas else 0
+        model = self.user.llm_model or settings.llm_model
+        provider = self.user.llm_provider or settings.llm_provider
         logger.debug(
             "Calling LLM: model=%s provider=%s messages=%d tools=%d max_tokens=%d",
-            settings.llm_model,
-            settings.llm_provider,
+            model,
+            provider,
             len(msg_dicts),
             tool_count,
             effective_max_tokens,
@@ -331,8 +333,8 @@ class ClawboltAgent:
                 return cast(
                     MessageResponse,
                     await amessages(
-                        model=settings.llm_model,
-                        provider=settings.llm_provider,
+                        model=model,
+                        provider=provider,
                         api_base=settings.llm_api_base,
                         system=system,
                         messages=msg_dicts,
@@ -366,8 +368,8 @@ class ClawboltAgent:
                 return cast(
                     MessageResponse,
                     await amessages(
-                        model=settings.llm_model,
-                        provider=settings.llm_provider,
+                        model=model,
+                        provider=provider,
                         api_base=settings.llm_api_base,
                         system=system,
                         messages=trimmed_dicts,
@@ -651,8 +653,9 @@ class ClawboltAgent:
             response = await self._call_llm_with_retry(
                 messages, tool_schemas, llm_kwargs, max_tokens=max_tokens
             )
+            model = self.user.llm_model or settings.llm_model
             purpose = "agent_main" if _round == 0 else "agent_followup"
-            log_llm_usage(self.user.id, settings.llm_model, response, purpose)
+            log_llm_usage(self.user.id, model, response, purpose)
             if response.usage and response.usage.input_tokens:
                 self._last_input_tokens = response.usage.input_tokens
                 _total_input_tokens += response.usage.input_tokens

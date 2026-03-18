@@ -12,6 +12,8 @@ export interface UserProfile {
   channel_identifier: string;
   heartbeat_opt_in: boolean;
   heartbeat_frequency: string;
+  llm_model: string;
+  llm_provider: string;
   onboarding_complete: boolean;
   is_active: boolean;
   created_at: string;
@@ -26,6 +28,8 @@ export interface UserProfileUpdate {
   heartbeat_text?: string;
   heartbeat_opt_in?: boolean;
   heartbeat_frequency?: string;
+  llm_model?: string;
+  llm_provider?: string;
 }
 
 export interface SessionSummary {
