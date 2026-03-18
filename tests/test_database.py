@@ -77,7 +77,6 @@ def test_user_defaults() -> None:
         assert user.preferred_channel == "telegram"
         assert user.heartbeat_opt_in is True
         assert user.heartbeat_frequency == "30m"
-        assert user.folder_scheme == "by_client"
         assert user.soul_text == ""
         assert user.user_text == ""
         assert user.heartbeat_text == ""

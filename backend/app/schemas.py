@@ -124,7 +124,6 @@ class ToolConfigEntryResponse(BaseModel):
     domain_group: str = ""
     domain_group_order: int = 0
     enabled: bool
-    auto_disabled_reason: str | None = None
 
 
 class ToolConfigResponse(BaseModel):

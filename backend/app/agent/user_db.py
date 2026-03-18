@@ -86,7 +86,6 @@ def _user_to_dto(user: User) -> UserData:
         is_active=user.is_active,
         heartbeat_opt_in=user.heartbeat_opt_in,
         heartbeat_frequency=user.heartbeat_frequency,
-        folder_scheme=user.folder_scheme,
         created_at=user.created_at,
         updated_at=user.updated_at,
     )
@@ -102,7 +101,6 @@ _USER_UPDATABLE_FIELDS: frozenset[str] = frozenset(
         "is_active",
         "heartbeat_opt_in",
         "heartbeat_frequency",
-        "folder_scheme",
         "soul_text",
         "user_text",
         "heartbeat_text",

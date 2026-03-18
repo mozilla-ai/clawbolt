@@ -42,7 +42,6 @@ class Settings(BaseSettings):
 
     # Messaging
     messaging_provider: str = "telegram"
-    default_folder_scheme: str = "by_client"
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
     telegram_allowed_chat_ids: str = (

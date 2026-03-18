@@ -14,13 +14,12 @@ from pydantic import BaseModel, Field
 from backend.app.config import settings
 
 
-def slugify(text: str, max_length: int = 50) -> str:
+def slugify(text: str, max_length: int = 60) -> str:
     """Convert text to a filesystem-safe slug."""
     slug = text.lower().strip()
     slug = re.sub(r"[^\w\s-]", "", slug)
     slug = re.sub(r"[\s_-]+", "_", slug)
-    slug = slug.strip("_")
-    return slug[:max_length]
+    return slug[:max_length].rstrip("_")
 
 
 class UserData(BaseModel):
@@ -39,7 +38,6 @@ class UserData(BaseModel):
     is_active: bool = True
     heartbeat_opt_in: bool = True
     heartbeat_frequency: str = Field(default_factory=lambda: settings.heartbeat_default_frequency)
-    folder_scheme: str = Field(default_factory=lambda: settings.default_folder_scheme)
     created_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.UTC)
     )
@@ -115,4 +113,3 @@ class ToolConfigEntry(BaseModel):
     domain_group: str = ""
     domain_group_order: int = 0
     enabled: bool = True
-    auto_disabled_reason: str | None = None

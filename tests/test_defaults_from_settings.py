@@ -14,9 +14,3 @@ def test_user_data_heartbeat_frequency_from_settings() -> None:
     """User.heartbeat_frequency should default to settings.heartbeat_default_frequency."""
     user = User()
     assert user.heartbeat_frequency == settings.heartbeat_default_frequency
-
-
-def test_user_data_folder_scheme_from_settings() -> None:
-    """User.folder_scheme should default to settings.default_folder_scheme."""
-    user = User()
-    assert user.folder_scheme == settings.default_folder_scheme

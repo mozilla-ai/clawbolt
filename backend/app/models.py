@@ -34,7 +34,6 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     heartbeat_opt_in: Mapped[bool] = mapped_column(Boolean, default=True)
     heartbeat_frequency: Mapped[str] = mapped_column(String, default="30m")
-    folder_scheme: Mapped[str] = mapped_column(String, default="by_client")
     soul_text: Mapped[str] = mapped_column(Text, default="")
     user_text: Mapped[str] = mapped_column(Text, default="")
     heartbeat_text: Mapped[str] = mapped_column(Text, default="")
@@ -58,7 +57,6 @@ class User(Base):
             "is_active": True,
             "heartbeat_opt_in": True,
             "heartbeat_frequency": settings.heartbeat_default_frequency,
-            "folder_scheme": settings.default_folder_scheme,
             "soul_text": "",
             "user_text": "",
             "heartbeat_text": "",

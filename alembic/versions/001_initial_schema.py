@@ -2,7 +2,7 @@
 
 Revision ID: 001
 Revises: None
-Create Date: 2026-03-13
+Create Date: 2026-03-18
 
 """
 
@@ -34,7 +34,6 @@ def upgrade() -> None:
         sa.Column("is_active", sa.Boolean(), server_default=sa.text("true")),
         sa.Column("heartbeat_opt_in", sa.Boolean(), server_default=sa.text("true")),
         sa.Column("heartbeat_frequency", sa.String(), server_default="30m"),
-        sa.Column("folder_scheme", sa.String(), server_default="by_client"),
         sa.Column("soul_text", sa.Text(), server_default=""),
         sa.Column("user_text", sa.Text(), server_default=""),
         sa.Column("heartbeat_text", sa.Text(), server_default=""),
@@ -95,67 +94,6 @@ def upgrade() -> None:
         sa.Column("media_urls_json", sa.Text(), server_default=""),
         sa.Column("timestamp", sa.DateTime(), nullable=False, server_default=_now),
         sa.UniqueConstraint("session_id", "seq", name="uq_message_seq"),
-    )
-
-    op.create_table(
-        "clients",
-        sa.Column("id", sa.String(), primary_key=True),
-        sa.Column(
-            "user_id",
-            sa.String(),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            index=True,
-            nullable=False,
-        ),
-        sa.Column("name", sa.String(), nullable=False),
-        sa.Column("phone", sa.String(), server_default=""),
-        sa.Column("email", sa.String(), server_default=""),
-        sa.Column("address", sa.Text(), server_default=""),
-        sa.Column("notes", sa.Text(), server_default=""),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=_now),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=_now),
-    )
-
-    op.create_table(
-        "estimates",
-        sa.Column("id", sa.String(), primary_key=True),
-        sa.Column(
-            "user_id",
-            sa.String(),
-            sa.ForeignKey("users.id", ondelete="CASCADE"),
-            index=True,
-            nullable=False,
-        ),
-        sa.Column(
-            "client_id",
-            sa.String(),
-            sa.ForeignKey("clients.id", ondelete="SET NULL"),
-            index=True,
-            nullable=True,
-        ),
-        sa.Column("description", sa.Text(), server_default=""),
-        sa.Column("total_amount", sa.Numeric(12, 2), server_default="0.0"),
-        sa.Column("status", sa.String(), server_default="draft"),
-        sa.Column("pdf_url", sa.String(), server_default=""),
-        sa.Column("storage_path", sa.String(), server_default=""),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=_now),
-        sa.Column("updated_at", sa.DateTime(), nullable=False, server_default=_now),
-    )
-
-    op.create_table(
-        "estimate_line_items",
-        sa.Column("id", sa.String(), primary_key=True),
-        sa.Column(
-            "estimate_id",
-            sa.String(),
-            sa.ForeignKey("estimates.id", ondelete="CASCADE"),
-            index=True,
-            nullable=False,
-        ),
-        sa.Column("description", sa.Text(), server_default=""),
-        sa.Column("quantity", sa.Numeric(12, 2), server_default="1.0"),
-        sa.Column("unit_price", sa.Numeric(12, 2), server_default="0.0"),
-        sa.Column("total", sa.Numeric(12, 2), server_default="0.0"),
     )
 
     op.create_table(
@@ -279,9 +217,6 @@ def downgrade() -> None:
     op.drop_table("heartbeat_items")
     op.drop_table("memory_documents")
     op.drop_table("media_files")
-    op.drop_table("estimate_line_items")
-    op.drop_table("estimates")
-    op.drop_table("clients")
     op.drop_table("messages")
     op.drop_table("sessions")
     op.drop_table("channel_routes")

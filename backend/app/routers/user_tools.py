@@ -112,7 +112,6 @@ async def get_tool_config(
                 domain_group=e.domain_group,
                 domain_group_order=e.domain_group_order,
                 enabled=e.enabled,
-                auto_disabled_reason=e.auto_disabled_reason,
             )
             for e in entries
         ]
@@ -166,7 +165,6 @@ async def update_tool_config(
                 domain_group=e.domain_group,
                 domain_group_order=e.domain_group_order,
                 enabled=e.enabled,
-                auto_disabled_reason=e.auto_disabled_reason,
             )
             for e in entries
         ]
