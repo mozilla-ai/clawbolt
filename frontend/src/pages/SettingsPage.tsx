@@ -8,7 +8,7 @@ import { Tabs, Tab } from '@heroui/tabs';
 import Checkbox from '@/components/ui/checkbox';
 import Field from '@/components/ui/field';
 import { toast } from '@/lib/toast';
-import { useUpdateProfile } from '@/hooks/queries';
+import { useModelConfig, useUpdateModelConfig, useUpdateProfile } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
   getExtraSettingsTabs,
@@ -49,7 +49,7 @@ export default function SettingsPage() {
   const renderContent = () => {
     if (premiumContent) return premiumContent;
     switch (activeTab) {
-      case 'model': return profile ? <ModelTab profile={profile} /> : null;
+      case 'model': return <ModelTab />;
       case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
       default: return null;
     }
@@ -76,64 +76,114 @@ export default function SettingsPage() {
 
 // --- Model Tab ---
 
-function ModelTab({
-  profile,
-}: {
-  profile: { llm_model: string; llm_provider: string };
-}) {
+function ModelTab() {
+  const { data: config, isLoading } = useModelConfig();
+  const updateConfig = useUpdateModelConfig();
+
   const [form, setForm] = useState({
-    llm_model: profile.llm_model,
-    llm_provider: profile.llm_provider,
+    llm_provider: '',
+    llm_model: '',
+    llm_api_base: '',
+    vision_model: '',
+    heartbeat_model: '',
+    heartbeat_provider: '',
+    compaction_model: '',
+    compaction_provider: '',
   });
-  const updateProfile = useUpdateProfile();
 
   useEffect(() => {
-    setForm({
-      llm_model: profile.llm_model,
-      llm_provider: profile.llm_provider,
-    });
-  }, [profile.llm_model, profile.llm_provider]);
+    if (config) {
+      setForm({
+        llm_provider: config.llm_provider,
+        llm_model: config.llm_model,
+        llm_api_base: config.llm_api_base ?? '',
+        vision_model: config.vision_model,
+        heartbeat_model: config.heartbeat_model,
+        heartbeat_provider: config.heartbeat_provider,
+        compaction_model: config.compaction_model,
+        compaction_provider: config.compaction_provider,
+      });
+    }
+  }, [config]);
+
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading...</p>;
 
   const handleSave = () => {
-    updateProfile.mutate(
+    updateConfig.mutate(
       {
-        llm_model: form.llm_model,
         llm_provider: form.llm_provider,
+        llm_model: form.llm_model,
+        llm_api_base: form.llm_api_base || undefined,
+        vision_model: form.vision_model,
+        heartbeat_model: form.heartbeat_model,
+        heartbeat_provider: form.heartbeat_provider,
+        compaction_model: form.compaction_model,
+        compaction_provider: form.compaction_provider,
       },
       {
-        onSuccess: () => toast.success('Model settings updated'),
+        onSuccess: () => toast.success('Model settings saved'),
         onError: (e) => toast.error(e.message),
       },
     );
   };
 
+  const set = (key: string) => (e: React.ChangeEvent<HTMLInputElement>) =>
+    setForm((prev) => ({ ...prev, [key]: e.target.value }));
+
   return (
-    <Card>
-      <div className="grid gap-4">
-        <p className="text-xs text-muted-foreground">
-          Override the default model and provider for your assistant. Leave blank to use the server defaults.
-        </p>
-        <Field label="Provider">
-          <Input
-            value={form.llm_provider}
-            onChange={(e) => setForm((prev) => ({ ...prev, llm_provider: e.target.value }))}
-            placeholder="e.g. openai, anthropic, openrouter"
-          />
-        </Field>
-        <Field label="Model">
-          <Input
-            value={form.llm_model}
-            onChange={(e) => setForm((prev) => ({ ...prev, llm_model: e.target.value }))}
-            placeholder="e.g. gpt-4o, claude-sonnet-4-20250514"
-          />
-        </Field>
-        <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
-            Save Model Settings
-          </Button>
+    <div className="grid gap-6">
+      <Card>
+        <h3 className="text-sm font-medium mb-3">Primary Model</h3>
+        <div className="grid gap-4">
+          <Field label="Provider">
+            <Input value={form.llm_provider} onChange={set('llm_provider')} placeholder="e.g. openai, anthropic, openrouter" />
+          </Field>
+          <Field label="Model">
+            <Input value={form.llm_model} onChange={set('llm_model')} placeholder="e.g. gpt-4o, claude-sonnet-4-20250514" />
+          </Field>
+          <Field label="API Base URL">
+            <Input value={form.llm_api_base} onChange={set('llm_api_base')} placeholder="e.g. http://localhost:1234/v1 (optional)" />
+            <p className="text-xs text-muted-foreground mt-1">
+              Custom API endpoint for local models or proxies. Leave blank for default.
+            </p>
+          </Field>
         </div>
+      </Card>
+
+      <Card>
+        <h3 className="text-sm font-medium mb-1">Task-specific Overrides</h3>
+        <p className="text-xs text-muted-foreground mb-3">
+          Leave blank to use the primary model for each task.
+        </p>
+        <div className="grid gap-4">
+          <Field label="Vision Model">
+            <Input value={form.vision_model} onChange={set('vision_model')} placeholder="Same as primary" />
+          </Field>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Heartbeat Provider">
+              <Input value={form.heartbeat_provider} onChange={set('heartbeat_provider')} placeholder="Same as primary" />
+            </Field>
+            <Field label="Heartbeat Model">
+              <Input value={form.heartbeat_model} onChange={set('heartbeat_model')} placeholder="Same as primary" />
+            </Field>
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <Field label="Compaction Provider">
+              <Input value={form.compaction_provider} onChange={set('compaction_provider')} placeholder="Same as primary" />
+            </Field>
+            <Field label="Compaction Model">
+              <Input value={form.compaction_model} onChange={set('compaction_model')} placeholder="Same as primary" />
+            </Field>
+          </div>
+        </div>
+      </Card>
+
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={updateConfig.isPending} isLoading={updateConfig.isPending}>
+          Save Model Settings
+        </Button>
       </div>
-    </Card>
+    </div>
   );
 }
 

@@ -38,8 +38,6 @@ class User(Base):
     heartbeat_opt_in: Mapped[bool] = mapped_column(Boolean, default=True)
     heartbeat_frequency: Mapped[str] = mapped_column(String, default="30m")
     folder_scheme: Mapped[str] = mapped_column(String, default="by_client")
-    llm_model: Mapped[str] = mapped_column(String, default="")
-    llm_provider: Mapped[str] = mapped_column(String, default="")
     soul_text: Mapped[str] = mapped_column(Text, default="")
     user_text: Mapped[str] = mapped_column(Text, default="")
     heartbeat_text: Mapped[str] = mapped_column(Text, default="")

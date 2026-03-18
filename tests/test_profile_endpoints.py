@@ -56,35 +56,56 @@ def test_update_profile_empty_body(client: TestClient) -> None:
     assert resp.status_code == 400
 
 
-def test_get_profile_includes_llm_fields(client: TestClient) -> None:
-    """Profile response should include llm_model and llm_provider."""
-    resp = client.get("/api/user/profile")
+def test_get_model_config(client: TestClient) -> None:
+    """GET /user/model/config returns current server-level LLM settings."""
+    resp = client.get("/api/user/model/config")
     assert resp.status_code == 200
     data = resp.json()
     assert "llm_model" in data
     assert "llm_provider" in data
-    # Defaults are empty strings (use server defaults)
-    assert data["llm_model"] == ""
-    assert data["llm_provider"] == ""
+    assert "vision_model" in data
+    assert "heartbeat_model" in data
+    assert "heartbeat_provider" in data
+    assert "compaction_model" in data
+    assert "compaction_provider" in data
+    assert "llm_api_base" in data
 
 
-def test_update_profile_llm_model_and_provider(client: TestClient) -> None:
-    """Users should be able to set their preferred model and provider."""
-    resp = client.put(
-        "/api/user/profile",
-        json={"llm_model": "gpt-4o", "llm_provider": "openai"},
-    )
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["llm_model"] == "gpt-4o"
-    assert data["llm_provider"] == "openai"
+def test_update_model_config(client: TestClient) -> None:
+    """PUT /user/model/config updates server-level LLM settings."""
+    original_model = settings.llm_model
+    original_provider = settings.llm_provider
+    try:
+        resp = client.put(
+            "/api/user/model/config",
+            json={"llm_model": "gpt-4o", "llm_provider": "openai"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["llm_model"] == "gpt-4o"
+        assert data["llm_provider"] == "openai"
+        assert settings.llm_model == "gpt-4o"
+        assert settings.llm_provider == "openai"
+    finally:
+        settings.llm_model = original_model
+        settings.llm_provider = original_provider
 
 
-def test_update_profile_clear_llm_model(client: TestClient) -> None:
-    """Setting llm_model to empty string should revert to server default."""
-    # Set a model first
-    client.put("/api/user/profile", json={"llm_model": "gpt-4o"})
-    # Then clear it
-    resp = client.put("/api/user/profile", json={"llm_model": ""})
-    assert resp.status_code == 200
-    assert resp.json()["llm_model"] == ""
+def test_update_model_config_vision(client: TestClient) -> None:
+    """PUT /user/model/config can set task-specific model overrides."""
+    original = settings.vision_model
+    try:
+        resp = client.put(
+            "/api/user/model/config",
+            json={"vision_model": "gpt-4o-mini"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["vision_model"] == "gpt-4o-mini"
+        assert settings.vision_model == "gpt-4o-mini"
+    finally:
+        settings.vision_model = original
+
+
+def test_update_model_config_empty_body(client: TestClient) -> None:
+    resp = client.put("/api/user/model/config", json={})
+    assert resp.status_code == 400

@@ -92,8 +92,6 @@ class UserProfileResponse(BaseModel):
     channel_identifier: str
     heartbeat_opt_in: bool
     heartbeat_frequency: str
-    llm_model: str
-    llm_provider: str
     onboarding_complete: bool
     is_active: bool
     created_at: str
@@ -108,8 +106,6 @@ class UserProfileUpdate(BaseModel):
     heartbeat_text: str | None = None
     heartbeat_opt_in: bool | None = None
     heartbeat_frequency: str | None = None
-    llm_model: str | None = None
-    llm_provider: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -163,6 +159,33 @@ class ChannelConfigResponse(BaseModel):
 class ChannelConfigUpdate(BaseModel):
     telegram_bot_token: str | None = None
     telegram_allowed_usernames: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Model config (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class ModelConfigResponse(BaseModel):
+    llm_provider: str
+    llm_model: str
+    llm_api_base: str | None
+    vision_model: str
+    heartbeat_model: str
+    heartbeat_provider: str
+    compaction_model: str
+    compaction_provider: str
+
+
+class ModelConfigUpdate(BaseModel):
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_api_base: str | None = None
+    vision_model: str | None = None
+    heartbeat_model: str | None = None
+    heartbeat_provider: str | None = None
+    compaction_model: str | None = None
+    compaction_provider: str | None = None
 
 
 # ---------------------------------------------------------------------------
