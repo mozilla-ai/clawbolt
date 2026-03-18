@@ -73,20 +73,6 @@ export interface MemoryUpdate {
   content: string;
 }
 
-export interface HeartbeatItem {
-  id: number;
-  description: string;
-  schedule: string;
-  status: string;
-  created_at: string;
-}
-
-export interface HeartbeatItemUpdate {
-  description?: string;
-  schedule?: string;
-  status?: string;
-}
-
 export interface AuthConfig {
   required: boolean;
   method?: string;

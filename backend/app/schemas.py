@@ -2,7 +2,7 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.enums import EstimateStatus, HeartbeatSchedule, InvoiceStatus
+from backend.app.enums import EstimateStatus, InvoiceStatus
 
 
 class HealthResponse(BaseModel):
@@ -144,30 +144,6 @@ class SessionDetailResponse(BaseModel):
     is_active: bool
     channel: str = ""
     messages: list[SessionMessage]
-
-
-# ---------------------------------------------------------------------------
-# Heartbeat (dashboard)
-# ---------------------------------------------------------------------------
-
-
-class HeartbeatCreateRequest(BaseModel):
-    description: str = Field(..., min_length=1)
-    schedule: str = HeartbeatSchedule.DAILY
-
-
-class HeartbeatUpdateRequest(BaseModel):
-    description: str | None = None
-    schedule: str | None = None
-    status: str | None = None
-
-
-class HeartbeatItemResponse(BaseModel):
-    id: str
-    description: str
-    schedule: str
-    status: str
-    created_at: str
 
 
 # ---------------------------------------------------------------------------
