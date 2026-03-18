@@ -11,7 +11,7 @@ import backend.app.database as _db_module
 from backend.app.agent.tools.base import ToolResult
 from backend.app.agent.tools.workspace_tools import create_workspace_tools
 from backend.app.config import settings
-from backend.app.models import User
+from backend.app.models import MemoryDocument, User
 
 
 def _get_tool_fn(user_id: str, tool_name: str) -> Callable[..., Awaitable[ToolResult]]:
@@ -289,3 +289,114 @@ async def test_heartbeat_md_roundtrip(test_user: User) -> None:
     read_fn = _get_tool_fn(test_user.id, "read_file")
     result = await read_fn(path="HEARTBEAT.md")
     assert "Follow up with Jake" in result.content
+
+
+# --- MemoryDocument-backed virtual file tests (MEMORY.md, HISTORY.md) ---
+
+
+def _set_memory_doc(user_id: str, column: str, value: str) -> None:
+    """Set a column on MemoryDocument directly in the DB."""
+    db = _db_module.SessionLocal()
+    try:
+        doc = db.query(MemoryDocument).filter_by(user_id=user_id).first()
+        if doc is None:
+            doc = MemoryDocument(user_id=user_id, memory_text="", history_text="")
+            db.add(doc)
+            db.flush()
+        setattr(doc, column, value)
+        db.commit()
+    finally:
+        db.close()
+
+
+def _get_memory_doc(user_id: str, column: str) -> str:
+    """Read a column from MemoryDocument in the DB."""
+    db = _db_module.SessionLocal()
+    try:
+        doc = db.query(MemoryDocument).filter_by(user_id=user_id).first()
+        if doc is None:
+            return ""
+        return getattr(doc, column, "") or ""
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio()
+async def test_read_memory_md_via_path(test_user: User) -> None:
+    """read_file('memory/MEMORY.md') should read from MemoryDocument.memory_text."""
+    _set_memory_doc(test_user.id, "memory_text", "- User prefers morning check-ins\n")
+
+    read_fn = _get_tool_fn(test_user.id, "read_file")
+    result = await read_fn(path="memory/MEMORY.md")
+    assert result.is_error is False
+    assert "morning check-ins" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_read_memory_md_top_level(test_user: User) -> None:
+    """read_file('MEMORY.md') should also read from MemoryDocument."""
+    _set_memory_doc(test_user.id, "memory_text", "- Has 3 active jobs\n")
+
+    read_fn = _get_tool_fn(test_user.id, "read_file")
+    result = await read_fn(path="MEMORY.md")
+    assert result.is_error is False
+    assert "3 active jobs" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_read_memory_md_empty(test_user: User) -> None:
+    """read_file('memory/MEMORY.md') should return '(empty)' when no MemoryDocument exists."""
+    read_fn = _get_tool_fn(test_user.id, "read_file")
+    result = await read_fn(path="memory/MEMORY.md")
+    assert result.is_error is False
+    assert result.content == "(empty)"
+
+
+@pytest.mark.asyncio()
+async def test_write_memory_md_via_path(test_user: User) -> None:
+    """write_file('memory/MEMORY.md') should write to MemoryDocument.memory_text."""
+    write_fn = _get_tool_fn(test_user.id, "write_file")
+    result = await write_fn(path="memory/MEMORY.md", content="- Rates: $85/hr\n")
+    assert result.is_error is False
+    assert "Wrote" in result.content
+    assert "Rates: $85/hr" in _get_memory_doc(test_user.id, "memory_text")
+
+
+@pytest.mark.asyncio()
+async def test_write_memory_md_creates_doc(test_user: User) -> None:
+    """write_file should create MemoryDocument if it doesn't exist yet."""
+    write_fn = _get_tool_fn(test_user.id, "write_file")
+    await write_fn(path="MEMORY.md", content="fresh memory")
+    assert "fresh memory" in _get_memory_doc(test_user.id, "memory_text")
+
+
+@pytest.mark.asyncio()
+async def test_edit_memory_md(test_user: User) -> None:
+    """edit_file should work on memory/MEMORY.md."""
+    _set_memory_doc(test_user.id, "memory_text", "- Rate: $85/hr\n- Hours: 8-5\n")
+
+    edit_fn = _get_tool_fn(test_user.id, "edit_file")
+    result = await edit_fn(path="memory/MEMORY.md", old_text="$85/hr", new_text="$100/hr")
+    assert result.is_error is False
+    assert "$100/hr" in _get_memory_doc(test_user.id, "memory_text")
+
+
+@pytest.mark.asyncio()
+async def test_history_md_roundtrip(test_user: User) -> None:
+    """HISTORY.md should read/write through MemoryDocument.history_text."""
+    _set_memory_doc(test_user.id, "history_text", "2026-03-18: Session compacted\n")
+
+    read_fn = _get_tool_fn(test_user.id, "read_file")
+    result = await read_fn(path="memory/HISTORY.md")
+    assert result.is_error is False
+    assert "Session compacted" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_delete_memory_md_protected(test_user: User) -> None:
+    """delete_file should reject MEMORY.md and HISTORY.md as protected files."""
+    delete_fn = _get_tool_fn(test_user.id, "delete_file")
+    for path in ("memory/MEMORY.md", "memory/HISTORY.md"):
+        result = await delete_fn(path=path)
+        assert result.is_error is True
+        assert "protected" in result.content.lower()
