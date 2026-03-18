@@ -42,7 +42,6 @@ class Settings(BaseSettings):
 
     # Messaging
     messaging_provider: str = "telegram"
-    default_folder_scheme: str = "by_client"
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
     telegram_allowed_chat_ids: str = (
@@ -65,7 +64,6 @@ class Settings(BaseSettings):
     storage_provider: str = "local"  # "local", "dropbox", or "google_drive"
     dropbox_access_token: str = ""
     google_drive_credentials_json: str = ""
-    pdf_storage_dir: str = "data/estimates"
     file_storage_base_dir: str = "data/storage"
 
     # Whisper
@@ -96,17 +94,6 @@ class Settings(BaseSettings):
 
     # Media
     max_media_size_bytes: int = Field(default=20_971_520, ge=1)  # 20 MB
-
-    # Email
-    email_provider: str = ""  # "resend" or "smtp"; empty = disabled
-    resend_api_key: str = ""
-    email_from_address: str = ""
-    email_from_name: str = ""
-    smtp_host: str = ""
-    smtp_port: int = Field(default=587, ge=1, le=65535)
-    smtp_username: str = ""
-    smtp_password: str = ""
-    smtp_use_tls: bool = True
 
     # QuickBooks Online
     quickbooks_client_id: str = ""

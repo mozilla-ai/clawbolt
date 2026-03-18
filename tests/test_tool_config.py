@@ -97,10 +97,10 @@ def test_specialist_summaries_excludes_disabled_factories() -> None:
 
     all_summaries = default_registry.get_available_specialist_summaries(ctx)
     excluded_summaries = default_registry.get_available_specialist_summaries(
-        ctx, excluded_factories={"estimate"}
+        ctx, excluded_factories={"heartbeat"}
     )
-    assert "estimate" in all_summaries
-    assert "estimate" not in excluded_summaries
+    assert "heartbeat" in all_summaries
+    assert "heartbeat" not in excluded_summaries
 
 
 # ---------------------------------------------------------------------------
@@ -161,17 +161,17 @@ def test_put_tool_config_disable_domain_tool(client: TestClient) -> None:
     """PUT /api/user/tools can disable a domain tool."""
     response = client.put(
         "/api/user/tools",
-        json={"tools": [{"name": "estimate", "enabled": False}]},
+        json={"tools": [{"name": "heartbeat", "enabled": False}]},
     )
     assert response.status_code == 200
     data = response.json()
     tools_by_name = {t["name"]: t for t in data["tools"]}
-    assert tools_by_name["estimate"]["enabled"] is False
+    assert tools_by_name["heartbeat"]["enabled"] is False
 
     # Verify it persists
     get_response = client.get("/api/user/tools")
     tools_by_name = {t["name"]: t for t in get_response.json()["tools"]}
-    assert tools_by_name["estimate"]["enabled"] is False
+    assert tools_by_name["heartbeat"]["enabled"] is False
 
 
 def test_put_tool_config_cannot_disable_core_tool(client: TestClient) -> None:
@@ -190,16 +190,16 @@ def test_put_tool_config_reenable(client: TestClient) -> None:
     # Disable
     client.put(
         "/api/user/tools",
-        json={"tools": [{"name": "estimate", "enabled": False}]},
+        json={"tools": [{"name": "heartbeat", "enabled": False}]},
     )
     # Re-enable
     response = client.put(
         "/api/user/tools",
-        json={"tools": [{"name": "estimate", "enabled": True}]},
+        json={"tools": [{"name": "heartbeat", "enabled": True}]},
     )
     assert response.status_code == 200
     tools_by_name = {t["name"]: t for t in response.json()["tools"]}
-    assert tools_by_name["estimate"]["enabled"] is True
+    assert tools_by_name["heartbeat"]["enabled"] is True
 
 
 def test_put_tool_config_empty_body(client: TestClient) -> None:

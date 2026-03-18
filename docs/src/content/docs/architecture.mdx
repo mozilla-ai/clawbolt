@@ -32,47 +32,36 @@ User sends a Telegram message
 ## Tech stack
 
 - **Python 3.11+** with FastAPI and async throughout
-- **File-based storage**: all data in JSON, JSONL, and Markdown files under `data/users/`. No database required
+- **PostgreSQL** for all structured data via SQLAlchemy 2.0 ORM
 - **Pydantic v2** for data classes and request/response schemas
 - **any-llm** for LLM provider abstraction (swap between OpenAI, Anthropic, etc.)
 - **python-telegram-bot** for the Telegram Bot API
 - **faster-whisper** for voice memo transcription
-- **ReportLab** for PDF estimate generation
 
 ## Storage
 
-All data is stored as files under `data/users/`. Each user gets an isolated directory:
+All structured data is stored in PostgreSQL via SQLAlchemy 2.0 ORM. The database has 10 tables:
 
-```
-data/
-  user_index.json                  # Channel -> user_id routing
-  seen_messages.json               # Webhook idempotency (capped at 10K)
-  users/
-    {id}/
-      user.json                    # Profile data
-      SOUL.md                      # Personality/behavioral guidance
-      USER.md                      # User info and preferences
-      HEARTBEAT.md                 # Heartbeat checklist (single source of truth)
-      BOOTSTRAP.md                 # First-run onboarding prompt (deleted after onboarding)
-      memory/
-        MEMORY.md                  # Structured facts by category
-        HISTORY.md                 # Compaction log
-      sessions/
-        {session_id}.jsonl         # Conversation transcripts
-      clients.json                 # Client records
-      estimates/
-        {estimate_id}.json         # Estimates with line items
-      media.json                   # Media file manifest
-      heartbeat/
-        log.jsonl                  # Heartbeat send log
-      llm_usage.jsonl              # Token usage log
-```
+| Table | Purpose |
+|---|---|
+| `users` | User profiles, personality text, preferences |
+| `channel_routes` | Channel -> user routing (Telegram, webchat, etc.) |
+| `sessions` | Chat session metadata |
+| `messages` | Chat messages (FK to sessions) |
+| `media_files` | Media file manifest |
+| `memory_documents` | Structured memory and compaction history |
+| `heartbeat_logs` | Heartbeat send log |
+| `idempotency_keys` | Webhook deduplication |
+| `llm_usage_logs` | Token usage tracking |
+| `tool_configs` | Per-user tool configuration |
 
-Key store classes in `backend/app/agent/file_store.py`:
+Key store modules:
 - `UserStore` (singleton via `get_user_store()`)
-- `FileMemoryStore` (per-user via `get_memory_store(id)`)
-- `FileSessionStore` (per-user via `get_session_store(id)`)
-- `ClientStore`, `EstimateStore`, `MediaStore`, `HeartbeatStore` (instantiated per use)
+- `SessionStore` (per-user via `get_session_store(id)`)
+- `MemoryStore` (per-user via `get_memory_store(id)`)
+- `MediaStore`, `HeartbeatStore`, `IdempotencyStore`, `LLMUsageStore`, `ToolConfigStore`
+
+File storage for uploads uses the local filesystem under `data/` (configurable via `DATA_DIR`).
 
 ## Agent tools
 
@@ -82,10 +71,10 @@ The agent has access to these tool groups:
 |------------|-------|---------|
 | Memory | `save_fact`, `recall_facts`, `forget_fact` | Persistent key-value memory for pricing, clients, jobs |
 | Messaging | `send_reply`, `send_media_reply` | Send text or media messages back to the user |
-| Estimates | `generate_estimate` | Create professional PDF estimates with line items |
 | Workspace | `read_file`, `write_file`, `edit_file`, `delete_file` | Read/write markdown files (USER.md, SOUL.md, etc.) |
 | Checklist | `add_checklist_item`, `list_checklist_items`, `remove_checklist_item` | Reminder checklists |
 | Files | `upload_to_storage`, `organize_file` | Store and organize files in cloud storage |
+| QuickBooks | `qb_query` | Read-only queries against QuickBooks Online (when connected) |
 
 Tool selection is context-aware: the registry picks relevant tools based on message keywords and context, with a fallback to all tools for ambiguous messages.
 
@@ -114,10 +103,7 @@ The [heartbeat system](../features/heartbeat/) separates cheap deterministic che
 | Data class | Purpose |
 |------------|---------|
 | `UserData` | User profile, heartbeat settings |
-| `ClientData` | Client records (name, phone, email, address, notes) |
-| `MemoryFact` | Key-value facts with category and confidence |
 | `SessionState` | Conversation session with messages |
 | `StoredMessage` | Inbound/outbound text, media URLs, tool interactions |
-| `EstimateData` | Estimates with line items, PDF URL, lifecycle status |
 | `MediaData` | Processed media with storage URLs |
-| `ChecklistItem` | Scheduled reminder items |
+| `ToolConfigEntry` | Per-user tool group configuration |

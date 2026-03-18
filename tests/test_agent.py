@@ -1664,7 +1664,6 @@ class TestToolRegistry:
         ensure_tool_modules_imported()
         names = default_registry.factory_names
         assert "messaging" in names
-        assert "estimate" in names
         assert "heartbeat" in names
         assert "file" in names
         assert "workspace" in names

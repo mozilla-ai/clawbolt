@@ -106,11 +106,6 @@ export default function ToolsPage() {
                       {tool.description && (
                         <p className="text-xs text-muted-foreground">{tool.description}</p>
                       )}
-                      {tool.auto_disabled_reason && (
-                        <p className="text-xs mt-0.5 text-amber-600">
-                          {tool.auto_disabled_reason}
-                        </p>
-                      )}
                       {oauthEntry && oauthEntry.configured && (
                         <p className="text-xs mt-0.5">
                           {oauthEntry.connected ? (
@@ -145,7 +140,7 @@ export default function ToolsPage() {
                       )}
                       <Switch
                         isSelected={tool.enabled}
-                        isDisabled={!!tool.auto_disabled_reason || updateMutation.isPending}
+                        isDisabled={updateMutation.isPending}
                         onValueChange={(val) => handleToggle(tool.name, val)}
                         size="sm"
                         aria-label={`Toggle ${tool.name}`}

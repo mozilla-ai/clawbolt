@@ -33,24 +33,6 @@ def _source_of(module_path: str) -> str:
     return path.read_text(encoding="utf-8")
 
 
-def test_estimates_router_uses_to_thread_for_read_bytes() -> None:
-    """estimates.py should use asyncio.to_thread for pdf_path.read_bytes."""
-    source = _source_of("backend/app/routers/estimates.py")
-    assert "asyncio.to_thread" in source, "estimates.py must use asyncio.to_thread"
-    assert "pdf_path.read_bytes()" not in source, (
-        "estimates.py should not call pdf_path.read_bytes() directly"
-    )
-
-
-def test_estimate_tools_uses_to_thread_for_write_bytes() -> None:
-    """estimate_tools.py should use asyncio.to_thread for pdf_path.write_bytes."""
-    source = _source_of("backend/app/agent/tools/estimate_tools.py")
-    assert "asyncio.to_thread" in source, "estimate_tools.py must use asyncio.to_thread"
-    assert "pdf_path.write_bytes(pdf_bytes)" not in source, (
-        "estimate_tools.py should not call pdf_path.write_bytes() directly"
-    )
-
-
 def test_telegram_uses_to_thread_for_read_bytes() -> None:
     """telegram.py should use asyncio.to_thread for local_path.read_bytes."""
     source = _source_of("backend/app/channels/telegram.py")
