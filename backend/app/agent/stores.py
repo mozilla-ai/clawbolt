@@ -10,6 +10,7 @@ Follows the same SessionLocal() / try-finally pattern used in session_db.py.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 from typing import Any
 
@@ -59,6 +60,19 @@ def _media_to_dto(m: MediaFile) -> MediaData:
     )
 
 
+def _parse_disabled_sub_tools(raw: str) -> list[str]:
+    """Parse JSON list of disabled sub-tool names from DB column."""
+    if not raw or not raw.strip():
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+    except (ValueError, TypeError):
+        pass
+    return []
+
+
 def _tool_config_to_dto(tc: ToolConfig) -> ToolConfigEntry:
     return ToolConfigEntry(
         name=tc.name,
@@ -67,6 +81,7 @@ def _tool_config_to_dto(tc: ToolConfig) -> ToolConfigEntry:
         domain_group=tc.domain_group,
         domain_group_order=tc.domain_group_order,
         enabled=tc.enabled,
+        disabled_sub_tools=_parse_disabled_sub_tools(tc.disabled_sub_tools),
     )
 
 
@@ -381,6 +396,9 @@ class ToolConfigStore:
 
             # Insert new rows
             for entry in entries:
+                disabled_sub = (
+                    json.dumps(entry.disabled_sub_tools) if entry.disabled_sub_tools else ""
+                )
                 tc = ToolConfig(
                     user_id=self.user_id,
                     name=entry.name,
@@ -389,6 +407,7 @@ class ToolConfigStore:
                     domain_group=entry.domain_group,
                     domain_group_order=entry.domain_group_order,
                     enabled=entry.enabled,
+                    disabled_sub_tools=disabled_sub,
                 )
                 db.add(tc)
             db.commit()
@@ -400,6 +419,23 @@ class ToolConfigStore:
         try:
             rows = db.query(ToolConfig.name).filter_by(user_id=self.user_id, enabled=False).all()
             return {row[0] for row in rows}
+        finally:
+            db.close()
+
+    async def get_disabled_sub_tool_names(self) -> set[str]:
+        """Return the union of all disabled sub-tool names across all groups."""
+        db = SessionLocal()
+        try:
+            rows = (
+                db.query(ToolConfig.disabled_sub_tools)
+                .filter_by(user_id=self.user_id)
+                .filter(ToolConfig.disabled_sub_tools != "")
+                .all()
+            )
+            result: set[str] = set()
+            for (raw,) in rows:
+                result.update(_parse_disabled_sub_tools(raw))
+            return result
         finally:
             db.close()
 

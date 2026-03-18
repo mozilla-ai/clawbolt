@@ -156,6 +156,12 @@ class ModelConfigUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+class SubToolEntryResponse(BaseModel):
+    name: str
+    description: str
+    enabled: bool
+
+
 class ToolConfigEntryResponse(BaseModel):
     name: str
     description: str
@@ -163,6 +169,7 @@ class ToolConfigEntryResponse(BaseModel):
     domain_group: str = ""
     domain_group_order: int = 0
     enabled: bool
+    sub_tools: list[SubToolEntryResponse] = Field(default_factory=list)
 
 
 class ToolConfigResponse(BaseModel):
@@ -172,6 +179,7 @@ class ToolConfigResponse(BaseModel):
 class ToolConfigUpdateEntry(BaseModel):
     name: str
     enabled: bool
+    disabled_sub_tools: list[str] | None = None
 
 
 class ToolConfigUpdate(BaseModel):

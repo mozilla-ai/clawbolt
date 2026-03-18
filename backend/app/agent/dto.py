@@ -104,6 +104,14 @@ class HeartbeatLogEntry(BaseModel):
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
 
 
+class SubToolEntry(BaseModel):
+    """An individual tool within a tool group."""
+
+    name: str = ""
+    description: str = ""
+    enabled: bool = True
+
+
 class ToolConfigEntry(BaseModel):
     """A single tool group configuration entry."""
 
@@ -113,3 +121,5 @@ class ToolConfigEntry(BaseModel):
     domain_group: str = ""
     domain_group_order: int = 0
     enabled: bool = True
+    sub_tools: list[SubToolEntry] = Field(default_factory=list)
+    disabled_sub_tools: list[str] = Field(default_factory=list)
