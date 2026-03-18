@@ -242,5 +242,6 @@ class ToolConfig(Base):
     domain_group: Mapped[str] = mapped_column(String, default="")
     domain_group_order: Mapped[int] = mapped_column(Integer, default=0)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    disabled_sub_tools: Mapped[str] = mapped_column(Text, default="")
 
     user: Mapped["User"] = relationship("User", back_populates="tool_configs")

@@ -21,6 +21,7 @@ from backend.app.agent.dto import (  # noqa: F401
     SessionMetadata,
     SessionState,
     StoredMessage,
+    SubToolEntry,
     ToolConfigEntry,
     UserData,
     slugify,

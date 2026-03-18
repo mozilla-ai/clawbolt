@@ -47,6 +47,14 @@ class ToolContext:
 
 
 @dataclass
+class SubToolInfo:
+    """Static metadata for an individual tool within a factory."""
+
+    name: str
+    description: str
+
+
+@dataclass
 class ToolFactory:
     """Metadata for a registered tool factory."""
 
@@ -55,6 +63,7 @@ class ToolFactory:
     requires_outbound: bool = False
     core: bool = True
     summary: str = ""
+    sub_tools: list[SubToolInfo] = field(default_factory=list)
 
 
 class ListCapabilitiesParams(BaseModel):
@@ -132,6 +141,7 @@ class ToolRegistry:
         requires_outbound: bool = False,
         core: bool = True,
         summary: str = "",
+        sub_tools: list[SubToolInfo] | None = None,
     ) -> None:
         """Register a tool factory by name.
 
@@ -145,6 +155,7 @@ class ToolRegistry:
                 ``list_capabilities``.
             summary: One-line description shown by ``list_capabilities`` for
                 specialist factories.
+            sub_tools: Static metadata for individual tools this factory creates.
         """
         if name in self._factories:
             logger.warning("Overwriting existing tool factory: %s", name)
@@ -154,6 +165,7 @@ class ToolRegistry:
             requires_outbound=requires_outbound,
             core=core,
             summary=summary,
+            sub_tools=sub_tools or [],
         )
 
     def create_tools(
@@ -161,11 +173,15 @@ class ToolRegistry:
         context: ToolContext,
         *,
         selected_factories: set[str] | None = None,
+        excluded_tool_names: set[str] | None = None,
     ) -> list[Tool]:
         """Create tools whose dependencies are satisfied by the context.
 
         When *selected_factories* is provided, only factories in that set are
         considered. Otherwise all registered factories are eligible.
+
+        When *excluded_tool_names* is provided, individual tools whose names
+        appear in the set are filtered out after creation.
 
         Every tool must have a ``params_model`` set so that Pydantic
         validation runs on all arguments before execution.
@@ -182,6 +198,8 @@ class ToolRegistry:
                 logger.debug("Skipping %s: no publish_outbound callback", name)
                 continue
             created = factory.create(context)
+            if excluded_tool_names:
+                created = [t for t in created if t.name not in excluded_tool_names]
             tools.extend(created)
         return tools
 
@@ -190,16 +208,22 @@ class ToolRegistry:
         context: ToolContext,
         *,
         excluded_factories: set[str] | None = None,
+        excluded_tool_names: set[str] | None = None,
     ) -> list[Tool]:
         """Create only core (always-available) tools.
 
         When *excluded_factories* is provided, factories in that set are
         skipped even if they are core factories.
+
+        When *excluded_tool_names* is provided, individual tools whose names
+        appear in the set are filtered out after creation.
         """
         selected = self.core_factory_names
         if excluded_factories:
             selected = selected - excluded_factories
-        return self.create_tools(context, selected_factories=selected)
+        return self.create_tools(
+            context, selected_factories=selected, excluded_tool_names=excluded_tool_names
+        )
 
     def get_available_specialist_summaries(
         self,
@@ -242,6 +266,11 @@ class ToolRegistry:
     def factory_names(self) -> list[str]:
         """Return sorted list of registered factory names."""
         return sorted(self._factories)
+
+    def get_factory_sub_tools(self, factory_name: str) -> list[SubToolInfo]:
+        """Return sub-tool metadata for a factory, or empty list if unknown."""
+        factory = self._factories.get(factory_name)
+        return factory.sub_tools if factory else []
 
     @property
     def specialist_summaries(self) -> dict[str, str]:

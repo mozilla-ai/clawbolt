@@ -402,9 +402,18 @@ def _workspace_factory(ctx: ToolContext) -> list[Tool]:
 
 
 def _register() -> None:
-    from backend.app.agent.tools.registry import default_registry
+    from backend.app.agent.tools.registry import SubToolInfo, default_registry
 
-    default_registry.register("workspace", _workspace_factory)
+    default_registry.register(
+        "workspace",
+        _workspace_factory,
+        sub_tools=[
+            SubToolInfo(ToolName.READ_FILE, "Read markdown files from workspace"),
+            SubToolInfo(ToolName.WRITE_FILE, "Write or overwrite markdown files"),
+            SubToolInfo(ToolName.EDIT_FILE, "Replace text in markdown files"),
+            SubToolInfo(ToolName.DELETE_FILE, "Delete markdown files"),
+        ],
+    )
 
 
 _register()

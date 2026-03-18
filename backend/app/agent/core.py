@@ -102,6 +102,7 @@ class ClawboltAgent:
         tool_context: ToolContext | None = None,
         registry: ToolRegistry | None = None,
         session_id: str = "",
+        excluded_tool_names: set[str] | None = None,
     ) -> None:
         self.user = user
         self._channel = channel
@@ -115,6 +116,7 @@ class ClawboltAgent:
         self._activated_specialists: set[str] = set()
         self._last_input_tokens: int = 0
         self._session_id = session_id
+        self._excluded_tool_names = excluded_tool_names
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -243,6 +245,7 @@ class ClawboltAgent:
         new_tools = self._registry.create_tools(
             self._tool_context,
             selected_factories={factory_name},
+            excluded_tool_names=self._excluded_tool_names,
         )
         if not new_tools:
             logger.debug(
