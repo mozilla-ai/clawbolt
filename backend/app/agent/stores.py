@@ -10,6 +10,7 @@ Follows the same SessionLocal() / try-finally pattern used in session_db.py.
 from __future__ import annotations
 
 import datetime
+import json
 import logging
 from typing import Any
 
@@ -64,8 +65,6 @@ def _parse_disabled_sub_tools(raw: str) -> list[str]:
     if not raw or not raw.strip():
         return []
     try:
-        import json
-
         parsed = json.loads(raw)
         if isinstance(parsed, list):
             return [str(x) for x in parsed]
@@ -391,8 +390,6 @@ class ToolConfigStore:
 
     async def save(self, entries: list[ToolConfigEntry]) -> list[ToolConfigEntry]:
         """Replace all ToolConfig rows for this user with new entries."""
-        import json
-
         with db_session() as db:
             # Delete existing rows for this user
             db.query(ToolConfig).filter_by(user_id=self.user_id).delete()

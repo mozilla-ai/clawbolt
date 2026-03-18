@@ -182,7 +182,8 @@ async def update_tool_config(
         else:
             disabled_names.add(name)
 
-        # Handle sub-tool toggles
+        # Handle sub-tool toggles (applies to both core and domain factories,
+        # allowing fine-grained control like read-only workspace mode).
         if update_entry.disabled_sub_tools is not None:
             # Validate sub-tool names against registry metadata
             valid_sub_names = {st.name for st in default_registry.get_factory_sub_tools(name)}
