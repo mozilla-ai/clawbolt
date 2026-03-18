@@ -22,9 +22,8 @@ class ToolName:
     SEND_DOCUMENT_EMAIL = "send_document_email"
 
     # Heartbeat
-    ADD_HEARTBEAT_ITEM = "add_heartbeat_item"
-    LIST_HEARTBEAT_ITEMS = "list_heartbeat_items"
-    REMOVE_HEARTBEAT_ITEM = "remove_heartbeat_item"
+    GET_HEARTBEAT = "get_heartbeat"
+    UPDATE_HEARTBEAT = "update_heartbeat"
 
     # File management
     UPLOAD_TO_STORAGE = "upload_to_storage"

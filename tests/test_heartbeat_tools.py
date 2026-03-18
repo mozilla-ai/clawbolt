@@ -9,150 +9,78 @@ from backend.app.models import User
 
 
 @pytest.mark.asyncio()
-async def test_add_heartbeat_item(test_user: User) -> None:
-    """add_heartbeat_item tool should create item and return confirmation."""
+async def test_get_heartbeat_returns_text(test_user: User) -> None:
+    """get_heartbeat should return the user's heartbeat_text."""
+    # Seed heartbeat text directly
+    store = HeartbeatStore(test_user.id)
+    await store.write_heartbeat_md("- Check material prices\n- Follow up with client")
+
     tools = create_heartbeat_tools(test_user.id)
-    add_item = tools[0].function
-    result = await add_item(description="Check material prices", schedule="daily")
-    assert "Added to heartbeat" in result.content
-    assert "material prices" in result.content
-    assert "daily" in result.content
+    get_hb = tools[0].function
+    result = await get_hb()
+    assert "Check material prices" in result.content
+    assert "Follow up with client" in result.content
     assert result.is_error is False
 
-    # Verify in store
-    store = HeartbeatStore(test_user.id)
-    items = await store.get_heartbeat_items()
-    active = [i for i in items if i.status == "active"]
-    # Default HEARTBEAT.md has 3 items + 1 added
-    assert len(active) >= 1
-    added = [i for i in active if i.description == "Check material prices"]
-    assert len(added) == 1
-    assert added[0].schedule == "daily"
-    assert added[0].status == "active"
-
 
 @pytest.mark.asyncio()
-async def test_add_heartbeat_item_default_schedule(
-    test_user: User,
-) -> None:
-    """add_heartbeat_item should default to daily schedule."""
+async def test_get_heartbeat_empty(test_user: User) -> None:
+    """get_heartbeat should return a friendly message when no text is set."""
     tools = create_heartbeat_tools(test_user.id)
-    add_item = tools[0].function
-    await add_item(description="Morning check")
-
-    store = HeartbeatStore(test_user.id)
-    items = await store.get_heartbeat_items()
-    active = [i for i in items if i.status == "active"]
-    added = [i for i in active if i.description == "Morning check"]
-    assert len(added) == 1
-    assert added[0].schedule == "daily"
-
-
-@pytest.mark.asyncio()
-async def test_add_heartbeat_item_invalid_schedule(
-    test_user: User,
-) -> None:
-    """add_heartbeat_item should reject invalid schedule values."""
-    tools = create_heartbeat_tools(test_user.id)
-    add_item = tools[0].function
-    result = await add_item(description="Bad schedule", schedule="hourly")
-    assert "Invalid schedule" in result.content
-    assert result.is_error is True
-
-    store = HeartbeatStore(test_user.id)
-    items = await store.get_heartbeat_items()
-    # No "Bad schedule" item should have been added
-    bad = [i for i in items if i.description == "Bad schedule"]
-    assert len(bad) == 0
-
-
-@pytest.mark.asyncio()
-async def test_list_heartbeat_items(test_user: User) -> None:
-    """list_heartbeat_items should show active items."""
-    tools = create_heartbeat_tools(test_user.id)
-    add_item = tools[0].function
-    list_items = tools[1].function
-
-    await add_item(description="Check inbox")
-    await add_item(description="Review quotes", schedule="weekdays")
-
-    result = await list_items()
-    assert "Check inbox" in result.content
-    assert "Review quotes" in result.content
-    assert "daily" in result.content
-    assert "weekdays" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_list_heartbeat_items_empty(test_user: User) -> None:
-    """list_heartbeat_items should return empty message when no items exist."""
-    tools = create_heartbeat_tools(test_user.id)
-    list_items = tools[1].function
-    result = await list_items()
-    assert "No active heartbeat items" in result.content
-
-
-@pytest.mark.asyncio()
-async def test_list_excludes_completed(test_user: User) -> None:
-    """list_heartbeat_items should not show completed items."""
-    store = HeartbeatStore(test_user.id)
-    item = await store.add_heartbeat_item(description="Done item", schedule="daily")
-    await store.update_heartbeat_item(item.id, status="completed")
-
-    tools = create_heartbeat_tools(test_user.id)
-    list_items = tools[1].function
-    result = await list_items()
-    # The completed item should not appear in the listing
-    assert "Done item" not in result.content
-
-
-@pytest.mark.asyncio()
-async def test_remove_heartbeat_item(test_user: User) -> None:
-    """remove_heartbeat_item should delete item and return confirmation."""
-    tools = create_heartbeat_tools(test_user.id)
-    add_item = tools[0].function
-    remove_item = tools[2].function
-
-    await add_item(description="To remove")
-
-    store = HeartbeatStore(test_user.id)
-    items = await store.get_heartbeat_items()
-    added = [i for i in items if i.description == "To remove"]
-    assert len(added) == 1
-    item_id = added[0].id
-
-    result = await remove_item(item_id=item_id)
-    assert "Removed" in result.content
+    get_hb = tools[0].function
+    result = await get_hb()
+    assert "No heartbeat notes set" in result.content
     assert result.is_error is False
 
-    items = await store.get_heartbeat_items()
-    removed = [i for i in items if i.description == "To remove"]
-    assert len(removed) == 0
-
 
 @pytest.mark.asyncio()
-async def test_remove_heartbeat_item_not_found(
-    test_user: User,
-) -> None:
-    """remove_heartbeat_item should handle missing IDs."""
+async def test_update_heartbeat_writes_text(test_user: User) -> None:
+    """update_heartbeat should write new text to heartbeat_text."""
     tools = create_heartbeat_tools(test_user.id)
-    remove_item = tools[2].function
-    result = await remove_item(item_id="999")
-    assert "not found" in result.content
-    assert result.is_error is True
+    update_hb = tools[1].function
+    result = await update_hb(text="- Daily site check\n- Review inbox")
+    assert "updated" in result.content.lower()
+    assert result.is_error is False
+
+    # Verify via store
+    store = HeartbeatStore(test_user.id)
+    text = store.read_heartbeat_md()
+    assert "Daily site check" in text
+    assert "Review inbox" in text
 
 
 @pytest.mark.asyncio()
-async def test_remove_scoped_to_user(
-    test_user: User,
-) -> None:
-    """remove_heartbeat_item should not delete another user's items.
+async def test_update_heartbeat_clears_with_empty_text(test_user: User) -> None:
+    """update_heartbeat with empty text should clear heartbeat_text."""
+    store = HeartbeatStore(test_user.id)
+    await store.write_heartbeat_md("- Old reminder")
 
-    Each user's HEARTBEAT.md is a separate file, so IDs are per-user.
-    Attempting to remove an ID that does not exist in the current user's
-    heartbeat should return not-found.
-    """
-    # Create other user in DB so FK constraints are satisfied
+    tools = create_heartbeat_tools(test_user.id)
+    update_hb = tools[1].function
+    result = await update_hb(text="")
+    assert "updated" in result.content.lower()
+
+    text = store.read_heartbeat_md()
+    assert text == ""
+
+
+@pytest.mark.asyncio()
+async def test_update_then_get_roundtrip(test_user: User) -> None:
+    """Writing and reading heartbeat text should round-trip correctly."""
+    tools = create_heartbeat_tools(test_user.id)
+    update_hb = tools[1].function
+    get_hb = tools[0].function
+
+    new_text = "## Morning\n- Check voicemail\n- Review schedule"
+    await update_hb(text=new_text)
+
+    result = await get_hb()
+    assert result.content == new_text
+
+
+@pytest.mark.asyncio()
+async def test_heartbeat_scoped_to_user(test_user: User) -> None:
+    """Each user's heartbeat text is independent."""
     db = _db_module.SessionLocal()
     try:
         other_user = User(user_id="hb-other-99", phone="+15559999999")
@@ -164,19 +92,16 @@ async def test_remove_scoped_to_user(
     finally:
         db.close()
 
-    other_store = HeartbeatStore(other_id)
-    await other_store.add_heartbeat_item(description="Other's item", schedule="daily")
-    other_items = await other_store.get_heartbeat_items()
-    assert len(other_items) == 1
+    # Set heartbeat for both users
+    tools_a = create_heartbeat_tools(test_user.id)
+    tools_b = create_heartbeat_tools(other_id)
+    await tools_a[1].function(text="User A notes")
+    await tools_b[1].function(text="User B notes")
 
-    # Use an ID that definitely does not exist in test_user's heartbeat
-    tools = create_heartbeat_tools(test_user.id)
-    remove_item = tools[2].function
-    result = await remove_item(item_id="9999")
-    assert "not found" in result.content
-    assert result.is_error is True
+    result_a = await tools_a[0].function()
+    result_b = await tools_b[0].function()
 
-    # Item should still exist in other user's store
-    remaining = await other_store.get_heartbeat_items()
-    other_items = [i for i in remaining if i.description == "Other's item"]
-    assert len(other_items) == 1
+    assert "User A notes" in result_a.content
+    assert "User B notes" not in result_a.content
+    assert "User B notes" in result_b.content
+    assert "User A notes" not in result_b.content

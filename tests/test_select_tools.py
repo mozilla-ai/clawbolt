@@ -45,7 +45,7 @@ def _build_test_registry() -> ToolRegistry:
     )
     registry.register(
         "heartbeat",
-        lambda ctx: [_make_tool("add_heartbeat_item"), _make_tool("list_heartbeat_items")],
+        lambda ctx: [_make_tool("get_heartbeat"), _make_tool("update_heartbeat")],
         core=False,
         summary="Manage recurring reminders and task heartbeats",
     )
@@ -93,7 +93,7 @@ class TestCreateCoreTools:
         tools = registry.create_core_tools(ctx)
         names = {t.name for t in tools}
         assert "generate_estimate" not in names
-        assert "add_heartbeat_item" not in names
+        assert "get_heartbeat" not in names
         assert "upload_to_storage" not in names
 
 
