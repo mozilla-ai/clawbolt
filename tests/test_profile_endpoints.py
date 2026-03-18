@@ -54,3 +54,58 @@ def test_update_profile_soul_text(client: TestClient) -> None:
 def test_update_profile_empty_body(client: TestClient) -> None:
     resp = client.put("/api/user/profile", json={})
     assert resp.status_code == 400
+
+
+def test_get_model_config(client: TestClient) -> None:
+    """GET /user/model/config returns current server-level LLM settings."""
+    resp = client.get("/api/user/model/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "llm_model" in data
+    assert "llm_provider" in data
+    assert "vision_model" in data
+    assert "heartbeat_model" in data
+    assert "heartbeat_provider" in data
+    assert "compaction_model" in data
+    assert "compaction_provider" in data
+    assert "llm_api_base" in data
+
+
+def test_update_model_config(client: TestClient) -> None:
+    """PUT /user/model/config updates server-level LLM settings."""
+    original_model = settings.llm_model
+    original_provider = settings.llm_provider
+    try:
+        resp = client.put(
+            "/api/user/model/config",
+            json={"llm_model": "gpt-4o", "llm_provider": "openai"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["llm_model"] == "gpt-4o"
+        assert data["llm_provider"] == "openai"
+        assert settings.llm_model == "gpt-4o"
+        assert settings.llm_provider == "openai"
+    finally:
+        settings.llm_model = original_model
+        settings.llm_provider = original_provider
+
+
+def test_update_model_config_vision(client: TestClient) -> None:
+    """PUT /user/model/config can set task-specific model overrides."""
+    original = settings.vision_model
+    try:
+        resp = client.put(
+            "/api/user/model/config",
+            json={"vision_model": "gpt-4o-mini"},
+        )
+        assert resp.status_code == 200
+        assert resp.json()["vision_model"] == "gpt-4o-mini"
+        assert settings.vision_model == "gpt-4o-mini"
+    finally:
+        settings.vision_model = original
+
+
+def test_update_model_config_empty_body(client: TestClient) -> None:
+    resp = client.put("/api/user/model/config", json={})
+    assert resp.status_code == 400

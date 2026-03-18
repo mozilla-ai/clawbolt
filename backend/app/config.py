@@ -151,6 +151,14 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "telegram_allowed_chat_ids",
         "telegram_allowed_usernames",
         "telegram_webhook_secret",
+        "llm_provider",
+        "llm_model",
+        "llm_api_base",
+        "vision_model",
+        "heartbeat_model",
+        "heartbeat_provider",
+        "compaction_model",
+        "compaction_provider",
     }
 )
 

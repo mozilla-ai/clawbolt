@@ -9,6 +9,8 @@ import type {
   UserProfileUpdate,
   MemoryData,
   MemoryUpdate,
+  ModelConfig,
+  ModelConfigUpdate,
   OAuthAuthorizeResponse,
   OAuthStatusResponse,
   SessionDetail,
@@ -99,6 +101,15 @@ const api = {
   getChannelConfig: () => _fetch<ChannelConfig>('/api/user/channels/config'),
   updateChannelConfig: (body: ChannelConfigUpdate) =>
     _fetch<ChannelConfig>('/api/user/channels/config', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+
+  // Model config
+  getModelConfig: () => _fetch<ModelConfig>('/api/user/model/config'),
+  updateModelConfig: (body: ModelConfigUpdate) =>
+    _fetch<ModelConfig>('/api/user/model/config', {
       method: 'PUT',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
