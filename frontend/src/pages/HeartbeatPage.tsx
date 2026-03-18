@@ -5,8 +5,8 @@ import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
 import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
-import { useUpdateProfile } from '@/hooks/queries';
 import {
+  useUpdateProfile,
   useHeartbeatItems,
   useCreateHeartbeatItem,
   useDeleteHeartbeatItem,
