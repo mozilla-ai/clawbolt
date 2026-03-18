@@ -11,7 +11,6 @@ from unittest.mock import patch
 
 import pytest
 
-from backend.app.agent.client_db import EstimateStore
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
 from backend.app.agent.session_db import get_session_store
 from backend.app.models import User
@@ -46,7 +45,7 @@ async def test_heartbeat_evaluate_returns_valid_action(
 async def test_heartbeat_evaluate_with_context(
     onboarded_user: User,
 ) -> None:
-    """Heartbeat should handle a user with real conversation history and pending estimates."""
+    """Heartbeat should handle a user with real conversation history."""
     # Set up conversation with messages via file store
     session_store = get_session_store(onboarded_user.id)
     session, _ = await session_store.get_or_create_session()
@@ -60,14 +59,6 @@ async def test_heartbeat_evaluate_with_context(
         session,
         direction="outbound",
         body="Sure! What size deck are you looking at?",
-    )
-
-    # Add a pending draft estimate
-    estimate_store = EstimateStore(onboarded_user.id)
-    await estimate_store.create(
-        description="12x12 composite deck build",
-        total_amount=4500,
-        status="draft",
     )
 
     with patch("backend.app.agent.heartbeat.settings") as mock_settings:

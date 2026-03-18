@@ -1,6 +1,5 @@
 """Verify that model and function defaults reference Settings, not hardcoded values."""
 
-from backend.app.agent.file_store import make_client_slug
 from backend.app.config import settings
 from backend.app.models import User
 
@@ -21,10 +20,3 @@ def test_user_data_folder_scheme_from_settings() -> None:
     """User.folder_scheme should default to settings.default_folder_scheme."""
     user = User()
     assert user.folder_scheme == settings.default_folder_scheme
-
-
-def test_make_client_slug_uses_settings_folder_scheme() -> None:
-    """make_client_slug should use settings.default_folder_scheme when not passed."""
-    slug = make_client_slug(name="John Doe")
-    expected = make_client_slug(name="John Doe", folder_scheme=settings.default_folder_scheme)
-    assert slug == expected

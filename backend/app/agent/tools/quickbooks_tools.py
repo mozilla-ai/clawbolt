@@ -29,40 +29,6 @@ logger = logging.getLogger(__name__)
 # Maximum number of rows to include in the tool response to keep context lean.
 _MAX_ROWS = 50
 
-# Tool groups auto-disabled when QuickBooks is connected.
-_QB_AUTO_DISABLED_GROUPS: frozenset[str] = frozenset({"estimate", "invoice", "email"})
-_QB_AUTO_DISABLED_REASON = "Managed by QuickBooks"
-
-
-def get_qb_auto_disabled_groups(user_id: str) -> dict[str, str]:
-    """Return a mapping of {factory_name: reason} for groups that should be auto-disabled.
-
-    When QuickBooks is connected with a valid token, local estimate, invoice,
-    and email tools are auto-disabled because QB handles those operations.
-    If the token is expired or invalid, local tools remain available so users
-    are never locked out of all document tools.
-
-    This function is shared between the agent router and the tool config API
-    to ensure consistent behavior.
-    """
-    result: dict[str, str] = {}
-    if not oauth_service.is_connected(user_id, "quickbooks"):
-        return result
-
-    # Verify the token is actually usable before auto-disabling local tools
-    token = oauth_service.load_token(user_id, "quickbooks")
-    if token is None or not token.access_token:
-        return result
-
-    # Check expiration if available (expired tokens can usually be refreshed,
-    # but if there is no refresh_token the connection is effectively dead)
-    if token.expires_at and token.expires_at < time.time() and not token.refresh_token:
-        return result
-
-    for group in _QB_AUTO_DISABLED_GROUPS:
-        result[group] = _QB_AUTO_DISABLED_REASON
-    return result
-
 
 class QBQueryParams(BaseModel):
     """Parameters for the qb_query tool."""

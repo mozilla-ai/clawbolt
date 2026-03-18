@@ -2,8 +2,6 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from backend.app.enums import EstimateStatus, InvoiceStatus
-
 
 class HealthResponse(BaseModel):
     status: str
@@ -26,53 +24,6 @@ class MessageBase(BaseModel):
 class MessageResponse(MessageBase):
     seq: int
     timestamp: str
-
-
-class EstimateLineItemBase(BaseModel):
-    description: str = ""
-    quantity: float = 1.0
-    unit_price: float = 0.0
-    total: float = 0.0
-
-
-class EstimateBase(BaseModel):
-    description: str = ""
-    total_amount: float = 0.0
-    status: str = EstimateStatus.DRAFT
-
-
-class EstimateResponse(EstimateBase):
-    id: str
-    user_id: str
-    client_id: str | None = None
-    pdf_url: str = ""
-    storage_path: str = ""
-    created_at: str
-
-
-class InvoiceLineItemBase(BaseModel):
-    description: str = ""
-    quantity: float = 1.0
-    unit_price: float = 0.0
-    total: float = 0.0
-
-
-class InvoiceBase(BaseModel):
-    description: str = ""
-    total_amount: float = 0.0
-    status: str = InvoiceStatus.DRAFT
-
-
-class InvoiceResponse(InvoiceBase):
-    id: str
-    user_id: str
-    client_id: str | None = None
-    pdf_url: str = ""
-    storage_path: str = ""
-    due_date: str | None = None
-    estimate_id: str | None = None
-    notes: str = ""
-    created_at: str
 
 
 # ---------------------------------------------------------------------------

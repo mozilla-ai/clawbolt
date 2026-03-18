@@ -12,10 +12,24 @@ from backend.app.agent.tools.base import (
     _strip_titles,
     tool_to_function_schema,
 )
-from backend.app.agent.tools.estimate_tools import (
-    EstimateLineItemParams,
-    GenerateEstimateParams,
-)
+
+
+# Sample nested Pydantic models for testing schema generation
+class _LineItemParams(BaseModel):
+    """A single line item."""
+
+    description: str = Field(description="Line item description")
+    quantity: float = Field(default=1, ge=0, description="Quantity")
+    unit_price: float = Field(ge=0, description="Unit price in dollars")
+
+
+class _NestedParams(BaseModel):
+    """Parameters with a nested array field."""
+
+    description: str = Field(description="Brief description of the work")
+    line_items: list[_LineItemParams] = Field(description="Line items", min_length=1)
+    client_name: str | None = Field(default=None, description="Optional client name")
+
 
 # --- _inline_refs ---
 
@@ -131,13 +145,13 @@ async def _dummy_func() -> ToolResult:
     return ToolResult(content="ok")
 
 
-def test_tool_to_function_schema_flat_for_estimate_params() -> None:
-    """Schema for GenerateEstimateParams (nested model) should have no $defs/$ref."""
+def test_tool_to_function_schema_flat_for_nested_params() -> None:
+    """Schema for nested model should have no $defs/$ref."""
     tool = Tool(
-        name="generate_estimate",
-        description="Generate an estimate",
+        name="test_tool",
+        description="Test tool with nested params",
         function=_dummy_func,
-        params_model=GenerateEstimateParams,
+        params_model=_NestedParams,
     )
     schema = tool_to_function_schema(tool)
     schema_json = json.dumps(schema)
@@ -161,10 +175,10 @@ def test_tool_to_function_schema_flat_for_estimate_params() -> None:
 def test_tool_to_function_schema_no_titles() -> None:
     """Schema should not contain any 'title' keys at any level."""
     tool = Tool(
-        name="generate_estimate",
-        description="Generate an estimate",
+        name="test_tool",
+        description="Test tool",
         function=_dummy_func,
-        params_model=GenerateEstimateParams,
+        params_model=_NestedParams,
     )
     schema = tool_to_function_schema(tool)
     schema_json = json.dumps(schema)
@@ -195,21 +209,21 @@ def test_tool_to_function_schema_simple_model() -> None:
     assert '"title"' not in json.dumps(schema)
 
 
-def test_estimate_line_item_params_ge_constraints() -> None:
-    """EstimateLineItemParams should enforce ge=0 on quantity and unit_price."""
+def test_line_item_params_ge_constraints() -> None:
+    """_LineItemParams should enforce ge=0 on quantity and unit_price."""
     # Valid values
-    item = EstimateLineItemParams(description="Test", quantity=1, unit_price=50)
+    item = _LineItemParams(description="Test", quantity=1, unit_price=50)
     assert item.quantity == 1
     assert item.unit_price == 50
 
     # Zero should be valid
-    item_zero = EstimateLineItemParams(description="Test", quantity=0, unit_price=0)
+    item_zero = _LineItemParams(description="Test", quantity=0, unit_price=0)
     assert item_zero.quantity == 0
     assert item_zero.unit_price == 0
 
     # Negative quantity should fail
     try:
-        EstimateLineItemParams(description="Test", quantity=-1, unit_price=50)
+        _LineItemParams(description="Test", quantity=-1, unit_price=50)
         msg = "Expected ValidationError for negative quantity"
         raise AssertionError(msg)
     except ValidationError:
@@ -217,7 +231,7 @@ def test_estimate_line_item_params_ge_constraints() -> None:
 
     # Negative unit_price should fail
     try:
-        EstimateLineItemParams(description="Test", quantity=1, unit_price=-10)
+        _LineItemParams(description="Test", quantity=1, unit_price=-10)
         msg = "Expected ValidationError for negative unit_price"
         raise AssertionError(msg)
     except ValidationError:

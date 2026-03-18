@@ -9,10 +9,6 @@ from pydantic import BaseModel, Field
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.tool_errors import summarize_tool_params
 from backend.app.agent.tools.base import Tool, ToolResult, tool_to_function_schema
-from backend.app.agent.tools.estimate_tools import (
-    EstimateLineItemParams,
-    GenerateEstimateParams,
-)
 from backend.app.agent.tools.file_tools import OrganizeFileParams, UploadToStorageParams
 from backend.app.agent.tools.heartbeat_tools import (
     GetHeartbeatParams,
@@ -71,11 +67,6 @@ def test_messaging_tool_param_models_exist() -> None:
     assert issubclass(SendMediaReplyParams, BaseModel)
 
 
-def test_estimate_tool_param_models_exist() -> None:
-    """Estimate tool param models should be importable and valid BaseModels."""
-    assert issubclass(GenerateEstimateParams, BaseModel)
-
-
 def test_heartbeat_tool_param_models_exist() -> None:
     """Heartbeat tool param models should be importable and valid BaseModels."""
     assert issubclass(GetHeartbeatParams, BaseModel)
@@ -108,23 +99,6 @@ def test_get_heartbeat_params_has_no_fields() -> None:
     """GetHeartbeatParams should have no required fields."""
     p = GetHeartbeatParams()
     assert isinstance(p, BaseModel)
-
-
-def test_generate_estimate_params_accepts_valid_input() -> None:
-    """GenerateEstimateParams should accept valid arguments with line items."""
-    p = GenerateEstimateParams(
-        description="Deck work",
-        line_items=[EstimateLineItemParams(description="Materials", unit_price=100.0, quantity=2)],
-    )
-    assert p.description == "Deck work"
-    assert len(p.line_items) == 1
-    assert p.line_items[0].unit_price == 100.0
-
-
-def test_generate_estimate_params_rejects_missing_line_items() -> None:
-    """GenerateEstimateParams should reject missing line_items."""
-    with pytest.raises(Exception):  # noqa: B017
-        GenerateEstimateParams(description="Deck work")  # type: ignore[call-arg]
 
 
 def test_upload_to_storage_rejects_invalid_category() -> None:
@@ -443,6 +417,22 @@ async def test_batch_validation_executes_valid_calls_alongside_invalid(
 # ---------------------------------------------------------------------------
 
 
+class _LineItemParams(BaseModel):
+    """A line item for testing validation summaries."""
+
+    description: str = Field(description="Line item description")
+    quantity: float = Field(default=1, ge=0, description="Quantity")
+    unit_price: float = Field(ge=0, description="Unit price in dollars")
+
+
+class _NestedToolParams(BaseModel):
+    """Tool params with a nested array for testing validation summaries."""
+
+    description: str = Field(description="Brief description")
+    line_items: list[_LineItemParams] = Field(description="Line items", min_length=1)
+    client_name: str | None = Field(default=None, description="Optional client name")
+
+
 def _make_tool(name: str, params_model: type[BaseModel]) -> Tool:
     """Helper to build a Tool with a dummy function for summary tests."""
 
@@ -458,7 +448,7 @@ def test_summarize_tool_params_includes_array_item_structure() -> None:
     Regression test for #434: when the LLM omits line_items, the error
     message must show the expected item structure so it can self-correct.
     """
-    tool = _make_tool("generate_estimate", GenerateEstimateParams)
+    tool = _make_tool("test_tool", _NestedToolParams)
     summary = summarize_tool_params(tool)
 
     # Should show nested item fields, not bare 'array'
@@ -470,7 +460,7 @@ def test_summarize_tool_params_includes_array_item_structure() -> None:
 
 def test_summarize_tool_params_resolves_anyof_types() -> None:
     """Optional union fields (str | None) should show the concrete type, not 'any'."""
-    tool = _make_tool("generate_estimate", GenerateEstimateParams)
+    tool = _make_tool("test_tool", _NestedToolParams)
     summary = summarize_tool_params(tool)
 
     assert '"client_name": string (optional)' in summary
@@ -491,7 +481,7 @@ async def test_validation_error_for_missing_line_items_shows_item_structure(
         tool_calls=[
             {
                 "id": "call_est",
-                "name": "estimate_tool",
+                "name": "nested_tool",
                 "arguments": json.dumps({"description": "Deck repair"}),
             }
         ]
@@ -501,10 +491,10 @@ async def test_validation_error_for_missing_line_items_shows_item_structure(
 
     mock_func = AsyncMock(return_value=ToolResult(content="ok"))
     tool = Tool(
-        name="estimate_tool",
-        description="Generate an estimate",
+        name="nested_tool",
+        description="A tool with nested params",
         function=mock_func,
-        params_model=GenerateEstimateParams,
+        params_model=_NestedToolParams,
     )
 
     agent = ClawboltAgent(user=test_user)

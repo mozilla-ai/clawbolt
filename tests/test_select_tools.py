@@ -196,7 +196,6 @@ class TestDefaultRegistryCoreSpecialistSplit:
         from backend.app.agent.tools.registry import default_registry
 
         specialist = default_registry.specialist_factory_names
-        assert "estimate" in specialist
         assert "heartbeat" in specialist
         assert "file" in specialist
 

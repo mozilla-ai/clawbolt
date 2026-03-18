@@ -11,16 +11,6 @@ class ToolName:
     SEND_REPLY = "send_reply"
     SEND_MEDIA_REPLY = "send_media_reply"
 
-    # Estimates
-    GENERATE_ESTIMATE = "generate_estimate"
-
-    # Invoices
-    GENERATE_INVOICE = "generate_invoice"
-    CONVERT_ESTIMATE_TO_INVOICE = "convert_estimate_to_invoice"
-
-    # Email
-    SEND_DOCUMENT_EMAIL = "send_document_email"
-
     # Heartbeat
     GET_HEARTBEAT = "get_heartbeat"
     UPDATE_HEARTBEAT = "update_heartbeat"

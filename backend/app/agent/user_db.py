@@ -4,8 +4,7 @@ Replaces the file-based UserStore from the old file_store.py. Uses the User
 ORM model for persistence, while keeping UserData Pydantic model as the public
 API surface for backward compatibility with premium.
 
-Follows the same SessionLocal() / try-finally pattern used in session_db.py
-and client_db.py.
+Follows the same SessionLocal() / try-finally pattern used in session_db.py.
 """
 
 from __future__ import annotations

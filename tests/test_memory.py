@@ -1,6 +1,5 @@
 import pytest
 
-from backend.app.agent.client_db import ClientStore
 from backend.app.agent.memory import build_memory_context, read_memory, write_memory
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.models import User
@@ -32,26 +31,17 @@ async def test_write_memory_overwrites(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_build_memory_context_with_clients(test_user: User) -> None:
-    """build_memory_context should include memory text and clients."""
+async def test_build_memory_context_with_memory(test_user: User) -> None:
+    """build_memory_context should include memory text."""
     store = get_memory_store(test_user.id)
     store.write_memory("## Pricing\n- Deck: $35/sqft")
 
-    client_store = ClientStore(test_user.id)
-    await client_store.create(
-        name="John Smith",
-        phone="555-1234",
-        address="123 Oak St",
-    )
-
     context = await build_memory_context(test_user.id)
     assert "$35/sqft" in context
-    assert "John Smith" in context
-    assert "123 Oak St" in context
 
 
 @pytest.mark.asyncio()
 async def test_build_memory_context_empty(test_user: User) -> None:
-    """build_memory_context returns empty string when no memory or clients."""
+    """build_memory_context returns empty string when no memory."""
     context = await build_memory_context(test_user.id)
     assert context == ""

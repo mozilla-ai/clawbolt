@@ -51,29 +51,6 @@ def _create_memory(user: User, content: str) -> None:
     store.write_memory(content)
 
 
-def _create_clients(user: User, clients: list[dict[str, str]]) -> None:
-    """Create Client rows in the database."""
-    from backend.app.models import Client
-
-    db = _db_module.SessionLocal()
-    try:
-        for c in clients:
-            db.add(
-                Client(
-                    id=c.get("id", "client"),
-                    user_id=user.id,
-                    name=c.get("name", ""),
-                    phone=c.get("phone", ""),
-                    email=c.get("email", ""),
-                    address=c.get("address", ""),
-                    notes=c.get("notes", ""),
-                )
-            )
-        db.commit()
-    finally:
-        db.close()
-
-
 def test_search_empty_query(client: TestClient) -> None:
     resp = client.get("/api/search?q=")
     assert resp.status_code == 200
@@ -121,28 +98,6 @@ def test_search_finds_sessions(client: TestClient, test_user: User) -> None:
     assert len(data["results"]) == 1
     assert data["results"][0]["type"] == "conversation"
     assert "plumbing" in data["results"][0]["preview"].lower()
-
-
-def test_search_finds_clients(client: TestClient, test_user: User) -> None:
-    _create_clients(
-        test_user,
-        [
-            {
-                "id": "john-doe",
-                "name": "John Doe",
-                "phone": "555-1234",
-                "email": "",
-                "address": "",
-                "notes": "",
-            },
-        ],
-    )
-    resp = client.get("/api/search?q=john")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["results"]) == 1
-    assert data["results"][0]["type"] == "client"
-    assert data["results"][0]["title"] == "John Doe"
 
 
 def test_search_case_insensitive(client: TestClient, test_user: User) -> None:

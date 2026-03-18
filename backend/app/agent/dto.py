@@ -12,7 +12,15 @@ import re
 from pydantic import BaseModel, Field
 
 from backend.app.config import settings
-from backend.app.enums import EstimateStatus, InvoiceStatus
+
+
+def slugify(text: str, max_length: int = 50) -> str:
+    """Convert text to a filesystem-safe slug."""
+    slug = text.lower().strip()
+    slug = re.sub(r"[^\w\s-]", "", slug)
+    slug = re.sub(r"[\s_-]+", "_", slug)
+    slug = slug.strip("_")
+    return slug[:max_length]
 
 
 class UserData(BaseModel):
@@ -77,71 +85,6 @@ class SessionState(BaseModel):
     channel: str = ""
 
 
-class ClientData(BaseModel):
-    """In-memory client DTO."""
-
-    id: str = ""
-    name: str = ""
-    phone: str = ""
-    email: str = ""
-    address: str = ""
-    notes: str = ""
-    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
-
-
-class EstimateLineItemData(BaseModel):
-    """In-memory estimate line item DTO."""
-
-    id: str = ""
-    description: str = ""
-    quantity: float = 1.0
-    unit_price: float = 0.0
-    total: float = 0.0
-
-
-class EstimateData(BaseModel):
-    """In-memory estimate DTO."""
-
-    id: str = ""
-    user_id: str = ""
-    client_id: str | None = None
-    description: str = ""
-    total_amount: float = 0.0
-    status: str = EstimateStatus.DRAFT
-    pdf_url: str = ""
-    storage_path: str = ""
-    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
-    line_items: list[EstimateLineItemData] = Field(default_factory=list)
-
-
-class InvoiceLineItemData(BaseModel):
-    """In-memory invoice line item DTO."""
-
-    id: str = ""
-    description: str = ""
-    quantity: float = 1.0
-    unit_price: float = 0.0
-    total: float = 0.0
-
-
-class InvoiceData(BaseModel):
-    """In-memory invoice DTO."""
-
-    id: str = ""
-    user_id: str = ""
-    client_id: str | None = None
-    description: str = ""
-    total_amount: float = 0.0
-    status: str = InvoiceStatus.DRAFT
-    pdf_url: str = ""
-    storage_path: str = ""
-    due_date: str | None = None
-    estimate_id: str | None = None
-    notes: str = ""
-    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
-    line_items: list[InvoiceLineItemData] = Field(default_factory=list)
-
-
 class MediaData(BaseModel):
     """In-memory media file DTO."""
 
@@ -173,53 +116,3 @@ class ToolConfigEntry(BaseModel):
     domain_group_order: int = 0
     enabled: bool = True
     auto_disabled_reason: str | None = None
-
-
-# ---------------------------------------------------------------------------
-# Utility functions
-# ---------------------------------------------------------------------------
-
-
-def slugify(text: str, max_length: int = 60) -> str:
-    """Convert text to a filesystem-safe slug.
-
-    Example: "John Smith - 116 Virginia Ave" -> "john_smith_116_virginia_ave"
-    """
-    slug = text.lower().strip()
-    slug = re.sub(r"[^\w\s-]", "", slug)
-    slug = re.sub(r"[\s_-]+", "_", slug)
-    return slug[:max_length].rstrip("_")
-
-
-def _unique_slug(base_slug: str, existing_ids: set[str]) -> str:
-    """Return a unique slug by appending a counter suffix if needed."""
-    if base_slug not in existing_ids:
-        return base_slug
-    counter = 2
-    while f"{base_slug}_{counter}" in existing_ids:
-        counter += 1
-    return f"{base_slug}_{counter}"
-
-
-def make_client_slug(
-    name: str = "",
-    address: str = "",
-    folder_scheme: str = "",
-) -> str:
-    """Build a client slug based on the folder scheme preference."""
-    folder_scheme = folder_scheme or settings.default_folder_scheme
-    if folder_scheme == "by_address" and address.strip():
-        return slugify(address)
-    if folder_scheme == "by_client_and_address":
-        parts = []
-        if name.strip():
-            parts.append(name.strip())
-        if address.strip():
-            parts.append(address.strip())
-        if parts:
-            return slugify(" ".join(parts))
-    if name.strip():
-        return slugify(name)
-    if address.strip():
-        return slugify(address)
-    return ""
