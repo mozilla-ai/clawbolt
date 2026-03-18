@@ -10,6 +10,8 @@ from backend.app.models import User
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
+    ModelConfigResponse,
+    ModelConfigUpdate,
     UserProfileResponse,
     UserProfileUpdate,
 )
@@ -120,3 +122,48 @@ async def update_channel_config(
             pass
 
     return _build_channel_config_response()
+
+
+# ---------------------------------------------------------------------------
+# Model config
+# ---------------------------------------------------------------------------
+
+
+def _build_model_config_response() -> ModelConfigResponse:
+    return ModelConfigResponse(
+        llm_provider=settings.llm_provider,
+        llm_model=settings.llm_model,
+        llm_api_base=settings.llm_api_base,
+        vision_model=settings.vision_model,
+        heartbeat_model=settings.heartbeat_model,
+        heartbeat_provider=settings.heartbeat_provider,
+        compaction_model=settings.compaction_model,
+        compaction_provider=settings.compaction_provider,
+    )
+
+
+@router.get("/user/model/config", response_model=ModelConfigResponse)
+async def get_model_config(
+    _current_user: User = Depends(get_current_user),
+) -> ModelConfigResponse:
+    """Return server-level LLM model configuration."""
+    return _build_model_config_response()
+
+
+@router.put("/user/model/config", response_model=ModelConfigResponse)
+async def update_model_config(
+    body: ModelConfigUpdate,
+    _current_user: User = Depends(get_current_user),
+) -> ModelConfigResponse:
+    """Update server-level LLM model configuration."""
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    try:
+        update_settings(updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    save_persistent_config(updates)
+    return _build_model_config_response()

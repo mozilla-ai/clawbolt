@@ -3,6 +3,7 @@ import { queryKeys } from '@/lib/query-keys';
 import api from '@/api';
 import type {
   MemoryUpdate,
+  ModelConfigUpdate,
   ToolConfigUpdateEntry,
   ChannelConfigUpdate,
 } from '@/types';
@@ -101,6 +102,25 @@ export function useOAuthDisconnect() {
     mutationFn: (integration: string) => api.disconnectOAuth(integration),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.oauth });
+    },
+  });
+}
+
+// --- Model config ---
+
+export function useModelConfig() {
+  return useQuery({
+    queryKey: queryKeys.modelConfig,
+    queryFn: () => api.getModelConfig(),
+  });
+}
+
+export function useUpdateModelConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: ModelConfigUpdate) => api.updateModelConfig(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.modelConfig });
     },
   });
 }

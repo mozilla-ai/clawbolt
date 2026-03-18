@@ -162,6 +162,33 @@ class ChannelConfigUpdate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Model config (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class ModelConfigResponse(BaseModel):
+    llm_provider: str
+    llm_model: str
+    llm_api_base: str | None
+    vision_model: str
+    heartbeat_model: str
+    heartbeat_provider: str
+    compaction_model: str
+    compaction_provider: str
+
+
+class ModelConfigUpdate(BaseModel):
+    llm_provider: str | None = None
+    llm_model: str | None = None
+    llm_api_base: str | None = None
+    vision_model: str | None = None
+    heartbeat_model: str | None = None
+    heartbeat_provider: str | None = None
+    compaction_model: str | None = None
+    compaction_provider: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Tool config (dashboard)
 # ---------------------------------------------------------------------------
 

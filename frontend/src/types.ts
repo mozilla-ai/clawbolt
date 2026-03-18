@@ -106,6 +106,28 @@ export interface ChannelConfigUpdate {
   telegram_allowed_usernames?: string;
 }
 
+export interface ModelConfig {
+  llm_provider: string;
+  llm_model: string;
+  llm_api_base: string | null;
+  vision_model: string;
+  heartbeat_model: string;
+  heartbeat_provider: string;
+  compaction_model: string;
+  compaction_provider: string;
+}
+
+export interface ModelConfigUpdate {
+  llm_provider?: string;
+  llm_model?: string;
+  llm_api_base?: string | null;
+  vision_model?: string;
+  heartbeat_model?: string;
+  heartbeat_provider?: string;
+  compaction_model?: string;
+  compaction_provider?: string;
+}
+
 export interface ToolConfigEntry {
   name: string;
   description: string;
