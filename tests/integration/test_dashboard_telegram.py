@@ -358,9 +358,7 @@ class TestPremiumWebchatIdentity:
             "backend.app.agent.ingestion.settings.premium_plugin",
             "clawbolt_premium.plugin",
         ):
-            asyncio.get_event_loop().run_until_complete(
-                _get_or_create_user("webchat", original_id)
-            )
+            asyncio.get_event_loop().run_until_complete(_get_or_create_user("webchat", original_id))
 
         # A ChannelRoute should now exist
         db = _db_module.SessionLocal()

@@ -102,9 +102,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         if route:
             user = db.query(User).filter_by(id=route.user_id).first()
             if user is not None:
-                logger.debug(
-                    "_get_or_create_user: found via channel route -> user %s", user.id
-                )
+                logger.debug("_get_or_create_user: found via channel route -> user %s", user.id)
                 db.expunge(user)
                 return user
 
@@ -115,9 +113,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         all_users = db.query(User).all()
         if len(all_users) == 1 and not settings.premium_plugin:
             user = all_users[0]
-            logger.debug(
-                "_get_or_create_user: single-tenant reuse -> user %s", user.id
-            )
+            logger.debug("_get_or_create_user: single-tenant reuse -> user %s", user.id)
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
             user.channel_identifier = sender_id
             user.preferred_channel = channel
