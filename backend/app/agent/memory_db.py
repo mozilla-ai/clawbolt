@@ -8,6 +8,7 @@ user_text.
 from __future__ import annotations
 
 import logging
+from collections import OrderedDict
 
 from backend.app.agent.client_db import ClientStore
 from backend.app.agent.dto import ClientData
@@ -159,17 +160,27 @@ class MemoryStore:
 
 
 # ---------------------------------------------------------------------------
-# Singleton cache
+# LRU cache
 # ---------------------------------------------------------------------------
 
-_stores: dict[str, MemoryStore] = {}
+_MAX_CACHED_STORES = 256
+_stores: OrderedDict[str, MemoryStore] = OrderedDict()
 
 
 def get_memory_store(user_id: str) -> MemoryStore:
-    """Get or create a MemoryStore for the given user."""
-    if user_id not in _stores:
-        _stores[user_id] = MemoryStore(user_id)
-    return _stores[user_id]
+    """Get or create a MemoryStore for the given user.
+
+    Uses an LRU cache bounded to ``_MAX_CACHED_STORES`` entries to prevent
+    unbounded memory growth in multi-tenant deployments.
+    """
+    if user_id in _stores:
+        _stores.move_to_end(user_id)
+        return _stores[user_id]
+    store = MemoryStore(user_id)
+    _stores[user_id] = store
+    if len(_stores) > _MAX_CACHED_STORES:
+        _stores.popitem(last=False)
+    return store
 
 
 def reset_memory_stores() -> None:
