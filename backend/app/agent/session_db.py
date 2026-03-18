@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime
 import logging
 import uuid
+from collections import OrderedDict
 from typing import Any
 
 from sqlalchemy import func
@@ -386,17 +387,27 @@ class SessionStore:
 
 
 # ---------------------------------------------------------------------------
-# Singleton cache
+# LRU cache
 # ---------------------------------------------------------------------------
 
-_stores: dict[str, SessionStore] = {}
+_MAX_CACHED_STORES = 256
+_stores: OrderedDict[str, SessionStore] = OrderedDict()
 
 
 def get_session_store(user_id: str) -> SessionStore:
-    """Get or create a SessionStore for the given user."""
-    if user_id not in _stores:
-        _stores[user_id] = SessionStore(user_id)
-    return _stores[user_id]
+    """Get or create a SessionStore for the given user.
+
+    Uses an LRU cache bounded to ``_MAX_CACHED_STORES`` entries to prevent
+    unbounded memory growth in multi-tenant deployments.
+    """
+    if user_id in _stores:
+        _stores.move_to_end(user_id)
+        return _stores[user_id]
+    store = SessionStore(user_id)
+    _stores[user_id] = store
+    if len(_stores) > _MAX_CACHED_STORES:
+        _stores.popitem(last=False)
+    return store
 
 
 def reset_session_stores() -> None:

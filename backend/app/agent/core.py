@@ -86,6 +86,8 @@ class AgentResponse:
     memories_saved: list[dict[str, str]] = field(default_factory=list)
     tool_calls: list[StoredToolInteraction] = field(default_factory=list)
     is_error_fallback: bool = False
+    total_input_tokens: int = 0
+    total_output_tokens: int = 0
 
 
 class ClawboltAgent:
@@ -632,6 +634,8 @@ class ClawboltAgent:
         tool_call_records: list[StoredToolInteraction] = []
         reply_text = ""
         _empty_reply_retried = False
+        _total_input_tokens = 0
+        _total_output_tokens = 0
 
         for _round in range(MAX_TOOL_ROUNDS):
             logger.debug(
@@ -651,6 +655,8 @@ class ClawboltAgent:
             log_llm_usage(self.user.id, settings.llm_model, response, purpose)
             if response.usage and response.usage.input_tokens:
                 self._last_input_tokens = response.usage.input_tokens
+                _total_input_tokens += response.usage.input_tokens
+                _total_output_tokens += response.usage.output_tokens or 0
                 logger.debug(
                     "LLM usage: input_tokens=%d output_tokens=%d",
                     response.usage.input_tokens,
@@ -680,6 +686,8 @@ class ClawboltAgent:
                     memories_saved=memories_saved,
                     tool_calls=tool_call_records,
                     is_error_fallback=True,
+                    total_input_tokens=_total_input_tokens,
+                    total_output_tokens=_total_output_tokens,
                 )
 
             # Parse tool calls via shared parser
@@ -782,6 +790,8 @@ class ClawboltAgent:
             actions_taken=actions_taken,
             memories_saved=memories_saved,
             tool_calls=tool_call_records,
+            total_input_tokens=_total_input_tokens,
+            total_output_tokens=_total_output_tokens,
         )
 
     def _find_tool(self, name: str) -> Callable[..., Any] | None:
