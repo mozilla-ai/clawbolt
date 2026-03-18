@@ -49,6 +49,8 @@ def create_messaging_tools(
 
     async def send_media_reply(message: str, media_url: str) -> ToolResult:
         """Send a reply with a media attachment."""
+        from pathlib import Path
+
         from backend.app.bus import OutboundMessage as OMsg
 
         if not media_url or not media_url.strip():
@@ -57,7 +59,19 @@ def create_messaging_tools(
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
-        outbound = OMsg(channel=channel, chat_id=to_address, content=message, media=[media_url])
+        url = media_url.strip()
+        is_url = url.startswith("http://") or url.startswith("https://")
+        is_local_file = Path(url).is_file()
+        if not is_url and not is_local_file:
+            return ToolResult(
+                content=(
+                    f"Error: media_url '{url}' is not a valid URL (must start with "
+                    f"http:// or https://) and does not exist as a local file."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        outbound = OMsg(channel=channel, chat_id=to_address, content=message, media=[url])
         await publish_outbound(outbound)
         return ToolResult(content="Sent media message")
 

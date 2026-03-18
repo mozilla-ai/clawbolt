@@ -23,7 +23,7 @@ from backend.app.services.storage_service import StorageBackend
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
-PDF_BASE_DIR = Path(settings.pdf_storage_dir)
+PDF_BASE_DIR = Path(settings.pdf_storage_dir).resolve()
 
 logger = logging.getLogger(__name__)
 
