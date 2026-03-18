@@ -92,6 +92,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
     """
     from sqlalchemy.exc import IntegrityError
 
+    logger.debug("_get_or_create_user: channel=%s sender_id=%s", channel, sender_id)
     db = SessionLocal()
     try:
         # Look up by channel route
@@ -101,6 +102,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         if route:
             user = db.query(User).filter_by(id=route.user_id).first()
             if user is not None:
+                logger.debug("_get_or_create_user: found via channel route -> user %s", user.id)
                 db.expunge(user)
                 return user
 
@@ -111,6 +113,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         all_users = db.query(User).all()
         if len(all_users) == 1 and not settings.premium_plugin:
             user = all_users[0]
+            logger.debug("_get_or_create_user: single-tenant reuse -> user %s", user.id)
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
             user.channel_identifier = sender_id
             user.preferred_channel = channel
@@ -118,6 +121,21 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             db.refresh(user)
             db.expunge(user)
             return user
+
+        # In premium mode the webchat sends sender_id = user.id (the PK).
+        # Link the existing user to this channel instead of creating a
+        # duplicate account.
+        existing = db.query(User).filter_by(id=sender_id).first()
+        if existing is not None:
+            logger.debug(
+                "_get_or_create_user: sender_id matches existing PK -> user %s",
+                existing.id,
+            )
+            db.add(ChannelRoute(user_id=existing.id, channel=channel, channel_identifier=sender_id))
+            db.commit()
+            db.refresh(existing)
+            db.expunge(existing)
+            return existing
 
         # Create new user -- handle concurrent creation race
         try:
@@ -133,10 +151,20 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             provision_user(user, db)
             db.commit()
             db.refresh(user)
+            logger.debug(
+                "_get_or_create_user: created new user %s (user_id=%s)",
+                user.id,
+                user.user_id,
+            )
             db.expunge(user)
             return user
         except IntegrityError:
             db.rollback()
+            logger.debug(
+                "_get_or_create_user: IntegrityError race, re-querying for %s/%s",
+                channel,
+                sender_id,
+            )
             # Concurrent insert won the race; re-query
             route = (
                 db.query(ChannelRoute)
@@ -325,6 +353,12 @@ async def process_inbound_from_bus(
     batching).
     """
     user = await _get_or_create_user(inbound.channel, inbound.sender_id)
+    logger.debug(
+        "process_inbound_from_bus: resolved user %s for channel=%s sender_id=%s",
+        user.id,
+        inbound.channel,
+        inbound.sender_id,
+    )
 
     # -- Intercept approval responses before normal processing --
     gate = get_approval_gate()
@@ -349,6 +383,12 @@ async def process_inbound_from_bus(
 
     session, _is_new = await get_or_create_conversation(
         user.id, external_session_id=inbound.session_id
+    )
+    logger.debug(
+        "process_inbound_from_bus: session %s (new=%s) for user %s",
+        session.session_id,
+        _is_new,
+        user.id,
     )
 
     session_store = get_session_store(user.id)
