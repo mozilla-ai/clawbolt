@@ -11,7 +11,6 @@ from backend.app.models import (  # noqa: F401
     Client,
     Estimate,
     EstimateLineItem,
-    HeartbeatItem,
     HeartbeatLog,
     IdempotencyKey,
     Invoice,
