@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from unittest.mock import patch
+
 import pytest
 
 from backend.app.agent.router import (
@@ -17,6 +19,7 @@ from backend.app.agent.router import (
     run_agent_step,
     run_pipeline,
 )
+from backend.app.media.download import DownloadedMedia
 
 
 @pytest.mark.asyncio
@@ -205,3 +208,43 @@ async def test_pipeline_step_can_mutate_context() -> None:
     )
 
     await run_pipeline(ctx, [set_context, check_context])
+
+
+@pytest.mark.asyncio
+async def test_prepare_media_step_preserves_pre_downloaded_media() -> None:
+    """prepare_media_step must not discard already-downloaded media.
+
+    Webchat uploads arrive as pre-populated ``downloaded_media`` on the
+    context (no ``media_urls``). Before the fix, the step overwrote
+    ``ctx.downloaded_media`` with the empty result of ``prepare_media()``,
+    silently dropping webchat image uploads.
+
+    Regression test for https://github.com/mozilla-ai/clawbolt/issues/664
+    """
+    from unittest.mock import AsyncMock
+
+    pre_downloaded = DownloadedMedia(
+        content=b"fake-image-bytes",
+        mime_type="image/png",
+        original_url="upload://photo.png",
+        filename="photo.png",
+    )
+
+    ctx = PipelineContext(
+        user=None,  # type: ignore[arg-type]
+        session=None,  # type: ignore[arg-type]
+        message=None,  # type: ignore[arg-type]
+        media_urls=[],
+        channel="webchat",
+        downloaded_media=[pre_downloaded],
+    )
+
+    with patch(
+        "backend.app.agent.router.prepare_media",
+        new_callable=AsyncMock,
+        return_value=([], None),
+    ):
+        result = await prepare_media_step(ctx)
+
+    assert len(result.downloaded_media) == 1
+    assert result.downloaded_media[0] is pre_downloaded
