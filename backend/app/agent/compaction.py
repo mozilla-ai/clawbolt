@@ -42,6 +42,10 @@ def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
 def _parse_compaction_response(raw: str) -> tuple[str, str]:
     """Parse the LLM compaction response into a memory update and summary.
 
+    The assistant prefill starts the response with ``{``, so the raw text from
+    the LLM may be missing the leading brace.  We try the text as-is first,
+    then retry with a prepended ``{`` before giving up.
+
     Returns a tuple of (memory_update, summary_string).
     """
     text = raw.strip()
@@ -53,9 +57,16 @@ def _parse_compaction_response(raw: str) -> tuple[str, str]:
             text = text[:-3]
         text = text.strip()
 
-    try:
-        parsed = json.loads(text)
-    except json.JSONDecodeError:
+    # Try parsing as-is first, then with prepended "{" (from assistant prefill)
+    parsed = None
+    for candidate in (text, "{" + text):
+        try:
+            parsed = json.loads(candidate)
+            break
+        except json.JSONDecodeError:
+            continue
+
+    if parsed is None:
         logger.warning("Failed to parse compaction response as JSON: %s", text[:200])
         return "", ""
 
@@ -118,6 +129,9 @@ async def compact_session(
 
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "\n".join(user_prompt_parts)},
+        # Assistant prefill forces the model to produce JSON instead of
+        # continuing the conversation it just read.
+        {"role": "assistant", "content": "{"},
     ]
 
     try:

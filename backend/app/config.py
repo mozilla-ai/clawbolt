@@ -87,7 +87,7 @@ class Settings(BaseSettings):
     compaction_enabled: bool = True
     compaction_model: str = ""  # empty = fall back to llm_model
     compaction_provider: str = ""  # empty = fall back to llm_provider
-    compaction_max_tokens: int = Field(default=500, ge=1)
+    compaction_max_tokens: int = Field(default=1500, ge=1)
 
     # Rate limiting
     webhook_rate_limit_max_requests: int = Field(default=30, ge=1)

@@ -347,7 +347,7 @@ class TelegramChannel(BaseChannel):
             data = await asyncio.to_thread(local_path.read_bytes)
             content_type = mimetypes.guess_type(str(local_path))[0] or "application/octet-stream"
             filename = local_path.name
-        else:
+        elif media_url.startswith("http://") or media_url.startswith("https://"):
             async with httpx.AsyncClient() as client:
                 resp = await client.get(
                     media_url, follow_redirects=True, timeout=settings.http_timeout_seconds
@@ -359,6 +359,12 @@ class TelegramChannel(BaseChannel):
                 ext = mimetypes.guess_extension(content_type) or ".bin"
                 filename = f"file{ext}"
                 data = resp.content
+        else:
+            msg = (
+                f"Cannot send media: '{media_url}' is not a reachable local file "
+                f"and is not a valid URL (missing http:// or https:// protocol)"
+            )
+            raise ValueError(msg)
 
         if content_type.startswith("image/"):
             msg = await self.bot.send_photo(

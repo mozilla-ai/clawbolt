@@ -122,6 +122,22 @@ def test_parse_markdown_fenced_json() -> None:
     assert summary == "A summary."
 
 
+def test_parse_prefilled_response() -> None:
+    """Should parse a response missing the leading '{' from assistant prefill."""
+    # The assistant prefill starts with "{", so the LLM response may omit it
+    inner = json.dumps(
+        {
+            "memory_update": "## Notes\n- Prefers 8am starts",
+            "summary": "[TIMESTAMP] Scheduling preferences.",
+        }
+    )
+    # Strip the leading "{" to simulate what the LLM returns after prefill
+    raw_without_brace = inner.lstrip("{")
+    memory_update, summary = _parse_compaction_response(raw_without_brace)
+    assert "8am starts" in memory_update
+    assert summary == "[TIMESTAMP] Scheduling preferences."
+
+
 def test_parse_invalid_json() -> None:
     """Invalid JSON should return empty strings without raising."""
     memory_update, summary = _parse_compaction_response("not json at all")
@@ -168,10 +184,12 @@ async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
     content = store.read_memory()
     assert "Deck: $45/sqft" in content
 
-    # Verify LLM was called with the system prompt
+    # Verify LLM was called with the system prompt and assistant prefill
     mock_llm.assert_called_once()
     call_kwargs = mock_llm.call_args
     assert call_kwargs.kwargs.get("system") == COMPACTION_SYSTEM_PROMPT
+    llm_messages = call_kwargs.kwargs["messages"]
+    assert llm_messages[-1] == {"role": "assistant", "content": "{"}
 
 
 @pytest.mark.asyncio()

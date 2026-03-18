@@ -112,6 +112,19 @@ async def test_send_media_document(
 
 
 @pytest.mark.asyncio()
+async def test_send_media_rejects_invalid_url(
+    telegram_service: TelegramChannel,
+) -> None:
+    """send_media should raise ValueError for a URL without protocol that isn't a local file."""
+    with pytest.raises(ValueError, match="not a reachable local file"):
+        await telegram_service.send_media(
+            to="123456789",
+            body="Here is the file",
+            media_url="data/estimates/nonexistent/EST-0001.pdf",
+        )
+
+
+@pytest.mark.asyncio()
 async def test_send_message_text_only(
     telegram_service: TelegramChannel, mock_bot: MagicMock
 ) -> None:
