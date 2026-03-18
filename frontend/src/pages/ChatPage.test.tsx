@@ -40,7 +40,7 @@ describe('ChatPage tool interactions', () => {
     });
     mockApi.getSession.mockResolvedValue({
       session_id: sessionId,
-      user_id: 1,
+      user_id: '1',
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       is_active: true,
@@ -95,7 +95,7 @@ describe('ChatPage tool interactions', () => {
     });
     mockApi.getSession.mockResolvedValue({
       session_id: sessionId,
-      user_id: 1,
+      user_id: '1',
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
       is_active: true,

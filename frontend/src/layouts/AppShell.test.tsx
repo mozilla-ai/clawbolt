@@ -14,8 +14,20 @@ vi.mock('@/contexts/AuthContext', () => ({
   }),
 }));
 
+// Mock the api module
+vi.mock('@/api', () => ({
+  default: {
+    getProfile: vi.fn(),
+    listSessions: vi.fn(),
+    getMemory: vi.fn(),
+  },
+}));
+
+import api from '@/api';
+const mockApi = vi.mocked(api);
+
 const PROFILE_RESPONSE = {
-  id: 1,
+  id: '1',
   user_id: 'local@clawbolt.local',
   phone: '555-0100',
   timezone: 'America/Los_Angeles',
@@ -54,32 +66,17 @@ const SESSIONS_RESPONSE = {
   limit: 10,
 };
 
-function mockFetchResponses(
+function setupMocks(
   profile: unknown = PROFILE_RESPONSE,
   sessions: unknown = SESSIONS_RESPONSE,
 ) {
-  vi.spyOn(globalThis, 'fetch').mockImplementation((input: string | URL | Request) => {
-    const url = typeof input === 'string' ? input : input instanceof URL ? input.href : input.url;
-    if (url.includes('/api/user/sessions')) {
-      return Promise.resolve(
-        new Response(JSON.stringify(sessions), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      );
-    }
-    // Default: profile
-    return Promise.resolve(
-      new Response(JSON.stringify(profile), {
-        status: 200,
-        headers: { 'Content-Type': 'application/json' },
-      }),
-    );
-  });
+  mockApi.getProfile.mockResolvedValue(profile as ReturnType<typeof api.getProfile> extends Promise<infer T> ? T : never);
+  mockApi.listSessions.mockResolvedValue(sessions as ReturnType<typeof api.listSessions> extends Promise<infer T> ? T : never);
+  mockApi.getMemory.mockResolvedValue({ content: '' });
 }
 
 beforeEach(() => {
-  mockFetchResponses();
+  setupMocks();
 });
 
 afterEach(() => {
@@ -100,7 +97,7 @@ describe('AppShell', () => {
   });
 
   it('shows error state when profile fails to load', async () => {
-    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('Network error'));
+    mockApi.getProfile.mockRejectedValue(new Error('Network error'));
 
     renderWithRouter(<AppShell />, { route: '/app' });
 
@@ -146,7 +143,7 @@ describe('RecentConversations', () => {
   });
 
   it('does not render section when no sessions are returned', async () => {
-    mockFetchResponses(PROFILE_RESPONSE, { sessions: [], total: 0, offset: 0, limit: 10 });
+    setupMocks(PROFILE_RESPONSE, { sessions: [], total: 0, offset: 0, limit: 10 });
 
     renderWithRouter(<AppShell />, { route: '/app/chat' });
 
