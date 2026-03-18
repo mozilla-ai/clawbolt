@@ -171,19 +171,6 @@ class HeartbeatItemResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
-# Overview stats (dashboard)
-# ---------------------------------------------------------------------------
-
-
-class UserStatsResponse(BaseModel):
-    total_sessions: int
-    messages_this_month: int
-    active_heartbeat_items: int
-    total_memory_facts: int
-    last_conversation_at: str | None
-
-
-# ---------------------------------------------------------------------------
 # Channel config (dashboard)
 # ---------------------------------------------------------------------------
 

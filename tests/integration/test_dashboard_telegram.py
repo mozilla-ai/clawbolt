@@ -187,11 +187,6 @@ class TestDashboardSeesTelegramData:
             ],
         )
         _seed_memory(telegram_user)
-        resp = real_auth_client.get("/api/user/stats")
-        assert resp.status_code == 200
-        data = resp.json()
-        assert data["total_sessions"] == 1
-        assert data["total_memory_facts"] == 2
 
 
 class TestMultiChannelSingleTenant:
