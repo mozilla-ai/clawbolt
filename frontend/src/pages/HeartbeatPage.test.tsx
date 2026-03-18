@@ -37,10 +37,6 @@ vi.mock('react-router-dom', async () => {
 
 vi.mock('@/api', () => ({
   default: {
-    listHeartbeatItems: vi.fn(),
-    createHeartbeatItem: vi.fn(),
-    updateHeartbeatItem: vi.fn(),
-    deleteHeartbeatItem: vi.fn(),
     getProfile: vi.fn(),
     updateProfile: vi.fn(),
   },
@@ -55,127 +51,49 @@ beforeEach(() => {
 });
 
 describe('HeartbeatPage', () => {
-  it('calls listHeartbeatItems API on mount', async () => {
-    mockApi.listHeartbeatItems.mockResolvedValue([]);
-
+  it('renders the heartbeat textarea with profile.heartbeat_text value', async () => {
     renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
 
     await waitFor(() => {
-      expect(mockApi.listHeartbeatItems).toHaveBeenCalledOnce();
+      expect(
+        screen.getByPlaceholderText(
+          'Track tasks and priorities in markdown format, e.g. - [ ] Follow up with new leads',
+        ),
+      ).toBeInTheDocument();
     });
+
+    const textarea = screen.getByPlaceholderText(
+      'Track tasks and priorities in markdown format, e.g. - [ ] Follow up with new leads',
+    );
+    expect(textarea).toHaveValue('Some freeform notes');
   });
 
-  it('displays structured heartbeat items from API', async () => {
-    mockApi.listHeartbeatItems.mockResolvedValue([
-      {
-        id: 1,
-        description: 'Follow up with new leads',
-        schedule: 'daily',
-        status: 'active',
-        created_at: '2025-01-01T00:00:00Z',
-      },
-      {
-        id: 2,
-        description: 'Check on active job sites',
-        schedule: 'weekly',
-        status: 'active',
-        created_at: '2025-01-02T00:00:00Z',
-      },
-    ]);
-
-    renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
-
-    await waitFor(() => {
-      expect(screen.getByText('Follow up with new leads')).toBeInTheDocument();
-    });
-    expect(screen.getByText('Check on active job sites')).toBeInTheDocument();
-    expect(screen.getByText('daily')).toBeInTheDocument();
-    expect(screen.getByText('weekly')).toBeInTheDocument();
-  });
-
-  it('shows empty state when no items exist', async () => {
-    mockApi.listHeartbeatItems.mockResolvedValue([]);
+  it('saves heartbeat_text via updateProfile on button click', async () => {
+    mockApi.updateProfile.mockResolvedValue(mockProfile as never);
 
     renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
 
     await waitFor(() => {
       expect(
-        screen.getByText('No items yet. Add one below, or ask your assistant to create them.'),
+        screen.getByPlaceholderText(
+          'Track tasks and priorities in markdown format, e.g. - [ ] Follow up with new leads',
+        ),
       ).toBeInTheDocument();
     });
-  });
 
-  it('creates a new heartbeat item via API', async () => {
-    mockApi.listHeartbeatItems.mockResolvedValue([]);
-    mockApi.createHeartbeatItem.mockResolvedValue({
-      id: 3,
-      description: 'Send invoice to client',
-      schedule: 'weekly',
-      status: 'active',
-      created_at: '2025-01-03T00:00:00Z',
-    });
-
-    renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('New item description')).toBeInTheDocument();
-    });
-
-    fireEvent.change(screen.getByPlaceholderText('New item description'), {
-      target: { value: 'Send invoice to client' },
-    });
     fireEvent.change(
-      screen.getByPlaceholderText('Schedule (optional, e.g. daily, weekly)'),
-      { target: { value: 'weekly' } },
+      screen.getByPlaceholderText(
+        'Track tasks and priorities in markdown format, e.g. - [ ] Follow up with new leads',
+      ),
+      { target: { value: 'Updated notes' } },
     );
-    fireEvent.click(screen.getByRole('button', { name: /add/i }));
+    fireEvent.click(screen.getByRole('button', { name: /save/i }));
 
     await waitFor(() => {
-      expect(mockApi.createHeartbeatItem).toHaveBeenCalledWith({
-        description: 'Send invoice to client',
-        schedule: 'weekly',
+      expect(mockApi.updateProfile).toHaveBeenCalled();
+      expect(mockApi.updateProfile.mock.calls[0][0]).toEqual({
+        heartbeat_text: 'Updated notes',
       });
     });
-  });
-
-  it('deletes a heartbeat item via API', async () => {
-    mockApi.listHeartbeatItems.mockResolvedValue([
-      {
-        id: 1,
-        description: 'Follow up with new leads',
-        schedule: 'daily',
-        status: 'active',
-        created_at: '2025-01-01T00:00:00Z',
-      },
-    ]);
-    mockApi.deleteHeartbeatItem.mockResolvedValue(undefined);
-
-    renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
-
-    await waitFor(() => {
-      expect(screen.getByText('Follow up with new leads')).toBeInTheDocument();
-    });
-
-    fireEvent.click(screen.getByRole('button', { name: /delete/i }));
-
-    await waitFor(() => {
-      expect(mockApi.deleteHeartbeatItem).toHaveBeenCalledWith(1);
-    });
-  });
-
-  it('also displays freeform notes textarea', async () => {
-    mockApi.listHeartbeatItems.mockResolvedValue([]);
-
-    renderWithRouter(<HeartbeatPage />, { route: '/app/heartbeat' });
-
-    await waitFor(() => {
-      expect(screen.getByText('Notes')).toBeInTheDocument();
-    });
-
-    const textarea = screen.getByPlaceholderText(
-      'Additional notes for your assistant (markdown supported)',
-    );
-    expect(textarea).toBeInTheDocument();
-    expect(textarea).toHaveValue('Some freeform notes');
   });
 });

@@ -100,9 +100,6 @@ class User(Base):
     memory_documents: Mapped[list["MemoryDocument"]] = relationship(
         "MemoryDocument", back_populates="user", cascade="all, delete-orphan"
     )
-    heartbeat_items: Mapped[list["HeartbeatItem"]] = relationship(
-        "HeartbeatItem", back_populates="user", cascade="all, delete-orphan"
-    )
     heartbeat_logs: Mapped[list["HeartbeatLog"]] = relationship(
         "HeartbeatLog", back_populates="user", cascade="all, delete-orphan"
     )
@@ -339,23 +336,6 @@ class MemoryDocument(Base):
     )
 
     user: Mapped["User"] = relationship("User", back_populates="memory_documents")
-
-
-class HeartbeatItem(Base):
-    __tablename__ = "heartbeat_items"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(
-        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    description: Mapped[str] = mapped_column(Text, nullable=False)
-    schedule: Mapped[str] = mapped_column(String, default="30m")
-    active_hours: Mapped[str] = mapped_column(String, default="")
-    last_triggered_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
-    status: Mapped[str] = mapped_column(String, default="active")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-
-    user: Mapped["User"] = relationship("User", back_populates="heartbeat_items")
 
 
 class HeartbeatLog(Base):

@@ -15,9 +15,8 @@ from backend.app.agent.tools.estimate_tools import (
 )
 from backend.app.agent.tools.file_tools import OrganizeFileParams, UploadToStorageParams
 from backend.app.agent.tools.heartbeat_tools import (
-    AddHeartbeatItemParams,
-    ListHeartbeatItemsParams,
-    RemoveHeartbeatItemParams,
+    GetHeartbeatParams,
+    UpdateHeartbeatParams,
 )
 from backend.app.agent.tools.messaging_tools import SendMediaReplyParams, SendReplyParams
 from backend.app.agent.tools.workspace_tools import DeleteFileParams
@@ -79,9 +78,8 @@ def test_estimate_tool_param_models_exist() -> None:
 
 def test_heartbeat_tool_param_models_exist() -> None:
     """Heartbeat tool param models should be importable and valid BaseModels."""
-    assert issubclass(AddHeartbeatItemParams, BaseModel)
-    assert issubclass(ListHeartbeatItemsParams, BaseModel)
-    assert issubclass(RemoveHeartbeatItemParams, BaseModel)
+    assert issubclass(GetHeartbeatParams, BaseModel)
+    assert issubclass(UpdateHeartbeatParams, BaseModel)
 
 
 def test_delete_file_param_model_exists() -> None:
@@ -100,16 +98,16 @@ def test_file_tool_param_models_exist() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_remove_heartbeat_item_accepts_string() -> None:
-    """RemoveHeartbeatItemParams should accept a string item_id."""
-    p = RemoveHeartbeatItemParams(item_id="42")
-    assert p.item_id == "42"
+def test_update_heartbeat_params_accepts_text() -> None:
+    """UpdateHeartbeatParams should accept a text string."""
+    p = UpdateHeartbeatParams(text="Check inbox daily")
+    assert p.text == "Check inbox daily"
 
 
-def test_remove_heartbeat_item_accepts_any_string() -> None:
-    """RemoveHeartbeatItemParams should accept any string item_id."""
-    p = RemoveHeartbeatItemParams(item_id="some_id")
-    assert p.item_id == "some_id"
+def test_get_heartbeat_params_has_no_fields() -> None:
+    """GetHeartbeatParams should have no required fields."""
+    p = GetHeartbeatParams()
+    assert isinstance(p, BaseModel)
 
 
 def test_generate_estimate_params_accepts_valid_input() -> None:
@@ -133,12 +131,6 @@ def test_upload_to_storage_rejects_invalid_category() -> None:
     """UploadToStorageParams should reject invalid file_category."""
     with pytest.raises(Exception):  # noqa: B017
         UploadToStorageParams(file_category="invalid_category")  # type: ignore[arg-type]
-
-
-def test_add_heartbeat_item_rejects_invalid_schedule() -> None:
-    """AddHeartbeatItemParams should reject invalid schedule values."""
-    with pytest.raises(Exception):  # noqa: B017
-        AddHeartbeatItemParams(description="test", schedule="monthly")  # type: ignore[arg-type]
 
 
 # ---------------------------------------------------------------------------

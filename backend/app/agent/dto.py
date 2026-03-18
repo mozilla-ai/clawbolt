@@ -12,7 +12,7 @@ import re
 from pydantic import BaseModel, Field
 
 from backend.app.config import settings
-from backend.app.enums import EstimateStatus, HeartbeatStatus, InvoiceStatus
+from backend.app.enums import EstimateStatus, InvoiceStatus
 
 
 class UserData(BaseModel):
@@ -153,19 +153,6 @@ class MediaData(BaseModel):
     processed_text: str = ""
     storage_url: str = ""
     storage_path: str = ""
-    created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
-
-
-class HeartbeatItemData(BaseModel):
-    """A heartbeat item (task/reminder) DTO."""
-
-    id: str = ""
-    user_id: str = ""
-    description: str = ""
-    schedule: str = "30m"
-    active_hours: str = ""
-    last_triggered_at: str | None = None
-    status: str = HeartbeatStatus.ACTIVE
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
 
 

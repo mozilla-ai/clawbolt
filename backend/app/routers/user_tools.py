@@ -68,7 +68,7 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         domain_group_order=1,
     ),
     "heartbeat": _FactoryMeta(
-        "Manage recurring reminders and heartbeat items",
+        "View and edit heartbeat notes",
         domain_group="Local Management",
         domain_group_order=1,
     ),

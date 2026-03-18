@@ -5,8 +5,6 @@ import type {
   ChannelConfigUpdate,
   ChatAccepted,
   ChatResponse,
-  HeartbeatItem,
-  HeartbeatItemUpdate,
   UserProfile,
   UserProfileUpdate,
   MemoryData,
@@ -96,23 +94,6 @@ const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(body),
     }),
-
-  // Heartbeat items
-  listHeartbeatItems: () => _fetch<HeartbeatItem[]>('/api/user/heartbeat'),
-  createHeartbeatItem: (body: { description: string; schedule?: string }) =>
-    _fetch<HeartbeatItem>('/api/user/heartbeat', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
-  updateHeartbeatItem: (id: number, body: HeartbeatItemUpdate) =>
-    _fetch<HeartbeatItem>(`/api/user/heartbeat/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(body),
-    }),
-  deleteHeartbeatItem: (id: number) =>
-    _fetchVoid(`/api/user/heartbeat/${id}`, { method: 'DELETE' }),
 
   // Channel config
   getChannelConfig: () => _fetch<ChannelConfig>('/api/user/channels/config'),

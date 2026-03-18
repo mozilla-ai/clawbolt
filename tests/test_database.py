@@ -58,7 +58,6 @@ def test_all_tables_created(_pg_engine: Engine) -> None:
         "estimate_line_items",
         "media_files",
         "memory_documents",
-        "heartbeat_items",
         "heartbeat_logs",
         "idempotency_keys",
         "llm_usage_logs",

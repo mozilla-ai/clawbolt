@@ -8,7 +8,6 @@ import {
   useChannelConfig,
   useSessions,
   useSession,
-  useHeartbeatItems,
 } from './queries';
 import api from '@/api';
 import type { ReactNode } from 'react';
@@ -25,10 +24,6 @@ vi.mock('@/api', () => ({
     updateToolConfig: vi.fn(),
     getChannelConfig: vi.fn(),
     updateChannelConfig: vi.fn(),
-    listHeartbeatItems: vi.fn(),
-    createHeartbeatItem: vi.fn(),
-    updateHeartbeatItem: vi.fn(),
-    deleteHeartbeatItem: vi.fn(),
   },
 }));
 
@@ -149,30 +144,3 @@ describe('useSession', () => {
   });
 });
 
-describe('useHeartbeatItems', () => {
-  it('fetches and returns heartbeat items', async () => {
-    const mockItems = [
-      { id: 1, description: 'Follow up with leads', schedule: 'daily', status: 'active' },
-    ];
-    vi.mocked(api.listHeartbeatItems).mockResolvedValue(mockItems as never);
-
-    const { result } = renderHook(() => useHeartbeatItems(), { wrapper: createWrapper() });
-
-    await waitFor(() => expect(result.current.data).toBeDefined());
-
-    expect(result.current.data).toEqual(mockItems);
-    expect(api.listHeartbeatItems).toHaveBeenCalledOnce();
-  });
-
-  it('calls the correct API endpoint (not profile)', async () => {
-    vi.mocked(api.listHeartbeatItems).mockResolvedValue([]);
-
-    renderHook(() => useHeartbeatItems(), { wrapper: createWrapper() });
-
-    await waitFor(() => {
-      expect(api.listHeartbeatItems).toHaveBeenCalledOnce();
-    });
-    // Ensure it does NOT fall back to getProfile for heartbeat data
-    expect(api.getProfile).not.toHaveBeenCalled();
-  });
-});

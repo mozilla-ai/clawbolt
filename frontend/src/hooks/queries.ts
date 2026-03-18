@@ -2,7 +2,6 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query-keys';
 import api from '@/api';
 import type {
-  HeartbeatItemUpdate,
   MemoryUpdate,
   ToolConfigUpdateEntry,
   ChannelConfigUpdate,
@@ -64,47 +63,6 @@ export function useUpdateMemory() {
     mutationFn: (body: MemoryUpdate) => api.updateMemory(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.memory.all });
-    },
-  });
-}
-
-// --- Heartbeat Items ---
-
-export function useHeartbeatItems() {
-  return useQuery({
-    queryKey: queryKeys.heartbeat,
-    queryFn: () => api.listHeartbeatItems(),
-  });
-}
-
-export function useCreateHeartbeatItem() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (body: { description: string; schedule?: string }) =>
-      api.createHeartbeatItem(body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.heartbeat });
-    },
-  });
-}
-
-export function useUpdateHeartbeatItem() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: ({ id, body }: { id: number; body: HeartbeatItemUpdate }) =>
-      api.updateHeartbeatItem(id, body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.heartbeat });
-    },
-  });
-}
-
-export function useDeleteHeartbeatItem() {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (id: number) => api.deleteHeartbeatItem(id),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.heartbeat });
     },
   });
 }

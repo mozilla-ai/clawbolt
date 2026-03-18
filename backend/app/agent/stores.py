@@ -10,7 +10,6 @@ and client_db.py.
 
 from __future__ import annotations
 
-import contextlib
 import datetime
 import logging
 from typing import Any
@@ -18,15 +17,12 @@ from typing import Any
 from sqlalchemy import func
 
 from backend.app.agent.dto import (
-    HeartbeatItemData,
     HeartbeatLogEntry,
     MediaData,
     ToolConfigEntry,
 )
 from backend.app.database import SessionLocal, db_session
-from backend.app.enums import HeartbeatSchedule, HeartbeatStatus
 from backend.app.models import (
-    HeartbeatItem,
     HeartbeatLog,
     IdempotencyKey,
     LLMUsageLog,
@@ -41,19 +37,6 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # ORM -> DTO converters
 # ---------------------------------------------------------------------------
-
-
-def _heartbeat_item_to_dto(item: HeartbeatItem) -> HeartbeatItemData:
-    return HeartbeatItemData(
-        id=item.id,
-        user_id=item.user_id,
-        description=item.description,
-        schedule=item.schedule,
-        active_hours=item.active_hours,
-        last_triggered_at=(item.last_triggered_at.isoformat() if item.last_triggered_at else None),
-        status=item.status,
-        created_at=item.created_at.isoformat() if item.created_at else "",
-    )
 
 
 def _heartbeat_log_to_dto(log: HeartbeatLog) -> HeartbeatLogEntry:
@@ -93,16 +76,6 @@ def _tool_config_to_dto(tc: ToolConfig) -> ToolConfigEntry:
 # ---------------------------------------------------------------------------
 
 
-_HEARTBEAT_ITEM_UPDATABLE_FIELDS: frozenset[str] = frozenset(
-    {
-        "description",
-        "schedule",
-        "active_hours",
-        "last_triggered_at",
-        "status",
-    }
-)
-
 _MEDIA_UPDATABLE_FIELDS: frozenset[str] = frozenset(
     {
         "processed_text",
@@ -113,118 +86,29 @@ _MEDIA_UPDATABLE_FIELDS: frozenset[str] = frozenset(
 
 
 class HeartbeatStore:
-    """Database-backed heartbeat storage using HeartbeatItem and HeartbeatLog ORM models."""
+    """Database-backed heartbeat storage using User.heartbeat_text and HeartbeatLog ORM models."""
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
 
     def read_heartbeat_md(self) -> str:
-        """Reconstruct heartbeat markdown from HeartbeatItem DB rows.
-
-        Always rebuilds from HeartbeatItem rows so that CRUD operations
-        on items are immediately reflected. Falls back to User.heartbeat_text
-        only when no items exist (e.g. freshly provisioned user).
-        """
+        """Read freeform heartbeat markdown from User.heartbeat_text."""
         db = SessionLocal()
         try:
-            items = (
-                db.query(HeartbeatItem)
-                .filter_by(user_id=self.user_id)
-                .order_by(HeartbeatItem.created_at)
-                .all()
-            )
-            if not items:
-                # Fall back to User.heartbeat_text for freshly provisioned users
-                user = db.query(User).filter_by(id=self.user_id).first()
-                if user is not None and user.heartbeat_text:
-                    return user.heartbeat_text
-                return ""
-
-            lines = ["# Heartbeat", ""]
-            for item in items:
-                checkbox = "[x]" if item.status == HeartbeatStatus.COMPLETED else "[ ]"
-                desc = item.description
-                sched = item.schedule or HeartbeatSchedule.DAILY
-                suffix = f" ({sched})" if sched != HeartbeatSchedule.DAILY else ""
-                lines.append(f"- {checkbox} {desc}{suffix}")
-            return "\n".join(lines) + "\n"
+            user = db.query(User).filter_by(id=self.user_id).first()
+            if user is not None and user.heartbeat_text:
+                return user.heartbeat_text
+            return ""
         finally:
             db.close()
 
-    async def get_heartbeat_items(self) -> list[HeartbeatItemData]:
-        """Query all HeartbeatItem rows, return as DTOs."""
-        db = SessionLocal()
-        try:
-            items = (
-                db.query(HeartbeatItem)
-                .filter_by(user_id=self.user_id)
-                .order_by(HeartbeatItem.created_at)
-                .all()
-            )
-            return [_heartbeat_item_to_dto(item) for item in items]
-        finally:
-            db.close()
-
-    async def add_heartbeat_item(
-        self,
-        description: str,
-        schedule: str = HeartbeatSchedule.DAILY,
-    ) -> HeartbeatItemData:
-        """Insert a new HeartbeatItem row and return it as a DTO."""
+    async def write_heartbeat_md(self, text: str) -> None:
+        """Write freeform heartbeat markdown to User.heartbeat_text."""
         with db_session() as db:
-            # Sequential ID: str(max_id + 1) -- lock rows to prevent races
-            existing_ids = [
-                row[0]
-                for row in db.query(HeartbeatItem.id)
-                .filter_by(user_id=self.user_id)
-                .with_for_update()
-                .all()
-            ]
-            max_num = 0
-            for eid in existing_ids:
-                with contextlib.suppress(ValueError):
-                    max_num = max(max_num, int(eid))
-            new_id = str(max_num + 1)
-
-            item = HeartbeatItem(
-                id=new_id,
-                user_id=self.user_id,
-                description=description,
-                schedule=schedule,
-                active_hours="",
-                status=HeartbeatStatus.ACTIVE,
-            )
-            db.add(item)
-            db.commit()
-            db.refresh(item)
-            return _heartbeat_item_to_dto(item)
-
-    async def update_heartbeat_item(
-        self,
-        item_id: str,
-        **fields: Any,
-    ) -> HeartbeatItemData | None:
-        """Update a HeartbeatItem row by id."""
-        with db_session() as db:
-            item = db.query(HeartbeatItem).filter_by(id=item_id, user_id=self.user_id).first()
-            if item is None:
-                return None
-            for key, value in fields.items():
-                if value is not None and key in _HEARTBEAT_ITEM_UPDATABLE_FIELDS:
-                    setattr(item, key, value)
-            db.commit()
-            db.refresh(item)
-            return _heartbeat_item_to_dto(item)
-
-    async def delete_heartbeat_item(self, item_id: str) -> bool:
-        """Delete a HeartbeatItem row by id."""
-        with db_session() as db:
-            item = db.query(HeartbeatItem).filter_by(id=item_id, user_id=self.user_id).first()
-            if item is None:
-                return False
-            db.delete(item)
-            db.commit()
-            return True
+            user = db.query(User).filter_by(id=self.user_id).first()
+            if user is not None:
+                user.heartbeat_text = text
+                db.commit()
 
     async def log_heartbeat(self) -> None:
         """Insert a HeartbeatLog row."""

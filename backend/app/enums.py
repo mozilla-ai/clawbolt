@@ -21,14 +21,3 @@ class InvoiceStatus(StrEnum):
     PAID = "paid"
     OVERDUE = "overdue"
     CANCELLED = "cancelled"
-
-
-class HeartbeatStatus(StrEnum):
-    ACTIVE = "active"
-    COMPLETED = "completed"
-
-
-class HeartbeatSchedule(StrEnum):
-    DAILY = "daily"
-    WEEKDAYS = "weekdays"
-    ONCE = "once"
