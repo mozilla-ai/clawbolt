@@ -28,7 +28,6 @@ from backend.app.routers import (
     user_memory,
     user_profile,
     user_sessions,
-    user_stats,
     user_tools,
 )
 
@@ -201,7 +200,6 @@ app.include_router(user_profile.router, prefix="/api")
 app.include_router(user_sessions.router, prefix="/api")
 app.include_router(user_memory.router, prefix="/api")
 app.include_router(user_heartbeat.router, prefix="/api")
-app.include_router(user_stats.router, prefix="/api")
 app.include_router(user_tools.router, prefix="/api")
 app.include_router(search.router, prefix="/api")
 

@@ -9,6 +9,7 @@ export const queryKeys = {
   memory: {
     all: ['memory'] as const,
   },
+  heartbeat: ['heartbeat'] as const,
   tools: ['tools'] as const,
   channels: ['channels'] as const,
   oauth: ['oauth'] as const,
