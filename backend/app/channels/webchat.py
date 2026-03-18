@@ -108,9 +108,10 @@ class WebChatChannel(BaseChannel):
 
             request_id = str(uuid.uuid4())
 
-            # Register response future before publishing so the dispatcher
-            # can resolve it even if processing is very fast.
+            # Register response future and event queue before publishing so
+            # the dispatcher can resolve it even if processing is very fast.
             message_bus.register_response_future(request_id)
+            message_bus.register_event_queue(request_id)
 
             inbound = InboundMessage(
                 channel="webchat",
@@ -139,7 +140,7 @@ class WebChatChannel(BaseChannel):
                         fut = message_bus.register_response_future(request_id)
 
                     timeout = settings.approval_timeout_seconds
-                    loop = asyncio.get_event_loop()
+                    loop = asyncio.get_running_loop()
                     deadline = loop.time() + timeout
 
                     # Stream intermediate events until the final reply is ready

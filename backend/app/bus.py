@@ -103,7 +103,10 @@ class MessageBus:
     # -- Event queues for SSE streaming of intermediate events ----------------
 
     def register_event_queue(self, request_id: str) -> asyncio.Queue[dict[str, Any]]:
-        """Create a queue for streaming intermediate events to the SSE endpoint."""
+        """Create (or return existing) queue for streaming intermediate events."""
+        existing = self._event_queues.get(request_id)
+        if existing is not None:
+            return existing
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._event_queues[request_id] = queue
         return queue
