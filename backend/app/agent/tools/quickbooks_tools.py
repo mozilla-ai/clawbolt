@@ -578,7 +578,7 @@ def _quickbooks_factory(ctx: ToolContext) -> list[Tool]:
 
 
 def _register() -> None:
-    from backend.app.agent.tools.registry import default_registry
+    from backend.app.agent.tools.registry import SubToolInfo, default_registry
 
     default_registry.register(
         "quickbooks",
@@ -588,6 +588,16 @@ def _register() -> None:
             "Query, create, and manage QuickBooks Online entities: "
             "invoices, estimates, customers, and more"
         ),
+        sub_tools=[
+            SubToolInfo(ToolName.QB_QUERY, "Run read-only queries against QuickBooks Online"),
+            SubToolInfo(ToolName.QB_CREATE_ESTIMATE, "Create estimates in QuickBooks"),
+            SubToolInfo(ToolName.QB_CREATE_INVOICE, "Create invoices in QuickBooks"),
+            SubToolInfo(ToolName.QB_CREATE_CUSTOMER, "Create customers in QuickBooks"),
+            SubToolInfo(ToolName.QB_SEND_INVOICE, "Send invoices via QuickBooks email"),
+            SubToolInfo(
+                ToolName.QB_ESTIMATE_TO_INVOICE, "Convert QuickBooks estimates to invoices"
+            ),
+        ],
     )
 
 

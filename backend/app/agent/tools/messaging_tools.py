@@ -104,9 +104,17 @@ def _messaging_factory(ctx: ToolContext) -> list[Tool]:
 
 
 def _register() -> None:
-    from backend.app.agent.tools.registry import default_registry
+    from backend.app.agent.tools.registry import SubToolInfo, default_registry
 
-    default_registry.register("messaging", _messaging_factory, requires_outbound=True)
+    default_registry.register(
+        "messaging",
+        _messaging_factory,
+        requires_outbound=True,
+        sub_tools=[
+            SubToolInfo(ToolName.SEND_REPLY, "Send text replies to the user"),
+            SubToolInfo(ToolName.SEND_MEDIA_REPLY, "Send replies with media attachments"),
+        ],
+    )
 
 
 _register()

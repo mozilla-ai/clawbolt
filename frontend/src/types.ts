@@ -130,6 +130,12 @@ export interface ModelConfigUpdate {
   compaction_provider?: string;
 }
 
+export interface SubToolEntry {
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
 export interface ToolConfigEntry {
   name: string;
   description: string;
@@ -137,6 +143,7 @@ export interface ToolConfigEntry {
   domain_group: string;
   domain_group_order: number;
   enabled: boolean;
+  sub_tools: SubToolEntry[];
 }
 
 export interface ToolConfigResponse {
@@ -146,6 +153,7 @@ export interface ToolConfigResponse {
 export interface ToolConfigUpdateEntry {
   name: string;
   enabled: boolean;
+  disabled_sub_tools?: string[];
 }
 
 export interface OAuthStatusEntry {

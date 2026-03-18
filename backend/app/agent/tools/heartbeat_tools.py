@@ -65,13 +65,17 @@ def _heartbeat_factory(ctx: ToolContext) -> list[Tool]:
 
 
 def _register() -> None:
-    from backend.app.agent.tools.registry import default_registry
+    from backend.app.agent.tools.registry import SubToolInfo, default_registry
 
     default_registry.register(
         "heartbeat",
         _heartbeat_factory,
         core=False,
         summary="View and edit heartbeat notes",
+        sub_tools=[
+            SubToolInfo(ToolName.GET_HEARTBEAT, "Read heartbeat notes"),
+            SubToolInfo(ToolName.UPDATE_HEARTBEAT, "Update heartbeat notes"),
+        ],
     )
 
 

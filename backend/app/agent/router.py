@@ -236,6 +236,11 @@ async def run_agent(
         downloaded_media=downloaded_media,
     )
 
+    # Load user's disabled tool groups and individual sub-tools.
+    tool_config_store = ToolConfigStore(user.id)
+    disabled_groups = await tool_config_store.get_disabled_tool_names()
+    disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
+
     agent = ClawboltAgent(
         user=user,
         channel=channel,
@@ -244,16 +249,16 @@ async def run_agent(
         tool_context=tool_context,
         registry=default_registry,
         session_id=session_id,
+        excluded_tool_names=disabled_sub_tools or None,
     )
 
-    # Load user's disabled tool groups to filter out unwanted tools.
-    tool_config_store = ToolConfigStore(user.id)
-    disabled_groups = await tool_config_store.get_disabled_tool_names()
-
     # Start with core tools only; specialist tools are discovered on demand
-    # via the list_capabilities meta-tool. Exclude user-disabled groups.
+    # via the list_capabilities meta-tool. Exclude user-disabled groups and
+    # individual sub-tools.
     tools = default_registry.create_core_tools(
-        tool_context, excluded_factories=disabled_groups or None
+        tool_context,
+        excluded_factories=disabled_groups or None,
+        excluded_tool_names=disabled_sub_tools or None,
     )
     specialist_summaries = default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=disabled_groups or None
