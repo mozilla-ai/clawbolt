@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from backend.app.config import settings
 
@@ -48,6 +48,7 @@ class MessageBus:
         self.inbound: asyncio.Queue[InboundMessage] = asyncio.Queue()
         self.outbound: asyncio.Queue[OutboundMessage] = asyncio.Queue()
         self._response_futures: dict[str, asyncio.Future[OutboundMessage]] = {}
+        self._event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
@@ -99,6 +100,28 @@ class MessageBus:
             return True
         return False
 
+    # -- Event queues for SSE streaming of intermediate events ----------------
+
+    def register_event_queue(self, request_id: str) -> asyncio.Queue[dict[str, Any]]:
+        """Create a queue for streaming intermediate events to the SSE endpoint."""
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._event_queues[request_id] = queue
+        return queue
+
+    async def publish_event(self, request_id: str, event: dict[str, Any]) -> None:
+        """Push an intermediate event to the SSE stream for *request_id*."""
+        queue = self._event_queues.get(request_id)
+        if queue is not None:
+            await queue.put(event)
+
+    def remove_event_queue(self, request_id: str) -> None:
+        """Remove the event queue for *request_id*."""
+        self._event_queues.pop(request_id, None)
+
+    def get_response_future(self, request_id: str) -> asyncio.Future[OutboundMessage] | None:
+        """Return the pending response future for *request_id*, or ``None``."""
+        return self._response_futures.get(request_id)
+
     async def wait_for_response(
         self, request_id: str, timeout: float | None = None
     ) -> OutboundMessage:
@@ -121,6 +144,7 @@ class MessageBus:
         self.inbound = asyncio.Queue()
         self.outbound = asyncio.Queue()
         self._response_futures.clear()
+        self._event_queues.clear()
 
     @property
     def inbound_size(self) -> int:

@@ -11,6 +11,7 @@ converted directly into ``DownloadedMedia`` objects (skipping the Telegram
 download step) and processed through the same vision/audio pipeline.
 """
 
+import asyncio
 import collections.abc
 import json
 import logging
@@ -128,16 +129,44 @@ class WebChatChannel(BaseChannel):
             request_id: str,
             _user: User = Depends(get_current_user),
         ) -> StreamingResponse:
-            """SSE endpoint: streams the agent reply for a given request_id."""
+            """SSE endpoint: streams tool-call events then the final reply."""
 
             async def event_stream() -> collections.abc.AsyncIterator[str]:
+                queue = message_bus.register_event_queue(request_id)
                 try:
-                    outbound = await message_bus.wait_for_response(request_id)
-                    data = json.dumps({"reply": outbound.content})
-                    yield f"data: {data}\n\n"
-                except TimeoutError:
-                    data = json.dumps({"error": "Response timed out"})
-                    yield f"data: {data}\n\n"
+                    fut = message_bus.get_response_future(request_id)
+                    if fut is None:
+                        fut = message_bus.register_response_future(request_id)
+
+                    timeout = settings.approval_timeout_seconds
+                    loop = asyncio.get_event_loop()
+                    deadline = loop.time() + timeout
+
+                    # Stream intermediate events until the final reply is ready
+                    while not fut.done():
+                        remaining = deadline - loop.time()
+                        if remaining <= 0:
+                            yield f"data: {json.dumps({'error': 'Response timed out'})}\n\n"
+                            return
+                        try:
+                            event = await asyncio.wait_for(queue.get(), timeout=min(remaining, 1.0))
+                            yield f"data: {json.dumps(event)}\n\n"
+                        except TimeoutError:
+                            continue
+
+                    # Drain any events queued after the future resolved
+                    while not queue.empty():
+                        event = queue.get_nowait()
+                        yield f"data: {json.dumps(event)}\n\n"
+
+                    # Send the final reply
+                    try:
+                        outbound = fut.result()
+                        yield f"data: {json.dumps({'reply': outbound.content})}\n\n"
+                    except Exception:
+                        yield f"data: {json.dumps({'error': 'Response failed'})}\n\n"
+                finally:
+                    message_bus.remove_event_queue(request_id)
 
             return StreamingResponse(
                 event_stream(),

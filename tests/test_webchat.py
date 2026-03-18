@@ -289,3 +289,89 @@ def test_sse_endpoint_returns_reply(
         assert "Hello from agent!" in text
 
     t.join(timeout=5)
+
+
+def test_sse_streams_tool_call_events(
+    webchat_client: TestClient,
+    webchat_user: User,
+) -> None:
+    """SSE endpoint should stream tool_call events before the final reply."""
+    import asyncio
+    import threading
+
+    with patch(
+        "backend.app.channels.webchat.message_bus.publish_inbound",
+        new_callable=AsyncMock,
+    ):
+        resp = webchat_client.post(
+            "/api/user/chat",
+            data={"message": "Do something with tools"},
+        )
+    assert resp.status_code == 200
+    request_id = resp.json()["request_id"]
+
+    outbound = OutboundMessage(
+        channel="webchat", chat_id="1", content="Done!", request_id=request_id
+    )
+
+    def _publish_events_then_resolve() -> None:
+        import time
+
+        time.sleep(0.2)
+        # Publish intermediate tool events via the bus event queue
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(
+            message_bus.publish_event(
+                request_id, {"type": "tool_call", "tool_name": "search_clients"}
+            )
+        )
+        loop.run_until_complete(
+            message_bus.publish_event(request_id, {"type": "tool_call", "tool_name": "save_memory"})
+        )
+        loop.close()
+        time.sleep(0.1)
+        message_bus.resolve_response(request_id, outbound)
+
+    t = threading.Thread(target=_publish_events_then_resolve)
+    t.start()
+
+    with webchat_client.stream("GET", f"/api/user/chat/events/{request_id}") as sse_resp:
+        assert sse_resp.status_code == 200
+        body = b""
+        for chunk in sse_resp.iter_bytes():
+            body += chunk
+        text = body.decode()
+
+    t.join(timeout=5)
+
+    # Verify tool_call events appear before the final reply
+    assert "search_clients" in text
+    assert "save_memory" in text
+    assert "Done!" in text
+    # Tool events should come before the reply
+    assert text.index("search_clients") < text.index("Done!")
+
+
+def test_bus_event_queue_lifecycle() -> None:
+    """Event queues are created, receive events, and get cleaned up."""
+    import asyncio
+
+    loop = asyncio.new_event_loop()
+
+    queue = message_bus.register_event_queue("test-req-1")
+    assert queue is not None
+
+    loop.run_until_complete(
+        message_bus.publish_event("test-req-1", {"type": "tool_call", "tool_name": "foo"})
+    )
+    assert not queue.empty()
+    event = loop.run_until_complete(asyncio.wait_for(queue.get(), timeout=1.0))
+    assert event["tool_name"] == "foo"
+
+    message_bus.remove_event_queue("test-req-1")
+    # Publishing to a removed queue should be a no-op
+    loop.run_until_complete(
+        message_bus.publish_event("test-req-1", {"type": "tool_call", "tool_name": "bar"})
+    )
+
+    loop.close()
