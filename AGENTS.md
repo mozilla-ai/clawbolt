@@ -22,11 +22,11 @@ uv run alembic revision --autogenerate -m "description"
 uv run pytest -v
 
 # Lint & format
-uv run ruff check backend/ tests/
-uv run ruff format --check backend/ tests/
+uv run ruff check backend/ tests/ alembic/
+uv run ruff format --check backend/ tests/ alembic/
 
 # Type checking
-uv run ty check --python .venv backend/ tests/
+uv run ty check --python .venv backend/ tests/ alembic/
 ```
 
 ## Tech Stack
@@ -115,9 +115,9 @@ Every change must pass all checks before it's considered complete:
 
 ```bash
 uv run pytest -v                                  # tests pass
-uv run ruff check backend/ tests/                 # lint passes
-uv run ruff format --check backend/ tests/        # format passes
-uv run ty check --python .venv backend/ tests/    # type checking passes
+uv run ruff check backend/ tests/ alembic/                 # lint passes
+uv run ruff format --check backend/ tests/ alembic/        # format passes
+uv run ty check --python .venv backend/ tests/ alembic/    # type checking passes
 cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 ```
 

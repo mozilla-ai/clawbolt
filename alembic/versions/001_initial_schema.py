@@ -9,6 +9,7 @@ Create Date: 2026-03-13
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 _now = sa.func.now()
@@ -44,7 +45,13 @@ def upgrade() -> None:
     op.create_table(
         "channel_routes",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("channel", sa.String(), nullable=False),
         sa.Column("channel_identifier", sa.String(), nullable=False),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=_now),
@@ -55,7 +62,13 @@ def upgrade() -> None:
         "sessions",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
         sa.Column("session_id", sa.String(), unique=True, nullable=False),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("is_active", sa.Boolean(), server_default=sa.text("true")),
         sa.Column("channel", sa.String(), server_default=""),
         sa.Column("last_compacted_seq", sa.Integer(), server_default="0"),
@@ -66,7 +79,13 @@ def upgrade() -> None:
     op.create_table(
         "messages",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("session_id", sa.Integer(), sa.ForeignKey("sessions.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "session_id",
+            sa.Integer(),
+            sa.ForeignKey("sessions.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("seq", sa.Integer(), nullable=False),
         sa.Column("direction", sa.String(), nullable=False),
         sa.Column("body", sa.Text(), server_default=""),
@@ -81,7 +100,13 @@ def upgrade() -> None:
     op.create_table(
         "clients",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("phone", sa.String(), server_default=""),
         sa.Column("email", sa.String(), server_default=""),
@@ -94,8 +119,20 @@ def upgrade() -> None:
     op.create_table(
         "estimates",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
-        sa.Column("client_id", sa.String(), sa.ForeignKey("clients.id", ondelete="SET NULL"), index=True, nullable=True),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+        sa.Column(
+            "client_id",
+            sa.String(),
+            sa.ForeignKey("clients.id", ondelete="SET NULL"),
+            index=True,
+            nullable=True,
+        ),
         sa.Column("description", sa.Text(), server_default=""),
         sa.Column("total_amount", sa.Numeric(12, 2), server_default="0.0"),
         sa.Column("status", sa.String(), server_default="draft"),
@@ -108,7 +145,13 @@ def upgrade() -> None:
     op.create_table(
         "estimate_line_items",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("estimate_id", sa.String(), sa.ForeignKey("estimates.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "estimate_id",
+            sa.String(),
+            sa.ForeignKey("estimates.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("description", sa.Text(), server_default=""),
         sa.Column("quantity", sa.Numeric(12, 2), server_default="1.0"),
         sa.Column("unit_price", sa.Numeric(12, 2), server_default="0.0"),
@@ -118,7 +161,13 @@ def upgrade() -> None:
     op.create_table(
         "media_files",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("message_id", sa.String(), server_default=""),
         sa.Column("original_url", sa.Text(), server_default=""),
         sa.Column("mime_type", sa.String(), server_default=""),
@@ -131,7 +180,13 @@ def upgrade() -> None:
     op.create_table(
         "memory_documents",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            unique=True,
+            nullable=False,
+        ),
         sa.Column("memory_text", sa.Text(), server_default=""),
         sa.Column("history_text", sa.Text(), server_default=""),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=_now),
@@ -141,7 +196,13 @@ def upgrade() -> None:
     op.create_table(
         "heartbeat_items",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("description", sa.Text(), nullable=False),
         sa.Column("schedule", sa.String(), server_default="30m"),
         sa.Column("active_hours", sa.String(), server_default=""),
@@ -153,7 +214,13 @@ def upgrade() -> None:
     op.create_table(
         "heartbeat_logs",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("created_at", sa.DateTime(), nullable=False, server_default=_now),
     )
 
@@ -167,7 +234,13 @@ def upgrade() -> None:
     op.create_table(
         "llm_usage_logs",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("provider", sa.String(), server_default=""),
         sa.Column("model", sa.String(), server_default=""),
         sa.Column("input_tokens", sa.Integer(), server_default="0"),
@@ -181,7 +254,13 @@ def upgrade() -> None:
     op.create_table(
         "tool_configs",
         sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
         sa.Column("name", sa.String(), nullable=False),
         sa.Column("description", sa.Text(), server_default=""),
         sa.Column("category", sa.String(), server_default=""),

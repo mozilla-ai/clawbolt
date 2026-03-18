@@ -9,6 +9,7 @@ Create Date: 2026-03-13
 from collections.abc import Sequence
 
 import sqlalchemy as sa
+
 from alembic import op
 
 _now = sa.func.now()
@@ -24,8 +25,20 @@ def upgrade() -> None:
     op.create_table(
         "invoices",
         sa.Column("id", sa.String(), primary_key=True),
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False),
-        sa.Column("client_id", sa.String(), sa.ForeignKey("clients.id", ondelete="SET NULL"), index=True, nullable=True),
+        sa.Column(
+            "user_id",
+            sa.String(),
+            sa.ForeignKey("users.id", ondelete="CASCADE"),
+            index=True,
+            nullable=False,
+        ),
+        sa.Column(
+            "client_id",
+            sa.String(),
+            sa.ForeignKey("clients.id", ondelete="SET NULL"),
+            index=True,
+            nullable=True,
+        ),
         sa.Column("description", sa.Text(), server_default=""),
         sa.Column("total_amount", sa.Numeric(12, 2), server_default="0.0"),
         sa.Column("status", sa.String(), server_default="draft"),
