@@ -349,10 +349,25 @@ async def persist_outbound(
 
 
 async def prepare_media_step(ctx: PipelineContext) -> PipelineContext:
-    """Download media and initialize storage backend."""
-    ctx.downloaded_media, ctx.storage = await prepare_media(
+    """Download media and initialize storage backend.
+
+    Preserves any already-downloaded media on the context (e.g. webchat
+    file uploads) and merges them with newly downloaded media from
+    ``media_urls`` (e.g. Telegram file-id references).
+    """
+    pre_downloaded = list(ctx.downloaded_media)
+    newly_downloaded, ctx.storage = await prepare_media(
         ctx.user, ctx.message, ctx.media_urls, download_media=ctx.download_media
     )
+    ctx.downloaded_media = pre_downloaded + newly_downloaded
+
+    # Auto-save pre-downloaded media (webchat uploads) to storage
+    if ctx.storage and pre_downloaded:
+        try:
+            await auto_save_media(ctx.user, ctx.storage, pre_downloaded)
+        except Exception:
+            logger.debug("Auto-save pre-downloaded media failed, continuing")
+
     return ctx
 
 
