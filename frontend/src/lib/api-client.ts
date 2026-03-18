@@ -5,6 +5,16 @@ let _accessToken: string | null = null;
 
 const REFRESH_TOKEN_KEY = 'clawbolt_refresh_token';
 
+// Consume refresh token from URL hash fragment (set by OAuth redirect).
+// This runs once at module load, before any auth checks.
+(function _consumeHashToken() {
+  const match = window.location.hash.match(/refresh_token=([^&]+)/);
+  if (match?.[1]) {
+    localStorage.setItem(REFRESH_TOKEN_KEY, match[1]);
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+  }
+})();
+
 function _getRefreshToken(): string | null {
   return localStorage.getItem(REFRESH_TOKEN_KEY);
 }
