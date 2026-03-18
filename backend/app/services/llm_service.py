@@ -24,8 +24,5 @@ def get_configured_providers() -> list[ProviderInfo]:
 
 async def get_models(provider: str, api_key: str | None = None) -> list[str]:
     """Fetch available models for a provider."""
-    kwargs: dict[str, str | None] = {"provider": provider}
-    if api_key:
-        kwargs["api_key"] = api_key
-    raw = await alist_models(**kwargs)
+    raw = await alist_models(provider=provider, api_key=api_key)
     return [m.id if hasattr(m, "id") else str(m) for m in raw]
