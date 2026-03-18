@@ -1,4 +1,5 @@
 import createClient, { type Middleware } from 'openapi-fetch';
+import type { paths } from '@/generated/api';
 
 // --- Token state (shared with api.ts via getters/setters) ---
 let _accessToken: string | null = null;
@@ -100,9 +101,7 @@ const authMiddleware: Middleware = {
 };
 
 // --- Create typed client ---
-// Using `never` for paths since we don't have generated types yet.
-// Once `npm run generate:api` is run against the live server, replace with `paths`.
-const client = createClient<Record<string, never>>({ baseUrl: '' });
+const client = createClient<paths>({ baseUrl: '' });
 client.use(authMiddleware);
 
 export default client;

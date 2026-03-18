@@ -1,77 +1,29 @@
-// API response types matching backend schemas
+import type { components } from '@/generated/api';
 
-export interface UserProfile {
-  id: string;
-  user_id: string;
-  phone: string;
-  timezone: string;
-  soul_text: string;
-  user_text: string;
-  heartbeat_text: string;
-  preferred_channel: string;
-  channel_identifier: string;
-  heartbeat_opt_in: boolean;
-  heartbeat_frequency: string;
-  onboarding_complete: boolean;
-  is_active: boolean;
-  created_at: string;
-  updated_at: string;
-}
+// --- Backend types (derived from OpenAPI spec, single source of truth) ---
 
-export interface UserProfileUpdate {
-  phone?: string;
-  timezone?: string;
-  soul_text?: string;
-  user_text?: string;
-  heartbeat_text?: string;
-  heartbeat_opt_in?: boolean;
-  heartbeat_frequency?: string;
-}
+export type UserProfileResponse = components['schemas']['UserProfileResponse'];
+export type UserProfileUpdate = components['schemas']['UserProfileUpdate'];
+export type SessionSummary = components['schemas']['SessionSummary'];
+export type SessionListResponse = components['schemas']['SessionListResponse'];
+export type SessionMessage = components['schemas']['SessionMessage'];
+export type SessionDetailResponse = components['schemas']['SessionDetailResponse'];
+export type MemoryResponse = components['schemas']['MemoryResponse'];
+export type MemoryUpdate = components['schemas']['MemoryUpdate'];
+export type ChannelConfigResponse = components['schemas']['ChannelConfigResponse'];
+export type ChannelConfigUpdate = components['schemas']['ChannelConfigUpdate'];
+export type ModelConfigResponse = components['schemas']['ModelConfigResponse'];
+export type ModelConfigUpdate = components['schemas']['ModelConfigUpdate'];
+export type SubToolEntryResponse = components['schemas']['SubToolEntryResponse'];
+export type ToolConfigEntryResponse = components['schemas']['ToolConfigEntryResponse'];
+export type ToolConfigResponse = components['schemas']['ToolConfigResponse'];
+export type ToolConfigUpdateEntry = components['schemas']['ToolConfigUpdateEntry'];
+export type OAuthStatusEntry = components['schemas']['OAuthStatusEntry'];
+export type OAuthStatusResponse = components['schemas']['OAuthStatusResponse'];
+export type OAuthAuthorizeResponse = components['schemas']['OAuthAuthorizeResponse'];
+export type ProviderInfo = components['schemas']['ProviderInfo'];
 
-export interface SessionSummary {
-  id: string;
-  start_time: string;
-  message_count: number;
-  last_message_preview: string;
-  channel: string;
-}
-
-export interface SessionListResponse {
-  sessions: SessionSummary[];
-  total: number;
-  offset: number;
-  limit: number;
-}
-
-export interface ToolInteraction {
-  [key: string]: unknown;
-}
-
-export interface SessionMessage {
-  seq: number;
-  direction: string;
-  body: string;
-  timestamp: string;
-  tool_interactions: ToolInteraction[];
-}
-
-export interface SessionDetail {
-  session_id: string;
-  user_id: string;
-  created_at: string;
-  last_message_at: string;
-  is_active: boolean;
-  channel: string;
-  messages: SessionMessage[];
-}
-
-export interface MemoryData {
-  content: string;
-}
-
-export interface MemoryUpdate {
-  content: string;
-}
+// --- Frontend-only types (no backend equivalent, stay manual) ---
 
 export interface AuthConfig {
   required: boolean;
@@ -96,82 +48,6 @@ export interface ChatAccepted {
   session_id: string;
 }
 
-export interface ChannelConfig {
-  telegram_bot_token_set: boolean;
-  telegram_allowed_usernames: string;
-}
-
-export interface ChannelConfigUpdate {
-  telegram_bot_token?: string;
-  telegram_allowed_usernames?: string;
-}
-
-export interface ModelConfig {
-  llm_provider: string;
-  llm_model: string;
-  llm_api_base: string | null;
-  vision_model: string;
-  vision_provider: string;
-  heartbeat_model: string;
-  heartbeat_provider: string;
-  compaction_model: string;
-  compaction_provider: string;
-}
-
-export interface ModelConfigUpdate {
-  llm_provider?: string;
-  llm_model?: string;
-  llm_api_base?: string | null;
-  vision_model?: string;
-  vision_provider?: string;
-  heartbeat_model?: string;
-  heartbeat_provider?: string;
-  compaction_model?: string;
-  compaction_provider?: string;
-}
-
-export interface SubToolEntry {
-  name: string;
-  description: string;
-  enabled: boolean;
-}
-
-export interface ToolConfigEntry {
-  name: string;
-  description: string;
-  category: string;
-  domain_group: string;
-  domain_group_order: number;
-  enabled: boolean;
-  sub_tools: SubToolEntry[];
-}
-
-export interface ToolConfigResponse {
-  tools: ToolConfigEntry[];
-}
-
-export interface ToolConfigUpdateEntry {
-  name: string;
-  enabled: boolean;
-  disabled_sub_tools?: string[];
-}
-
-export interface OAuthStatusEntry {
-  integration: string;
-  configured: boolean;
-  connected: boolean;
-}
-
-export interface OAuthStatusResponse {
-  integrations: OAuthStatusEntry[];
-}
-
-export interface OAuthAuthorizeResponse {
-  url: string;
-  integration: string;
-}
-
-export interface ProviderInfo {
-  name: string;
-  local: boolean;
+export interface ToolInteraction {
+  [key: string]: unknown;
 }
