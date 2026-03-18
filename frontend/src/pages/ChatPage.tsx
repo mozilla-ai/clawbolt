@@ -85,8 +85,11 @@ export default function ChatPage() {
   const { data: sessionsData, isPending: loadingSessions } = useSessions(0, 50);
   const sessions: SessionSummary[] = sessionsData?.sessions ?? [];
 
-  // Fetch session history via React Query
-  const { data: sessionDetail, isPending: loadingHistoryPending, isError: historyError } = useSession(activeSessionId);
+  // Fetch session history via React Query (poll every 3s when idle)
+  const { data: sessionDetail, isPending: loadingHistoryPending, isError: historyError } = useSession(
+    activeSessionId,
+    sending ? false : 3_000,
+  );
   const loadingHistory = loadingHistoryPending && !!activeSessionId;
 
   // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
@@ -256,9 +259,13 @@ export default function ChatPage() {
         setSearchParams({ session: res.session_id }, { replace: true });
         saveLastSession(res.session_id);
         forceNewRef.current = false;
-        // Invalidate sessions cache so the new session appears in the list
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
       }
+      // Refresh session data so full tool interactions from the DB replace
+      // the partial names collected from SSE events
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.sessions.detail(res.session_id),
+      });
     } catch (err: unknown) {
       if (!mountedRef.current) return;
       const msg = err instanceof Error ? err.message : 'Failed to send message';

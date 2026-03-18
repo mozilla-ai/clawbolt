@@ -17,7 +17,7 @@ from any_llm import AuthenticationError, ContentFilterError
 
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, ClawboltAgent
-from backend.app.agent.events import AgentEvent
+from backend.app.agent.events import AgentEvent, ToolExecutionStartEvent
 from backend.app.agent.file_store import (
     SessionState,
     StoredMessage,
@@ -480,6 +480,23 @@ def get_active_pipeline() -> list[PipelineStep]:
 # ---------------------------------------------------------------------------
 
 
+def _create_sse_event_forwarder(
+    request_id: str,
+) -> Callable[[AgentEvent], Awaitable[None]]:
+    """Create an event subscriber that forwards tool events to the SSE stream."""
+
+    async def _forward(event: AgentEvent) -> None:
+        if isinstance(event, ToolExecutionStartEvent):
+            from backend.app.bus import message_bus
+
+            await message_bus.publish_event(
+                request_id,
+                {"type": "tool_call", "tool_name": event.tool_name},
+            )
+
+    return _forward
+
+
 async def handle_inbound_message(
     user: User,
     session: SessionState,
@@ -530,5 +547,8 @@ async def handle_inbound_message(
         download_media=download_media,
         request_id=request_id,
     )
+    # Stream tool execution events to the web chat SSE endpoint
+    if request_id:
+        ctx.event_subscribers.append(_create_sse_event_forwarder(request_id))
     ctx = await run_pipeline(ctx, pipeline or get_active_pipeline())
     return ctx.response or AgentResponse(reply_text="")
