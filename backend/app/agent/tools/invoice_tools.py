@@ -228,7 +228,7 @@ def create_invoice_tools(
 
         # Generate and save PDF
         try:
-            await _generate_invoice_pdf_and_save(
+            pdf_path = await _generate_invoice_pdf_and_save(
                 user=user,
                 invoice_id=invoice_number,
                 description=description,
@@ -258,8 +258,8 @@ def create_invoice_tools(
             content=(
                 f"Invoice {invoice_number} generated for ${total_amount:,.2f}. "
                 f"{len(processed_items)} line item(s). "
-                f"PDF saved. "
-                f"Use send_media_reply to send it to the user."
+                f"PDF saved at {pdf_path}. "
+                f"Use send_media_reply with media_url={pdf_path} to send it to the user."
             )
         )
 
@@ -336,7 +336,7 @@ def create_invoice_tools(
 
         # Generate and save PDF
         try:
-            await _generate_invoice_pdf_and_save(
+            pdf_path = await _generate_invoice_pdf_and_save(
                 user=user,
                 invoice_id=invoice_number,
                 description=estimate.description,
@@ -367,8 +367,8 @@ def create_invoice_tools(
                 f"Invoice {invoice_number} created from estimate {estimate_id} "
                 f"for ${estimate.total_amount:,.2f}. "
                 f"{len(processed_items)} line item(s). "
-                f"PDF saved. "
-                f"Use send_media_reply to send it to the user."
+                f"PDF saved at {pdf_path}. "
+                f"Use send_media_reply with media_url={pdf_path} to send it to the user."
             )
         )
 

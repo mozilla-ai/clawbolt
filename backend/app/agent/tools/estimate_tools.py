@@ -232,8 +232,8 @@ def create_estimate_tools(
             content=(
                 f"Estimate {estimate_number} generated for ${total_amount:,.2f}. "
                 f"{len(processed_items)} line item(s). "
-                f"PDF saved. "
-                f"Use send_media_reply to send it to the user."
+                f"PDF saved at {pdf_path}. "
+                f"Use send_media_reply with media_url={pdf_path} to send it to the user."
             )
         )
 
