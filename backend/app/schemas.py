@@ -132,6 +132,7 @@ class ModelConfigResponse(BaseModel):
     llm_model: str
     llm_api_base: str | None
     vision_model: str
+    vision_provider: str
     heartbeat_model: str
     heartbeat_provider: str
     compaction_model: str
@@ -143,6 +144,7 @@ class ModelConfigUpdate(BaseModel):
     llm_model: str | None = None
     llm_api_base: str | None = None
     vision_model: str | None = None
+    vision_provider: str | None = None
     heartbeat_model: str | None = None
     heartbeat_provider: str | None = None
     compaction_model: str | None = None

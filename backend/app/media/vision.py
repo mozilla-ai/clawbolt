@@ -47,13 +47,14 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
     user_content = _build_vision_content(b64_image, mime_type, context)
 
     model = settings.vision_model or settings.llm_model
-    logger.info("Using vision model: %s (provider=%s)", model, settings.llm_provider)
+    provider = settings.vision_provider or settings.llm_provider
+    logger.info("Using vision model: %s (provider=%s)", model, provider)
 
     response = cast(
         MessageResponse,
         await amessages(
             model=model,
-            provider=settings.llm_provider,
+            provider=provider,
             api_base=settings.llm_api_base,
             system=VISION_SYSTEM_PROMPT,
             messages=[

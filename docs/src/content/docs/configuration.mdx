@@ -37,6 +37,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | `LLM_MODEL` | (required) | Model to use for the agent loop |
 | `LLM_API_BASE` | (none) | Custom API base URL (e.g. `http://localhost:1234/v1` for LM Studio) |
 | `VISION_MODEL` | (same as `LLM_MODEL`) | Model to use for image/document analysis. Falls back to `LLM_MODEL` if not set |
+| `VISION_PROVIDER` | (same as `LLM_PROVIDER`) | Provider for the vision model. Falls back to `LLM_PROVIDER` if not set |
 | `ANY_LLM_KEY` | | [any-llm.ai](https://any-llm.ai) managed platform key (replaces individual provider keys) |
 
 Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use the any-llm.ai managed platform as a key vault for all providers.

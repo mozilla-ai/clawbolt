@@ -55,7 +55,13 @@ async def _verify_llm_settings() -> None:
         ("primary", settings.llm_provider, settings.llm_model),
     ]
     if settings.vision_model:
-        configs.append(("vision", settings.llm_provider, settings.vision_model))
+        configs.append(
+            (
+                "vision",
+                settings.vision_provider or settings.llm_provider,
+                settings.vision_model,
+            )
+        )
     if settings.compaction_model or settings.compaction_provider:
         configs.append(
             (

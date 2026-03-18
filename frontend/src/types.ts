@@ -111,6 +111,7 @@ export interface ModelConfig {
   llm_model: string;
   llm_api_base: string | null;
   vision_model: string;
+  vision_provider: string;
   heartbeat_model: string;
   heartbeat_provider: string;
   compaction_model: string;
@@ -122,6 +123,7 @@ export interface ModelConfigUpdate {
   llm_model?: string;
   llm_api_base?: string | null;
   vision_model?: string;
+  vision_provider?: string;
   heartbeat_model?: string;
   heartbeat_provider?: string;
   compaction_model?: string;
@@ -159,4 +161,9 @@ export interface OAuthStatusResponse {
 export interface OAuthAuthorizeResponse {
   url: string;
   integration: string;
+}
+
+export interface ProviderInfo {
+  name: string;
+  local: boolean;
 }
