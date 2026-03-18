@@ -4,7 +4,6 @@ All data classes, stores, and utilities have been migrated to dedicated modules:
 - DTOs and utilities: backend.app.agent.dto
 - User store: backend.app.agent.user_db
 - Session store: backend.app.agent.session_db
-- Client/Estimate stores: backend.app.agent.client_db
 - Memory store: backend.app.agent.memory_db
 - Heartbeat/Media/Idempotency/LLM/ToolConfig stores: backend.app.agent.stores
 
@@ -15,14 +14,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-# Re-export ClientStore and EstimateStore
-from backend.app.agent.client_db import ClientStore, EstimateStore  # noqa: F401
-
 # Re-export all DTOs
 from backend.app.agent.dto import (  # noqa: F401
-    ClientData,
-    EstimateData,
-    EstimateLineItemData,
     HeartbeatLogEntry,
     MediaData,
     SessionMetadata,
@@ -30,8 +23,6 @@ from backend.app.agent.dto import (  # noqa: F401
     StoredMessage,
     ToolConfigEntry,
     UserData,
-    _unique_slug,
-    make_client_slug,
     slugify,
 )
 

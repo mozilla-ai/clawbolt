@@ -19,9 +19,7 @@ from backend.app.config import load_persistent_config, log_config_warnings, sett
 from backend.app.database import get_engine
 from backend.app.routers import (
     auth,
-    estimates,
     health,
-    invoices,
     oauth,
     search,
     user_memory,
@@ -193,8 +191,6 @@ app.include_router(oauth.router, prefix="/api")
 for _channel in get_manager().channels.values():
     app.include_router(_channel.get_router(), prefix="/api")
 
-app.include_router(estimates.router, prefix="/api")
-app.include_router(invoices.router, prefix="/api")
 app.include_router(user_profile.router, prefix="/api")
 app.include_router(user_sessions.router, prefix="/api")
 app.include_router(user_memory.router, prefix="/api")

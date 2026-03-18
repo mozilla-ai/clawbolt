@@ -1,7 +1,4 @@
-"""SQLAlchemy ORM models for clawbolt.
-
-These 15 tables replace the file-based storage layer in file_store.py.
-"""
+"""SQLAlchemy ORM models for clawbolt."""
 
 import uuid as _uuid
 from collections.abc import Callable
@@ -37,7 +34,6 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     heartbeat_opt_in: Mapped[bool] = mapped_column(Boolean, default=True)
     heartbeat_frequency: Mapped[str] = mapped_column(String, default="30m")
-    folder_scheme: Mapped[str] = mapped_column(String, default="by_client")
     soul_text: Mapped[str] = mapped_column(Text, default="")
     user_text: Mapped[str] = mapped_column(Text, default="")
     heartbeat_text: Mapped[str] = mapped_column(Text, default="")
@@ -61,7 +57,6 @@ class User(Base):
             "is_active": True,
             "heartbeat_opt_in": True,
             "heartbeat_frequency": settings.heartbeat_default_frequency,
-            "folder_scheme": settings.default_folder_scheme,
             "soul_text": "",
             "user_text": "",
             "heartbeat_text": "",
@@ -84,15 +79,6 @@ class User(Base):
     )
     sessions: Mapped[list["ChatSession"]] = relationship(
         "ChatSession", back_populates="user", cascade="all, delete-orphan"
-    )
-    clients: Mapped[list["Client"]] = relationship(
-        "Client", back_populates="user", cascade="all, delete-orphan"
-    )
-    estimates: Mapped[list["Estimate"]] = relationship(
-        "Estimate", back_populates="user", cascade="all, delete-orphan"
-    )
-    invoices: Mapped[list["Invoice"]] = relationship(
-        "Invoice", back_populates="user", cascade="all, delete-orphan"
     )
     media_files: Mapped[list["MediaFile"]] = relationship(
         "MediaFile", back_populates="user", cascade="all, delete-orphan"
@@ -164,141 +150,6 @@ class Message(Base):
     timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
     session: Mapped["ChatSession"] = relationship("ChatSession", back_populates="messages")
-
-
-class Client(Base):
-    __tablename__ = "clients"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(
-        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    name: Mapped[str] = mapped_column(String, nullable=False)
-    phone: Mapped[str] = mapped_column(String, default="")
-    email: Mapped[str] = mapped_column(String, default="")
-    address: Mapped[str] = mapped_column(Text, default="")
-    notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
-
-    user: Mapped["User"] = relationship("User", back_populates="clients")
-    estimates: Mapped[list["Estimate"]] = relationship(
-        "Estimate", back_populates="client", passive_deletes=True
-    )
-    invoices: Mapped[list["Invoice"]] = relationship(
-        "Invoice", back_populates="client", passive_deletes=True
-    )
-
-
-class Estimate(Base):
-    __tablename__ = "estimates"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(
-        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    client_id: Mapped[str | None] = mapped_column(
-        String,
-        ForeignKey("clients.id", ondelete="SET NULL"),
-        index=True,
-        nullable=True,
-        default=None,
-    )
-    description: Mapped[str] = mapped_column(Text, default="")
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
-    status: Mapped[str] = mapped_column(String, default="draft")
-    pdf_url: Mapped[str] = mapped_column(String, default="")
-    storage_path: Mapped[str] = mapped_column(String, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
-
-    user: Mapped["User"] = relationship("User", back_populates="estimates")
-    client: Mapped["Client | None"] = relationship("Client", back_populates="estimates")
-    line_items: Mapped[list["EstimateLineItem"]] = relationship(
-        "EstimateLineItem", back_populates="estimate", cascade="all, delete-orphan"
-    )
-
-
-class EstimateLineItem(Base):
-    __tablename__ = "estimate_line_items"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    estimate_id: Mapped[str] = mapped_column(
-        String, ForeignKey("estimates.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    description: Mapped[str] = mapped_column(Text, default="")
-    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("1.00"))
-    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
-    total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
-
-    estimate: Mapped["Estimate"] = relationship("Estimate", back_populates="line_items")
-
-
-class Invoice(Base):
-    __tablename__ = "invoices"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    user_id: Mapped[str] = mapped_column(
-        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    client_id: Mapped[str | None] = mapped_column(
-        String,
-        ForeignKey("clients.id", ondelete="SET NULL"),
-        index=True,
-        nullable=True,
-        default=None,
-    )
-    description: Mapped[str] = mapped_column(Text, default="")
-    total_amount: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
-    status: Mapped[str] = mapped_column(String, default="draft")
-    pdf_url: Mapped[str] = mapped_column(String, default="")
-    storage_path: Mapped[str] = mapped_column(String, default="")
-    due_date: Mapped[str | None] = mapped_column(String, nullable=True, default=None)
-    estimate_id: Mapped[str | None] = mapped_column(
-        String,
-        ForeignKey("estimates.id", ondelete="SET NULL"),
-        index=True,
-        nullable=True,
-        default=None,
-    )
-    notes: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-    updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
-        default=lambda: datetime.now(UTC),
-        onupdate=lambda: datetime.now(UTC),
-    )
-
-    user: Mapped["User"] = relationship("User", back_populates="invoices")
-    client: Mapped["Client | None"] = relationship("Client", back_populates="invoices")
-    estimate: Mapped["Estimate | None"] = relationship("Estimate", viewonly=True)
-    line_items: Mapped[list["InvoiceLineItem"]] = relationship(
-        "InvoiceLineItem", back_populates="invoice", cascade="all, delete-orphan"
-    )
-
-
-class InvoiceLineItem(Base):
-    __tablename__ = "invoice_line_items"
-
-    id: Mapped[str] = mapped_column(String, primary_key=True)
-    invoice_id: Mapped[str] = mapped_column(
-        String, ForeignKey("invoices.id", ondelete="CASCADE"), index=True, nullable=False
-    )
-    description: Mapped[str] = mapped_column(Text, default="")
-    quantity: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("1.00"))
-    unit_price: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
-    total: Mapped[Decimal] = mapped_column(Numeric(12, 2), default=Decimal("0.00"))
-
-    invoice: Mapped["Invoice"] = relationship("Invoice", back_populates="line_items")
 
 
 class MediaFile(Base):

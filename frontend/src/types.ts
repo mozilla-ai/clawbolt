@@ -135,7 +135,6 @@ export interface ToolConfigEntry {
   domain_group: string;
   domain_group_order: number;
   enabled: boolean;
-  auto_disabled_reason: string | null;
 }
 
 export interface ToolConfigResponse {

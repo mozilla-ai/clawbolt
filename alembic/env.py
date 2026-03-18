@@ -8,13 +8,8 @@ from backend.app.database import Base
 from backend.app.models import (  # noqa: F401
     ChannelRoute,
     ChatSession,
-    Client,
-    Estimate,
-    EstimateLineItem,
     HeartbeatLog,
     IdempotencyKey,
-    Invoice,
-    InvoiceLineItem,
     LLMUsageLog,
     MediaFile,
     MemoryDocument,

@@ -34,13 +34,13 @@ uv run ty check --python .venv backend/ tests/ alembic/
 - Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2
 - any-llm-sdk (LLM provider abstraction via `acompletion`)
 - Telegram Bot API for messaging (via python-telegram-bot), faster-whisper for audio transcription
-- ReportLab for PDF generation, Dropbox/Google Drive for file storage
+- Dropbox/Google Drive for file storage
 - PostgreSQL for all data persistence, Alembic for migrations
 - uv + hatchling build system, ruff linting, ty type checking
 
 ## Storage
 
-All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The database has 15 tables:
+All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The database has 10 tables:
 
 | Table | Purpose |
 |---|---|
@@ -48,12 +48,8 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `channel_routes` | Channel -> user routing (Telegram, webchat, etc.) |
 | `sessions` | Chat session metadata |
 | `messages` | Chat messages (FK to sessions) |
-| `clients` | Client/customer records |
-| `estimates` | Job estimates |
-| `estimate_line_items` | Individual line items within estimates |
 | `media_files` | Media file manifest |
 | `memory_documents` | Structured memory and compaction history |
-| `heartbeat_items` | Proactive follow-up items |
 | `heartbeat_logs` | Heartbeat send log |
 | `idempotency_keys` | Webhook deduplication |
 | `llm_usage_logs` | Token usage tracking |
@@ -63,14 +59,13 @@ Key store modules:
 - `backend/app/agent/user_db.py` -- `UserStore` (singleton via `get_user_store()`)
 - `backend/app/agent/session_db.py` -- `SessionStore` (per-user via `get_session_store(id)`)
 - `backend/app/agent/memory_db.py` -- `MemoryStore` (per-user via `get_memory_store(id)`)
-- `backend/app/agent/client_db.py` -- `ClientStore`, `EstimateStore`
 - `backend/app/agent/stores.py` -- `MediaStore`, `HeartbeatStore`, `IdempotencyStore`, `LLMUsageStore`, `ToolConfigStore`
-- `backend/app/agent/dto.py` -- Pydantic DTOs: `UserData`, `StoredMessage`, `SessionState`, `ClientData`, etc.
+- `backend/app/agent/dto.py` -- Pydantic DTOs: `UserData`, `StoredMessage`, `SessionState`, etc.
 - `backend/app/agent/file_store.py` -- Compatibility shim (re-exports from above modules)
 - `backend/app/database.py` -- `Base`, `SessionLocal`, `get_db()`, `get_engine()`
-- `backend/app/models.py` -- All 15 SQLAlchemy ORM model classes
+- `backend/app/models.py` -- All SQLAlchemy ORM model classes
 
-File storage for PDFs and uploads still uses the local filesystem under `data/` (configurable via `DATA_DIR`).
+File storage for uploads uses the local filesystem under `data/` (configurable via `DATA_DIR`).
 
 ## Backwards Compatibility
 
@@ -131,6 +126,24 @@ cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 ### Ephemeral directories
 
 `target/`, `node_modules/`, and `.venv/` don't persist between sessions. Run `uv sync` at the start of each session if needed.
+
+### PostgreSQL for tests
+
+Tests require a running PostgreSQL instance. In a sandbox without Docker, install and start PostgreSQL directly:
+
+```bash
+# Install PostgreSQL (Debian/Ubuntu)
+apt-get update -qq && apt-get install -y -qq postgresql postgresql-client
+
+# Start the cluster
+pg_ctlcluster 16 main start
+
+# Create the test user and database
+su - postgres -c "psql -c \"CREATE USER clawbolt WITH PASSWORD 'clawbolt' CREATEDB;\""
+su - postgres -c "psql -c \"CREATE DATABASE clawbolt_test OWNER clawbolt;\""
+```
+
+The test suite connects to `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test`. The conftest.py handles table creation and per-test transaction rollback automatically.
 
 ### Git operations
 

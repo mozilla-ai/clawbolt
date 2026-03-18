@@ -36,7 +36,6 @@ export default defineConfig({
         {
           label: "Features",
           items: [
-            { label: "Estimates", slug: "features/estimates" },
             { label: "Memory", slug: "features/memory" },
             { label: "Photos", slug: "features/photos" },
             { label: "Voice", slug: "features/voice" },

@@ -1,11 +1,10 @@
-"""Unified search endpoint across sessions, memory facts, and clients."""
+"""Unified search endpoint across sessions and memory facts."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 
-from backend.app.agent.client_db import ClientStore
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.session_db import get_session_store
 from backend.app.auth.dependencies import get_current_user
@@ -31,7 +30,7 @@ async def search(
     q: str = Query("", min_length=0, max_length=200),
     current_user: User = Depends(get_current_user),
 ) -> SearchResponse:
-    """Search across conversations, memory facts, and client records."""
+    """Search across conversations and memory facts."""
     query = q.strip().lower()
     if not query:
         return SearchResponse(results=[], query=q)
@@ -49,23 +48,6 @@ async def search(
                     type="memory",
                     title=stripped[:60],
                     preview=stripped[:120],
-                    url="/app/memory",
-                )
-            )
-
-    # Search client records (by name, email, phone, notes)
-    client_store = ClientStore(user_id=current_user.id)
-    clients = await client_store.list_all()
-    for client in clients:
-        searchable = f"{client.name} {client.email} {client.phone} {client.notes}".lower()
-        if query in searchable:
-            results.append(
-                SearchResult(
-                    type="client",
-                    title=client.name or client.id,
-                    preview=", ".join(
-                        part for part in [client.phone, client.email, client.address] if part
-                    )[:120],
                     url="/app/memory",
                 )
             )

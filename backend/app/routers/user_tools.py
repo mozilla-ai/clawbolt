@@ -47,21 +47,6 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
     "profile": _FactoryMeta("View and update user profile information"),
     "memory": _FactoryMeta("Save, recall, and forget long-term facts"),
     "messaging": _FactoryMeta("Send text and media replies to the user"),
-    "estimate": _FactoryMeta(
-        "Generate professional estimates and quotes with PDF output",
-        domain_group="Local Management",
-        domain_group_order=1,
-    ),
-    "invoice": _FactoryMeta(
-        "Generate invoices with payment tracking and PDF output",
-        domain_group="Local Management",
-        domain_group_order=1,
-    ),
-    "email": _FactoryMeta(
-        "Send estimates and invoices to clients via email",
-        domain_group="Local Management",
-        domain_group_order=1,
-    ),
     "file": _FactoryMeta(
         "Upload and organize files in cloud storage",
         domain_group="Local Management",
@@ -80,43 +65,21 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
 }
 
 
-def _get_auto_disabled_groups(user_id: str) -> dict[str, str]:
-    """Return a mapping of {factory_name: reason} for groups that should be auto-disabled.
-
-    When QuickBooks is connected with a valid token, local estimate, invoice,
-    and email tools are auto-disabled because QB handles those operations.
-    If the token is expired or invalid, local tools remain available so users
-    are never locked out of all document tools.
-    """
-    from backend.app.agent.tools.quickbooks_tools import get_qb_auto_disabled_groups
-
-    return get_qb_auto_disabled_groups(user_id)
-
-
 def _build_tool_list(
     disabled_names: set[str],
-    auto_disabled: dict[str, str] | None = None,
 ) -> list[ToolConfigEntry]:
     """Build the full tool config list from the registry.
 
     Each registered factory becomes one entry. Factories in
     ``_CORE_FACTORIES`` are always enabled; others respect the
-    user's disabled set and auto-disable rules.
+    user's disabled set.
     """
-    auto_disabled = auto_disabled or {}
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
         is_core = name in _CORE_FACTORIES
         meta = _FACTORY_META.get(name)
 
-        # Determine enabled state and auto-disable reason
-        auto_reason = auto_disabled.get(name) if not is_core else None
-        if is_core:
-            enabled = True
-        elif auto_reason:
-            enabled = False
-        else:
-            enabled = name not in disabled_names
+        enabled = True if is_core else name not in disabled_names
 
         entries.append(
             ToolConfigEntry(
@@ -126,7 +89,6 @@ def _build_tool_list(
                 domain_group=meta.domain_group if meta else "",
                 domain_group_order=meta.domain_group_order if meta else 0,
                 enabled=enabled,
-                auto_disabled_reason=auto_reason,
             )
         )
     return entries
@@ -140,8 +102,7 @@ async def get_tool_config(
     store = ToolConfigStore(current_user.id)
     saved = await store.load()
     disabled_names = {e.name for e in saved if not e.enabled}
-    auto_disabled = _get_auto_disabled_groups(current_user.id)
-    entries = _build_tool_list(disabled_names, auto_disabled=auto_disabled)
+    entries = _build_tool_list(disabled_names)
     return ToolConfigResponse(
         tools=[
             ToolConfigEntryResponse(
@@ -151,7 +112,6 @@ async def get_tool_config(
                 domain_group=e.domain_group,
                 domain_group_order=e.domain_group_order,
                 enabled=e.enabled,
-                auto_disabled_reason=e.auto_disabled_reason,
             )
             for e in entries
         ]
@@ -179,15 +139,6 @@ async def update_tool_config(
     saved = await store.load()
     disabled_names = {e.name for e in saved if not e.enabled}
 
-    # Check for attempts to enable auto-disabled tools
-    auto_disabled = _get_auto_disabled_groups(current_user.id)
-    for name, enabled in requested.items():
-        if enabled and name in auto_disabled:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Cannot enable '{name}': {auto_disabled[name]}",
-            )
-
     # Apply changes, ignoring core tools
     valid_factories = set(default_registry.factory_names)
     for name, enabled in requested.items():
@@ -202,7 +153,7 @@ async def update_tool_config(
             disabled_names.add(name)
 
     # Build and save the full config
-    entries = _build_tool_list(disabled_names, auto_disabled=auto_disabled)
+    entries = _build_tool_list(disabled_names)
     await store.save(entries)
 
     return ToolConfigResponse(
@@ -214,7 +165,6 @@ async def update_tool_config(
                 domain_group=e.domain_group,
                 domain_group_order=e.domain_group_order,
                 enabled=e.enabled,
-                auto_disabled_reason=e.auto_disabled_reason,
             )
             for e in entries
         ]

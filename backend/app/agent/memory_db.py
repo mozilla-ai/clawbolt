@@ -10,8 +10,6 @@ from __future__ import annotations
 import logging
 from collections import OrderedDict
 
-from backend.app.agent.client_db import ClientStore
-from backend.app.agent.dto import ClientData
 from backend.app.database import SessionLocal, db_session
 from backend.app.models import MemoryDocument, User
 
@@ -131,32 +129,8 @@ class MemoryStore:
                 db.commit()
 
     async def build_memory_context(self) -> str:
-        """Build memory context for injection into the agent prompt.
-
-        Returns the raw memory text plus a formatted client list.
-        """
-        memory_text = self.read_memory()
-
-        client_store = ClientStore(self.user_id)
-        clients: list[ClientData] = await client_store.list_all()
-
-        lines: list[str] = []
-        if memory_text:
-            lines.append(memory_text)
-            lines.append("")
-        if clients:
-            lines.append("## Clients")
-            for c in clients:
-                parts = [c.name]
-                if c.phone:
-                    parts.append(f"({c.phone})")
-                if c.address:
-                    parts.append(f": {c.address}")
-                if c.notes:
-                    parts.append(f", {c.notes}")
-                lines.append(f"- {' '.join(parts)}")
-            lines.append("")
-        return "\n".join(lines)
+        """Build memory context for injection into the agent prompt."""
+        return self.read_memory()
 
 
 # ---------------------------------------------------------------------------
