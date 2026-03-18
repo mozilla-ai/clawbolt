@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -24,6 +25,27 @@ if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 PDF_BASE_DIR = Path(settings.pdf_storage_dir)
+
+# ---------------------------------------------------------------------------
+# Pluggable estimate quota hooks (set by premium layer)
+# ---------------------------------------------------------------------------
+
+# Returns True if the user has estimate quota remaining; False to block.
+_estimate_quota_check: Callable[[str], bool] | None = None
+
+# Called after a successful estimate creation to increment usage.
+_estimate_quota_increment: Callable[[str], None] | None = None
+
+
+def set_estimate_quota_hooks(
+    check: Callable[[str], bool],
+    increment: Callable[[str], None],
+) -> None:
+    """Register quota check/increment callbacks (called by premium plugin)."""
+    global _estimate_quota_check, _estimate_quota_increment
+    _estimate_quota_check = check
+    _estimate_quota_increment = increment
+
 
 logger = logging.getLogger(__name__)
 
@@ -118,6 +140,17 @@ def create_estimate_tools(
                     address=client_address or "",
                 )
 
+        # Check estimate quota (premium hook)
+        if _estimate_quota_check is not None and not _estimate_quota_check(user.id):
+            return ToolResult(
+                content=(
+                    "You've reached your monthly estimate limit. "
+                    "Upgrade your plan at clawbolt.ai to create more estimates."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
         # Create estimate via store
         estimate_store = EstimateStore(user.id)
         try:
@@ -190,6 +223,10 @@ def create_estimate_tools(
         if cloud_path:
             update_fields["storage_path"] = cloud_path
         await estimate_store.update(estimate.id, **update_fields)
+
+        # Increment estimate quota (premium hook)
+        if _estimate_quota_increment is not None:
+            _estimate_quota_increment(user.id)
 
         return ToolResult(
             content=(
