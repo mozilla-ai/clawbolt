@@ -119,8 +119,7 @@ def create_list_capabilities_tool(
         return ToolResult(content=activation_msg)
 
     summary_lines = [
-        f"  - {name}: {summary}"
-        for name, summary in sorted(specialist_summaries.items())
+        f"  - {name}: {summary}" for name, summary in sorted(specialist_summaries.items())
     ]
     summary_block = "\n".join(summary_lines)
     return Tool(
