@@ -47,6 +47,7 @@ _INVOICES: list[dict[str, Any]] = [
 _ESTIMATES: list[dict[str, Any]] = [
     {
         "Id": "2001",
+        "SyncToken": "0",
         "DocNumber": "EST-2001",
         "CustomerRef": {"value": "100", "name": "John Smith"},
         "TotalAmt": 3200.00,
@@ -111,5 +112,10 @@ class MockQuickBooksService(QuickBooksService):
     async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
         raise NotImplementedError("MockQuickBooksService.create_entity not implemented")
 
-    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
-        raise NotImplementedError("MockQuickBooksService.send_invoice_email not implemented")
+    async def update_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError("MockQuickBooksService.update_entity not implemented")
+
+    async def send_entity_email(
+        self, entity_type: str, entity_id: str, email: str
+    ) -> dict[str, Any]:
+        raise NotImplementedError("MockQuickBooksService.send_entity_email not implemented")

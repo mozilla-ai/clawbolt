@@ -16,7 +16,8 @@ class FakeQBService(QuickBooksService):
 
     def __init__(self) -> None:
         self.created: list[tuple[str, dict[str, Any]]] = []
-        self.sent_invoices: list[tuple[str, str]] = []
+        self.updated: list[tuple[str, dict[str, Any]]] = []
+        self.sent: list[tuple[str, str, str]] = []
         self._next_id = 100
 
     async def query(self, query_str: str) -> list[dict[str, Any]]:
@@ -36,9 +37,21 @@ class FakeQBService(QuickBooksService):
         self.created.append((entity_type, data))
         return result
 
-    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
-        self.sent_invoices.append((invoice_id, email))
-        return {"Invoice": {"Id": invoice_id, "EmailStatus": "EmailSent"}}
+    async def update_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {**data}
+        if entity_type == "Customer":
+            result["DisplayName"] = data.get("DisplayName", "")
+        else:
+            result["DocNumber"] = data.get("DocNumber", "")
+            result["TotalAmt"] = sum(line.get("Amount", 0) for line in data.get("Line", []))
+        self.updated.append((entity_type, data))
+        return result
+
+    async def send_entity_email(
+        self, entity_type: str, entity_id: str, email: str
+    ) -> dict[str, Any]:
+        self.sent.append((entity_type, entity_id, email))
+        return {entity_type: {"Id": entity_id, "EmailStatus": "EmailSent"}}
 
 
 def _get_tool(tools: list, name: str) -> Any:
@@ -238,31 +251,151 @@ async def test_qb_create_api_error() -> None:
 
 
 # ---------------------------------------------------------------------------
+# qb_update
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_qb_update_estimate() -> None:
+    """Update an estimate with changed line items."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_update")
+
+    result = await fn(
+        entity_type="Estimate",
+        data={
+            "Id": "2001",
+            "SyncToken": "0",
+            "CustomerRef": {"value": "100"},
+            "Line": [
+                {
+                    "Amount": 600.00,
+                    "DetailType": "SalesItemLineDetail",
+                    "Description": "Labor - updated",
+                    "SalesItemLineDetail": {"Qty": 12, "UnitPrice": 50.0},
+                },
+            ],
+        },
+    )
+
+    assert result.is_error is False
+    assert "Estimate updated" in result.content
+    assert "Id: 2001" in result.content
+    assert "$600.00" in result.content
+    assert len(svc.updated) == 1
+    entity_type, body = svc.updated[0]
+    assert entity_type == "Estimate"
+    assert body["Id"] == "2001"
+    assert body["SyncToken"] == "0"
+
+
+@pytest.mark.asyncio()
+async def test_qb_update_customer() -> None:
+    """Update a customer's contact info."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_update")
+
+    result = await fn(
+        entity_type="Customer",
+        data={
+            "Id": "100",
+            "SyncToken": "1",
+            "DisplayName": "John Smith",
+            "PrimaryPhone": {"FreeFormNumber": "555-9999"},
+        },
+    )
+
+    assert result.is_error is False
+    assert "Customer updated" in result.content
+    assert "John Smith" in result.content
+    _, body = svc.updated[0]
+    assert body["PrimaryPhone"]["FreeFormNumber"] == "555-9999"
+
+
+@pytest.mark.asyncio()
+async def test_qb_update_rejects_disallowed_entity() -> None:
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_update")
+
+    result = await fn(
+        entity_type="Payment",
+        data={"Id": "1", "SyncToken": "0", "TotalAmt": 100},
+    )
+
+    assert result.is_error is True
+    assert "not allowed" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_qb_update_api_error() -> None:
+    svc = FakeQBService()
+    svc.update_entity = AsyncMock(side_effect=Exception("QB API error"))  # type: ignore[method-assign]
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_update")
+
+    result = await fn(
+        entity_type="Estimate",
+        data={"Id": "2001", "SyncToken": "0"},
+    )
+
+    assert result.is_error is True
+    assert "Failed to update Estimate" in result.content
+
+
+# ---------------------------------------------------------------------------
 # qb_send
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_qb_send_success() -> None:
+async def test_qb_send_invoice_success() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
     fn = _get_tool(tools, "qb_send")
 
-    result = await fn(invoice_id="42", email="client@example.com")
+    result = await fn(entity_type="Invoice", entity_id="42", email="client@example.com")
 
     assert result.is_error is False
-    assert "sent to client@example.com" in result.content
-    assert svc.sent_invoices == [("42", "client@example.com")]
+    assert "Invoice 42 sent to client@example.com" in result.content
+    assert svc.sent == [("Invoice", "42", "client@example.com")]
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_estimate_success() -> None:
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_send")
+
+    result = await fn(entity_type="Estimate", entity_id="2001", email="client@example.com")
+
+    assert result.is_error is False
+    assert "Estimate 2001 sent to client@example.com" in result.content
+    assert svc.sent == [("Estimate", "2001", "client@example.com")]
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_rejects_disallowed_entity() -> None:
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_send")
+
+    result = await fn(entity_type="Customer", entity_id="100", email="test@example.com")
+
+    assert result.is_error is True
+    assert "not allowed" in result.content
 
 
 @pytest.mark.asyncio()
 async def test_qb_send_failure() -> None:
     svc = FakeQBService()
-    svc.send_invoice_email = AsyncMock(side_effect=Exception("Email failed"))  # type: ignore[method-assign]
+    svc.send_entity_email = AsyncMock(side_effect=Exception("Email failed"))  # type: ignore[method-assign]
     tools = create_quickbooks_tools(svc)
     fn = _get_tool(tools, "qb_send")
 
-    result = await fn(invoice_id="42", email="bad@email.com")
+    result = await fn(entity_type="Invoice", entity_id="42", email="bad@email.com")
 
     assert result.is_error is True
     assert "Failed to send invoice" in result.content
@@ -274,10 +407,10 @@ async def test_qb_send_failure() -> None:
 
 
 def test_quickbooks_tools_count() -> None:
-    """create_quickbooks_tools should return 3 tools."""
+    """create_quickbooks_tools should return 4 tools."""
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
-    assert len(tools) == 3
+    assert len(tools) == 4
 
     names = {t.name for t in tools}
-    assert names == {"qb_query", "qb_create", "qb_send"}
+    assert names == {"qb_query", "qb_create", "qb_update", "qb_send"}

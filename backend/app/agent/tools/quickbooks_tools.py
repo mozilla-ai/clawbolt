@@ -50,6 +50,12 @@ _QUERYABLE_ENTITIES = {
 # Entity types that qb_create is allowed to create.
 _CREATABLE_ENTITIES = {"Customer", "Estimate", "Invoice"}
 
+# Entity types that qb_update is allowed to update.
+_UPDATABLE_ENTITIES = {"Customer", "Estimate", "Invoice"}
+
+# Entity types that qb_send is allowed to send via email.
+_SENDABLE_ENTITIES = {"Invoice", "Estimate"}
+
 
 class QBQueryParams(BaseModel):
     """Parameters for the qb_query tool."""
@@ -72,12 +78,30 @@ class QBCreateParams(BaseModel):
     )
 
 
+class QBUpdateParams(BaseModel):
+    """Parameters for the qb_update tool."""
+
+    entity_type: str = Field(
+        description="QBO entity type to update: Customer, Estimate, or Invoice"
+    )
+    data: dict[str, Any] = Field(
+        description=(
+            "Full QBO API payload including Id and SyncToken from a prior qb_query. "
+            "See SKILL.md for payload formats."
+        )
+    )
+
+
 class QBSendParams(BaseModel):
     """Parameters for the qb_send tool."""
 
-    invoice_id: str = Field(description="QuickBooks Invoice ID (numeric)")
+    entity_type: str = Field(
+        description="QBO entity type to send: Invoice or Estimate",
+        default="Invoice",
+    )
+    entity_id: str = Field(description="QuickBooks entity ID (numeric)")
     email: str = Field(
-        description="Email address to send the invoice to",
+        description="Email address to send to",
         pattern=r"^[^@\s]+@[^@\s]+\.[^@\s]+$",
     )
 
@@ -92,7 +116,7 @@ def _format_results(rows: list[dict[str, Any]]) -> str:
     for row in truncated:
         parts: list[str] = []
         for key, val in row.items():
-            if key in ("domain", "sparse", "SyncToken", "MetaData"):
+            if key in ("domain", "sparse", "MetaData"):
                 continue
             if isinstance(val, dict):
                 name = val.get("name", "")
@@ -229,19 +253,69 @@ def create_quickbooks_tools(
 
         return ToolResult(content=" | ".join(parts))
 
-    async def qb_send(invoice_id: str, email: str) -> ToolResult:
-        """Send an invoice via QuickBooks email."""
-        try:
-            await qb_service.send_invoice_email(invoice_id, email)
-        except Exception as exc:
-            logger.exception("QB send invoice email failed")
+    async def qb_update(entity_type: str, data: dict[str, Any]) -> ToolResult:
+        """Update an existing entity in QuickBooks Online."""
+        if entity_type not in _UPDATABLE_ENTITIES:
             return ToolResult(
-                content=f"Failed to send invoice: {exc}",
+                content=f"Updating '{entity_type}' is not allowed. "
+                f"Allowed: {', '.join(sorted(_UPDATABLE_ENTITIES))}",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        try:
+            result = await qb_service.update_entity(entity_type, data)
+        except Exception as exc:
+            logger.exception("QB update %s failed", entity_type)
+            error_str = str(exc)
+            if hasattr(exc, "response"):
+                try:
+                    error_body = exc.response.json()  # type: ignore[union-attr]
+                    error_str = json.dumps(error_body, indent=2)
+                except Exception:
+                    pass
+            return ToolResult(
+                content=f"Failed to update {entity_type}: {error_str}",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
 
-        return ToolResult(content=f"Invoice {invoice_id} sent to {email} via QuickBooks.")
+        entity_id = result.get("Id", "?")
+        doc_num = result.get("DocNumber", "")
+        total = result.get("TotalAmt")
+        display_name = result.get("DisplayName", "")
+
+        parts = [f"{entity_type} updated in QuickBooks.", f"Id: {entity_id}"]
+        if doc_num:
+            parts.append(f"DocNumber: {doc_num}")
+        if total is not None:
+            parts.append(f"Total: ${total:.2f}")
+        if display_name:
+            parts.append(f"Name: {display_name}")
+
+        return ToolResult(content=" | ".join(parts))
+
+    async def qb_send(entity_type: str, entity_id: str, email: str) -> ToolResult:
+        """Send an invoice or estimate via QuickBooks email."""
+        if entity_type not in _SENDABLE_ENTITIES:
+            return ToolResult(
+                content=f"Sending '{entity_type}' is not allowed. "
+                f"Allowed: {', '.join(sorted(_SENDABLE_ENTITIES))}",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        try:
+            await qb_service.send_entity_email(entity_type, entity_id, email)
+        except Exception as exc:
+            logger.exception("QB send %s email failed", entity_type)
+            return ToolResult(
+                content=f"Failed to send {entity_type.lower()}: {exc}",
+                is_error=True,
+                error_kind=ToolErrorKind.SERVICE,
+            )
+
+        return ToolResult(content=f"{entity_type} {entity_id} sent to {email} via QuickBooks.")
 
     return [
         Tool(
@@ -274,14 +348,32 @@ def create_quickbooks_tools(
             ),
         ),
         Tool(
+            name=ToolName.QB_UPDATE,
+            description=(
+                "Update an existing entity in QuickBooks Online. Pass the entity type "
+                "(Customer, Estimate, or Invoice) and the full QBO API payload "
+                "including Id and SyncToken from a prior qb_query. "
+                "See the QuickBooks skill for payload formats."
+            ),
+            function=qb_update,
+            params_model=QBUpdateParams,
+            usage_hint=(
+                "Update a Customer, Estimate, or Invoice in QB. "
+                "Payload must include Id and SyncToken from a prior query."
+            ),
+        ),
+        Tool(
             name=ToolName.QB_SEND,
             description=(
-                "Send an invoice to a customer via QuickBooks email. "
-                "The invoice must already exist in QuickBooks."
+                "Send an invoice or estimate to a customer via QuickBooks email. "
+                "The entity must already exist in QuickBooks."
             ),
             function=qb_send,
             params_model=QBSendParams,
-            usage_hint="Send a QB invoice by email. Confirm the email address first.",
+            usage_hint=(
+                "Send a QB invoice or estimate by email. "
+                "Confirm the email address with the user first."
+            ),
         ),
     ]
 
@@ -326,7 +418,8 @@ def _register() -> None:
         sub_tools=[
             SubToolInfo(ToolName.QB_QUERY, "Run read-only queries against QuickBooks Online"),
             SubToolInfo(ToolName.QB_CREATE, "Create entities in QuickBooks"),
-            SubToolInfo(ToolName.QB_SEND, "Send invoices via QuickBooks email"),
+            SubToolInfo(ToolName.QB_UPDATE, "Update existing entities in QuickBooks"),
+            SubToolInfo(ToolName.QB_SEND, "Send invoices or estimates via QuickBooks email"),
         ],
     )
 

@@ -55,12 +55,13 @@ async def test_query_customers(qb_tool: Tool) -> None:
 
 @pytest.mark.asyncio()
 async def test_query_estimates(qb_tool: Tool) -> None:
-    """Should return estimates."""
+    """Should return estimates with SyncToken visible."""
     result = await qb_tool.function(query="SELECT * FROM Estimate")
 
     assert result.is_error is False
     assert "1 result(s)" in result.content
     assert "EST-2001" in result.content
+    assert "SyncToken: 0" in result.content
 
 
 @pytest.mark.asyncio()
@@ -148,9 +149,9 @@ def test_quickbooks_tools_have_params_model(qb_service: MockQuickBooksService) -
 
 
 def test_quickbooks_tools_count(qb_service: MockQuickBooksService) -> None:
-    """create_quickbooks_tools should return 3 tools."""
+    """create_quickbooks_tools should return 4 tools."""
     tools = create_quickbooks_tools(qb_service)
-    assert len(tools) == 3
+    assert len(tools) == 4
 
 
 def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
