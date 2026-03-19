@@ -5,7 +5,6 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 import backend.app.database as _db_module
-from backend.app.agent.approval import PermissionLevel, get_approval_store
 from backend.app.agent.file_store import (
     SessionState,
     StoredMessage,
@@ -21,13 +20,6 @@ from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
 from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
-
-
-def _auto_approve_workspace_tools(user_id: str) -> None:
-    """Pre-approve workspace tools so tests don't block on approval."""
-    store = get_approval_store()
-    for tool_name in ("write_file", "edit_file", "delete_file"):
-        store.set_permission(user_id, tool_name, PermissionLevel.AUTO)
 
 
 def _ensure_session_on_disk(user: User, session: SessionState) -> None:
@@ -321,7 +313,6 @@ async def test_onboarding_completes_when_bootstrap_deleted(
 ) -> None:
     """Onboarding should complete when BOOTSTRAP.md is deleted via delete_file."""
     assert is_onboarding_needed(new_user) is True
-    _auto_approve_workspace_tools(new_user.id)
 
     # Simulate: agent calls write_file to save USER.md, then delete_file to remove BOOTSTRAP.md
     tool_response = make_tool_call_response(
@@ -756,7 +747,6 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     )
     _create_bootstrap(user)
     assert is_onboarding_needed(user) is True
-    _auto_approve_workspace_tools(user.id)
 
     # Simulate: the LLM writes USER.md and SOUL.md but does NOT delete BOOTSTRAP.md
     tool_response = make_tool_call_response(
