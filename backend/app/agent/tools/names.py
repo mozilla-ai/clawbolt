@@ -27,11 +27,8 @@ class ToolName:
 
     # QuickBooks
     QB_QUERY = "qb_query"
-    QB_CREATE_ESTIMATE = "qb_create_estimate"
-    QB_CREATE_INVOICE = "qb_create_invoice"
-    QB_CREATE_CUSTOMER = "qb_create_customer"
-    QB_SEND_INVOICE = "qb_send_invoice"
-    QB_ESTIMATE_TO_INVOICE = "qb_estimate_to_invoice"
+    QB_CREATE = "qb_create"
+    QB_SEND = "qb_send"
 
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
