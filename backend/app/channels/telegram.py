@@ -343,9 +343,7 @@ class TelegramChannel(BaseChannel):
             )
         except Exception:
             # Fall back to plain text if Markdown parsing fails
-            msg = await self.bot.send_message(
-                chat_id=self._parse_chat_id(to), text=body
-            )
+            msg = await self.bot.send_message(chat_id=self._parse_chat_id(to), text=body)
         return str(msg.message_id)
 
     async def send_media(self, to: str, body: str, media_url: str) -> str:
