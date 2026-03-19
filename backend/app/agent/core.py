@@ -46,6 +46,7 @@ from backend.app.agent.system_prompt import build_agent_system_prompt
 from backend.app.agent.tool_errors import (
     _DEFAULT_ERROR_HINT,
     _ERROR_KIND_HINTS,
+    _TRUNCATION_HINT,
     build_error_hint,
     format_validation_error,
 )
@@ -420,6 +421,7 @@ class ClawboltAgent:
         actions_taken: list[str],
         memories_saved: list[dict[str, str]],
         tool_call_records: list[StoredToolInteraction],
+        response_truncated: bool = False,
     ) -> list[ToolResultMessage]:
         """Validate and execute a round of tool calls.
 
@@ -445,6 +447,7 @@ class ClawboltAgent:
                     ToolResultMessage(
                         tool_call_id=tc_req.id,
                         content=f"Error: malformed arguments for {tool_name}",
+                        is_error=True,
                     )
                 )
                 actions_taken.append(f"Failed: {tool_name} (bad args)")
@@ -463,6 +466,7 @@ class ClawboltAgent:
                     ToolResultMessage(
                         tool_call_id=tc_req.id,
                         content=result_str,
+                        is_error=True,
                     )
                 )
                 continue
@@ -475,7 +479,11 @@ class ClawboltAgent:
                     validation_error,
                 )
                 tool_tags = self._get_tool_tags(tool_name)
-                hint = _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
+                hint = (
+                    _TRUNCATION_HINT
+                    if response_truncated
+                    else _ERROR_KIND_HINTS[ToolErrorKind.VALIDATION]
+                )
                 result_str = validation_error + "\n\n" + hint
                 actions_taken.append(f"Failed: {tool_name} (validation)")
                 tool_call_records.append(
@@ -492,6 +500,7 @@ class ClawboltAgent:
                     ToolResultMessage(
                         tool_call_id=tc_req.id,
                         content=result_str,
+                        is_error=True,
                     )
                 )
                 continue
@@ -524,6 +533,7 @@ class ClawboltAgent:
                     ToolResultMessage(
                         tool_call_id=tc_req.id,
                         content=deny_msg,
+                        is_error=True,
                     )
                 )
                 continue
@@ -579,6 +589,7 @@ class ClawboltAgent:
                 ToolResultMessage(
                     tool_call_id=tc_req.id,
                     content=result_str,
+                    is_error=is_error,
                 )
             )
 
@@ -756,6 +767,10 @@ class ClawboltAgent:
                 )
             )
 
+            # Detect truncated responses: when the LLM hits max_tokens while
+            # generating a tool call, the JSON payload may be incomplete.
+            response_truncated = response.stop_reason == "max_tokens"
+
             # Execute the tool round (validate, approve, run)
             tool_results = await self._execute_tool_round(
                 parsed_calls,
@@ -763,7 +778,19 @@ class ClawboltAgent:
                 actions_taken,
                 memories_saved,
                 tool_call_records,
+                response_truncated=response_truncated,
             )
+
+            # If the response was truncated and produced validation errors,
+            # auto-increase max_tokens for the next round so the LLM has
+            # enough room to generate the full tool call payload.
+            if response_truncated and any(r.is_error for r in tool_results):
+                effective = max_tokens or settings.llm_max_tokens_agent
+                max_tokens = min(effective * 2, 4096)
+                logger.info(
+                    "Response truncated with errors, increasing max_tokens to %d",
+                    max_tokens,
+                )
 
             # Activate any specialist factories requested via list_capabilities.
             # New tool schemas will be picked up at the top of the next round.

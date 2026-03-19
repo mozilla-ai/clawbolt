@@ -66,6 +66,18 @@ def test_tool_result_message_to_content_block() -> None:
         "tool_use_id": "call_1",
         "content": "Saved successfully.",
     }
+    assert "is_error" not in block
+
+
+def test_tool_result_message_error_to_content_block() -> None:
+    msg = ToolResultMessage(tool_call_id="call_1", content="Validation error", is_error=True)
+    block = msg.to_content_block()
+    assert block == {
+        "type": "tool_result",
+        "tool_use_id": "call_1",
+        "content": "Validation error",
+        "is_error": True,
+    }
 
 
 def test_messages_to_messages_api_extracts_system() -> None:
