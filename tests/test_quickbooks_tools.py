@@ -73,6 +73,17 @@ async def test_query_items(qb_tool: Tool) -> None:
     assert "Drywall" in result.content
 
 
+@pytest.mark.asyncio()
+async def test_query_invoices_includes_line_items(qb_tool: Tool) -> None:
+    """Query results should include line item details, not just a count."""
+    result = await qb_tool.function(query="SELECT * FROM Invoice")
+
+    assert result.is_error is False
+    assert "Pipe repair labor $350.00" in result.content
+    assert "Copper fittings $150.00" in result.content
+    assert "Kitchen remodel labor $800.00" in result.content
+
+
 # -- Filtering --
 
 

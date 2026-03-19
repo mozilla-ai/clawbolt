@@ -31,6 +31,20 @@ _INVOICES: list[dict[str, Any]] = [
         "DueDate": "2026-02-15",
         "TxnDate": "2026-01-15",
         "EmailStatus": "EmailSent",
+        "Line": [
+            {
+                "Amount": 350.00,
+                "Description": "Pipe repair labor",
+                "DetailType": "SalesItemLineDetail",
+                "SalesItemLineDetail": {"Qty": 7, "UnitPrice": 50.0},
+            },
+            {
+                "Amount": 150.00,
+                "Description": "Copper fittings",
+                "DetailType": "SalesItemLineDetail",
+                "SalesItemLineDetail": {"Qty": 10, "UnitPrice": 15.0},
+            },
+        ],
     },
     {
         "Id": "1002",
@@ -41,6 +55,20 @@ _INVOICES: list[dict[str, Any]] = [
         "DueDate": "2026-03-01",
         "TxnDate": "2026-02-01",
         "EmailStatus": "NotSet",
+        "Line": [
+            {
+                "Amount": 800.00,
+                "Description": "Kitchen remodel labor",
+                "DetailType": "SalesItemLineDetail",
+                "SalesItemLineDetail": {"Qty": 16, "UnitPrice": 50.0},
+            },
+            {
+                "Amount": 450.00,
+                "Description": "Cabinet materials",
+                "DetailType": "SalesItemLineDetail",
+                "SalesItemLineDetail": {"Qty": 3, "UnitPrice": 150.0},
+            },
+        ],
     },
 ]
 
