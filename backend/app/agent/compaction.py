@@ -130,9 +130,6 @@ async def compact_session(
 
     messages: list[dict[str, Any]] = [
         {"role": "user", "content": "\n".join(user_prompt_parts)},
-        # Assistant prefill forces the model to produce JSON instead of
-        # continuing the conversation it just read.
-        {"role": "assistant", "content": "{"},
     ]
 
     try:

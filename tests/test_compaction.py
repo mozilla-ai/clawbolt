@@ -184,12 +184,12 @@ async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
     content = store.read_memory()
     assert "Deck: $45/sqft" in content
 
-    # Verify LLM was called with the system prompt and assistant prefill
+    # Verify LLM was called with the system prompt
     mock_llm.assert_called_once()
     call_kwargs = mock_llm.call_args
     assert call_kwargs.kwargs.get("system") == COMPACTION_SYSTEM_PROMPT
     llm_messages = call_kwargs.kwargs["messages"]
-    assert llm_messages[-1] == {"role": "assistant", "content": "{"}
+    assert llm_messages[-1]["role"] == "user"
 
 
 @pytest.mark.asyncio()
