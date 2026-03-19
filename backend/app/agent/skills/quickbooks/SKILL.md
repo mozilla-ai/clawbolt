@@ -8,17 +8,20 @@ You now have access to QuickBooks Online tools. Here is how to use them effectiv
 |------|---------|
 | `qb_query` | Run read-only queries using QBO query language |
 | `qb_create` | Create a Customer, Estimate, or Invoice |
-| `qb_send` | Email an invoice to a customer |
+| `qb_update` | Update an existing Customer, Estimate, or Invoice |
+| `qb_send` | Email an invoice or estimate to a customer |
 
 ## Query Guide (qb_query)
 
 ### Queryable entities and useful fields
-- Invoice: Id, DocNumber, CustomerRef, TotalAmt, Balance, DueDate, TxnDate, EmailStatus
-- Estimate: Id, DocNumber, CustomerRef, TotalAmt, TxnDate, ExpirationDate, TxnStatus
-- Customer: Id, DisplayName, PrimaryEmailAddr, PrimaryPhone, Balance
+- Invoice: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, Balance, DueDate, TxnDate, EmailStatus
+- Estimate: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, TxnDate, ExpirationDate, TxnStatus
+- Customer: Id, SyncToken, DisplayName, PrimaryEmailAddr, PrimaryPhone, Balance
 - Item: Id, Name, Description, UnitPrice, Type
 - Payment: Id, CustomerRef, TotalAmt, TxnDate
 - Bill: Id, VendorRef, TotalAmt, DueDate, Balance
+
+Note: SyncToken is returned in query results. You need it when updating an entity with `qb_update`.
 
 ### Syntax
 SELECT <fields> FROM <Entity> [WHERE <conditions>] [ORDERBY <field> DESC] [MAXRESULTS <n>]
@@ -100,12 +103,56 @@ Each line item in the `Line` array should look like:
 
 `Amount` should equal `Qty * UnitPrice`.
 
-## Sending Invoices (qb_send)
+## Updating Entities (qb_update)
 
-- You need the invoice ID (numeric) and the recipient email address.
+Pass `entity_type` and `data` with the **full entity payload including Id and SyncToken** from a prior `qb_query`.
+
+The SyncToken is required for optimistic concurrency. If the entity was modified since you last queried it, QuickBooks will reject the update with a conflict error. In that case, re-query the entity and try again with the new SyncToken.
+
+### Update example
+```json
+{
+  "entity_type": "Estimate",
+  "data": {
+    "Id": "2001",
+    "SyncToken": "0",
+    "CustomerRef": {"value": "100"},
+    "Line": [
+      {
+        "Amount": 600.00,
+        "DetailType": "SalesItemLineDetail",
+        "Description": "Labor - kitchen remodel (revised)",
+        "SalesItemLineDetail": {"Qty": 12, "UnitPrice": 50.00}
+      },
+      {
+        "Amount": 350.00,
+        "DetailType": "SalesItemLineDetail",
+        "Description": "Materials",
+        "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 350.00}
+      }
+    ]
+  }
+}
+```
+
+## Sending Invoices and Estimates (qb_send)
+
+- Pass `entity_type` (Invoice or Estimate), the entity ID (numeric), and the recipient email address.
 - Confirm the email address with the user before sending.
 
 ## Common Workflows
+
+### Voice-to-estimate (dictation workflow)
+This is the primary workflow for users who dictate job details from the field:
+1. User describes a job (client, scope, labor, materials) via chat
+2. Extract structured data from the description
+3. `qb_query` Customer to check if the client exists
+4. If new client: `qb_create` Customer
+5. `qb_create` Estimate with line items (typically labor + materials)
+6. Confirm with user: "I created a draft estimate for [client] in QuickBooks. Want to review or adjust anything?"
+7. User comes back later to refine: `qb_query` the estimate (note the SyncToken in the results)
+8. `qb_update` Estimate with revised line items (include Id and SyncToken)
+9. When user says it's ready: `qb_send` Estimate to the client's email
 
 ### New customer job
 1. `qb_create` Customer

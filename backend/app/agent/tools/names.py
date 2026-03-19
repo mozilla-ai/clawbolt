@@ -28,6 +28,7 @@ class ToolName:
     # QuickBooks
     QB_QUERY = "qb_query"
     QB_CREATE = "qb_create"
+    QB_UPDATE = "qb_update"
     QB_SEND = "qb_send"
 
     # Meta-tools

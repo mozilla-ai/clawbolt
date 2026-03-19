@@ -32,8 +32,14 @@ class QuickBooksService(ABC):
         """Create a QBO entity (Customer, Estimate, Invoice, etc.)."""
 
     @abstractmethod
-    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
-        """Send an invoice via QuickBooks email."""
+    async def update_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        """Update an existing QBO entity. *data* must include Id and SyncToken."""
+
+    @abstractmethod
+    async def send_entity_email(
+        self, entity_type: str, entity_id: str, email: str
+    ) -> dict[str, Any]:
+        """Send an invoice or estimate via QuickBooks email."""
 
 
 class QuickBooksOnlineService(QuickBooksService):
@@ -119,9 +125,18 @@ class QuickBooksOnlineService(QuickBooksService):
         # QBO wraps the created entity under the entity type key
         return result.get(entity_type, result)
 
-    async def send_invoice_email(self, invoice_id: str, email: str) -> dict[str, Any]:
-        if not invoice_id.strip().isdigit():
-            msg = f"Invalid invoice_id '{invoice_id}'. QuickBooks IDs must be numeric."
+    async def update_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        # QBO uses the same POST endpoint for create and update.
+        # The presence of Id + SyncToken in the payload triggers an update.
+        path = f"/{entity_type.lower()}"
+        result = await self._request("POST", path, json=data)
+        return result.get(entity_type, result)
+
+    async def send_entity_email(
+        self, entity_type: str, entity_id: str, email: str
+    ) -> dict[str, Any]:
+        if not entity_id.strip().isdigit():
+            msg = f"Invalid entity_id '{entity_id}'. QuickBooks IDs must be numeric."
             raise ValueError(msg)
         import re as _re
 
@@ -130,6 +145,6 @@ class QuickBooksOnlineService(QuickBooksService):
             raise ValueError(msg)
         return await self._request(
             "POST",
-            f"/invoice/{invoice_id.strip()}/send",
+            f"/{entity_type.lower()}/{entity_id.strip()}/send",
             params={"sendTo": email},
         )

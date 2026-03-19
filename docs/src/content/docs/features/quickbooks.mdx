@@ -1,25 +1,38 @@
 ---
 title: QuickBooks Online
-description: Connect Clawbolt to QuickBooks Online to look up invoices, estimates, customers, and more.
+description: Connect Clawbolt to QuickBooks Online to manage invoices, estimates, customers, and more from chat.
 ---
 
 :::caution[Experimental]
 The QuickBooks integration is experimental. Do not connect it to a production QuickBooks account. Use a sandbox company only while this feature is being developed.
 :::
 
-Clawbolt can connect to QuickBooks Online so you can look up invoices, estimates, customers, items, and more directly from the chat. Ask a question like "what invoices do I have for Amy?" and Clawbolt will query your QuickBooks data.
+Clawbolt can connect to QuickBooks Online so you can manage invoices, estimates, and customers directly from the chat. Ask a question like "what invoices do I have for Amy?" or dictate a job description and Clawbolt will create a draft estimate in QuickBooks.
 
 ## What it can do
 
-The integration provides a single read-only query tool (`qb_query`) that the agent uses to look up data in QuickBooks. It can query any entity type:
+The integration provides four tools that the agent uses to interact with QuickBooks:
 
-- **Invoices**: amounts, payment status, due dates
-- **Estimates**: totals, status, expiry dates
-- **Customers**: contact info, balances
-- **Items**: pricing catalog, descriptions
-- **Payments, Bills, and more**
+| Tool | Purpose |
+|------|---------|
+| `qb_query` | Look up invoices, estimates, customers, items, payments, and more |
+| `qb_create` | Create new customers, estimates, or invoices |
+| `qb_update` | Update existing customers, estimates, or invoices |
+| `qb_send` | Email an invoice or estimate to a customer |
 
-The agent writes the queries itself, so you just ask in plain language and it figures out how to look it up.
+The agent handles the queries and API calls itself, so you just talk in plain language.
+
+### Voice-to-estimate workflow
+
+The primary workflow for tradespeople in the field:
+
+1. Dictate a job description into your phone (your phone's speech-to-text converts it to a message)
+2. Clawbolt extracts the client, scope, labor, and materials from your description
+3. Clawbolt creates a draft estimate in QuickBooks immediately
+4. Come back later to review and refine it via chat
+5. When it's ready, Clawbolt sends it to your client by email
+
+No "computer time" required.
 
 ## Setup
 
@@ -70,10 +83,11 @@ QUICKBOOKS_REFRESH_TOKEN=your_refresh_token
 QUICKBOOKS_ENVIRONMENT=sandbox
 ```
 
-Restart Clawbolt and the QuickBooks tool will appear as a specialist capability.
+Restart Clawbolt and the QuickBooks tools will appear as a specialist capability.
 
-## Example conversation
+## Example conversations
 
+### Looking up data
 ```
 You: Do I have any invoices for Amy's Bird Sanctuary?
 
@@ -82,11 +96,19 @@ Clawbolt: Found 4 invoices for Amy's Bird Sanctuary:
           - #1012 | $650.00 (Open, $400 paid) | Due: 2024-03-15
           - #1009 | $1,250.00 (Paid) | Date: 2023-11-20
           - #1003 | $475.00 (Paid) | Date: 2023-09-05
+```
 
-You: What about estimates?
+### Creating an estimate from a dictation
+```
+You: Just left the Johnson place. They want the bathroom remodeled.
+     About 3 days of labor at 65 an hour, plus around 800 in materials
+     for tile and fixtures.
 
-Clawbolt: Found 1 estimate for Amy's Bird Sanctuary:
-          - #1004 | $2,500.00 | Status: Accepted | Date: 2024-02-01
+Clawbolt: I created a draft estimate for Johnson in QuickBooks:
+          - Labor (3 days @ $65/hr): $1,560.00
+          - Materials (tile & fixtures): $800.00
+          - Total: $2,360.00
+          Want to review or adjust anything?
 ```
 
 ## Token lifecycle
