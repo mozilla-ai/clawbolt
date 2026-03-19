@@ -358,9 +358,8 @@ async def test_onboarding_completes_when_bootstrap_deleted(
         db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
-    # Heartbeat items should be seeded now that onboarding is complete
-    assert refreshed.heartbeat_text
-    assert "Follow up" in refreshed.heartbeat_text
+    # Heartbeat items remain empty; users add them as needed
+    assert not refreshed.heartbeat_text
 
 
 @pytest.mark.asyncio()
@@ -819,6 +818,5 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
         db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
-    # Heartbeat items should be seeded now that onboarding is complete
-    assert refreshed.heartbeat_text
-    assert "Follow up" in refreshed.heartbeat_text
+    # Heartbeat items remain empty; users add them as needed
+    assert not refreshed.heartbeat_text
