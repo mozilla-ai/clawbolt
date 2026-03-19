@@ -5,6 +5,7 @@ import pytest
 from any_llm import AuthenticationError, ContentFilterError
 
 import backend.app.database as _db_module
+from backend.app.agent.approval import PermissionLevel, get_approval_store
 from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.router import (
     AUTH_ERROR_FALLBACK,
@@ -708,6 +709,9 @@ async def test_send_media_reply_suppresses_duplicate_text(
     inbound_message: StoredMessage,
 ) -> None:
     """When agent calls send_media_reply, the router should NOT also dispatch text."""
+    # Pre-approve messaging tools so the approval gate doesn't block
+    store = get_approval_store()
+    store.set_permission(test_user.id, "send_media_reply", PermissionLevel.AUTO)
     # LLM calls send_media_reply tool
     tool_response = make_tool_call_response(
         tool_calls=[

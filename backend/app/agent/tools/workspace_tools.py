@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
@@ -371,6 +372,10 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 "Write to USER.md when you learn about the user (rates, hours, preferences, etc.). "
                 "Write to SOUL.md when the user defines your personality."
             ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: f"Write to {args.get('path', 'file')}",
+            ),
         ),
         Tool(
             name=ToolName.EDIT_FILE,
@@ -382,6 +387,10 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             function=edit_file,
             params_model=EditFileParams,
             tags={ToolTags.MODIFIES_PROFILE},
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: f"Edit {args.get('path', 'file')}",
+            ),
         ),
         Tool(
             name=ToolName.DELETE_FILE,
@@ -392,6 +401,10 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             function=delete_file,
             params_model=DeleteFileParams,
             tags={ToolTags.MODIFIES_PROFILE},
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: f"Delete {args.get('path', 'file')}",
+            ),
         ),
     ]
 

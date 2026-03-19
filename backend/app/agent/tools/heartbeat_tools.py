@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
@@ -55,6 +56,10 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
             function=update_heartbeat,
             params_model=UpdateHeartbeatParams,
             usage_hint="When the user wants to change heartbeat notes, update them.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: "Update heartbeat notes",
+            ),
         ),
     ]
 
