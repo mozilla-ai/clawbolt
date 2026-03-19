@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.file_store import MediaStore
 from backend.app.agent.file_store import slugify as _store_slugify
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
@@ -363,6 +364,12 @@ def create_file_tools(
             function=upload_to_storage,
             params_model=UploadToStorageParams,
             usage_hint="Upload media from the current message to cloud storage.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Upload file to {args.get('client_name') or 'storage'}"
+                ),
+            ),
         ),
         Tool(
             name=ToolName.ORGANIZE_FILE,
@@ -376,6 +383,12 @@ def create_file_tools(
             function=organize_file,
             params_model=OrganizeFileParams,
             usage_hint="Move an unsorted file into the correct client folder.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Move file to {args.get('client_name') or 'client'} folder"
+                ),
+            ),
         ),
     ]
 

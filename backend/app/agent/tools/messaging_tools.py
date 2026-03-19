@@ -5,6 +5,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
 from backend.app.agent.tools.names import ToolName
 
@@ -83,6 +84,10 @@ def create_messaging_tools(
             params_model=SendReplyParams,
             tags={ToolTags.SENDS_REPLY},
             usage_hint="Use this to send a text message to the user.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: "Send a text message",
+            ),
         ),
         Tool(
             name=ToolName.SEND_MEDIA_REPLY,
@@ -91,6 +96,10 @@ def create_messaging_tools(
             params_model=SendMediaReplyParams,
             tags={ToolTags.SENDS_REPLY},
             usage_hint=("When sending estimates or files, use this to send media to the user."),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: f"Send media: {args.get('media_url', 'file')}",
+            ),
         ),
     ]
 

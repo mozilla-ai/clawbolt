@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
 
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
@@ -332,6 +333,12 @@ def create_quickbooks_tools(
                 "Query QuickBooks for invoices, estimates, customers, items, and more. "
                 "Use SELECT ... FROM <Entity> syntax."
             ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Query QuickBooks: {str(args.get('query', ''))[:60]}"
+                ),
+            ),
         ),
         Tool(
             name=ToolName.QB_CREATE,
@@ -345,6 +352,12 @@ def create_quickbooks_tools(
             usage_hint=(
                 "Create a Customer, Estimate, or Invoice in QB. "
                 "Construct the QBO API payload as described in the skill docs."
+            ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Create {args.get('entity_type', 'entity')} in QuickBooks"
+                ),
             ),
         ),
         Tool(
@@ -361,6 +374,12 @@ def create_quickbooks_tools(
                 "Update a Customer, Estimate, or Invoice in QB. "
                 "Payload must include Id and SyncToken from a prior query."
             ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Update {args.get('entity_type', 'entity')} in QuickBooks"
+                ),
+            ),
         ),
         Tool(
             name=ToolName.QB_SEND,
@@ -373,6 +392,13 @@ def create_quickbooks_tools(
             usage_hint=(
                 "Send a QB invoice or estimate by email. "
                 "Confirm the email address with the user first."
+            ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Send {args.get('entity_type', 'entity')} "
+                    f"to {args.get('email', 'recipient')} via QuickBooks"
+                ),
             ),
         ),
     ]
