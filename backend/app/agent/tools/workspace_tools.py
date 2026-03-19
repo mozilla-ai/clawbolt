@@ -373,7 +373,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 "Write to SOUL.md when the user defines your personality."
             ),
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ASK,
+                default_level=PermissionLevel.AUTO,
                 description_builder=lambda args: f"Write to {args.get('path', 'file')}",
             ),
         ),
@@ -388,7 +388,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             params_model=EditFileParams,
             tags={ToolTags.MODIFIES_PROFILE},
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ASK,
+                default_level=PermissionLevel.AUTO,
                 description_builder=lambda args: f"Edit {args.get('path', 'file')}",
             ),
         ),

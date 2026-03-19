@@ -23,17 +23,17 @@ class TestWorkspaceToolPolicies:
         tool = _find_tool(tools, ToolName.READ_FILE)
         assert tool.approval_policy is None  # No policy = AUTO
 
-    def test_write_file_is_ask(self) -> None:
+    def test_write_file_is_auto(self) -> None:
         tools = create_workspace_tools("test-user")
         tool = _find_tool(tools, ToolName.WRITE_FILE)
         assert tool.approval_policy is not None
-        assert tool.approval_policy.default_level == PermissionLevel.ASK
+        assert tool.approval_policy.default_level == PermissionLevel.AUTO
 
-    def test_edit_file_is_ask(self) -> None:
+    def test_edit_file_is_auto(self) -> None:
         tools = create_workspace_tools("test-user")
         tool = _find_tool(tools, ToolName.EDIT_FILE)
         assert tool.approval_policy is not None
-        assert tool.approval_policy.default_level == PermissionLevel.ASK
+        assert tool.approval_policy.default_level == PermissionLevel.AUTO
 
     def test_delete_file_is_ask(self) -> None:
         tools = create_workspace_tools("test-user")
@@ -80,11 +80,11 @@ class TestHeartbeatToolPolicies:
         tool = _find_tool(tools, ToolName.GET_HEARTBEAT)
         assert tool.approval_policy is None  # No policy = AUTO
 
-    def test_update_heartbeat_is_ask(self) -> None:
+    def test_update_heartbeat_is_auto(self) -> None:
         tools = create_heartbeat_tools("test-user")
         tool = _find_tool(tools, ToolName.UPDATE_HEARTBEAT)
         assert tool.approval_policy is not None
-        assert tool.approval_policy.default_level == PermissionLevel.ASK
+        assert tool.approval_policy.default_level == PermissionLevel.AUTO
 
 
 # QuickBooks and file tools are tested indirectly through their factory

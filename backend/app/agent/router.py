@@ -278,16 +278,15 @@ async def run_agent(
     if is_onboarding and not system_prompt_override:
         system_prompt_override = build_onboarding_system_prompt(user, tools=tools)
 
-    # During onboarding the agent must write USER.md / SOUL.md, delete
-    # BOOTSTRAP.md, and send replies without prompting.  Pre-approve
-    # these tools so the approval gate doesn't block the bootstrap flow.
+    # During onboarding the agent must delete BOOTSTRAP.md and send
+    # replies without prompting.  Pre-approve these tools so the
+    # approval gate doesn't block the bootstrap flow.  (write_file and
+    # edit_file already default to AUTO.)
     if is_onboarding:
         from backend.app.agent.approval import PermissionLevel, get_approval_store
         from backend.app.agent.tools.names import ToolName
 
         _onboarding_auto_tools = (
-            ToolName.WRITE_FILE,
-            ToolName.EDIT_FILE,
             ToolName.DELETE_FILE,
             ToolName.SEND_REPLY,
             ToolName.SEND_MEDIA_REPLY,
