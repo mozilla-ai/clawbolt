@@ -127,7 +127,18 @@ def _format_results(rows: list[dict[str, Any]]) -> str:
                 elif ref_val:
                     parts.append(f"{key}: {ref_val}")
             elif isinstance(val, list):
-                parts.append(f"{key}: [{len(val)} items]")
+                if key == "Line" and val:
+                    items = []
+                    for item in val:
+                        if not isinstance(item, dict):
+                            continue
+                        desc = item.get("Description", "")
+                        amt = item.get("Amount")
+                        entry = f"{desc} ${amt:,.2f}" if amt is not None and desc else str(amt)
+                        items.append(entry)
+                    parts.append(f"Line: [{'; '.join(items)}]")
+                else:
+                    parts.append(f"{key}: {json.dumps(val)}")
             else:
                 parts.append(f"{key}: {val}")
         lines.append("- " + " | ".join(parts))
