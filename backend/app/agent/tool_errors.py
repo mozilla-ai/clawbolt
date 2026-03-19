@@ -19,6 +19,12 @@ from backend.app.agent.tools.base import (
 
 _DEFAULT_ERROR_HINT = "[Analyze the error above and try a different approach.]"
 
+_TRUNCATION_HINT = (
+    "[Your previous response was cut short (hit the token limit) and the tool call"
+    " was incomplete. Simplify your approach: use smaller payloads, break the"
+    " operation into multiple steps, or omit optional fields.]"
+)
+
 _ERROR_KIND_HINTS: dict[ToolErrorKind, str] = {
     ToolErrorKind.VALIDATION: (
         "[Check the expected parameter format and try again with corrected arguments.]"
