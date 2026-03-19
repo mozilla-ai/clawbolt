@@ -137,6 +137,7 @@ class ModelConfigResponse(BaseModel):
     heartbeat_provider: str
     compaction_model: str
     compaction_provider: str
+    reasoning_effort: str
 
 
 class ModelConfigUpdate(BaseModel):
@@ -149,6 +150,7 @@ class ModelConfigUpdate(BaseModel):
     heartbeat_provider: str | None = None
     compaction_model: str | None = None
     compaction_provider: str | None = None
+    reasoning_effort: str | None = None
 
 
 # ---------------------------------------------------------------------------

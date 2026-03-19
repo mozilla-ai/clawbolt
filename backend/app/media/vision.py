@@ -7,6 +7,7 @@ from any_llm.types.messages import MessageResponse
 
 from backend.app.agent.llm_parsing import get_response_text
 from backend.app.config import settings
+from backend.app.services.llm_service import reasoning_effort_to_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,7 @@ async def analyze_image(image_bytes: bytes, mime_type: str, context: str = "") -
                 {"role": "user", "content": user_content},
             ],
             max_tokens=settings.llm_max_tokens_vision,
+            thinking=reasoning_effort_to_thinking(settings.reasoning_effort),
         ),
     )
     logger.debug("Vision LLM response received for mime_type=%s", mime_type)

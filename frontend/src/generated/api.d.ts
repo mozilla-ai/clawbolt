@@ -491,6 +491,8 @@ export interface components {
             compaction_model: string;
             /** Compaction Provider */
             compaction_provider: string;
+            /** Reasoning Effort */
+            reasoning_effort: string;
         };
         /** ModelConfigUpdate */
         ModelConfigUpdate: {
@@ -512,6 +514,8 @@ export interface components {
             compaction_model?: string | null;
             /** Compaction Provider */
             compaction_provider?: string | null;
+            /** Reasoning Effort */
+            reasoning_effort?: string | null;
         };
         /** OAuthAuthorizeResponse */
         OAuthAuthorizeResponse: {

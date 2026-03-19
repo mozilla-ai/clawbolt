@@ -36,6 +36,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | `LLM_PROVIDER` | (required) | LLM provider name (any provider supported by [any-llm](https://github.com/mozilla-ai/any-llm)) |
 | `LLM_MODEL` | (required) | Model to use for the agent loop |
 | `LLM_API_BASE` | (none) | Custom API base URL (e.g. `http://localhost:1234/v1` for LM Studio) |
+| `REASONING_EFFORT` | `auto` | Reasoning effort level: `none`, `minimal`, `low`, `medium`, `high`, `xhigh`, or `auto` |
 | `VISION_MODEL` | (same as `LLM_MODEL`) | Model to use for image/document analysis. Falls back to `LLM_MODEL` if not set |
 | `VISION_PROVIDER` | (same as `LLM_PROVIDER`) | Provider for the vision model. Falls back to `LLM_PROVIDER` if not set |
 | `ANY_LLM_KEY` | | [any-llm.ai](https://any-llm.ai) managed platform key (replaces individual provider keys) |
