@@ -101,7 +101,7 @@ Until this project has its first production release, you do not need to be conce
 - **`user_id` scoping** on every data class and endpoint from day one
 - **Message bus**: async inbound/outbound queues in `bus.py`. Channels publish inbound messages; the agent publishes outbound replies. The ``ChannelManager`` dispatches outbound messages to the correct channel.
 - **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `acompletion`) -> tool execution -> reply
-- **Memory**: Structured facts stored in `memory_documents` table + client records in `clients` table
+- **Memory**: Freeform per-user MEMORY.md managed via workspace tools, backed by `memory_documents` table with automatic compaction
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
 
 ## Definition of Done

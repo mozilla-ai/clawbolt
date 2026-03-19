@@ -102,7 +102,6 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | `COMPACTION_MODEL` | (same as `LLM_MODEL`) | Model used for compaction |
 | `COMPACTION_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for compaction |
 | `COMPACTION_MAX_TOKENS` | `500` | Max tokens per compaction response |
-| `HEARTBEAT_STALE_ESTIMATE_HOURS` | `24` | Hours before an unsent estimate is considered stale |
 
 ## Rate limiting
 
@@ -142,7 +141,7 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | `QUICKBOOKS_CLIENT_SECRET` | | OAuth client secret from the Intuit developer console |
 | `QUICKBOOKS_ENVIRONMENT` | `sandbox` | `sandbox` for testing or `production` for live data |
 
-When `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set, users can connect their QuickBooks account via the web dashboard. Once connected, the agent gains a specialist `qb_query` tool for running read-only queries against QuickBooks Online.
+When `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set, users can connect their QuickBooks account via the web dashboard. Once connected, the agent gains specialist QuickBooks tools (`qb_query`, `qb_create`, `qb_update`, `qb_send`).
 
 ## HTTP timeouts
 

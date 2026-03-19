@@ -11,12 +11,11 @@ The heartbeat runs on a timer and uses a two-stage design: **cheap checks first,
 
 ### Stage 1: Deterministic checks (no LLM cost)
 
-Fast file-based checks look for actionable items:
+Fast checks look for actionable items:
 
-- **Stale draft estimates**: Estimates in "draft" status for more than 24 hours
-- **Due checklist items**: Items scheduled for today (daily, weekdays, or one-time)
 - **Time-sensitive memory facts**: Facts containing keywords like "remind", "follow-up", "deadline"
 - **Idle users**: No inbound messages for a configurable number of days
+- **Heartbeat notes**: User-defined notes stored via the `update_heartbeat` tool
 
 ### Stage 2: LLM evaluation (only if flags found)
 
@@ -30,21 +29,6 @@ Clawbolt respects your schedule:
 - Your timezone is respected (set in your profile)
 - Global quiet hours prevent late-night messages (default 8pm-7am)
 
-## Checklist items
-
-You can ask Clawbolt to create recurring reminders:
-
-```
-You: Remind me to check on the Garcia job every weekday morning
-
-Clawbolt: I've added a weekday checklist item: "Check on the Garcia job"
-```
-
-Schedules supported:
-- **Daily**: Every day during active hours
-- **Weekdays**: Monday through Friday
-- **Once**: A one-time reminder
-
 ## Rate limiting
 
-The heartbeat system includes rate limiting to prevent spam. Outbound heartbeat messages are logged, and cooldown periods are enforced between messages.
+The heartbeat system includes rate limiting to prevent spam. Outbound heartbeat messages are logged, and cooldown periods are enforced between messages. Configurable via `HEARTBEAT_MAX_DAILY_MESSAGES`.

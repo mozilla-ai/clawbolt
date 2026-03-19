@@ -3,7 +3,7 @@ title: Storage Providers
 description: Configure Dropbox, Google Drive, or local file storage.
 ---
 
-Clawbolt can catalog job photos, estimates, and documents to a storage backend. Three providers are supported.
+Clawbolt can catalog job photos and documents to a storage backend. Three providers are supported.
 
 ## Local (default)
 
@@ -11,12 +11,10 @@ Works out of the box with no configuration. Files are saved to `data/storage/` o
 
 ```
 data/storage/
-├── Job Photos/
-│   └── 2026-02-28/
-│       ├── site-front.jpg
-│       └── site-back.jpg
-└── Estimates/
-    └── EST-001.pdf
+└── Job Photos/
+    └── 2026-02-28/
+        ├── site-front.jpg
+        └── site-back.jpg
 ```
 
 This is ideal for development and demos. Set `STORAGE_PROVIDER=local` or leave it unset (it's the default).

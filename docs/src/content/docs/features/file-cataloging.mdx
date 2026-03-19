@@ -3,7 +3,7 @@ title: File Cataloging
 description: Automatically organize photos and documents in cloud storage.
 ---
 
-Clawbolt can automatically catalog job photos, estimates, voice notes, and documents to a cloud storage backend. Files are organized by client and type.
+Clawbolt can automatically catalog job photos, voice notes, and documents to a cloud storage backend. Files are organized by client and type.
 
 ## Supported storage providers
 
@@ -24,13 +24,11 @@ Job Photos/
 │   └── site-back.jpg
 └── 2026-03-01/
     └── kitchen-demo.jpg
-Estimates/
-└── EST-001.pdf
 ```
 
 ## How it works
 
-When you send media or generate an estimate, the agent uses the `upload_to_storage` and `organize_file` tools to:
+When you send media, the agent uses the `upload_to_storage` and `organize_file` tools to:
 
 1. Upload the file to your configured storage backend
 2. Organize it into the appropriate folder structure
