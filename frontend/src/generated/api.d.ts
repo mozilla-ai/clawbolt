@@ -274,6 +274,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/storage/config": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Storage Config
+         * @description Return server-level storage configuration.
+         */
+        get: operations["get_storage_config_api_user_storage_config_get"];
+        /**
+         * Update Storage Config
+         * @description Update server-level storage configuration.
+         */
+        put: operations["update_storage_config_api_user_storage_config_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/providers": {
         parameters: {
             query?: never;
@@ -650,6 +674,28 @@ export interface components {
              * @default
              */
             channel: string;
+        };
+        /** StorageConfigResponse */
+        StorageConfigResponse: {
+            /** Storage Provider */
+            storage_provider: string;
+            /** File Storage Base Dir */
+            file_storage_base_dir: string;
+            /** Dropbox Access Token Set */
+            dropbox_access_token_set: boolean;
+            /** Google Drive Credentials Json Set */
+            google_drive_credentials_json_set: boolean;
+        };
+        /** StorageConfigUpdate */
+        StorageConfigUpdate: {
+            /** Storage Provider */
+            storage_provider?: string | null;
+            /** File Storage Base Dir */
+            file_storage_base_dir?: string | null;
+            /** Dropbox Access Token */
+            dropbox_access_token?: string | null;
+            /** Google Drive Credentials Json */
+            google_drive_credentials_json?: string | null;
         };
         /** SubToolEntryResponse */
         SubToolEntryResponse: {
@@ -1212,6 +1258,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ModelConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_storage_config_api_user_storage_config_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageConfigResponse"];
+                };
+            };
+        };
+    };
+    update_storage_config_api_user_storage_config_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["StorageConfigUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StorageConfigResponse"];
                 };
             };
             /** @description Validation Error */

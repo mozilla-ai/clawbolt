@@ -536,6 +536,62 @@
         }
       }
     },
+    "/api/user/storage/config": {
+      "get": {
+        "summary": "Get Storage Config",
+        "description": "Return server-level storage configuration.",
+        "operationId": "get_storage_config_api_user_storage_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Storage Config",
+        "description": "Update server-level storage configuration.",
+        "operationId": "update_storage_config_api_user_storage_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/StorageConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StorageConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/providers": {
       "get": {
         "summary": "List Providers",
@@ -1457,6 +1513,84 @@
           "message_count"
         ],
         "title": "SessionSummary"
+      },
+      "StorageConfigResponse": {
+        "properties": {
+          "storage_provider": {
+            "type": "string",
+            "title": "Storage Provider"
+          },
+          "file_storage_base_dir": {
+            "type": "string",
+            "title": "File Storage Base Dir"
+          },
+          "dropbox_access_token_set": {
+            "type": "boolean",
+            "title": "Dropbox Access Token Set"
+          },
+          "google_drive_credentials_json_set": {
+            "type": "boolean",
+            "title": "Google Drive Credentials Json Set"
+          }
+        },
+        "type": "object",
+        "required": [
+          "storage_provider",
+          "file_storage_base_dir",
+          "dropbox_access_token_set",
+          "google_drive_credentials_json_set"
+        ],
+        "title": "StorageConfigResponse"
+      },
+      "StorageConfigUpdate": {
+        "properties": {
+          "storage_provider": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Storage Provider"
+          },
+          "file_storage_base_dir": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "File Storage Base Dir"
+          },
+          "dropbox_access_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Dropbox Access Token"
+          },
+          "google_drive_credentials_json": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Google Drive Credentials Json"
+          }
+        },
+        "type": "object",
+        "title": "StorageConfigUpdate"
       },
       "SubToolEntryResponse": {
         "properties": {
