@@ -25,9 +25,11 @@ logger = logging.getLogger(__name__)
 def provision_user(user: User, db: object | None = None) -> None:
     """Provision a new user: seed DB defaults and create the data directory.
 
-    Seeds soul_text, user_text, and heartbeat_text DB columns with default
-    templates if empty. Creates the on-disk data directory for BOOTSTRAP.md
-    and other files that still live on the filesystem.
+    Seeds soul_text and user_text DB columns with default templates if
+    empty. Heartbeat items are NOT seeded here: they start empty and are
+    populated when onboarding completes (see ``OnboardingSubscriber``).
+    Creates the on-disk data directory for BOOTSTRAP.md and other files
+    that still live on the filesystem.
     """
     from sqlalchemy.orm import Session as SASession
 
@@ -47,16 +49,12 @@ def provision_user(user: User, db: object | None = None) -> None:
             if not db_user.user_text:
                 db_user.user_text = f"# User\n\n{load_prompt('default_user')}\n"
                 needs_commit = True
-            if not db_user.heartbeat_text:
-                db_user.heartbeat_text = f"# Heartbeat\n\n{load_prompt('default_heartbeat')}\n"
-                needs_commit = True
             if needs_commit:
                 db.commit()
                 db.refresh(db_user)
                 # Update the in-memory user object so callers see the seeded values
                 user.soul_text = db_user.soul_text
                 user.user_text = db_user.user_text
-                user.heartbeat_text = db_user.heartbeat_text
     finally:
         if own_session:
             db.close()

@@ -117,11 +117,11 @@ def test_provision_user_creates_bootstrap_and_seeds_db() -> None:
 
         provision_user(user, db)
 
-        # DB columns should be seeded
+        # DB columns should be seeded (except heartbeat, which waits for onboarding)
         db.refresh(user)
         assert user.soul_text
         assert user.user_text
-        assert user.heartbeat_text
+        assert not user.heartbeat_text
 
         # BOOTSTRAP.md on disk
         user_dir = Path(settings.data_dir) / str(user.id)
@@ -358,6 +358,9 @@ async def test_onboarding_completes_when_bootstrap_deleted(
         db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
+    # Heartbeat items should be seeded now that onboarding is complete
+    assert refreshed.heartbeat_text
+    assert "Follow up" in refreshed.heartbeat_text
 
 
 @pytest.mark.asyncio()
@@ -816,3 +819,6 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
         db.close()
     assert refreshed is not None
     assert refreshed.onboarding_complete is True
+    # Heartbeat items should be seeded now that onboarding is complete
+    assert refreshed.heartbeat_text
+    assert "Follow up" in refreshed.heartbeat_text
