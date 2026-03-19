@@ -83,7 +83,12 @@ def create_list_capabilities_tool(
     The tool itself only returns text describing available specialist
     categories.  Actual tool schema injection is handled by the agent
     loop in ``core.py`` after detecting a ``list_capabilities`` call.
+
+    When a category is activated that has an associated SKILL.md, the
+    skill instructions are included in the response so the LLM has
+    usage guidance alongside the new tool schemas.
     """
+    from backend.app.agent.skills.loader import get_skill_instructions
 
     async def list_capabilities(category: str | None = None) -> ToolResult:
         if category is None:
@@ -105,9 +110,13 @@ def create_list_capabilities_tool(
                 error_kind=ToolErrorKind.NOT_FOUND,
             )
 
-        return ToolResult(
-            content=f'Category "{category}" activated. Tools are available in your next response.'
+        activation_msg = (
+            f'Category "{category}" activated. Tools are available in your next response.'
         )
+        skill_instructions = get_skill_instructions(category)
+        if skill_instructions:
+            activation_msg += f"\n\n{skill_instructions}"
+        return ToolResult(content=activation_msg)
 
     categories = ", ".join(sorted(specialist_summaries.keys()))
     return Tool(
