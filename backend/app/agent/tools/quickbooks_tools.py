@@ -113,14 +113,6 @@ def _format_results(rows: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _sanitize_qbo_string(value: str) -> str:
-    """Sanitize a string for use in a QBO query literal."""
-    import re as _re
-
-    sanitized = _re.sub(r"[\x00-\x1f\x7f]", "", value)
-    return sanitized.replace("'", "''")
-
-
 def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
     """Return a callback that persists refreshed tokens to disk."""
 
