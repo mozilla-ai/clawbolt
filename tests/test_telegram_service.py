@@ -52,7 +52,9 @@ async def test_send_text(telegram_service: TelegramChannel, mock_bot: MagicMock)
     """send_text should call bot.send_message with correct params."""
     msg_id = await telegram_service.send_text(to="123456789", body="Your estimate is ready")
     assert msg_id == "42"
-    mock_bot.send_message.assert_called_once_with(chat_id=123456789, text="Your estimate is ready")
+    mock_bot.send_message.assert_called_once_with(
+        chat_id=123456789, text="Your estimate is ready", parse_mode="Markdown"
+    )
 
 
 @pytest.mark.asyncio()
@@ -131,7 +133,9 @@ async def test_send_message_text_only(
     """send_message without media_urls should send text."""
     msg_id = await telegram_service.send_message(to="123456789", body="Hello")
     assert msg_id == "42"
-    mock_bot.send_message.assert_called_once_with(chat_id=123456789, text="Hello")
+    mock_bot.send_message.assert_called_once_with(
+        chat_id=123456789, text="Hello", parse_mode="Markdown"
+    )
 
 
 @pytest.mark.asyncio()

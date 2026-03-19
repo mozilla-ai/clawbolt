@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
+import Markdown from 'react-markdown';
 import Button from '@/components/ui/button';
 import { Tooltip } from '@heroui/tooltip';
 import { Spinner } from '@heroui/spinner';
@@ -426,9 +427,13 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.body && (
-                    <div className={msg.role === 'assistant' ? 'prose-chat' : ''}>
+                    msg.role === 'assistant' ? (
+                      <div className="prose-chat">
+                        <Markdown>{msg.body}</Markdown>
+                      </div>
+                    ) : (
                       <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
-                    </div>
+                    )
                   )}
 
                   {msg.toolInteractions && msg.toolInteractions.length > 0 && (

@@ -335,7 +335,15 @@ class TelegramChannel(BaseChannel):
 
     async def send_text(self, to: str, body: str) -> str:
         """Send a text message. *to* is a Telegram chat_id."""
-        msg = await self.bot.send_message(chat_id=self._parse_chat_id(to), text=body)
+        try:
+            msg = await self.bot.send_message(
+                chat_id=self._parse_chat_id(to),
+                text=body,
+                parse_mode="Markdown",
+            )
+        except Exception:
+            # Fall back to plain text if Markdown parsing fails
+            msg = await self.bot.send_message(chat_id=self._parse_chat_id(to), text=body)
         return str(msg.message_id)
 
     async def send_media(self, to: str, body: str, media_url: str) -> str:
@@ -368,11 +376,19 @@ class TelegramChannel(BaseChannel):
 
         if content_type.startswith("image/"):
             msg = await self.bot.send_photo(
-                chat_id=chat_id, photo=data, caption=body, filename=filename
+                chat_id=chat_id,
+                photo=data,
+                caption=body,
+                filename=filename,
+                parse_mode="Markdown",
             )
         else:
             msg = await self.bot.send_document(
-                chat_id=chat_id, document=data, caption=body, filename=filename
+                chat_id=chat_id,
+                document=data,
+                caption=body,
+                filename=filename,
+                parse_mode="Markdown",
             )
         return str(msg.message_id)
 
