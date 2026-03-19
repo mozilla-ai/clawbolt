@@ -57,7 +57,7 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
             params_model=UpdateHeartbeatParams,
             usage_hint="When the user wants to change heartbeat notes, update them.",
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ASK,
+                default_level=PermissionLevel.AUTO,
                 description_builder=lambda args: "Update heartbeat notes",
             ),
         ),
