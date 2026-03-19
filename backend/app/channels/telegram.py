@@ -2,7 +2,6 @@
 
 import asyncio
 import hmac
-import html
 import logging
 import mimetypes
 import re
@@ -94,57 +93,119 @@ class _InvalidSecret(Exception):
 
 
 # ---------------------------------------------------------------------------
-# Markdown -> Telegram HTML conversion
+# Markdown -> Telegram MarkdownV2 conversion
 # ---------------------------------------------------------------------------
 
-_FENCED_CODE_RE = re.compile(r"```(?:\w*)\n(.*?)```", re.DOTALL)
+# Characters that must be escaped in MarkdownV2 outside of code/pre blocks.
+# See https://core.telegram.org/bots/api#markdownv2-style
+_MDV2_ESCAPE_CHARS = r"_*[]()~`>#+=|{}.!-"
+_MDV2_ESCAPE_RE = re.compile(r"([" + re.escape(_MDV2_ESCAPE_CHARS) + r"])")
+
+# Characters that must be escaped inside code/pre blocks (only ` and \).
+_MDV2_CODE_ESCAPE_RE = re.compile(r"([`\\])")
+
+_FENCED_CODE_RE = re.compile(r"```(\w*)\n(.*?)```", re.DOTALL)
 _INLINE_CODE_RE = re.compile(r"`([^`]+)`")
-_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
-_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*", re.DOTALL)
+_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)", re.DOTALL)
 _LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
 _HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
 
 
-def markdown_to_telegram_html(text: str) -> str:
-    """Convert common Markdown to Telegram-supported HTML.
+def _escape_mdv2(text: str) -> str:
+    """Escape special characters for MarkdownV2 outside code blocks."""
+    return _MDV2_ESCAPE_RE.sub(r"\\\1", text)
 
-    Handles fenced code blocks, inline code, bold, italic, links, and headings.
-    Telegram supports: <b>, <i>, <code>, <pre>, <a href="">.
+
+def _escape_mdv2_code(text: str) -> str:
+    """Escape special characters for MarkdownV2 inside code/pre blocks."""
+    return _MDV2_CODE_ESCAPE_RE.sub(r"\\\1", text)
+
+
+def markdown_to_telegram_mdv2(text: str) -> str:
+    """Convert standard Markdown to Telegram MarkdownV2.
+
+    Standard Markdown uses ``**bold**`` and ``*italic*``.
+    Telegram MarkdownV2 uses ``*bold*`` and ``_italic_``, plus requires
+    escaping many special characters in literal text.
     """
-    # Protect fenced code blocks first - extract them before escaping
+    # 1. Stash fenced code blocks (different escape rules)
     code_blocks: list[str] = []
 
     def _stash_code(m: re.Match[str]) -> str:
-        code_blocks.append(html.escape(m.group(1).strip()))
+        lang = m.group(1)
+        code = _escape_mdv2_code(m.group(2).strip())
+        code_blocks.append(f"```{lang}\n{code}\n```" if lang else f"```\n{code}\n```")
         return f"\x00CODEBLOCK{len(code_blocks) - 1}\x00"
 
     text = _FENCED_CODE_RE.sub(_stash_code, text)
 
-    # Protect inline code
+    # 2. Stash inline code
     inline_codes: list[str] = []
 
     def _stash_inline(m: re.Match[str]) -> str:
-        inline_codes.append(html.escape(m.group(1)))
+        inline_codes.append(f"`{_escape_mdv2_code(m.group(1))}`")
         return f"\x00INLINE{len(inline_codes) - 1}\x00"
 
     text = _INLINE_CODE_RE.sub(_stash_inline, text)
 
-    # Escape HTML in remaining text
-    text = html.escape(text)
+    # 3. Extract formatting spans before escaping
+    bold_spans: list[str] = []
 
-    # Convert markdown patterns to HTML
-    text = _BOLD_RE.sub(r"<b>\1</b>", text)
-    text = _ITALIC_RE.sub(r"<i>\1</i>", text)
-    text = _LINK_RE.sub(r'<a href="\2">\1</a>', text)
-    text = _HEADING_RE.sub(r"<b>\1</b>", text)
+    def _stash_bold(m: re.Match[str]) -> str:
+        bold_spans.append(m.group(1))
+        return f"\x00BOLD{len(bold_spans) - 1}\x00"
 
-    # Restore inline code
+    text = _BOLD_RE.sub(_stash_bold, text)
+
+    italic_spans: list[str] = []
+
+    def _stash_italic(m: re.Match[str]) -> str:
+        italic_spans.append(m.group(1))
+        return f"\x00ITALIC{len(italic_spans) - 1}\x00"
+
+    text = _ITALIC_RE.sub(_stash_italic, text)
+
+    link_spans: list[tuple[str, str]] = []
+
+    def _stash_link(m: re.Match[str]) -> str:
+        link_spans.append((m.group(1), m.group(2)))
+        return f"\x00LINK{len(link_spans) - 1}\x00"
+
+    text = _LINK_RE.sub(_stash_link, text)
+
+    heading_spans: list[str] = []
+
+    def _stash_heading(m: re.Match[str]) -> str:
+        heading_spans.append(m.group(1))
+        return f"\x00HEADING{len(heading_spans) - 1}\x00"
+
+    text = _HEADING_RE.sub(_stash_heading, text)
+
+    # 4. Escape all special characters in the remaining literal text
+    text = _escape_mdv2(text)
+
+    # 5. Restore formatting with MarkdownV2 syntax
+    for i, content in enumerate(heading_spans):
+        text = text.replace(f"\x00HEADING{i}\x00", f"*{_escape_mdv2(content)}*")
+
+    for i, content in enumerate(bold_spans):
+        text = text.replace(f"\x00BOLD{i}\x00", f"*{_escape_mdv2(content)}*")
+
+    for i, content in enumerate(italic_spans):
+        text = text.replace(f"\x00ITALIC{i}\x00", f"_{_escape_mdv2(content)}_")
+
+    for i, (label, url) in enumerate(link_spans):
+        escaped_label = _escape_mdv2(label)
+        # Inside (...) only ) and \ need escaping
+        escaped_url = url.replace("\\", "\\\\").replace(")", "\\)")
+        text = text.replace(f"\x00LINK{i}\x00", f"[{escaped_label}]({escaped_url})")
+
     for i, code in enumerate(inline_codes):
-        text = text.replace(f"\x00INLINE{i}\x00", f"<code>{code}</code>")
+        text = text.replace(f"\x00INLINE{i}\x00", code)
 
-    # Restore code blocks
     for i, code in enumerate(code_blocks):
-        text = text.replace(f"\x00CODEBLOCK{i}\x00", f"<pre>{code}</pre>")
+        text = text.replace(f"\x00CODEBLOCK{i}\x00", code)
 
     return text
 
@@ -396,11 +457,11 @@ class TelegramChannel(BaseChannel):
         try:
             msg = await self.bot.send_message(
                 chat_id=self._parse_chat_id(to),
-                text=markdown_to_telegram_html(body),
-                parse_mode="HTML",
+                text=markdown_to_telegram_mdv2(body),
+                parse_mode="MarkdownV2",
             )
         except Exception:
-            # Fall back to plain text if HTML conversion/parsing fails
+            # Fall back to plain text if MarkdownV2 conversion fails
             msg = await self.bot.send_message(chat_id=self._parse_chat_id(to), text=body)
         return str(msg.message_id)
 
@@ -432,22 +493,22 @@ class TelegramChannel(BaseChannel):
             )
             raise ValueError(msg)
 
-        caption_html = markdown_to_telegram_html(body) if body else ""
+        caption_mdv2 = markdown_to_telegram_mdv2(body) if body else ""
         if content_type.startswith("image/"):
             msg = await self.bot.send_photo(
                 chat_id=chat_id,
                 photo=data,
-                caption=caption_html,
+                caption=caption_mdv2,
                 filename=filename,
-                parse_mode="HTML",
+                parse_mode="MarkdownV2",
             )
         else:
             msg = await self.bot.send_document(
                 chat_id=chat_id,
                 document=data,
-                caption=caption_html,
+                caption=caption_mdv2,
                 filename=filename,
-                parse_mode="HTML",
+                parse_mode="MarkdownV2",
             )
         return str(msg.message_id)
 

@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.channels.telegram import TelegramChannel, markdown_to_telegram_html
+from backend.app.channels.telegram import TelegramChannel, markdown_to_telegram_mdv2
 
 # ---------------------------------------------------------------------------
 # _parse_chat_id
@@ -49,12 +49,13 @@ def telegram_service(mock_bot: MagicMock) -> TelegramChannel:
 
 @pytest.mark.asyncio()
 async def test_send_text(telegram_service: TelegramChannel, mock_bot: MagicMock) -> None:
-    """send_text should call bot.send_message with correct params."""
+    """send_text should call bot.send_message with MarkdownV2."""
     msg_id = await telegram_service.send_text(to="123456789", body="Your estimate is ready")
     assert msg_id == "42"
-    mock_bot.send_message.assert_called_once_with(
-        chat_id=123456789, text="Your estimate is ready", parse_mode="HTML"
-    )
+    call_kwargs = mock_bot.send_message.call_args.kwargs
+    assert call_kwargs["chat_id"] == 123456789
+    assert call_kwargs["parse_mode"] == "MarkdownV2"
+    assert call_kwargs["text"] == markdown_to_telegram_mdv2("Your estimate is ready")
 
 
 @pytest.mark.asyncio()
@@ -133,9 +134,10 @@ async def test_send_message_text_only(
     """send_message without media_urls should send text."""
     msg_id = await telegram_service.send_message(to="123456789", body="Hello")
     assert msg_id == "42"
-    mock_bot.send_message.assert_called_once_with(
-        chat_id=123456789, text="Hello", parse_mode="HTML"
-    )
+    call_kwargs = mock_bot.send_message.call_args.kwargs
+    assert call_kwargs["chat_id"] == 123456789
+    assert call_kwargs["parse_mode"] == "MarkdownV2"
+    assert call_kwargs["text"] == markdown_to_telegram_mdv2("Hello")
 
 
 @pytest.mark.asyncio()
@@ -196,40 +198,56 @@ async def test_send_typing_indicator_failure_does_not_raise(
 
 
 # ---------------------------------------------------------------------------
-# markdown_to_telegram_html
+# markdown_to_telegram_mdv2
 # ---------------------------------------------------------------------------
 
 
-class TestMarkdownToTelegramHtml:
+class TestMarkdownToTelegramMdv2:
     def test_bold(self) -> None:
-        assert markdown_to_telegram_html("**hello**") == "<b>hello</b>"
+        assert markdown_to_telegram_mdv2("**hello**") == "*hello*"
 
     def test_italic(self) -> None:
-        assert markdown_to_telegram_html("*hello*") == "<i>hello</i>"
+        assert markdown_to_telegram_mdv2("*hello*") == "_hello_"
 
     def test_inline_code(self) -> None:
-        assert markdown_to_telegram_html("`foo()`") == "<code>foo()</code>"
+        assert markdown_to_telegram_mdv2("`foo()`") == "`foo()`"
 
     def test_fenced_code_block(self) -> None:
         md = "```python\nprint('hi')\n```"
-        assert markdown_to_telegram_html(md) == "<pre>print(&#x27;hi&#x27;)</pre>"
+        result = markdown_to_telegram_mdv2(md)
+        assert result.startswith("```python\n")
+        assert result.endswith("\n```")
+        assert "print('hi')" in result
 
     def test_link(self) -> None:
-        assert markdown_to_telegram_html("[click](https://x.com)") == (
-            '<a href="https://x.com">click</a>'
-        )
+        assert markdown_to_telegram_mdv2("[click](https://x.com)") == "[click](https://x.com)"
 
     def test_heading_becomes_bold(self) -> None:
-        assert markdown_to_telegram_html("## My heading") == "<b>My heading</b>"
+        result = markdown_to_telegram_mdv2("## My heading")
+        assert result == "*My heading*"
 
-    def test_html_entities_escaped(self) -> None:
-        assert "&lt;" in markdown_to_telegram_html("use <div> tags")
+    def test_special_chars_escaped(self) -> None:
+        result = markdown_to_telegram_mdv2("Price is $50.00!")
+        assert "\\." in result
+        assert "\\!" in result
 
-    def test_plain_text_unchanged(self) -> None:
-        assert markdown_to_telegram_html("just text") == "just text"
+    def test_plain_text_no_special_chars(self) -> None:
+        assert markdown_to_telegram_mdv2("just text") == "just text"
 
     def test_mixed_formatting(self) -> None:
-        result = markdown_to_telegram_html("**bold** and *italic* and `code`")
-        assert "<b>bold</b>" in result
-        assert "<i>italic</i>" in result
-        assert "<code>code</code>" in result
+        result = markdown_to_telegram_mdv2("**bold** and *italic* and `code`")
+        assert "*bold*" in result
+        assert "_italic_" in result
+        assert "`code`" in result
+
+    def test_code_block_no_over_escaping(self) -> None:
+        """Special chars inside code blocks should not be escaped."""
+        md = "```\nx = 1 + 2\n```"
+        result = markdown_to_telegram_mdv2(md)
+        # + should NOT be escaped inside code blocks
+        assert "\\+" not in result
+        assert "x = 1 + 2" in result
+
+    def test_url_parens_escaped(self) -> None:
+        result = markdown_to_telegram_mdv2("[text](https://x.com/a_(b))")
+        assert "\\)" in result
