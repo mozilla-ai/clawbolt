@@ -205,6 +205,16 @@ function ProviderModelPicker({
   );
 }
 
+const REASONING_EFFORT_OPTIONS = [
+  { value: 'auto', label: 'Auto (provider default)' },
+  { value: 'none', label: 'None' },
+  { value: 'minimal', label: 'Minimal' },
+  { value: 'low', label: 'Low' },
+  { value: 'medium', label: 'Medium' },
+  { value: 'high', label: 'High' },
+  { value: 'xhigh', label: 'Extra High' },
+] as const;
+
 function ModelTab() {
   const { data: config, isLoading } = useModelConfig();
   const updateConfig = useUpdateModelConfig();
@@ -220,6 +230,7 @@ function ModelTab() {
     heartbeat_provider: '',
     compaction_model: '',
     compaction_provider: '',
+    reasoning_effort: 'auto',
   });
 
   useEffect(() => {
@@ -234,6 +245,7 @@ function ModelTab() {
         heartbeat_provider: config.heartbeat_provider,
         compaction_model: config.compaction_model,
         compaction_provider: config.compaction_provider,
+        reasoning_effort: config.reasoning_effort,
       });
     }
   }, [config]);
@@ -252,6 +264,7 @@ function ModelTab() {
         heartbeat_provider: form.heartbeat_provider,
         compaction_model: form.compaction_model,
         compaction_provider: form.compaction_provider,
+        reasoning_effort: form.reasoning_effort,
       },
       {
         onSuccess: () => toast.success('Model settings saved'),
@@ -277,6 +290,19 @@ function ModelTab() {
           onApiBaseChange={(v) => set('llm_api_base', v)}
           showApiBase
         />
+        <Field label="Reasoning Effort">
+          <Select
+            value={form.reasoning_effort}
+            onChange={(e) => set('reasoning_effort', e.target.value)}
+          >
+            {REASONING_EFFORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </Select>
+          <p className="text-xs text-muted-foreground mt-1">
+            Controls how much reasoning the model uses. Higher values produce more thorough responses but use more tokens.
+          </p>
+        </Field>
       </Card>
 
       <Card>

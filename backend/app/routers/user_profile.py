@@ -142,6 +142,7 @@ def _build_model_config_response() -> ModelConfigResponse:
         heartbeat_provider=settings.heartbeat_provider,
         compaction_model=settings.compaction_model,
         compaction_provider=settings.compaction_provider,
+        reasoning_effort=settings.reasoning_effort,
     )
 
 

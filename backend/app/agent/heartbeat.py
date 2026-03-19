@@ -35,6 +35,7 @@ from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.models import ChannelRoute, User
+from backend.app.services.llm_service import reasoning_effort_to_thinking
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -336,6 +337,7 @@ async def evaluate_heartbeat_need(
             ],
             tools=[HEARTBEAT_DECISION_TOOL],
             max_tokens=settings.llm_max_tokens_heartbeat,
+            thinking=reasoning_effort_to_thinking(settings.reasoning_effort),
         ),
     )
 

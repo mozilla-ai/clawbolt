@@ -22,6 +22,7 @@ from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
+from backend.app.services.llm_service import reasoning_effort_to_thinking
 
 logger = logging.getLogger(__name__)
 
@@ -144,6 +145,7 @@ async def compact_session(
                 system=COMPACTION_SYSTEM_PROMPT,
                 messages=messages,
                 max_tokens=settings.compaction_max_tokens,
+                thinking=reasoning_effort_to_thinking(settings.reasoning_effort),
             ),
         )
     except Exception:

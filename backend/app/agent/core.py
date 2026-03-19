@@ -60,6 +60,7 @@ from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
 from backend.app.models import User
+from backend.app.services.llm_service import reasoning_effort_to_thinking
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -321,6 +322,7 @@ class ClawboltAgent:
         effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
         system, msg_dicts = messages_to_messages_api(messages)
         tool_count = len(tool_schemas) if tool_schemas else 0
+        thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
         logger.debug(
             "Calling LLM: model=%s provider=%s messages=%d tools=%d max_tokens=%d",
             settings.llm_model,
@@ -341,6 +343,7 @@ class ClawboltAgent:
                         messages=msg_dicts,
                         tools=tool_schemas,
                         max_tokens=effective_max_tokens,
+                        thinking=thinking,
                         **llm_kwargs,
                     ),
                 )
@@ -376,6 +379,7 @@ class ClawboltAgent:
                         messages=trimmed_dicts,
                         tools=tool_schemas,
                         max_tokens=effective_max_tokens,
+                        thinking=thinking,
                         **llm_kwargs,
                     ),
                 )
