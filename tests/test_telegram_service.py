@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from backend.app.channels.telegram import TelegramChannel
+from backend.app.channels.telegram import TelegramChannel, markdown_to_telegram_html
 
 # ---------------------------------------------------------------------------
 # _parse_chat_id
@@ -53,7 +53,7 @@ async def test_send_text(telegram_service: TelegramChannel, mock_bot: MagicMock)
     msg_id = await telegram_service.send_text(to="123456789", body="Your estimate is ready")
     assert msg_id == "42"
     mock_bot.send_message.assert_called_once_with(
-        chat_id=123456789, text="Your estimate is ready", parse_mode="Markdown"
+        chat_id=123456789, text="Your estimate is ready", parse_mode="HTML"
     )
 
 
@@ -134,7 +134,7 @@ async def test_send_message_text_only(
     msg_id = await telegram_service.send_message(to="123456789", body="Hello")
     assert msg_id == "42"
     mock_bot.send_message.assert_called_once_with(
-        chat_id=123456789, text="Hello", parse_mode="Markdown"
+        chat_id=123456789, text="Hello", parse_mode="HTML"
     )
 
 
@@ -193,3 +193,43 @@ async def test_send_typing_indicator_failure_does_not_raise(
     mock_bot.send_chat_action.side_effect = RuntimeError("Telegram API error")
     # Should not raise
     await telegram_service.send_typing_indicator(to="123456789")
+
+
+# ---------------------------------------------------------------------------
+# markdown_to_telegram_html
+# ---------------------------------------------------------------------------
+
+
+class TestMarkdownToTelegramHtml:
+    def test_bold(self) -> None:
+        assert markdown_to_telegram_html("**hello**") == "<b>hello</b>"
+
+    def test_italic(self) -> None:
+        assert markdown_to_telegram_html("*hello*") == "<i>hello</i>"
+
+    def test_inline_code(self) -> None:
+        assert markdown_to_telegram_html("`foo()`") == "<code>foo()</code>"
+
+    def test_fenced_code_block(self) -> None:
+        md = "```python\nprint('hi')\n```"
+        assert markdown_to_telegram_html(md) == "<pre>print(&#x27;hi&#x27;)</pre>"
+
+    def test_link(self) -> None:
+        assert markdown_to_telegram_html("[click](https://x.com)") == (
+            '<a href="https://x.com">click</a>'
+        )
+
+    def test_heading_becomes_bold(self) -> None:
+        assert markdown_to_telegram_html("## My heading") == "<b>My heading</b>"
+
+    def test_html_entities_escaped(self) -> None:
+        assert "&lt;" in markdown_to_telegram_html("use <div> tags")
+
+    def test_plain_text_unchanged(self) -> None:
+        assert markdown_to_telegram_html("just text") == "just text"
+
+    def test_mixed_formatting(self) -> None:
+        result = markdown_to_telegram_html("**bold** and *italic* and `code`")
+        assert "<b>bold</b>" in result
+        assert "<i>italic</i>" in result
+        assert "<code>code</code>" in result
