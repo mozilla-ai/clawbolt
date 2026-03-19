@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
-from typing import Any, ClassVar
+from typing import Any
 
 import httpx
 
@@ -113,14 +113,7 @@ class QuickBooksOnlineService(QuickBooksService):
                 return value
         return []
 
-    _ALLOWED_ENTITY_TYPES: ClassVar[set[str]] = {"Customer", "Estimate", "Invoice"}
-
     async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
-        if entity_type not in self._ALLOWED_ENTITY_TYPES:
-            msg = (
-                f"Entity type '{entity_type}' is not allowed. Allowed: {self._ALLOWED_ENTITY_TYPES}"
-            )
-            raise ValueError(msg)
         path = f"/{entity_type.lower()}"
         result = await self._request("POST", path, json=data)
         # QBO wraps the created entity under the entity type key

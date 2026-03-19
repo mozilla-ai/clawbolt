@@ -141,16 +141,16 @@ async def test_query_api_error(qb_service: MockQuickBooksService) -> None:
 
 
 def test_quickbooks_tools_have_params_model(qb_service: MockQuickBooksService) -> None:
-    """The qb_query tool must have a params_model set."""
+    """All QB tools must have a params_model set."""
     tools = create_quickbooks_tools(qb_service)
     for tool in tools:
         assert tool.params_model is not None, f"Tool {tool.name} missing params_model"
 
 
 def test_quickbooks_tools_count(qb_service: MockQuickBooksService) -> None:
-    """create_quickbooks_tools should return 6 tools."""
+    """create_quickbooks_tools should return 3 tools."""
     tools = create_quickbooks_tools(qb_service)
-    assert len(tools) == 6
+    assert len(tools) == 3
 
 
 def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
