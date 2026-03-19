@@ -149,6 +149,22 @@ def build_onboarding_system_prompt(
     return builder.build()
 
 
+def _seed_default_heartbeat(user_id: str) -> None:
+    """Populate the user's heartbeat items with the default template.
+
+    Called when onboarding completes so that heartbeat items start empty
+    for new users and only get populated once the user is fully set up.
+    """
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter_by(id=user_id).first()
+        if db_user and not db_user.heartbeat_text:
+            db_user.heartbeat_text = f"# Heartbeat\n\n{load_prompt('default_heartbeat')}\n"
+            db.commit()
+    finally:
+        db.close()
+
+
 class OnboardingSubscriber:
     """Event subscriber that detects onboarding completion after agent processing.
 
@@ -190,6 +206,7 @@ class OnboardingSubscriber:
             finally:
                 db.close()
             self._user.onboarding_complete = True
+            _seed_default_heartbeat(self._user.id)
             return
 
         # Heuristic fallback: BOOTSTRAP.md still exists but user profile
@@ -224,6 +241,7 @@ class OnboardingSubscriber:
             finally:
                 db.close()
             self._user.onboarding_complete = True
+            _seed_default_heartbeat(self._user.id)
             return
 
         # Pre-populated user: BOOTSTRAP.md doesn't exist but flag was never set
@@ -241,6 +259,7 @@ class OnboardingSubscriber:
             finally:
                 db.close()
             self._user.onboarding_complete = True
+            _seed_default_heartbeat(self._user.id)
 
     def finalize(self, response: AgentResponse) -> None:
         """No-op. Kept for API compatibility with the pipeline."""
