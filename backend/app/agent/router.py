@@ -30,6 +30,7 @@ from backend.app.agent.onboarding import (
     is_onboarding_needed,
 )
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.skills.loader import load_all_skills
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
 from backend.app.agent.tools.registry import (
@@ -67,6 +68,9 @@ VISION_UNAVAILABLE_NOTE = (
 
 # Ensure all tool modules have self-registered with the default registry.
 ensure_tool_modules_imported()
+
+# Load skill documentation (SKILL.md files) for specialist categories.
+load_all_skills()
 
 
 # ---------------------------------------------------------------------------
