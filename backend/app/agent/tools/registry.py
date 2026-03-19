@@ -118,7 +118,10 @@ def create_list_capabilities_tool(
             activation_msg += f"\n\n{skill_instructions}"
         return ToolResult(content=activation_msg)
 
-    categories = ", ".join(sorted(specialist_summaries.keys()))
+    summary_lines = [
+        f"  - {name}: {summary}" for name, summary in sorted(specialist_summaries.items())
+    ]
+    summary_block = "\n".join(summary_lines)
     return Tool(
         name=ToolName.LIST_CAPABILITIES,
         description=(
@@ -129,8 +132,11 @@ def create_list_capabilities_tool(
         function=list_capabilities,
         params_model=ListCapabilitiesParams,
         usage_hint=(
-            f"You have specialist capabilities ({categories}). "
-            "Call list_capabilities with a category name to activate them."
+            "You have specialist capabilities:\n"
+            f"{summary_block}\n"
+            "Call list_capabilities with a category name to activate the tools "
+            "before using them. Activate proactively when the user's message "
+            "relates to a specialist category."
         ),
     )
 
