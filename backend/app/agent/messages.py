@@ -72,14 +72,18 @@ class ToolResultMessage:
 
     tool_call_id: str
     content: str
+    is_error: bool = False
 
     def to_content_block(self) -> dict[str, Any]:
         """Return a single ``tool_result`` content block."""
-        return {
+        block: dict[str, Any] = {
             "type": "tool_result",
             "tool_use_id": self.tool_call_id,
             "content": self.content,
         }
+        if self.is_error:
+            block["is_error"] = True
+        return block
 
 
 # Union of all message types the agent loop works with.

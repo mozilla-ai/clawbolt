@@ -58,7 +58,7 @@ class Settings(BaseSettings):
     vision_model: str = ""  # empty = fall back to llm_model
     vision_provider: str = ""  # empty = fall back to llm_provider
     reasoning_effort: str = "auto"  # none, minimal, low, medium, high, xhigh, auto
-    llm_max_tokens_agent: int = Field(default=500, ge=1)
+    llm_max_tokens_agent: int = Field(default=1024, ge=1)
     llm_max_tokens_heartbeat: int = Field(default=300, ge=1)
     llm_max_tokens_vision: int = Field(default=1000, ge=1)
 

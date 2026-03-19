@@ -55,6 +55,25 @@ def make_tool_call_response(
     )
 
 
+def make_truncated_tool_call_response(
+    tool_calls: list[dict[str, Any]],
+    content: str | None = None,
+) -> MessageResponse:
+    """Build a mock MessageResponse with tool_use blocks and stop_reason='max_tokens'.
+
+    Simulates an LLM response that was truncated mid-tool-call due to
+    hitting the max_tokens limit.
+    """
+    resp = make_tool_call_response(tool_calls, content)
+    return MessageResponse(
+        id=resp.id,
+        content=resp.content,
+        model=resp.model,
+        stop_reason="max_tokens",
+        usage=resp.usage,
+    )
+
+
 def make_error_response(
     stop_reason: str = "error",
     content: str = "",

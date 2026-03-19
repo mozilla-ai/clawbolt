@@ -30,6 +30,7 @@ from tests.mocks.llm import (
     make_error_response,
     make_text_response,
     make_tool_call_response,
+    make_truncated_tool_call_response,
 )
 
 
@@ -1961,3 +1962,112 @@ async def test_agent_empty_reply_reprompt_only_once(
     assert mock_amessages.call_count == 3  # type: ignore[union-attr]
     # Reply is empty since both attempts produced nothing
     assert response.reply_text == ""
+
+
+# ---------------------------------------------------------------------------
+# Truncation detection tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_truncated_tool_call_sends_truncation_hint(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """When a tool call is truncated (stop_reason=max_tokens) and validation
+    fails, the error message should include truncation-specific guidance
+    instead of the generic validation hint."""
+
+    async def create_entity(**kwargs: object) -> ToolResult:
+        return ToolResult(content="created")
+
+    class CreateParams(BaseModel):
+        entity_type: str
+        data: dict[str, object]
+
+    tool = Tool(
+        name="qb_create",
+        description="Create an entity",
+        function=create_entity,
+        params_model=CreateParams,
+    )
+
+    # Round 0: LLM response truncated, only entity_type (missing data)
+    # Round 1: LLM self-corrects with complete args
+    # Round 2: LLM produces final text
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_truncated_tool_call_response(
+            [{"name": "qb_create", "arguments": {"entity_type": "Customer"}}]
+        ),
+        make_tool_call_response(
+            [
+                {
+                    "name": "qb_create",
+                    "arguments": {"entity_type": "Customer", "data": {"Name": "Test"}},
+                }
+            ]
+        ),
+        make_text_response("Created the customer."),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    await agent.process_message("Create a customer", system_prompt_override="system")
+
+    # The error sent back after the truncated call should contain the
+    # truncation hint, not the generic validation hint
+    followup_call = mock_amessages.call_args_list[1]
+    msgs = followup_call.kwargs["messages"]
+    tool_msg = next(
+        m
+        for m in msgs
+        if m.get("role") == "user"
+        and isinstance(m.get("content"), list)
+        and any(b.get("type") == "tool_result" for b in m["content"])
+    )
+    content = tool_msg["content"][0]["content"]
+    assert "cut short" in content or "truncated" in content
+    assert tool_msg["content"][0].get("is_error") is True
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_truncated_response_increases_max_tokens(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """When a response is truncated with validation errors, the agent should
+    auto-increase max_tokens for the next LLM call."""
+
+    async def create_entity(**kwargs: object) -> ToolResult:
+        return ToolResult(content="created")
+
+    class CreateParams(BaseModel):
+        entity_type: str
+        data: dict[str, object]
+
+    tool = Tool(
+        name="qb_create",
+        description="Create an entity",
+        function=create_entity,
+        params_model=CreateParams,
+    )
+
+    mock_amessages.side_effect = [  # type: ignore[union-attr]
+        make_truncated_tool_call_response(
+            [{"name": "qb_create", "arguments": {"entity_type": "Invoice"}}]
+        ),
+        make_text_response("I need more info to create that invoice."),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    await agent.process_message("Create an invoice", system_prompt_override="system")
+
+    # The second LLM call should have a higher max_tokens than the first
+    first_call = mock_amessages.call_args_list[0]
+    second_call = mock_amessages.call_args_list[1]
+    first_max = first_call.kwargs["max_tokens"]
+    second_max = second_call.kwargs["max_tokens"]
+    assert second_max > first_max
