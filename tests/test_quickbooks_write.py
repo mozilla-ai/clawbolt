@@ -1,4 +1,4 @@
-"""Tests for QuickBooks write operations (create, send, convert)."""
+"""Tests for QuickBooks write operations (qb_create, qb_send)."""
 
 from __future__ import annotations
 
@@ -15,46 +15,24 @@ class FakeQBService(QuickBooksService):
     """In-memory fake for testing QB write tools."""
 
     def __init__(self) -> None:
-        self.customers: dict[str, dict[str, Any]] = {
-            "1": {"Id": "1", "DisplayName": "Alice Johnson"},
-            "2": {"Id": "2", "DisplayName": "Bob's Plumbing"},
-        }
         self.created: list[tuple[str, dict[str, Any]]] = []
         self.sent_invoices: list[tuple[str, str]] = []
         self._next_id = 100
 
     async def query(self, query_str: str) -> list[dict[str, Any]]:
-        upper = query_str.upper()
-        if "FROM CUSTOMER" in upper:
-            # Simple name match
-            for cust in self.customers.values():
-                if cust["DisplayName"] in query_str:
-                    return [cust]
-            return []
-        if "FROM ESTIMATE" in upper:
-            # Return a fake estimate if id matches
-            for entity_type, data in self.created:
-                if entity_type == "Estimate" and str(data.get("_Id", "")) in query_str:
-                    return [
-                        {
-                            "Id": str(data["_Id"]),
-                            "CustomerRef": data.get("CustomerRef", {}),
-                            "Line": data.get("Line", []),
-                            "TotalAmt": 500.0,
-                        }
-                    ]
-            return []
         return []
 
     async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
         self._next_id += 1
-        result = {
+        result: dict[str, Any] = {
             "Id": str(self._next_id),
-            "DocNumber": f"10{self._next_id}",
-            "TotalAmt": sum(line.get("Amount", 0) for line in data.get("Line", [])),
             **data,
         }
-        data["_Id"] = self._next_id
+        if entity_type == "Customer":
+            result["DisplayName"] = data.get("DisplayName", "")
+        else:
+            result["DocNumber"] = f"10{self._next_id}"
+            result["TotalAmt"] = sum(line.get("Amount", 0) for line in data.get("Line", []))
         self.created.append((entity_type, data))
         return result
 
@@ -71,144 +49,45 @@ def _get_tool(tools: list, name: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
-# qb_create_estimate
+# qb_create - Customer
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_qb_create_estimate_success() -> None:
+async def test_qb_create_customer() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_create_estimate")
+    fn = _get_tool(tools, "qb_create")
 
     result = await fn(
-        customer_name="Alice Johnson",
-        line_items=[
-            {"description": "Labor", "quantity": 8, "unit_price": 50.0},
-            {"description": "Materials", "quantity": 1, "unit_price": 200.0},
-        ],
-        expiration_date="2026-04-01",
-        memo="Kitchen remodel estimate",
-    )
-
-    assert result.is_error is False
-    assert "Estimate created" in result.content
-    assert "Alice Johnson" in result.content
-    assert len(svc.created) == 1
-    entity_type, body = svc.created[0]
-    assert entity_type == "Estimate"
-    assert body["CustomerRef"]["value"] == "1"
-    assert body["ExpirationDate"] == "2026-04-01"
-    assert body["CustomerMemo"]["value"] == "Kitchen remodel estimate"
-
-
-@pytest.mark.asyncio()
-async def test_qb_create_estimate_customer_not_found() -> None:
-    svc = FakeQBService()
-    tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_create_estimate")
-
-    result = await fn(
-        customer_name="Nonexistent Customer",
-        line_items=[{"description": "Test", "quantity": 1, "unit_price": 100.0}],
-    )
-
-    assert result.is_error is True
-    assert "not found" in result.content.lower()
-
-
-@pytest.mark.asyncio()
-async def test_qb_create_estimate_api_error() -> None:
-    svc = FakeQBService()
-    svc.create_entity = AsyncMock(side_effect=Exception("QB API error"))  # type: ignore[method-assign]
-    tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_create_estimate")
-
-    result = await fn(
-        customer_name="Alice Johnson",
-        line_items=[{"description": "Test", "quantity": 1, "unit_price": 100.0}],
-    )
-
-    assert result.is_error is True
-    assert "Failed to create estimate" in result.content
-
-
-# ---------------------------------------------------------------------------
-# qb_create_invoice
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-async def test_qb_create_invoice_success() -> None:
-    svc = FakeQBService()
-    tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_create_invoice")
-
-    result = await fn(
-        customer_name="Alice Johnson",
-        line_items=[
-            {"description": "Pipe repair", "quantity": 1, "unit_price": 350.0},
-        ],
-        due_date="2026-04-15",
-    )
-
-    assert result.is_error is False
-    assert "Invoice created" in result.content
-    assert "Alice Johnson" in result.content
-    entity_type, body = svc.created[0]
-    assert entity_type == "Invoice"
-    assert body["DueDate"] == "2026-04-15"
-
-
-@pytest.mark.asyncio()
-async def test_qb_create_invoice_customer_not_found() -> None:
-    svc = FakeQBService()
-    tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_create_invoice")
-
-    result = await fn(
-        customer_name="Nobody",
-        line_items=[{"description": "Test", "quantity": 1, "unit_price": 100.0}],
-    )
-
-    assert result.is_error is True
-    assert "not found" in result.content.lower()
-
-
-# ---------------------------------------------------------------------------
-# qb_create_customer
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-async def test_qb_create_customer_success() -> None:
-    svc = FakeQBService()
-    tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_create_customer")
-
-    result = await fn(
-        display_name="New Customer LLC",
-        email="new@example.com",
-        phone="555-1234",
+        entity_type="Customer",
+        data={
+            "DisplayName": "New Customer LLC",
+            "PrimaryEmailAddr": {"Address": "new@example.com"},
+            "PrimaryPhone": {"FreeFormNumber": "555-1234"},
+        },
     )
 
     assert result.is_error is False
     assert "Customer created" in result.content
     assert "New Customer LLC" in result.content
+    assert len(svc.created) == 1
     entity_type, body = svc.created[0]
     assert entity_type == "Customer"
     assert body["DisplayName"] == "New Customer LLC"
     assert body["PrimaryEmailAddr"]["Address"] == "new@example.com"
-    assert body["PrimaryPhone"]["FreeFormNumber"] == "555-1234"
 
 
 @pytest.mark.asyncio()
 async def test_qb_create_customer_minimal() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_create_customer")
+    fn = _get_tool(tools, "qb_create")
 
-    result = await fn(display_name="Just A Name")
+    result = await fn(
+        entity_type="Customer",
+        data={"DisplayName": "Just A Name"},
+    )
 
     assert result.is_error is False
     _, body = svc.created[0]
@@ -216,29 +95,158 @@ async def test_qb_create_customer_minimal() -> None:
     assert "PrimaryPhone" not in body
 
 
-@pytest.mark.asyncio()
-async def test_qb_create_customer_api_error() -> None:
-    svc = FakeQBService()
-    svc.create_entity = AsyncMock(side_effect=Exception("Duplicate name"))  # type: ignore[method-assign]
-    tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_create_customer")
+# ---------------------------------------------------------------------------
+# qb_create - Estimate
+# ---------------------------------------------------------------------------
 
-    result = await fn(display_name="Duplicate")
+
+@pytest.mark.asyncio()
+async def test_qb_create_estimate() -> None:
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_create")
+
+    result = await fn(
+        entity_type="Estimate",
+        data={
+            "CustomerRef": {"value": "1"},
+            "Line": [
+                {
+                    "Amount": 400.00,
+                    "DetailType": "SalesItemLineDetail",
+                    "Description": "Labor",
+                    "SalesItemLineDetail": {"Qty": 8, "UnitPrice": 50.0},
+                },
+                {
+                    "Amount": 200.00,
+                    "DetailType": "SalesItemLineDetail",
+                    "Description": "Materials",
+                    "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 200.0},
+                },
+            ],
+            "ExpirationDate": "2026-04-01",
+            "CustomerMemo": {"value": "Kitchen remodel estimate"},
+        },
+    )
+
+    assert result.is_error is False
+    assert "Estimate created" in result.content
+    assert "$600.00" in result.content
+    assert len(svc.created) == 1
+    entity_type, body = svc.created[0]
+    assert entity_type == "Estimate"
+    assert body["CustomerRef"]["value"] == "1"
+    assert body["ExpirationDate"] == "2026-04-01"
+
+
+# ---------------------------------------------------------------------------
+# qb_create - Invoice
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_invoice() -> None:
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_create")
+
+    result = await fn(
+        entity_type="Invoice",
+        data={
+            "CustomerRef": {"value": "1"},
+            "Line": [
+                {
+                    "Amount": 350.00,
+                    "DetailType": "SalesItemLineDetail",
+                    "Description": "Pipe repair",
+                    "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 350.0},
+                },
+            ],
+            "DueDate": "2026-04-15",
+        },
+    )
+
+    assert result.is_error is False
+    assert "Invoice created" in result.content
+    assert "$350.00" in result.content
+    entity_type, body = svc.created[0]
+    assert entity_type == "Invoice"
+    assert body["DueDate"] == "2026-04-15"
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_invoice_with_linked_estimate() -> None:
+    """Creating an invoice with LinkedTxn (estimate-to-invoice workflow)."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_create")
+
+    result = await fn(
+        entity_type="Invoice",
+        data={
+            "CustomerRef": {"value": "1"},
+            "Line": [
+                {
+                    "Amount": 5000.00,
+                    "DetailType": "SalesItemLineDetail",
+                    "Description": "Deck build",
+                    "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 5000.0},
+                },
+            ],
+            "LinkedTxn": [{"TxnId": "42", "TxnType": "Estimate"}],
+        },
+    )
+
+    assert result.is_error is False
+    assert "Invoice created" in result.content
+    _, body = svc.created[0]
+    assert body["LinkedTxn"][0]["TxnId"] == "42"
+    assert body["LinkedTxn"][0]["TxnType"] == "Estimate"
+
+
+# ---------------------------------------------------------------------------
+# qb_create - validation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_rejects_disallowed_entity() -> None:
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_create")
+
+    result = await fn(entity_type="Payment", data={"TotalAmt": 100})
 
     assert result.is_error is True
-    assert "Failed to create customer" in result.content
+    assert "not allowed" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_api_error() -> None:
+    svc = FakeQBService()
+    svc.create_entity = AsyncMock(side_effect=Exception("QB API error"))  # type: ignore[method-assign]
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_create")
+
+    result = await fn(
+        entity_type="Customer",
+        data={"DisplayName": "Test"},
+    )
+
+    assert result.is_error is True
+    assert "Failed to create Customer" in result.content
 
 
 # ---------------------------------------------------------------------------
-# qb_send_invoice
+# qb_send
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_qb_send_invoice_success() -> None:
+async def test_qb_send_success() -> None:
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_send_invoice")
+    fn = _get_tool(tools, "qb_send")
 
     result = await fn(invoice_id="42", email="client@example.com")
 
@@ -248,97 +256,16 @@ async def test_qb_send_invoice_success() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_qb_send_invoice_failure() -> None:
+async def test_qb_send_failure() -> None:
     svc = FakeQBService()
     svc.send_invoice_email = AsyncMock(side_effect=Exception("Email failed"))  # type: ignore[method-assign]
     tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_send_invoice")
+    fn = _get_tool(tools, "qb_send")
 
-    result = await fn(invoice_id="42", email="bad@email")
+    result = await fn(invoice_id="42", email="bad@email.com")
 
     assert result.is_error is True
     assert "Failed to send invoice" in result.content
-
-
-# ---------------------------------------------------------------------------
-# qb_estimate_to_invoice
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-async def test_qb_estimate_to_invoice_success() -> None:
-    svc = FakeQBService()
-    tools = create_quickbooks_tools(svc)
-
-    # First create an estimate
-    create_est = _get_tool(tools, "qb_create_estimate")
-    await create_est(
-        customer_name="Alice Johnson",
-        line_items=[{"description": "Deck build", "quantity": 1, "unit_price": 5000.0}],
-    )
-
-    # Get the estimate ID from the created entities
-    _, est_data = svc.created[0]
-    est_id = str(est_data["_Id"])
-
-    # Convert to invoice
-    convert = _get_tool(tools, "qb_estimate_to_invoice")
-    result = await convert(estimate_id=est_id)
-
-    assert result.is_error is False
-    assert "Invoice created from Estimate" in result.content
-
-    # Verify the invoice was created with LinkedTxn
-    inv_entity_type, inv_body = svc.created[1]
-    assert inv_entity_type == "Invoice"
-    assert inv_body["LinkedTxn"][0]["TxnId"] == est_id
-    assert inv_body["LinkedTxn"][0]["TxnType"] == "Estimate"
-
-
-@pytest.mark.asyncio()
-async def test_qb_estimate_to_invoice_not_found() -> None:
-    svc = FakeQBService()
-    tools = create_quickbooks_tools(svc)
-    fn = _get_tool(tools, "qb_estimate_to_invoice")
-
-    result = await fn(estimate_id="99999")
-
-    assert result.is_error is True
-    assert "not found" in result.content.lower()
-
-
-@pytest.mark.asyncio()
-async def test_qb_estimate_to_invoice_create_fails() -> None:
-    svc = FakeQBService()
-    tools = create_quickbooks_tools(svc)
-
-    # Create an estimate first
-    create_est = _get_tool(tools, "qb_create_estimate")
-    await create_est(
-        customer_name="Alice Johnson",
-        line_items=[{"description": "Test", "quantity": 1, "unit_price": 100.0}],
-    )
-    _, est_data = svc.created[0]
-    est_id = str(est_data["_Id"])
-
-    # Make create_entity fail for the invoice
-    original = svc.create_entity
-    call_count = 0
-
-    async def fail_second(entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
-        nonlocal call_count
-        call_count += 1
-        if entity_type == "Invoice":
-            raise Exception("QB error")
-        return await original(entity_type, data)
-
-    svc.create_entity = fail_second  # type: ignore[assignment]
-
-    convert = _get_tool(tools, "qb_estimate_to_invoice")
-    result = await convert(estimate_id=est_id)
-
-    assert result.is_error is True
-    assert "Failed to create invoice from estimate" in result.content
 
 
 # ---------------------------------------------------------------------------
@@ -347,17 +274,10 @@ async def test_qb_estimate_to_invoice_create_fails() -> None:
 
 
 def test_quickbooks_tools_count() -> None:
-    """create_quickbooks_tools should return 6 tools."""
+    """create_quickbooks_tools should return 3 tools."""
     svc = FakeQBService()
     tools = create_quickbooks_tools(svc)
-    assert len(tools) == 6
+    assert len(tools) == 3
 
     names = {t.name for t in tools}
-    assert names == {
-        "qb_query",
-        "qb_create_estimate",
-        "qb_create_invoice",
-        "qb_create_customer",
-        "qb_send_invoice",
-        "qb_estimate_to_invoice",
-    }
+    assert names == {"qb_query", "qb_create", "qb_send"}
