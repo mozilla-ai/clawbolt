@@ -221,6 +221,7 @@ async def run_agent(
     is_onboarding: bool = False,
     event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] | None = None,
     session_id: str = "",
+    request_id: str = "",
 ) -> AgentResponse:
     """Initialize agent with tools and process the message.
 
@@ -254,6 +255,7 @@ async def run_agent(
         registry=default_registry,
         session_id=session_id,
         excluded_tool_names=disabled_sub_tools or None,
+        request_id=request_id,
     )
 
     # Start with core tools only; specialist tools are discovered on demand
@@ -424,6 +426,7 @@ async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
         is_onboarding=ctx.is_onboarding,
         event_subscribers=ctx.event_subscribers,
         session_id=ctx.session.session_id,
+        request_id=ctx.request_id,
     )
     return ctx
 

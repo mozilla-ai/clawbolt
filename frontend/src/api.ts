@@ -175,6 +175,20 @@ const api = {
     if (error) _throwApiError(error, 'Failed to disconnect OAuth');
   },
 
+  // Chat approval
+  sendApproval: async (decision: string): Promise<void> => {
+    const res = await fetch('/api/user/chat/approve', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ..._getAuthHeaders() },
+      body: JSON.stringify({ decision }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      const b = body as { detail?: string };
+      throw new Error(b.detail || `Approval failed: ${res.status}`);
+    }
+  },
+
   // Chat (async: POST submits, SSE delivers reply -- stays manual)
   sendChatMessage: async (
     message: string,

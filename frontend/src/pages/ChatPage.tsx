@@ -65,6 +65,7 @@ export default function ChatPage() {
   );
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
+  const [approvalPrompt, setApprovalPrompt] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const forceNewRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -238,6 +239,8 @@ export default function ChatPage() {
             if (event.tool_name) {
               toolNames.push(event.tool_name);
             }
+          } else if (event.type === 'approval_request') {
+            setApprovalPrompt(event.content ?? null);
           }
         },
         forceNewRef.current,
@@ -274,6 +277,7 @@ export default function ChatPage() {
       if (!mountedRef.current) return;
       setSending(false);
       setCurrentTool(null);
+      setApprovalPrompt(null);
       // Re-focus input on desktop only; on mobile, programmatic focus
       // triggers iOS Safari auto-zoom and forces the keyboard open.
       // Deferred via requestAnimationFrame so React flushes the
@@ -461,8 +465,22 @@ export default function ChatPage() {
               </div>
             ))}
 
-            {sending && (
+            {sending && !approvalPrompt && (
               <ToolUseIndicator toolName={currentTool ?? undefined} />
+            )}
+            {approvalPrompt && (
+              <ApprovalPrompt
+                description={approvalPrompt}
+                onDecision={async (decision) => {
+                  try {
+                    await api.sendApproval(decision);
+                    setApprovalPrompt(null);
+                    setCurrentTool(null);
+                  } catch {
+                    toast.error('Failed to send approval');
+                  }
+                }}
+              />
             )}
           </div>
         )}
@@ -579,6 +597,60 @@ function ToolUseIndicator({ toolName }: { toolName?: string }) {
           <span className="text-xs text-muted-foreground">
             {toolName ? `Using ${toolName}...` : 'Thinking...'}
           </span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ApprovalPrompt({
+  description,
+  onDecision,
+}: {
+  description: string;
+  onDecision: (decision: string) => void;
+}) {
+  const [responding, setResponding] = useState(false);
+  const handleClick = (decision: string) => {
+    setResponding(true);
+    onDecision(decision);
+  };
+  return (
+    <div className="flex justify-start">
+      <div className="max-w-[80%] bg-card border border-border rounded-[12px_12px_12px_4px] px-4 py-3 animate-message-in">
+        <p className="text-sm whitespace-pre-wrap mb-3">{description}</p>
+        <div className="flex flex-wrap gap-2">
+          <Button
+            size="sm"
+            onClick={() => handleClick('yes')}
+            disabled={responding}
+          >
+            Yes
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => handleClick('no')}
+            disabled={responding}
+          >
+            No
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => handleClick('always')}
+            disabled={responding}
+          >
+            Always allow
+          </Button>
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => handleClick('never')}
+            disabled={responding}
+          >
+            Never allow
+          </Button>
         </div>
       </div>
     </div>

@@ -107,6 +107,7 @@ class ClawboltAgent:
         registry: ToolRegistry | None = None,
         session_id: str = "",
         excluded_tool_names: set[str] | None = None,
+        request_id: str = "",
     ) -> None:
         self.user = user
         self._channel = channel
@@ -121,6 +122,7 @@ class ClawboltAgent:
         self._last_input_tokens: int = 0
         self._session_id = session_id
         self._excluded_tool_names = excluded_tool_names
+        self._request_id = request_id
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -537,6 +539,17 @@ class ClawboltAgent:
             plan_msg = format_plan_message("Here's what I need to do:", auto_steps, ask_steps)
 
             if self._publish_outbound is not None and self._chat_id is not None:
+                # Publish approval prompt as SSE event for webchat clients.
+                # The publish_outbound path works for Telegram but is a no-op
+                # for webchat (WebChatChannel.send_text returns "").
+                if self._request_id:
+                    from backend.app.bus import message_bus
+
+                    await message_bus.publish_event(
+                        self._request_id,
+                        {"type": "approval_request", "content": plan_msg},
+                    )
+
                 gate = get_approval_gate()
                 decision = await gate.request_approval(
                     user_id=self.user.id,
