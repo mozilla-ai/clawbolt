@@ -7,14 +7,7 @@ Clawbolt has a persistent memory system that stores facts about your business ac
 
 ## How it works
 
-Memory is stored as key-value facts in a per-user `MEMORY.md` file, categorized for efficient recall:
-
-| Category | Examples |
-|----------|----------|
-| **Pricing** | "Standard hourly rate is $85", "Tile installation $12/sqft" |
-| **Client** | "Mrs. Johnson's address is 42 Oak St", "Bob prefers morning appointments" |
-| **Job** | "Johnson kitchen needs permits", "Use Moen fixtures for the Garcia job" |
-| **General** | "Preferred lumber yard is Home Depot on 5th", "Licensed in TX and OK" |
+Memory is stored as freeform text in a per-user `MEMORY.md` file managed by the agent. The agent reads and writes this file using workspace tools (`read_file`, `write_file`, `edit_file`). When conversations get long, automatic compaction summarizes key facts back into `MEMORY.md` and appends a timestamped summary to `HISTORY.md`.
 
 ## Saving facts
 
@@ -29,7 +22,7 @@ Clawbolt: Got it! I've saved that your hourly rate for electrical
 
 ## Recalling facts
 
-When Clawbolt needs information (for example, when generating an estimate), it automatically searches its memory. You can also ask directly:
+Clawbolt's memory is always available in context. You can ask directly:
 
 ```
 You: What's Mrs. Johnson's address?
@@ -46,7 +39,3 @@ You: Forget my old rate for plumbing, it's $90 now
 
 Clawbolt: Done! I've updated your plumbing rate to $90/hour.
 ```
-
-## Memory and estimates
-
-The memory system powers [estimate generation](../estimates/). When you ask for an estimate, Clawbolt pulls your saved rates, client details, and job notes to build accurate line items.

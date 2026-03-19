@@ -17,7 +17,7 @@ User sends a Telegram message
   Agent loop (any-llm)  <--  Processed context
         |
         v
-  Tool execution (memory, estimates, file upload)
+  Tool execution (memory, file upload, heartbeat)
         |
         v
   Reply sent via Telegram
@@ -26,7 +26,7 @@ User sends a Telegram message
 1. **Webhook**: Telegram sends an update to `/api/webhooks/telegram`
 2. **Media pipeline**: Photos, voice notes, and documents are downloaded and processed (transcription, image analysis)
 3. **Agent loop**: The LLM receives the message plus conversation history and available tools, then decides what to do
-4. **Tool execution**: The agent calls tools (save a fact, generate an estimate, upload a file, etc.)
+4. **Tool execution**: The agent calls tools (edit memory, upload a file, query QuickBooks, etc.)
 5. **Reply**: The agent's response is sent back via Telegram
 
 ## Tech stack
@@ -69,12 +69,11 @@ The agent has access to these tool groups:
 
 | Tool group | Tools | Purpose |
 |------------|-------|---------|
-| Memory | `save_fact`, `recall_facts`, `forget_fact` | Persistent key-value memory for pricing, clients, jobs |
 | Messaging | `send_reply`, `send_media_reply` | Send text or media messages back to the user |
-| Workspace | `read_file`, `write_file`, `edit_file`, `delete_file` | Read/write markdown files (USER.md, SOUL.md, etc.) |
-| Checklist | `add_checklist_item`, `list_checklist_items`, `remove_checklist_item` | Reminder checklists |
+| Workspace | `read_file`, `write_file`, `edit_file`, `delete_file` | Read/write markdown files (MEMORY.md, USER.md, SOUL.md, etc.) |
+| Heartbeat | `get_heartbeat`, `update_heartbeat` | Read and update heartbeat notes |
 | Files | `upload_to_storage`, `organize_file` | Store and organize files in cloud storage |
-| QuickBooks | `qb_query` | Read-only queries against QuickBooks Online (when connected) |
+| QuickBooks | `qb_query`, `qb_create`, `qb_update`, `qb_send` | Query, create, update, and send QuickBooks entities (specialist) |
 
 Tool selection is context-aware: the registry picks relevant tools based on message keywords and context, with a fallback to all tools for ambiguous messages.
 

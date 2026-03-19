@@ -22,16 +22,16 @@ Clawbolt is a messaging-first AI assistant that helps users manage their busines
 
 ## Demo
 
-[![Clawbolt Demo](https://img.youtube.com/vi/Tp4nS8CapD4/maxresdefault.jpg)](https://www.youtube.com/watch?v=Tp4nS8CapD4)
+[![Clawbolt Demo](https://img.youtube.com/vi/YJcnij0SYiY/maxresdefault.jpg)](https://www.youtube.com/watch?v=YJcnij0SYiY)
 
 ## Features
 
-- **Estimates** -- Describe a job, get a professional PDF estimate generated and sent back instantly
 - **Memory** -- Clawbolt remembers your rates, clients, preferences, and past conversations
 - **Photo analysis** -- Send a job site photo and get an AI description for documentation
 - **Voice memos** -- Send a voice note, get it transcribed and processed as a message
 - **File cataloging** -- Photos and documents auto-organized in Dropbox or Google Drive
-- **Proactive heartbeat** -- Clawbolt checks in periodically with reminders about stale drafts and follow-ups
+- **Proactive heartbeat** -- Clawbolt checks in periodically with reminders and follow-ups
+- **QuickBooks Online** -- Query, create, and send invoices and estimates via QuickBooks (experimental)
 - **Onboarding** -- First-time users get a friendly conversation to set up their profile
 
 ## Quick Start
