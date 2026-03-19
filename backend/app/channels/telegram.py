@@ -2,8 +2,10 @@
 
 import asyncio
 import hmac
+import html
 import logging
 import mimetypes
+import re
 from pathlib import Path
 
 import httpx
@@ -89,6 +91,62 @@ class TelegramUpdate(BaseModel):
 
 class _InvalidSecret(Exception):
     pass
+
+
+# ---------------------------------------------------------------------------
+# Markdown -> Telegram HTML conversion
+# ---------------------------------------------------------------------------
+
+_FENCED_CODE_RE = re.compile(r"```(?:\w*)\n(.*?)```", re.DOTALL)
+_INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+_BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
+_ITALIC_RE = re.compile(r"(?<!\*)\*(?!\*)(.+?)(?<!\*)\*(?!\*)")
+_LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+_HEADING_RE = re.compile(r"^#{1,6}\s+(.+)$", re.MULTILINE)
+
+
+def markdown_to_telegram_html(text: str) -> str:
+    """Convert common Markdown to Telegram-supported HTML.
+
+    Handles fenced code blocks, inline code, bold, italic, links, and headings.
+    Telegram supports: <b>, <i>, <code>, <pre>, <a href="">.
+    """
+    # Protect fenced code blocks first - extract them before escaping
+    code_blocks: list[str] = []
+
+    def _stash_code(m: re.Match[str]) -> str:
+        code_blocks.append(html.escape(m.group(1).strip()))
+        return f"\x00CODEBLOCK{len(code_blocks) - 1}\x00"
+
+    text = _FENCED_CODE_RE.sub(_stash_code, text)
+
+    # Protect inline code
+    inline_codes: list[str] = []
+
+    def _stash_inline(m: re.Match[str]) -> str:
+        inline_codes.append(html.escape(m.group(1)))
+        return f"\x00INLINE{len(inline_codes) - 1}\x00"
+
+    text = _INLINE_CODE_RE.sub(_stash_inline, text)
+
+    # Escape HTML in remaining text
+    text = html.escape(text)
+
+    # Convert markdown patterns to HTML
+    text = _BOLD_RE.sub(r"<b>\1</b>", text)
+    text = _ITALIC_RE.sub(r"<i>\1</i>", text)
+    text = _LINK_RE.sub(r'<a href="\2">\1</a>', text)
+    text = _HEADING_RE.sub(r"<b>\1</b>", text)
+
+    # Restore inline code
+    for i, code in enumerate(inline_codes):
+        text = text.replace(f"\x00INLINE{i}\x00", f"<code>{code}</code>")
+
+    # Restore code blocks
+    for i, code in enumerate(code_blocks):
+        text = text.replace(f"\x00CODEBLOCK{i}\x00", f"<pre>{code}</pre>")
+
+    return text
 
 
 class TelegramChannel(BaseChannel):
@@ -338,11 +396,11 @@ class TelegramChannel(BaseChannel):
         try:
             msg = await self.bot.send_message(
                 chat_id=self._parse_chat_id(to),
-                text=body,
-                parse_mode="Markdown",
+                text=markdown_to_telegram_html(body),
+                parse_mode="HTML",
             )
         except Exception:
-            # Fall back to plain text if Markdown parsing fails
+            # Fall back to plain text if HTML conversion/parsing fails
             msg = await self.bot.send_message(chat_id=self._parse_chat_id(to), text=body)
         return str(msg.message_id)
 
@@ -374,21 +432,22 @@ class TelegramChannel(BaseChannel):
             )
             raise ValueError(msg)
 
+        caption_html = markdown_to_telegram_html(body) if body else ""
         if content_type.startswith("image/"):
             msg = await self.bot.send_photo(
                 chat_id=chat_id,
                 photo=data,
-                caption=body,
+                caption=caption_html,
                 filename=filename,
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
         else:
             msg = await self.bot.send_document(
                 chat_id=chat_id,
                 document=data,
-                caption=body,
+                caption=caption_html,
                 filename=filename,
-                parse_mode="Markdown",
+                parse_mode="HTML",
             )
         return str(msg.message_id)
 
