@@ -7,6 +7,10 @@ an ``approval_policy`` on their ``Tool`` definition.
 Three permission levels: AUTO (execute freely), ASK (prompt user first),
 DENY (never execute). Users can respond with yes/always/no/never to
 control both immediate and future behavior.
+
+Batch plan approval: when a user request triggers multiple tools, the
+system presents a single plan message grouping auto and pending steps.
+The user approves or rejects the entire batch with one response.
 """
 
 from __future__ import annotations
@@ -100,6 +104,76 @@ class ApprovalPolicy:
     default_level: PermissionLevel = PermissionLevel.ASK
     resource_extractor: Callable[[dict[str, Any]], str | None] | None = None
     description_builder: Callable[[dict[str, Any]], str] | None = None
+
+
+# ---------------------------------------------------------------------------
+# PlanStep and plan formatting
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class PlanStep:
+    """A single step in a batch approval plan.
+
+    Attributes:
+        tool_name: The tool's registered name.
+        description: Human-readable description of what this step does.
+        level: The resolved permission level for this step.
+    """
+
+    tool_name: str
+    description: str
+    level: PermissionLevel
+
+
+def format_plan_message(
+    plan_description: str,
+    auto_steps: list[PlanStep],
+    ask_steps: list[PlanStep],
+) -> str:
+    """Build a plain-text plan message for batch approval.
+
+    Compression rules:
+    - Single ask step, no auto steps: simple single-tool prompt.
+    - Single ask step with auto steps: compact one-line format.
+    - Multiple ask steps: full numbered plan with [auto] and [needs OK] markers.
+    """
+    if not ask_steps:
+        return ""
+
+    # Single ask, no auto: simple prompt
+    if len(ask_steps) == 1 and not auto_steps:
+        desc = ask_steps[0].description
+        return f"{desc}\n\nReply: yes | no | always | never"
+
+    # Single ask with auto steps: compact format
+    if len(ask_steps) == 1:
+        auto_desc = ", ".join(s.description for s in auto_steps)
+        ask_desc = ask_steps[0].description
+        return (
+            f"{plan_description}\n"
+            f"I'll {auto_desc.lower()} [auto]. "
+            f"{ask_desc} [needs OK]\n\n"
+            "Reply: yes | no | always | never"
+        )
+
+    # Multiple ask steps: full numbered plan
+    lines = [plan_description]
+    step_num = 0
+
+    # Group auto steps into one line if any
+    if auto_steps:
+        step_num += 1
+        auto_desc = ", ".join(s.description.lower() for s in auto_steps)
+        lines.append(f"  {step_num}. [auto] {auto_desc.capitalize()}")
+
+    for step in ask_steps:
+        step_num += 1
+        lines.append(f"  {step_num}. [needs OK] {step.description}")
+
+    lines.append("")
+    lines.append("Reply: yes | no | always | never")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
