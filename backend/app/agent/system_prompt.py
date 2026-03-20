@@ -203,7 +203,7 @@ async def build_agent_system_prompt(
         instructions = build_instructions_section()
     builder.add_section("Instructions", instructions)
 
-    builder.add_section("Current date", build_date_section(user))
+    builder.add_section("Current date and time", build_local_datetime_section(user))
 
     builder.add_section("Proactive Messaging", build_proactive_section())
     builder.add_section("Recall Behavior", build_recall_section())
