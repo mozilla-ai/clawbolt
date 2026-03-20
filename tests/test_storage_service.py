@@ -341,6 +341,7 @@ async def test_gdrive_upload_returns_web_link(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
     """upload_file should return the webViewLink from Google Drive."""
+    gdrive_storage._folder_cache["folder-id"] = "folder-id"
     url = await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
     assert url == "https://drive.google.com/file/d/123/view"
     mock_drive_service.files.return_value.create.assert_called_once()
@@ -351,6 +352,7 @@ async def test_gdrive_upload_fallback_to_id(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
     """When webViewLink is missing, should fall back to file id."""
+    gdrive_storage._folder_cache["folder-id"] = "folder-id"
     mock_drive_service.files.return_value.create.return_value.execute.return_value = {
         "id": "file-456"
     }
@@ -362,34 +364,35 @@ async def test_gdrive_upload_fallback_to_id(
 async def test_gdrive_create_folder_returns_id(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
-    """create_folder should create a folder and return its id."""
-    mock_drive_service.files.return_value.create.return_value.execute.return_value = {
-        "id": "folder-789"
-    }
+    """create_folder should resolve the path and return its Drive folder ID."""
+    mock_drive_service.files.return_value.list.return_value.execute.return_value = {"files": []}
+    mock_drive_service.files.return_value.create.return_value.execute.side_effect = [
+        {"id": "job-photos-id"},
+        {"id": "date-folder-id"},
+    ]
     result = await gdrive_storage.create_folder("/Job Photos/2026")
-    assert result == "folder-789"
+    assert result == "date-folder-id"
 
 
 @pytest.mark.asyncio()
-async def test_gdrive_create_folder_uses_path_segment(
+async def test_gdrive_create_folder_reuses_existing(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
-    """create_folder should use the last path segment as the folder name."""
-    mock_drive_service.files.return_value.create.return_value.execute.return_value = {
-        "id": "folder-x"
+    """create_folder should reuse existing folders instead of creating duplicates."""
+    mock_drive_service.files.return_value.list.return_value.execute.return_value = {
+        "files": [{"id": "existing-id"}]
     }
-    await gdrive_storage.create_folder("/Job Photos/2026-02-28")
-    call_args = mock_drive_service.files.return_value.create.call_args
-    body = call_args[1]["body"] if "body" in call_args[1] else call_args[0][0]
-    assert body["name"] == "2026-02-28"
-    assert body["mimeType"] == "application/vnd.google-apps.folder"
+    result = await gdrive_storage.create_folder("/Unsorted")
+    assert result == "existing-id"
+    mock_drive_service.files.return_value.create.assert_not_called()
 
 
 @pytest.mark.asyncio()
 async def test_gdrive_list_folder(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
-    """list_folder should query with parent and return [{name, path}] dicts."""
+    """list_folder should query with resolved folder ID and return [{name, path}] dicts."""
+    gdrive_storage._folder_cache["folder-id"] = "folder-id"
     files = await gdrive_storage.list_folder("folder-id")
     assert len(files) == 2
     assert files[0] == {"name": "photo.jpg", "path": "https://drive.google.com/f1"}
@@ -484,8 +487,9 @@ async def test_dropbox_move_file(
 async def test_gdrive_move_file(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
-    """move_file should search, then update parents and name."""
-    # Mock search returning one file
+    """move_file should resolve paths, search, then update parents and name."""
+    gdrive_storage._folder_cache["src-folder-id"] = "src-folder-id"
+    gdrive_storage._folder_cache["dest-folder-id"] = "dest-folder-id"
     mock_drive_service.files.return_value.list.return_value.execute.return_value = {
         "files": [{"id": "file-abc", "name": "file_001.jpg"}]
     }
@@ -506,6 +510,8 @@ async def test_gdrive_move_file_not_found(
     gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
 ) -> None:
     """move_file should raise FileNotFoundError if source file not in Drive."""
+    gdrive_storage._folder_cache["src"] = "src-folder-id"
+    gdrive_storage._folder_cache["dest"] = "dest-folder-id"
     mock_drive_service.files.return_value.list.return_value.execute.return_value = {"files": []}
     with pytest.raises(FileNotFoundError):
         await gdrive_storage.move_file("src", "missing.jpg", "dest", "file.jpg")
@@ -595,13 +601,70 @@ def test_dropbox_no_user_no_prefix(mock_dbx_client: MagicMock) -> None:
     assert s._prefixed("/docs") == "/docs"
 
 
-def test_gdrive_user_path_prefix() -> None:
-    """GoogleDriveStorage with user_id should store a path prefix."""
+@pytest.mark.asyncio()
+async def test_gdrive_user_creates_root_folder(mock_drive_service: MagicMock) -> None:
+    """GoogleDriveStorage with user_id should create a per-user root folder."""
     s = GoogleDriveStorage(credentials_json='{"token": "fake"}', user_id="42")
-    assert s._path_prefix == "42/"
+    s._service = mock_drive_service
+    mock_drive_service.files.return_value.list.return_value.execute.return_value = {"files": []}
+    mock_drive_service.files.return_value.create.return_value.execute.side_effect = [
+        {"id": "user-root-id"},
+        {"id": "unsorted-id"},
+    ]
+    folder_id = await s.create_folder("/Unsorted")
+    assert folder_id == "unsorted-id"
+    assert s._folder_cache["42"] == "user-root-id"
+    assert s._folder_cache["42/Unsorted"] == "unsorted-id"
 
 
-def test_gdrive_no_user_no_prefix() -> None:
-    """GoogleDriveStorage without user_id should have empty prefix."""
+def test_gdrive_no_user_has_no_user_id() -> None:
+    """GoogleDriveStorage without user_id should have _user_id as None."""
     s = GoogleDriveStorage(credentials_json='{"token": "fake"}')
-    assert s._path_prefix == ""
+    assert s._user_id is None
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_resolve_path_caches_results(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """_resolve_path should cache folder IDs to avoid repeated API calls."""
+    mock_drive_service.files.return_value.list.return_value.execute.return_value = {"files": []}
+    mock_drive_service.files.return_value.create.return_value.execute.return_value = {
+        "id": "new-folder-id"
+    }
+    await gdrive_storage._resolve_path("/Unsorted")
+    folder_id = await gdrive_storage._resolve_path("/Unsorted")
+    assert folder_id == "new-folder-id"
+    # Only one list+create cycle, not two
+    assert mock_drive_service.files.return_value.list.return_value.execute.call_count == 1
+    assert mock_drive_service.files.return_value.create.return_value.execute.call_count == 1
+
+
+@pytest.mark.asyncio()
+async def test_gdrive_upload_wraps_api_error(
+    gdrive_storage: GoogleDriveStorage, mock_drive_service: MagicMock
+) -> None:
+    """upload_file should wrap Google API errors in RuntimeError."""
+    pytest.importorskip("googleapiclient")
+    from googleapiclient.errors import HttpError
+
+    gdrive_storage._folder_cache["folder-id"] = "folder-id"
+    resp = MagicMock(status=500, reason="Internal Server Error")
+    mock_drive_service.files.return_value.create.return_value.execute.side_effect = HttpError(
+        resp, b"error"
+    )
+    with pytest.raises(RuntimeError, match="Google Drive upload failed"):
+        await gdrive_storage.upload_file(b"data", "folder-id", "doc.pdf")
+
+
+@pytest.mark.asyncio()
+async def test_dropbox_move_file_with_user_prefix(mock_dbx_client: MagicMock) -> None:
+    """move_file should apply the per-user prefix to both src and dest paths."""
+    with patch(
+        "backend.app.services.storage_service.dropbox.Dropbox", return_value=mock_dbx_client
+    ):
+        s = DropboxStorage(access_token="fake-token", user_id="42")
+    await s.move_file("/Unsorted", "file.jpg", "/Client/photos", "deck.jpg")
+    mock_dbx_client.files_move_v2.assert_called_once_with(
+        "/42/Unsorted/file.jpg", "/42/Client/photos/deck.jpg"
+    )

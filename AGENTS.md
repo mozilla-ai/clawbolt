@@ -148,3 +148,9 @@ The test suite connects to `postgresql://clawbolt:clawbolt@localhost:5432/clawbo
 ### Git operations
 
 Git auth is pre-configured. Never push directly to main. Always create a branch and open a PR.
+
+## Design System
+Always read DESIGN.md before making any visual or UI decisions.
+All font choices, colors, spacing, and aesthetic direction are defined there.
+Do not deviate without explicit user approval.
+In QA mode, flag any code that doesn't match DESIGN.md.
