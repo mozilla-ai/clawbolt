@@ -118,6 +118,7 @@ class WebChatChannel(BaseChannel):
 
             # Register response future and event queue before publishing so
             # the dispatcher can resolve it even if processing is very fast.
+            message_bus.set_request_owner(request_id, str(user.id))
             message_bus.register_response_future(request_id)
             message_bus.register_event_queue(request_id)
 
@@ -136,9 +137,11 @@ class WebChatChannel(BaseChannel):
         @router.get("/user/chat/events/{request_id}")
         async def chat_events(
             request_id: str,
-            _user: User = Depends(get_current_user),
+            user: User = Depends(get_current_user),
         ) -> StreamingResponse:
             """SSE endpoint: streams tool-call events then the final reply."""
+            if not message_bus.check_request_owner(request_id, str(user.id)):
+                raise HTTPException(status_code=403, detail="Not your request")
 
             async def event_stream() -> collections.abc.AsyncIterator[str]:
                 queue = message_bus.register_event_queue(request_id)

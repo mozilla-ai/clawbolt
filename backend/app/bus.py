@@ -50,6 +50,7 @@ class MessageBus:
         self._response_futures: dict[str, asyncio.Future[OutboundMessage]] = {}
         self._event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
+        self._request_owners: dict[str, str] = {}
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
@@ -67,6 +68,15 @@ class MessageBus:
         """Consume the next outbound message (blocks until available)."""
         return await self.outbound.get()
 
+    def set_request_owner(self, request_id: str, user_id: str) -> None:
+        """Associate a request_id with the user who created it."""
+        self._request_owners[request_id] = user_id
+
+    def check_request_owner(self, request_id: str, user_id: str) -> bool:
+        """Return True if *user_id* owns *request_id* (or if no owner is recorded)."""
+        owner = self._request_owners.get(request_id)
+        return owner is None or owner == user_id
+
     def register_response_future(
         self, request_id: str, ttl: float = 300
     ) -> asyncio.Future[OutboundMessage]:
@@ -83,6 +93,7 @@ class MessageBus:
         async def _cleanup() -> None:
             await asyncio.sleep(ttl)
             stale = self._response_futures.pop(request_id, None)
+            self._request_owners.pop(request_id, None)
             if stale is not None and not stale.done():
                 stale.cancel()
                 logger.debug("Cleaned up stale response future for request %s", request_id)
@@ -118,8 +129,9 @@ class MessageBus:
             await queue.put(event)
 
     def remove_event_queue(self, request_id: str) -> None:
-        """Remove the event queue for *request_id*."""
+        """Remove the event queue and owner mapping for *request_id*."""
         self._event_queues.pop(request_id, None)
+        self._request_owners.pop(request_id, None)
 
     def get_response_future(self, request_id: str) -> asyncio.Future[OutboundMessage] | None:
         """Return the pending response future for *request_id*, or ``None``."""
@@ -148,6 +160,7 @@ class MessageBus:
         self.outbound = asyncio.Queue()
         self._response_futures.clear()
         self._event_queues.clear()
+        self._request_owners.clear()
 
     @property
     def inbound_size(self) -> int:
