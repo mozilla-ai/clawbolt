@@ -13,6 +13,6 @@ export function renderPremiumSettingsTab(_key: string): ReactNode {
   return null;
 }
 
-export function showOssSettingsTabs(_isPremium: boolean): boolean {
-  return true;
+export function showOssSettingsTabs(_isPremium: boolean, _isAdmin: boolean): string[] {
+  return ['model', 'storage', 'heartbeat'];
 }
