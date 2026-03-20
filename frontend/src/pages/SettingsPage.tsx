@@ -9,7 +9,7 @@ import Checkbox from '@/components/ui/checkbox';
 import Field from '@/components/ui/field';
 import api from '@/api';
 import { toast } from '@/lib/toast';
-import { useModelConfig, useUpdateModelConfig, useUpdateProfile } from '@/hooks/queries';
+import { useModelConfig, useUpdateModelConfig, useStorageConfig, useUpdateStorageConfig, useUpdateProfile } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
   getExtraSettingsTabs,
@@ -38,6 +38,7 @@ export default function SettingsPage() {
   const ossTabs = showOssSettingsTabs(isPremium)
     ? [
         { key: 'model', label: 'Model' },
+        { key: 'storage', label: 'Storage' },
         { key: 'heartbeat', label: 'Heartbeat' },
       ]
     : [];
@@ -51,6 +52,7 @@ export default function SettingsPage() {
     if (premiumContent) return premiumContent;
     switch (activeTab) {
       case 'model': return <ModelTab />;
+      case 'storage': return <StorageTab />;
       case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
       default: return null;
     }
@@ -350,6 +352,142 @@ function ModelTab() {
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={updateConfig.isPending} isLoading={updateConfig.isPending}>
           Save Model Settings
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- Storage Tab ---
+
+const STORAGE_PROVIDER_OPTIONS = [
+  { value: 'local', label: 'Local filesystem' },
+  { value: 'dropbox', label: 'Dropbox' },
+  { value: 'google_drive', label: 'Google Drive' },
+] as const;
+
+function StorageTab() {
+  const { data: config, isLoading } = useStorageConfig();
+  const updateConfig = useUpdateStorageConfig();
+
+  const [form, setForm] = useState({
+    storage_provider: 'local',
+    file_storage_base_dir: '',
+    dropbox_access_token: '',
+    google_drive_credentials_json: '',
+  });
+
+  useEffect(() => {
+    if (config) {
+      setForm({
+        storage_provider: config.storage_provider,
+        file_storage_base_dir: config.file_storage_base_dir,
+        dropbox_access_token: '',
+        google_drive_credentials_json: '',
+      });
+    }
+  }, [config]);
+
+  if (isLoading) return <p className="text-sm text-muted-foreground">Loading...</p>;
+
+  const handleSave = () => {
+    const body: Record<string, string> = {
+      storage_provider: form.storage_provider,
+      file_storage_base_dir: form.file_storage_base_dir,
+    };
+    if (form.dropbox_access_token) {
+      body.dropbox_access_token = form.dropbox_access_token;
+    }
+    if (form.google_drive_credentials_json) {
+      body.google_drive_credentials_json = form.google_drive_credentials_json;
+    }
+    updateConfig.mutate(body, {
+      onSuccess: () => {
+        toast.success('Storage settings saved');
+        setForm((prev) => ({
+          ...prev,
+          dropbox_access_token: '',
+          google_drive_credentials_json: '',
+        }));
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  const set = (key: string, value: string) =>
+    setForm((prev) => ({ ...prev, [key]: value }));
+
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <div className="grid gap-4">
+          <Field label="Storage Provider">
+            <Select
+              value={form.storage_provider}
+              onChange={(e) => set('storage_provider', e.target.value)}
+            >
+              {STORAGE_PROVIDER_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>{o.label}</option>
+              ))}
+            </Select>
+          </Field>
+
+          {form.storage_provider === 'local' && (
+            <Field label="Storage Directory">
+              <Input
+                value={form.file_storage_base_dir}
+                onChange={(e) => set('file_storage_base_dir', e.target.value)}
+                placeholder="data/storage"
+              />
+              <p className="text-xs text-muted-foreground mt-1">
+                Local directory for file storage. Relative to the app root.
+              </p>
+            </Field>
+          )}
+
+          {form.storage_provider === 'dropbox' && (
+            <>
+              <p className="text-sm">
+                Status:{' '}
+                <span className={config?.dropbox_access_token_set ? 'text-success' : 'text-warning'}>
+                  {config?.dropbox_access_token_set ? 'Configured' : 'Not configured'}
+                </span>
+              </p>
+              <Field label="Access Token">
+                <Input
+                  type="password"
+                  value={form.dropbox_access_token}
+                  onChange={(e) => set('dropbox_access_token', e.target.value)}
+                  placeholder={config?.dropbox_access_token_set ? 'Leave blank to keep current token' : 'Enter Dropbox access token'}
+                />
+              </Field>
+            </>
+          )}
+
+          {form.storage_provider === 'google_drive' && (
+            <>
+              <p className="text-sm">
+                Status:{' '}
+                <span className={config?.google_drive_credentials_json_set ? 'text-success' : 'text-warning'}>
+                  {config?.google_drive_credentials_json_set ? 'Configured' : 'Not configured'}
+                </span>
+              </p>
+              <Field label="Credentials JSON">
+                <textarea
+                  className="w-full rounded-md border border-default bg-background px-3 py-2 text-sm font-mono min-h-[120px]"
+                  value={form.google_drive_credentials_json}
+                  onChange={(e) => set('google_drive_credentials_json', e.target.value)}
+                  placeholder={config?.google_drive_credentials_json_set ? 'Leave blank to keep current credentials' : 'Paste Google Drive service account JSON'}
+                />
+              </Field>
+            </>
+          )}
+        </div>
+      </Card>
+
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={updateConfig.isPending} isLoading={updateConfig.isPending}>
+          Save Storage Settings
         </Button>
       </div>
     </div>

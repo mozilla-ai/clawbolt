@@ -150,6 +150,10 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "compaction_model",
         "compaction_provider",
         "reasoning_effort",
+        "storage_provider",
+        "dropbox_access_token",
+        "google_drive_credentials_json",
+        "file_storage_base_dir",
     }
 )
 

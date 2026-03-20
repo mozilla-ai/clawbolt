@@ -154,6 +154,25 @@ class ModelConfigUpdate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Storage config (dashboard)
+# ---------------------------------------------------------------------------
+
+
+class StorageConfigResponse(BaseModel):
+    storage_provider: str
+    file_storage_base_dir: str
+    dropbox_access_token_set: bool
+    google_drive_credentials_json_set: bool
+
+
+class StorageConfigUpdate(BaseModel):
+    storage_provider: str | None = None
+    file_storage_base_dir: str | None = None
+    dropbox_access_token: str | None = None
+    google_drive_credentials_json: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Tool config (dashboard)
 # ---------------------------------------------------------------------------
 

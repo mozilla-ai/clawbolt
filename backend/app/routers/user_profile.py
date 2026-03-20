@@ -13,6 +13,8 @@ from backend.app.schemas import (
     ModelConfigResponse,
     ModelConfigUpdate,
     ProviderInfo,
+    StorageConfigResponse,
+    StorageConfigUpdate,
     UserProfileResponse,
     UserProfileUpdate,
 )
@@ -171,6 +173,58 @@ async def update_model_config(
 
     save_persistent_config(updates)
     return _build_model_config_response()
+
+
+# ---------------------------------------------------------------------------
+# Storage config
+# ---------------------------------------------------------------------------
+
+_VALID_STORAGE_PROVIDERS = {"local", "dropbox", "google_drive"}
+
+
+def _build_storage_config_response() -> StorageConfigResponse:
+    return StorageConfigResponse(
+        storage_provider=settings.storage_provider,
+        file_storage_base_dir=settings.file_storage_base_dir,
+        dropbox_access_token_set=bool(settings.dropbox_access_token),
+        google_drive_credentials_json_set=bool(settings.google_drive_credentials_json),
+    )
+
+
+@router.get("/user/storage/config", response_model=StorageConfigResponse)
+async def get_storage_config(
+    _current_user: User = Depends(get_current_user),
+) -> StorageConfigResponse:
+    """Return server-level storage configuration."""
+    return _build_storage_config_response()
+
+
+@router.put("/user/storage/config", response_model=StorageConfigResponse)
+async def update_storage_config(
+    body: StorageConfigUpdate,
+    _current_user: User = Depends(get_current_user),
+) -> StorageConfigResponse:
+    """Update server-level storage configuration."""
+    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    if (
+        "storage_provider" in updates
+        and updates["storage_provider"] not in _VALID_STORAGE_PROVIDERS
+    ):
+        raise HTTPException(
+            status_code=422,
+            detail=f"Invalid storage_provider: must be one of {sorted(_VALID_STORAGE_PROVIDERS)}",
+        )
+
+    try:
+        update_settings(updates)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    save_persistent_config(updates)
+    return _build_storage_config_response()
 
 
 # ---------------------------------------------------------------------------

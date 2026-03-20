@@ -11,6 +11,8 @@ import type {
   ChannelConfigUpdate,
   ModelConfigResponse,
   ModelConfigUpdate,
+  StorageConfigResponse,
+  StorageConfigUpdate,
   OAuthAuthorizeResponse,
   OAuthStatusResponse,
   ProviderInfo,
@@ -125,6 +127,20 @@ const api = {
     });
     if (error) _throwApiError(error, 'Failed to update model config');
     return data as ModelConfigResponse;
+  },
+
+  // Storage config
+  getStorageConfig: async () => {
+    const { data, error } = await client.GET('/api/user/storage/config');
+    if (error) _throwApiError(error, 'Failed to get storage config');
+    return data as StorageConfigResponse;
+  },
+  updateStorageConfig: async (body: StorageConfigUpdate) => {
+    const { data, error } = await client.PUT('/api/user/storage/config', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to update storage config');
+    return data as StorageConfigResponse;
   },
 
   // Providers & models

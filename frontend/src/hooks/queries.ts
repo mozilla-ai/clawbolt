@@ -4,6 +4,7 @@ import api from '@/api';
 import type {
   MemoryUpdate,
   ModelConfigUpdate,
+  StorageConfigUpdate,
   ToolConfigUpdateEntry,
   ChannelConfigUpdate,
 } from '@/types';
@@ -102,6 +103,25 @@ export function useOAuthDisconnect() {
     mutationFn: (integration: string) => api.disconnectOAuth(integration),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.oauth });
+    },
+  });
+}
+
+// --- Storage config ---
+
+export function useStorageConfig() {
+  return useQuery({
+    queryKey: queryKeys.storageConfig,
+    queryFn: () => api.getStorageConfig(),
+  });
+}
+
+export function useUpdateStorageConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: StorageConfigUpdate) => api.updateStorageConfig(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.storageConfig });
     },
   });
 }

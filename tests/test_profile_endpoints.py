@@ -170,3 +170,65 @@ def test_list_provider_models_error_returns_502(
     resp = client.get("/api/user/providers/badprovider/models")
     assert resp.status_code == 502
     assert "Failed to list models" in resp.json()["detail"]
+
+
+# ---------------------------------------------------------------------------
+# Storage config
+# ---------------------------------------------------------------------------
+
+
+def test_get_storage_config(client: TestClient) -> None:
+    """GET /user/storage/config returns current server-level storage settings."""
+    resp = client.get("/api/user/storage/config")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "storage_provider" in data
+    assert "file_storage_base_dir" in data
+    assert isinstance(data["dropbox_access_token_set"], bool)
+    assert isinstance(data["google_drive_credentials_json_set"], bool)
+
+
+def test_update_storage_config_provider(client: TestClient) -> None:
+    """PUT /user/storage/config updates the storage provider."""
+    original = settings.storage_provider
+    try:
+        resp = client.put(
+            "/api/user/storage/config",
+            json={"storage_provider": "dropbox"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["storage_provider"] == "dropbox"
+        assert settings.storage_provider == "dropbox"
+    finally:
+        settings.storage_provider = original
+
+
+def test_update_storage_config_credentials(client: TestClient) -> None:
+    """PUT /user/storage/config with a token sets the _set flag to True."""
+    original = settings.dropbox_access_token
+    try:
+        resp = client.put(
+            "/api/user/storage/config",
+            json={"dropbox_access_token": "test-token-123"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["dropbox_access_token_set"] is True
+    finally:
+        settings.dropbox_access_token = original
+
+
+def test_update_storage_config_invalid_provider(client: TestClient) -> None:
+    """PUT /user/storage/config rejects unknown providers."""
+    resp = client.put(
+        "/api/user/storage/config",
+        json={"storage_provider": "s3"},
+    )
+    assert resp.status_code == 422
+
+
+def test_update_storage_config_empty_body(client: TestClient) -> None:
+    """PUT /user/storage/config with empty body returns 400."""
+    resp = client.put("/api/user/storage/config", json={})
+    assert resp.status_code == 400
