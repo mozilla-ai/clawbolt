@@ -969,12 +969,17 @@
           "telegram_allowed_usernames": {
             "type": "string",
             "title": "Telegram Allowed Usernames"
+          },
+          "telegram_allowed_chat_ids": {
+            "type": "string",
+            "title": "Telegram Allowed Chat Ids"
           }
         },
         "type": "object",
         "required": [
           "telegram_bot_token_set",
-          "telegram_allowed_usernames"
+          "telegram_allowed_usernames",
+          "telegram_allowed_chat_ids"
         ],
         "title": "ChannelConfigResponse"
       },
@@ -1001,6 +1006,17 @@
               }
             ],
             "title": "Telegram Allowed Usernames"
+          },
+          "telegram_allowed_chat_ids": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Telegram Allowed Chat Ids"
           }
         },
         "type": "object",

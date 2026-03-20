@@ -482,6 +482,8 @@ export interface components {
             telegram_bot_token_set: boolean;
             /** Telegram Allowed Usernames */
             telegram_allowed_usernames: string;
+            /** Telegram Allowed Chat Ids */
+            telegram_allowed_chat_ids: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -489,6 +491,8 @@ export interface components {
             telegram_bot_token?: string | null;
             /** Telegram Allowed Usernames */
             telegram_allowed_usernames?: string | null;
+            /** Telegram Allowed Chat Ids */
+            telegram_allowed_chat_ids?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
