@@ -53,6 +53,17 @@ def test_update_profile_soul_text(client: TestClient) -> None:
     assert data["soul_text"] == "Be friendly."
 
 
+def test_update_profile_onboarding_complete(client: TestClient) -> None:
+    """PUT /api/user/profile can set onboarding_complete flag."""
+    resp = client.put(
+        "/api/user/profile",
+        json={"onboarding_complete": True},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["onboarding_complete"] is True
+
+
 def test_update_profile_empty_body(client: TestClient) -> None:
     resp = client.put("/api/user/profile", json={})
     assert resp.status_code == 400
