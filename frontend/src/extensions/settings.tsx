@@ -9,7 +9,7 @@ export function getExtraSettingsTabs(_isPremium: boolean, _isAdmin: boolean): Ex
   return [];
 }
 
-export function renderPremiumSettingsTab(_key: string): ReactNode {
+export function renderPremiumSettingsTab(_key: string, _isAdmin: boolean): ReactNode {
   return null;
 }
 
