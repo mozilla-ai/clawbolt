@@ -97,7 +97,7 @@ describe('useToolConfig', () => {
 
 describe('useChannelConfig', () => {
   it('fetches and returns channel config', async () => {
-    const mockConfig = { telegram_bot_token_set: true, telegram_allowed_chat_ids: '*' };
+    const mockConfig = { telegram_bot_token_set: true, telegram_allowed_chat_id: '*' };
     vi.mocked(api.getChannelConfig).mockResolvedValue(mockConfig as never);
 
     const { result } = renderHook(() => useChannelConfig(), { wrapper: createWrapper() });

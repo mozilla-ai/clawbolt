@@ -966,15 +966,15 @@
             "type": "boolean",
             "title": "Telegram Bot Token Set"
           },
-          "telegram_allowed_chat_ids": {
+          "telegram_allowed_chat_id": {
             "type": "string",
-            "title": "Telegram Allowed Chat Ids"
+            "title": "Telegram Allowed Chat Id"
           }
         },
         "type": "object",
         "required": [
           "telegram_bot_token_set",
-          "telegram_allowed_chat_ids"
+          "telegram_allowed_chat_id"
         ],
         "title": "ChannelConfigResponse"
       },
@@ -991,7 +991,7 @@
             ],
             "title": "Telegram Bot Token"
           },
-          "telegram_allowed_chat_ids": {
+          "telegram_allowed_chat_id": {
             "anyOf": [
               {
                 "type": "string"
@@ -1000,7 +1000,7 @@
                 "type": "null"
               }
             ],
-            "title": "Telegram Allowed Chat Ids"
+            "title": "Telegram Allowed Chat Id"
           }
         },
         "type": "object",

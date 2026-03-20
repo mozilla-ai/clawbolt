@@ -82,7 +82,7 @@ async def update_profile(
 def _build_channel_config_response() -> ChannelConfigResponse:
     return ChannelConfigResponse(
         telegram_bot_token_set=bool(settings.telegram_bot_token),
-        telegram_allowed_chat_ids=settings.telegram_allowed_chat_ids,
+        telegram_allowed_chat_id=settings.telegram_allowed_chat_id,
     )
 
 
@@ -103,6 +103,14 @@ async def update_channel_config(
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Enforce single Telegram chat ID (no comma-separated lists).
+    chat_id = updates.get("telegram_allowed_chat_id", "")
+    if chat_id and chat_id != "*" and "," in chat_id:
+        raise HTTPException(
+            status_code=422,
+            detail="Only a single Telegram user ID is allowed. Remove commas.",
+        )
 
     try:
         update_settings(updates)

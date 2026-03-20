@@ -19,7 +19,7 @@ def test_warns_when_allowlist_empty(caplog: "pytest.LogCaptureFixture") -> None:
     ):
         mock_settings.telegram_bot_token = "fake-bot-token"
         mock_settings.telegram_webhook_secret = "secret"
-        mock_settings.telegram_allowed_chat_ids = ""
+        mock_settings.telegram_allowed_chat_id = ""
         mock_settings.cors_origins = "*"
 
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
@@ -31,7 +31,7 @@ def test_warns_when_allowlist_empty(caplog: "pytest.LogCaptureFixture") -> None:
 
 
 def test_no_warning_when_chat_ids_set(caplog: "pytest.LogCaptureFixture") -> None:
-    """No allowlist warning when TELEGRAM_ALLOWED_CHAT_IDS is configured."""
+    """No allowlist warning when TELEGRAM_ALLOWED_CHAT_ID is configured."""
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
@@ -40,7 +40,7 @@ def test_no_warning_when_chat_ids_set(caplog: "pytest.LogCaptureFixture") -> Non
     ):
         mock_settings.telegram_bot_token = "fake-bot-token"
         mock_settings.telegram_webhook_secret = "secret"
-        mock_settings.telegram_allowed_chat_ids = "12345"
+        mock_settings.telegram_allowed_chat_id = "12345"
         mock_settings.cors_origins = "*"
 
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
@@ -63,7 +63,7 @@ def test_no_allowlist_warning_when_bot_token_not_set(
     ):
         mock_settings.telegram_bot_token = ""
         mock_settings.telegram_webhook_secret = ""
-        mock_settings.telegram_allowed_chat_ids = ""
+        mock_settings.telegram_allowed_chat_id = ""
         mock_settings.cors_origins = "*"
 
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
