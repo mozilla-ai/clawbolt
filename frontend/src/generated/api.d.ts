@@ -797,6 +797,8 @@ export interface components {
             heartbeat_opt_in?: boolean | null;
             /** Heartbeat Frequency */
             heartbeat_frequency?: string | null;
+            /** Onboarding Complete */
+            onboarding_complete?: boolean | null;
         };
         /** ValidationError */
         ValidationError: {
