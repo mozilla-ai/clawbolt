@@ -133,7 +133,7 @@ export default function AppShell() {
         <div className="p-4 border-b border-border">
           <div className="flex items-center gap-2">
             <img src="/clawbolt.png" alt="" className="w-7 h-7" />
-            <h1 className="text-lg font-bold text-foreground">Clawbolt</h1>
+            <h1 className="text-lg font-bold font-display text-foreground">Clawbolt</h1>
           </div>
         </div>
 
@@ -166,7 +166,6 @@ export default function AppShell() {
             <Link
               href={getReportIssueUrl()}
               isExternal
-              showAnchorIcon
               size="sm"
               className="text-xs text-muted-foreground can-hover:hover:text-foreground transition-all duration-150"
             >
@@ -175,7 +174,6 @@ export default function AppShell() {
             <Link
               href={getFeatureRequestUrl()}
               isExternal
-              showAnchorIcon
               size="sm"
               className="text-xs text-muted-foreground can-hover:hover:text-foreground transition-all duration-150"
             >
@@ -212,7 +210,7 @@ export default function AppShell() {
             </Button>
           </Tooltip>
           <img src="/clawbolt.png" alt="" className="w-6 h-6" />
-          <h1 className="text-lg font-bold text-foreground">Clawbolt</h1>
+          <h1 className="text-lg font-bold font-display text-foreground">Clawbolt</h1>
         </header>
 
         <main className="flex-1 overflow-y-auto p-4 sm:p-6 max-w-5xl w-full mx-auto">

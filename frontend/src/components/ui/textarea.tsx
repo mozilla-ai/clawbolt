@@ -31,7 +31,10 @@ const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(
           }
         }}
         className={className}
-        classNames={classNames}
+        classNames={{
+          inputWrapper: 'bg-card',
+          ...classNames,
+        }}
       />
     );
   },

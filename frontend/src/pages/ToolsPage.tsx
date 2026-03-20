@@ -94,7 +94,7 @@ export default function ToolsPage() {
   if (isPending && !data) {
     return (
       <div>
-        <h2 className="text-xl font-semibold mb-6">Tools</h2>
+        <h2 className="text-xl font-semibold font-display mb-6">Tools</h2>
         <Card>
           <p className="text-sm text-muted-foreground">Loading tool configuration...</p>
         </Card>
@@ -169,7 +169,7 @@ export default function ToolsPage() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-6">Tools</h2>
+      <h2 className="text-xl font-semibold font-display mb-6">Tools</h2>
       <p className="text-sm text-muted-foreground mb-4">
         Configure which tool groups are available to your AI assistant.
         Expand a group to enable or disable individual tools.

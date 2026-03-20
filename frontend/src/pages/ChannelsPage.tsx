@@ -16,7 +16,7 @@ export default function ChannelsPage() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-6">Channels</h2>
+      <h2 className="text-xl font-semibold font-display mb-6">Channels</h2>
       <ChannelsContent profile={profile} />
     </div>
   );

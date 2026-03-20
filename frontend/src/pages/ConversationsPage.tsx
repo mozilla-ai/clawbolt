@@ -91,7 +91,7 @@ function SessionListView() {
   return (
     <div>
       <div className="mb-6">
-        <h2 className="text-xl font-semibold">Conversations</h2>
+        <h2 className="text-xl font-semibold font-display">Conversations</h2>
         <p className="text-sm text-muted-foreground mt-1">
           Review past conversations with your AI assistant.
         </p>
@@ -186,7 +186,7 @@ function SessionDetailView({ sessionId }: { sessionId: string }) {
       ) : session ? (
         <>
           <div className="mb-4 flex items-center gap-3">
-            <h2 className="text-xl font-semibold">Conversation</h2>
+            <h2 className="text-xl font-semibold font-display">Conversation</h2>
             {session.channel && <Badge variant="outline">{channelLabel(session.channel)}</Badge>}
             {session.is_active && <Badge>Active</Badge>}
             <Button

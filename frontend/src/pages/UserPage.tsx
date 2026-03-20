@@ -44,7 +44,7 @@ export default function UserPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-semibold">User</h2>
+          <h2 className="text-xl font-semibold font-display">User</h2>
           <p className="text-sm text-muted-foreground mt-1">
             Updated over time as your assistant learns about you.
           </p>

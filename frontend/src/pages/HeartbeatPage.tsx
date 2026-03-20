@@ -44,7 +44,7 @@ export default function HeartbeatPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-semibold">Heartbeat</h2>
+          <h2 className="text-xl font-semibold font-display">Heartbeat</h2>
           <p className="text-sm text-muted-foreground mt-1">
             Your assistant reads this to stay aware of your priorities.
           </p>
