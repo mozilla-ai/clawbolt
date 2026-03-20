@@ -28,33 +28,23 @@ You can customize your bot later with BotFather commands: `/setdescription` (bio
 
 ## 2. Configure access control
 
-Clawbolt rejects all incoming messages by default. Before starting the server, configure who is allowed to message the bot.
+Clawbolt rejects all incoming messages by default. Before starting the server, configure your Telegram user ID.
 
-### Allow by username
+### Set your chat ID
 
-The simplest option. Add Telegram usernames (without the `@`) to your `.env`:
-
-```bash
-TELEGRAM_ALLOWED_USERNAMES=johndoe,janedoe
-```
-
-### Allow by chat ID
-
-Chat IDs are numeric and never change, so they are more reliable than usernames. Add them to your `.env`:
+Chat IDs are numeric and never change. Each user can only set a single Telegram user ID. Add yours to your `.env`:
 
 ```bash
-TELEGRAM_ALLOWED_CHAT_IDS=123456789,987654321
+TELEGRAM_ALLOWED_CHAT_ID=123456789
 ```
 
 ### Allow everyone
 
-To allow any Telegram user to message the bot:
+To allow any Telegram user to message the bot (useful for development):
 
 ```bash
-TELEGRAM_ALLOWED_CHAT_IDS=*
+TELEGRAM_ALLOWED_CHAT_ID=*
 ```
-
-If both `TELEGRAM_ALLOWED_CHAT_IDS` and `TELEGRAM_ALLOWED_USERNAMES` are set, a message is allowed when **either** matches.
 
 ### Finding your chat ID
 
@@ -120,7 +110,7 @@ Then send a message to your bot on Telegram. If Clawbolt is running and configur
 
 **Bot does not respond to messages**
 
-- Check the server logs for allowlist rejections. If you see "not in allowlist, ignoring", update `TELEGRAM_ALLOWED_CHAT_IDS` or `TELEGRAM_ALLOWED_USERNAMES` in your `.env`.
+- Check the server logs for allowlist rejections. If you see "not in allowlist, ignoring", update `TELEGRAM_ALLOWED_CHAT_ID` in your `.env`.
 - Verify the webhook is registered: run the `getWebhookInfo` curl command above.
 - Make sure the server is running and reachable at the tunnel URL.
 

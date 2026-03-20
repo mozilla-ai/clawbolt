@@ -128,12 +128,12 @@ def test_webhook_survives_bus_publish_failure(client: TestClient) -> None:
 
 
 def test_allowlist_rejects_unlisted_chat_id(client: TestClient) -> None:
-    """Messages from a chat_id not in the allowlist should be silently ignored."""
+    """Messages from a chat_id not matching the configured ID should be ignored."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "111,222",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_id",
+            "111",
         ),
     ):
         payload = make_telegram_update_payload(chat_id=999, text="Hi")
@@ -143,13 +143,13 @@ def test_allowlist_rejects_unlisted_chat_id(client: TestClient) -> None:
     mock_pub.assert_not_called()
 
 
-def test_allowlist_accepts_listed_chat_id(client: TestClient) -> None:
-    """Messages from a chat_id on the allowlist should be published to bus."""
+def test_allowlist_accepts_matching_chat_id(client: TestClient) -> None:
+    """Messages from the configured chat ID should be published to bus."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "111,123456789,333",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_id",
+            "123456789",
         ),
     ):
         payload = make_telegram_update_payload(chat_id=123456789, text="Hello")
@@ -164,7 +164,7 @@ def test_allowlist_empty_denies_all(client: TestClient) -> None:
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_id",
             "",
         ),
     ):
@@ -176,11 +176,11 @@ def test_allowlist_empty_denies_all(client: TestClient) -> None:
 
 
 def test_allowlist_wildcard_allows_all(client: TestClient) -> None:
-    """Setting TELEGRAM_ALLOWED_CHAT_IDS to '*' should allow all chat IDs."""
+    """Setting TELEGRAM_ALLOWED_CHAT_ID to '*' should allow all chat IDs."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
+            "backend.app.channels.telegram.settings.telegram_allowed_chat_id",
             "*",
         ),
     ):

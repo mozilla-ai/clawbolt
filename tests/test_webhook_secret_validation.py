@@ -68,7 +68,7 @@ def _make_client(
                 bot_token,
             ),
             patch(
-                "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
+                "backend.app.channels.telegram.settings.telegram_allowed_chat_id",
                 "*",
             ),
             patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),

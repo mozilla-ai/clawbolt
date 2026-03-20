@@ -104,16 +104,16 @@ def test_update_channel_config_null_token_is_ignored(
     client: TestClient, _set_bot_token: None
 ) -> None:
     """PUT with null token should be ignored, preserving the existing value."""
-    original_ids = settings.telegram_allowed_chat_ids
+    original_id = settings.telegram_allowed_chat_id
     with patch("backend.app.routers.user_profile.save_persistent_config"):
         resp = client.put(
             "/api/user/channels/config",
-            json={"telegram_bot_token": None, "telegram_allowed_chat_ids": "111"},
+            json={"telegram_bot_token": None, "telegram_allowed_chat_id": "111"},
         )
     assert resp.status_code == 200
     assert resp.json()["telegram_bot_token_set"] is True
     assert settings.telegram_bot_token == "test-token-123"
-    settings.telegram_allowed_chat_ids = original_ids
+    settings.telegram_allowed_chat_id = original_id
 
 
 def test_update_channel_config_null_only_returns_400(
@@ -141,35 +141,48 @@ def test_update_channel_config_empty_string_clears_token(
     assert settings.telegram_bot_token == ""
 
 
-def test_get_channel_config_includes_allowed_chat_ids(
+def test_get_channel_config_includes_allowed_chat_id(
     client: TestClient,
 ) -> None:
-    """GET response includes telegram_allowed_chat_ids field."""
-    original = settings.telegram_allowed_chat_ids
-    settings.telegram_allowed_chat_ids = "111,222,333"
+    """GET response includes telegram_allowed_chat_id field."""
+    original = settings.telegram_allowed_chat_id
+    settings.telegram_allowed_chat_id = "111222333"
     try:
         resp = client.get("/api/user/channels/config")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["telegram_allowed_chat_ids"] == "111,222,333"
+        assert data["telegram_allowed_chat_id"] == "111222333"
     finally:
-        settings.telegram_allowed_chat_ids = original
+        settings.telegram_allowed_chat_id = original
 
 
-def test_update_channel_config_allowed_chat_ids(
+def test_update_channel_config_allowed_chat_id(
     client: TestClient,
 ) -> None:
-    """PUT updates telegram_allowed_chat_ids in settings."""
-    original = settings.telegram_allowed_chat_ids
+    """PUT updates telegram_allowed_chat_id in settings."""
+    original = settings.telegram_allowed_chat_id
     with patch("backend.app.routers.user_profile.save_persistent_config"):
         try:
             resp = client.put(
                 "/api/user/channels/config",
-                json={"telegram_allowed_chat_ids": "444,555"},
+                json={"telegram_allowed_chat_id": "444555"},
             )
             assert resp.status_code == 200
             data = resp.json()
-            assert data["telegram_allowed_chat_ids"] == "444,555"
-            assert settings.telegram_allowed_chat_ids == "444,555"
+            assert data["telegram_allowed_chat_id"] == "444555"
+            assert settings.telegram_allowed_chat_id == "444555"
         finally:
-            settings.telegram_allowed_chat_ids = original
+            settings.telegram_allowed_chat_id = original
+
+
+def test_update_channel_config_rejects_multiple_chat_ids(
+    client: TestClient,
+) -> None:
+    """PUT rejects comma-separated chat IDs (only a single ID is allowed)."""
+    with patch("backend.app.routers.user_profile.save_persistent_config"):
+        resp = client.put(
+            "/api/user/channels/config",
+            json={"telegram_allowed_chat_id": "111,222"},
+        )
+    assert resp.status_code == 422
+    assert "single" in resp.json()["detail"].lower()

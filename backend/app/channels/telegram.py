@@ -320,19 +320,19 @@ class TelegramChannel(BaseChannel):
     def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return ``True`` if the sender passes the Telegram allowlist gate.
 
-        The allowlist defaults to empty, which rejects all senders (deny by default).
-        Set to ``"*"`` to explicitly allow everyone through.
+        Only a single chat ID is supported per user. The setting defaults to
+        empty, which rejects all senders (deny by default). Set to ``"*"`` to
+        explicitly allow everyone through.
         """
-        ids_raw = settings.telegram_allowed_chat_ids.strip()
+        allowed = settings.telegram_allowed_chat_id.strip()
 
-        if not ids_raw:
+        if not allowed:
             return False
 
-        if ids_raw == "*":
+        if allowed == "*":
             return True
 
-        allowed_ids = {cid.strip() for cid in ids_raw.split(",")}
-        return sender_id in allowed_ids
+        return sender_id == allowed
 
     @staticmethod
     def parse_update(update: TelegramUpdate) -> InboundMessage | None:

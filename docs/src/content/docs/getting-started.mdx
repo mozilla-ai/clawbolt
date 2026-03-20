@@ -29,7 +29,7 @@ Edit `.env` and fill in the required credentials. See [Configuration](../configu
 At minimum you need:
 - `TELEGRAM_BOT_TOKEN` -- your Telegram bot token
 - An LLM API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
-- `TELEGRAM_ALLOWED_CHAT_IDS` or `TELEGRAM_ALLOWED_USERNAMES` -- controls who can message the bot. Set to `*` to allow everyone, or a comma-separated list of IDs/usernames. **Messages are rejected by default when both are empty.**
+- `TELEGRAM_ALLOWED_CHAT_ID` -- your numeric Telegram user ID. Set to `*` to allow everyone. **Messages are rejected by default when empty.**
 - `VISION_MODEL` -- the model used for image analysis (defaults to `LLM_MODEL` if not set)
 
 ## 3. Start the services
