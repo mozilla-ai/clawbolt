@@ -60,7 +60,9 @@ export default function ChatPage() {
   const [searchParams, setSearchParams] = useSearchParams();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
+  const [pendingCount, setPendingCount] = useState(0);
+  const pendingRef = useRef(0);
+  const sending = pendingCount > 0;
   const [activeSessionId, setActiveSessionId] = useState<string | null>(
     searchParams.get('session'),
   );
@@ -204,7 +206,7 @@ export default function ChatPage() {
   const handleSubmit = async (e: FormEvent) => {
     e.preventDefault();
     const text = input.trim();
-    if ((!text && selectedFiles.length === 0) || sending) return;
+    if (!text && selectedFiles.length === 0) return;
 
     // Build attachments for display
     const attachments: FileAttachment[] = selectedFiles.map((f) => ({
@@ -223,15 +225,20 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, userMsg]);
 
     const filesToSend = selectedFiles.length > 0 ? [...selectedFiles] : undefined;
+    // Capture session state at submit time so concurrent sends use correct values
+    const submitSessionId = activeSessionId;
+    const submitForceNew = forceNewRef.current;
+    if (forceNewRef.current) forceNewRef.current = false;
     setInput('');
     setSelectedFiles([]);
-    setSending(true);
+    pendingRef.current++;
+    setPendingCount((c) => c + 1);
 
     try {
       const toolNames: string[] = [];
       const res = await api.sendChatMessage(
         text,
-        activeSessionId ?? undefined,
+        submitSessionId ?? undefined,
         filesToSend,
         (event) => {
           if (!mountedRef.current) return;
@@ -244,7 +251,16 @@ export default function ChatPage() {
             setApprovalPrompt(event.content ?? null);
           }
         },
-        forceNewRef.current,
+        submitForceNew,
+        (accepted) => {
+          if (!mountedRef.current) return;
+          // Capture session ID immediately so follow-up messages use it
+          if (!submitSessionId && accepted.session_id) {
+            setActiveSessionId(accepted.session_id);
+            setSearchParams({ session: accepted.session_id }, { replace: true });
+            saveLastSession(accepted.session_id);
+          }
+        },
       );
       if (!mountedRef.current) return;
       const assistantMsg: ChatMessage = {
@@ -258,12 +274,6 @@ export default function ChatPage() {
       };
       setMessages((prev) => [...prev, assistantMsg]);
 
-      if (!activeSessionId) {
-        setActiveSessionId(res.session_id);
-        setSearchParams({ session: res.session_id }, { replace: true });
-        saveLastSession(res.session_id);
-        forceNewRef.current = false;
-      }
       // Refresh session data so full tool interactions from the DB replace
       // the partial names collected from SSE events
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
@@ -276,20 +286,17 @@ export default function ChatPage() {
       toast.error(msg);
     } finally {
       if (!mountedRef.current) return;
-      setSending(false);
-      setCurrentTool(null);
-      setApprovalPrompt(null);
-      // Re-focus input on desktop only; on mobile, programmatic focus
-      // triggers iOS Safari auto-zoom and forces the keyboard open.
-      // Deferred via requestAnimationFrame so React flushes the
-      // setSending(false) render before we focus the (now enabled) textarea.
-      if (window.matchMedia('(min-width: 640px)').matches) {
-        requestAnimationFrame(() => inputRef.current?.focus());
+      pendingRef.current--;
+      setPendingCount((c) => c - 1);
+      // Only clear indicators when all pending requests are done
+      if (pendingRef.current === 0) {
+        setCurrentTool(null);
+        setApprovalPrompt(null);
       }
     }
   };
 
-  const canSend = !sending && (input.trim().length > 0 || selectedFiles.length > 0);
+  const canSend = input.trim().length > 0 || selectedFiles.length > 0;
   const activeSession = sessions.find((s) => s.id === activeSessionId);
 
   return (
@@ -514,15 +521,14 @@ export default function ChatPage() {
                 el.style.height = Math.min(el.scrollHeight, 160) + 'px';
               }}
               onKeyDown={(e) => {
-                if (e.key === 'Enter' && !e.shiftKey && !sending) {
+                if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
                   if (canSend) handleSubmit(e);
                 }
               }}
               placeholder="Type a message..."
-              disabled={sending}
               rows={1}
-              className="w-full px-2 py-1.5 text-base sm:text-sm bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none resize-none disabled:opacity-50"
+              className="w-full px-2 py-1.5 text-base sm:text-sm bg-transparent text-foreground placeholder:text-muted-foreground focus:outline-none resize-none"
               autoComplete="off"
               style={{ height: 'auto' }}
             />
@@ -568,7 +574,6 @@ export default function ChatPage() {
                   variant="ghost"
                   size="icon"
                   onClick={() => fileInputRef.current?.click()}
-                  disabled={sending}
                   className="text-muted-foreground hover:text-foreground"
                   aria-label="Attach files"
                 >
