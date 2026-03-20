@@ -1,4 +1,4 @@
-"""Test that a warning is logged when Telegram allowlists are empty."""
+"""Test that a warning is logged when the Telegram allowlist is empty."""
 
 import logging
 from unittest.mock import AsyncMock, patch
@@ -9,8 +9,8 @@ from fastapi.testclient import TestClient
 from backend.app.main import app
 
 
-def test_warns_when_both_allowlists_empty(caplog: "pytest.LogCaptureFixture") -> None:
-    """Startup should warn when bot token is set but both allowlists are empty."""
+def test_warns_when_allowlist_empty(caplog: "pytest.LogCaptureFixture") -> None:
+    """Startup should warn when bot token is set but allowlist is empty."""
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.main.settings") as mock_settings,
@@ -20,7 +20,6 @@ def test_warns_when_both_allowlists_empty(caplog: "pytest.LogCaptureFixture") ->
         mock_settings.telegram_bot_token = "fake-bot-token"
         mock_settings.telegram_webhook_secret = "secret"
         mock_settings.telegram_allowed_chat_ids = ""
-        mock_settings.telegram_allowed_usernames = ""
         mock_settings.cors_origins = "*"
 
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
@@ -42,29 +41,6 @@ def test_no_warning_when_chat_ids_set(caplog: "pytest.LogCaptureFixture") -> Non
         mock_settings.telegram_bot_token = "fake-bot-token"
         mock_settings.telegram_webhook_secret = "secret"
         mock_settings.telegram_allowed_chat_ids = "12345"
-        mock_settings.telegram_allowed_usernames = ""
-        mock_settings.cors_origins = "*"
-
-        with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
-            pass
-
-    assert not any("All messages will be rejected" in msg for msg in caplog.messages)
-
-    app.dependency_overrides.clear()
-
-
-def test_no_warning_when_usernames_set(caplog: "pytest.LogCaptureFixture") -> None:
-    """No allowlist warning when TELEGRAM_ALLOWED_USERNAMES is configured."""
-    with (
-        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
-        patch("backend.app.main.settings") as mock_settings,
-        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
-        patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),
-    ):
-        mock_settings.telegram_bot_token = "fake-bot-token"
-        mock_settings.telegram_webhook_secret = "secret"
-        mock_settings.telegram_allowed_chat_ids = ""
-        mock_settings.telegram_allowed_usernames = "contractor1"
         mock_settings.cors_origins = "*"
 
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):
@@ -88,7 +64,6 @@ def test_no_allowlist_warning_when_bot_token_not_set(
         mock_settings.telegram_bot_token = ""
         mock_settings.telegram_webhook_secret = ""
         mock_settings.telegram_allowed_chat_ids = ""
-        mock_settings.telegram_allowed_usernames = ""
         mock_settings.cors_origins = "*"
 
         with caplog.at_level(logging.WARNING, logger="backend.app.main"), TestClient(app):

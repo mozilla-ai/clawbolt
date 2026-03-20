@@ -71,10 +71,6 @@ def _make_client(
                 "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
                 "*",
             ),
-            patch(
-                "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-                "",
-            ),
             patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
             TestClient(app) as c,
         ):
