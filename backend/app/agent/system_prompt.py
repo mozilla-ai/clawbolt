@@ -134,10 +134,27 @@ def build_date_section(user: User) -> str:
 
 
 def build_local_datetime_section(user: User) -> str:
-    """Build a human-readable local datetime for the heartbeat evaluator."""
+    """Build a human-readable local datetime with explicit timezone context.
+
+    Includes the IANA timezone name alongside the abbreviation so the LLM
+    unambiguously knows which timezone the time is in, and a directive to
+    always use this timezone when discussing times with the user.
+    """
     now = datetime.datetime.now(datetime.UTC)
     local = to_local_time(now, user.timezone)
-    return local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
+    formatted = local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
+    if user.timezone:
+        return (
+            f"{formatted} ({user.timezone})\n"
+            "This is the user's local time. Always use this timezone when "
+            "discussing times, scheduling, or referring to deadlines."
+        )
+    return (
+        f"{formatted}\n"
+        "No timezone has been set for this user. This time is in UTC. "
+        "If the user mentions their location or timezone, update USER.md "
+        "with their timezone so future times are shown in their local time."
+    )
 
 
 def build_cross_session_context(

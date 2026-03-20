@@ -326,6 +326,19 @@ class TestBuildLocalDatetimeSection:
         assert "2025-06-15" in result
 
     @patch("backend.app.agent.system_prompt.datetime")
+    def test_includes_iana_timezone_name(self, mock_dt: MagicMock) -> None:
+        """Should include IANA timezone name for unambiguous identification."""
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 15, 17, 30, tzinfo=datetime.UTC
+        )
+        user = MagicMock()
+        user.timezone = "America/New_York"
+        result = build_local_datetime_section(user)
+        assert "(America/New_York)" in result
+        assert "user's local time" in result
+
+    @patch("backend.app.agent.system_prompt.datetime")
     def test_utc_fallback_when_no_timezone(self, mock_dt: MagicMock) -> None:
         mock_dt.UTC = datetime.UTC
         mock_dt.datetime.now.return_value = datetime.datetime(
@@ -336,6 +349,19 @@ class TestBuildLocalDatetimeSection:
         result = build_local_datetime_section(user)
         assert "05:30 PM" in result
         assert "Sunday" in result
+
+    @patch("backend.app.agent.system_prompt.datetime")
+    def test_utc_fallback_includes_guidance(self, mock_dt: MagicMock) -> None:
+        """When no timezone is set, should tell the agent to ask for it."""
+        mock_dt.UTC = datetime.UTC
+        mock_dt.datetime.now.return_value = datetime.datetime(
+            2025, 6, 15, 17, 30, tzinfo=datetime.UTC
+        )
+        user = MagicMock()
+        user.timezone = ""
+        result = build_local_datetime_section(user)
+        assert "UTC" in result
+        assert "No timezone has been set" in result
 
 
 class TestAgentSystemPromptIncludesDate:
