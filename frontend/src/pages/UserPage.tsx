@@ -15,8 +15,8 @@ export default function UserPage() {
   }, [reloadProfile]);
 
   const handleSave = useCallback(
-    (text: string) => {
-      updateProfile.mutate(
+    async (text: string) => {
+      await updateProfile.mutateAsync(
         { user_text: text },
         {
           onSuccess: () => toast.success('User info updated'),

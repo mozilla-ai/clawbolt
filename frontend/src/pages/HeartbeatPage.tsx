@@ -15,8 +15,8 @@ export default function HeartbeatPage() {
   }, [reloadProfile]);
 
   const handleSave = useCallback(
-    (text: string) => {
-      updateProfile.mutate(
+    async (text: string) => {
+      await updateProfile.mutateAsync(
         { heartbeat_text: text },
         {
           onSuccess: () => toast.success('Heartbeat updated'),

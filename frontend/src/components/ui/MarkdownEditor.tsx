@@ -5,7 +5,7 @@ import Button from '@/components/ui/button';
 
 interface MarkdownEditorProps {
   value: string;
-  onSave: (value: string) => void;
+  onSave: (value: string) => Promise<void> | void;
   isSaving: boolean;
   placeholder?: string;
   emptyMessage?: string;
@@ -35,9 +35,14 @@ export default function MarkdownEditor({
     setEditing(false);
   }, [value]);
 
-  const handleSave = useCallback(() => {
-    onSave(draft);
-    setEditing(false);
+  const handleSave = useCallback(async () => {
+    try {
+      await onSave(draft);
+      setEditing(false);
+    } catch {
+      // Stay in edit mode so the user doesn't lose their draft.
+      // The caller is responsible for showing error feedback.
+    }
   }, [draft, onSave]);
 
   if (editing) {

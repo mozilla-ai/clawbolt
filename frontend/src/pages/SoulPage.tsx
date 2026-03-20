@@ -15,8 +15,8 @@ export default function SoulPage() {
   }, [reloadProfile]);
 
   const handleSave = useCallback(
-    (text: string) => {
-      updateProfile.mutate(
+    async (text: string) => {
+      await updateProfile.mutateAsync(
         { soul_text: text },
         {
           onSuccess: () => toast.success('Soul settings updated'),
