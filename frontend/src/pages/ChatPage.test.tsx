@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { renderWithRouter } from '@/test/test-utils';
 import ChatPage from './ChatPage';
 
@@ -126,5 +127,41 @@ describe('ChatPage tool interactions', () => {
 
     // No "Tool:" labels should appear
     expect(screen.queryByText('Tool:')).not.toBeInTheDocument();
+  });
+});
+
+describe('ChatPage concurrent messaging', () => {
+  it('keeps input and send button enabled while assistant is responding', async () => {
+    // sendChatMessage never resolves, simulating a pending response
+    mockApi.sendChatMessage.mockReturnValue(new Promise(() => {}));
+
+    renderWithRouter(<ChatPage />);
+
+    const textarea = screen.getByPlaceholderText('Type a message...');
+    const user = userEvent.setup();
+
+    // Type and send a message
+    await user.type(textarea, 'Hello');
+    await user.keyboard('{Enter}');
+
+    // Wait for the user message to appear in the chat
+    await waitFor(() => {
+      expect(screen.getByText('Hello')).toBeInTheDocument();
+    });
+
+    // Input should NOT be disabled while the assistant is responding
+    expect(textarea).not.toBeDisabled();
+
+    // User should be able to type a new message while waiting
+    await user.type(textarea, 'Follow up');
+    expect(textarea).toHaveValue('Follow up');
+
+    // Send button should be enabled since there is text in the input
+    const sendButton = screen.getByLabelText('Send message');
+    expect(sendButton).not.toBeDisabled();
+
+    // Attach files button should also remain enabled
+    const attachButton = screen.getByLabelText('Attach files');
+    expect(attachButton).not.toBeDisabled();
   });
 });
