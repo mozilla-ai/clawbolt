@@ -263,16 +263,20 @@ export default function ChatPage() {
         },
       );
       if (!mountedRef.current) return;
-      const assistantMsg: ChatMessage = {
-        id: nextId.current++,
-        role: 'assistant',
-        body: res.reply,
-        timestamp: new Date(),
-        toolInteractions: toolNames.length > 0
-          ? toolNames.map((name) => ({ name }))
-          : undefined,
-      };
-      setMessages((prev) => [...prev, assistantMsg]);
+      // Skip adding an assistant message when the reply is empty
+      // (the agent chose not to respond, e.g. user asked for silence).
+      if (res.reply) {
+        const assistantMsg: ChatMessage = {
+          id: nextId.current++,
+          role: 'assistant',
+          body: res.reply,
+          timestamp: new Date(),
+          toolInteractions: toolNames.length > 0
+            ? toolNames.map((name) => ({ name }))
+            : undefined,
+        };
+        setMessages((prev) => [...prev, assistantMsg]);
+      }
 
       // Refresh session data so full tool interactions from the DB replace
       // the partial names collected from SSE events

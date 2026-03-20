@@ -457,6 +457,16 @@ async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
                 request_id=ctx.request_id,
             )
             await message_bus.publish_outbound(outbound)
+        elif not sent_reply and not ctx.response.reply_text and ctx.request_id:
+            # Resolve SSE future with empty content so webchat clients
+            # know processing is complete without rendering a message.
+            outbound = OutboundMessage(
+                channel=ctx.channel,
+                chat_id=ctx.to_address,
+                content="",
+                request_id=ctx.request_id,
+            )
+            await message_bus.publish_outbound(outbound)
     return ctx
 
 

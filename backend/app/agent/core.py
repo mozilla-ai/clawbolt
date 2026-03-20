@@ -797,8 +797,10 @@ class ClawboltAgent:
                     messages.append(
                         UserMessage(
                             content=(
-                                "[System: you called tools but did not reply. "
-                                "Please respond to the user.]"
+                                "[System: you called tools but did not send a text reply. "
+                                "If you intentionally chose not to respond "
+                                "(e.g. the user asked for silence), return empty text. "
+                                "Otherwise, please reply to the user.]"
                             )
                         )
                     )
