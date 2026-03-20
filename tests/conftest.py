@@ -198,7 +198,7 @@ def client(test_user: User) -> Generator[TestClient]:
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         # Default allowlist to "*" (allow all) so tests are not blocked.
         # Individual allowlist tests override these values.
-        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_ids", "*"),
+        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_id", "*"),
         # Clear bot token so auto-derived webhook secret is empty for tests that
         # don't send a secret header
         patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),

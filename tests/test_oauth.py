@@ -80,7 +80,7 @@ def client(test_user: User) -> Generator[TestClient]:
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
-        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_ids", "*"),
+        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_id", "*"),
         patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
         patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
         TestClient(app) as c,

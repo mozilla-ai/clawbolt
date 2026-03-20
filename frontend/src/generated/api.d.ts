@@ -481,14 +481,14 @@ export interface components {
             /** Telegram Bot Token Set */
             telegram_bot_token_set: boolean;
             /** Telegram Allowed Chat Ids */
-            telegram_allowed_chat_ids: string;
+            telegram_allowed_chat_id: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
             /** Telegram Bot Token */
             telegram_bot_token?: string | null;
             /** Telegram Allowed Chat Ids */
-            telegram_allowed_chat_ids?: string | null;
+            telegram_allowed_chat_id?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {

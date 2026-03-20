@@ -105,12 +105,12 @@ class SessionDetailResponse(BaseModel):
 
 class ChannelConfigResponse(BaseModel):
     telegram_bot_token_set: bool
-    telegram_allowed_chat_ids: str
+    telegram_allowed_chat_id: str
 
 
 class ChannelConfigUpdate(BaseModel):
     telegram_bot_token: str | None = None
-    telegram_allowed_chat_ids: str | None = None
+    telegram_allowed_chat_id: str | None = None
 
 
 # ---------------------------------------------------------------------------

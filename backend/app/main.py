@@ -154,11 +154,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         else:
             logger.info("Webhook secret: auto-derived from bot token")
 
-    if settings.telegram_bot_token and not settings.telegram_allowed_chat_ids:
+    if settings.telegram_bot_token and not settings.telegram_allowed_chat_id:
         logger.warning(
-            "No Telegram allowlist configured (TELEGRAM_ALLOWED_CHAT_IDS). "
+            "No Telegram user ID configured (TELEGRAM_ALLOWED_CHAT_ID). "
             "All messages will be rejected. "
-            'Set to "*" to allow all users, or provide a comma-separated list of chat IDs.'
+            'Set to "*" to allow all users, or provide a single numeric chat ID.'
         )
 
     # Start all registered channels concurrently.

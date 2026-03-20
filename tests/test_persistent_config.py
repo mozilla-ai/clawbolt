@@ -60,7 +60,7 @@ def test_load_config_applies_values(config_path: Path) -> None:
         json.dumps(
             {
                 "telegram_bot_token": "saved-token",
-                "telegram_allowed_chat_ids": "111,222",
+                "telegram_allowed_chat_id": "111222",
             }
         )
     )
@@ -69,7 +69,7 @@ def test_load_config_applies_values(config_path: Path) -> None:
 
     assert result["telegram_bot_token"] == "saved-token"
     assert settings.telegram_bot_token == "saved-token"
-    assert settings.telegram_allowed_chat_ids == "111,222"
+    assert settings.telegram_allowed_chat_id == "111222"
 
 
 def test_load_config_env_var_takes_precedence(config_path: Path) -> None:
@@ -118,11 +118,11 @@ def test_save_merges_with_existing(config_path: Path) -> None:
     """save_persistent_config merges new keys into existing config."""
     config_path.write_text(json.dumps({"telegram_bot_token": "existing-tok"}))
 
-    save_persistent_config({"telegram_allowed_chat_ids": "111"}, path=config_path)
+    save_persistent_config({"telegram_allowed_chat_id": "111"}, path=config_path)
 
     data = json.loads(config_path.read_text())
     assert data["telegram_bot_token"] == "existing-tok"
-    assert data["telegram_allowed_chat_ids"] == "111"
+    assert data["telegram_allowed_chat_id"] == "111"
 
 
 def test_save_overwrites_existing_key(config_path: Path) -> None:
@@ -160,7 +160,7 @@ def test_load_all_persistable_settings(config_path: Path) -> None:
     """All four persistable settings can be loaded from config.json."""
     all_values = {
         "telegram_bot_token": "bot-token-value",
-        "telegram_allowed_chat_ids": "111,222",
+        "telegram_allowed_chat_id": "111222",
         "telegram_webhook_secret": "secret-value",
     }
     config_path.write_text(json.dumps(all_values))
@@ -174,18 +174,18 @@ def test_load_all_persistable_settings(config_path: Path) -> None:
 def test_round_trip_save_then_load(config_path: Path) -> None:
     """Values saved with save_persistent_config can be loaded back."""
     save_persistent_config(
-        {"telegram_bot_token": "rt-token", "telegram_allowed_chat_ids": "111"},
+        {"telegram_bot_token": "rt-token", "telegram_allowed_chat_id": "111"},
         path=config_path,
     )
 
     # Reset settings to defaults
     settings.telegram_bot_token = ""
-    settings.telegram_allowed_chat_ids = ""
+    settings.telegram_allowed_chat_id = ""
 
     load_persistent_config(path=config_path)
 
     assert settings.telegram_bot_token == "rt-token"
-    assert settings.telegram_allowed_chat_ids == "111"
+    assert settings.telegram_allowed_chat_id == "111"
 
 
 # ---------------------------------------------------------------------------
@@ -222,8 +222,8 @@ def test_update_settings_multiple_keys() -> None:
     update_settings(
         {
             "telegram_bot_token": "multi-tok",
-            "telegram_allowed_chat_ids": "111,222",
+            "telegram_allowed_chat_id": "111222",
         }
     )
     assert settings.telegram_bot_token == "multi-tok"
-    assert settings.telegram_allowed_chat_ids == "111,222"
+    assert settings.telegram_allowed_chat_id == "111222"

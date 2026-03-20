@@ -15,7 +15,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | `LLM_PROVIDER` | Provider name (any provider supported by [any-llm](https://github.com/mozilla-ai/any-llm)) |
 | `LLM_MODEL` | Model identifier for the agent loop (e.g. the model name your provider expects) |
 | LLM API key | The API key env var for your chosen provider (e.g. `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`) |
-| `TELEGRAM_ALLOWED_CHAT_IDS` or `TELEGRAM_ALLOWED_USERNAMES` | Who can message the bot. Set to `*` to allow everyone, or a comma-separated list. **Empty = deny all** |
+| `TELEGRAM_ALLOWED_CHAT_ID` | Your numeric Telegram user ID. Set to `*` to allow everyone. **Empty = deny all** |
 
 ## Core
 
@@ -50,8 +50,7 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 | `MESSAGING_PROVIDER` | `telegram` | Messaging backend (currently only `telegram` is supported) |
 | `TELEGRAM_BOT_TOKEN` | | Bot token from @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | (auto-derived) | Webhook validation secret. Auto-derived from bot token if not set |
-| `TELEGRAM_ALLOWED_CHAT_IDS` | (empty) | Comma-separated allowlist of Telegram chat IDs, or `*` to allow all. Empty = deny all |
-| `TELEGRAM_ALLOWED_USERNAMES` | (empty) | Comma-separated allowlist of Telegram usernames, or `*` to allow all. Empty = deny all |
+| `TELEGRAM_ALLOWED_CHAT_ID` | (empty) | Your numeric Telegram user ID, or `*` to allow all. Only a single ID is allowed per user. Empty = deny all |
 
 ## Storage settings
 

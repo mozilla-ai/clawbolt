@@ -44,9 +44,7 @@ class Settings(BaseSettings):
     messaging_provider: str = "telegram"
     telegram_bot_token: str = ""
     telegram_webhook_secret: str = ""
-    telegram_allowed_chat_ids: str = (
-        ""  # Comma-separated allowlist, or "*" for all; empty = deny all
-    )
+    telegram_allowed_chat_id: str = ""  # Single numeric chat ID, or "*" for all; empty = deny all
 
     # LLM
     llm_provider: str = ""
@@ -134,7 +132,7 @@ TELEGRAM_API_BASE = "https://api.telegram.org"
 PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
     {
         "telegram_bot_token",
-        "telegram_allowed_chat_ids",
+        "telegram_allowed_chat_id",
         "telegram_webhook_secret",
         "llm_provider",
         "llm_model",

@@ -158,14 +158,14 @@ function OssTelegramSection({
   const updateMutation = useUpdateChannelConfig();
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
 
-  const displayedId = telegramUserId ?? config?.telegram_allowed_chat_ids ?? '';
+  const displayedId = telegramUserId ?? config?.telegram_allowed_chat_id ?? '';
 
   const handleSave = () => {
-    if (config && displayedId === config.telegram_allowed_chat_ids) {
+    if (config && displayedId === config.telegram_allowed_chat_id) {
       toast.error('No changes to save');
       return;
     }
-    updateMutation.mutate({ telegram_allowed_chat_ids: displayedId }, {
+    updateMutation.mutate({ telegram_allowed_chat_id: displayedId }, {
       onSuccess: () => {
         setTelegramUserId(null);
         toast.success('Telegram settings updated');
