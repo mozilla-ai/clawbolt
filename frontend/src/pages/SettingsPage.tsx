@@ -35,13 +35,12 @@ export default function SettingsPage() {
   };
 
   // Build tab list
-  const ossTabs = showOssSettingsTabs(isPremium)
-    ? [
-        { key: 'model', label: 'Model' },
-        { key: 'storage', label: 'Storage' },
-        { key: 'heartbeat', label: 'Heartbeat' },
-      ]
-    : [];
+  const visibleOssKeys = showOssSettingsTabs(isPremium, isAdmin);
+  const ossTabs = [
+    { key: 'model', label: 'Model' },
+    { key: 'storage', label: 'Storage' },
+    { key: 'heartbeat', label: 'Heartbeat' },
+  ].filter((t) => visibleOssKeys.includes(t.key));
   const allTabs = [...ossTabs, ...extraTabs.map((t) => ({ key: t.key, label: t.label }))];
 
   // Premium-only tab
