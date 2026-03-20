@@ -44,7 +44,7 @@ export default function SettingsPage() {
   const allTabs = [...ossTabs, ...extraTabs.map((t) => ({ key: t.key, label: t.label }))];
 
   // Premium-only tab
-  const premiumContent = renderPremiumSettingsTab(activeTab);
+  const premiumContent = renderPremiumSettingsTab(activeTab, isAdmin);
 
   // Render tab content based on active tab
   const renderContent = () => {
