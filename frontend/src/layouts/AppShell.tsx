@@ -162,6 +162,22 @@ export default function AppShell() {
 
         <div className="p-2 text-xs text-muted-foreground space-y-1">
           <Divider className="mb-1" />
+          <NavLink
+            to="/app/get-started"
+            onClick={closeSidebar}
+            className={({ isActive }) =>
+              `flex items-center gap-2 px-3 py-1 rounded-md text-xs transition-all duration-150 ${
+                isActive
+                  ? 'text-primary font-medium'
+                  : 'text-muted-foreground can-hover:hover:text-foreground'
+              }`
+            }
+          >
+            <svg className="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            Get Started
+          </NavLink>
           <div className="flex gap-2 px-3 py-1">
             <Link
               href={getReportIssueUrl()}

@@ -1,7 +1,7 @@
 import { lazy, Suspense } from 'react';
-import { Routes, Route, Navigate } from 'react-router-dom';
+import { Routes, Route, Navigate, useOutletContext } from 'react-router-dom';
 import { Spinner } from '@heroui/spinner';
-import AppShell from '@/layouts/AppShell';
+import AppShell, { type AppShellContext } from '@/layouts/AppShell';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getLoginPageElement,
@@ -20,6 +20,16 @@ const UserPage = lazy(() => import('@/pages/UserPage'));
 const ChannelsPage = lazy(() => import('@/pages/ChannelsPage'));
 const ToolsPage = lazy(() => import('@/pages/ToolsPage'));
 const OAuthCallbackPage = lazy(() => import('@/pages/OAuthCallbackPage'));
+const GetStartedPage = lazy(() => import('@/pages/GetStartedPage'));
+
+/** Redirect index to get-started if onboarding is incomplete, otherwise to chat. */
+function DefaultRedirect() {
+  const { profile } = useOutletContext<AppShellContext>();
+  if (profile && !profile.onboarding_complete) {
+    return <Navigate to="/app/get-started" replace />;
+  }
+  return <Navigate to="/app/chat" replace />;
+}
 
 export default function App() {
   const { authState, isPremium } = useAuth();
@@ -50,7 +60,8 @@ export default function App() {
 
         {/* Authenticated app */}
         <Route path="/app" element={<AppShell />}>
-          <Route index element={<Navigate to="/app/chat" replace />} />
+          <Route index element={<DefaultRedirect />} />
+          <Route path="get-started" element={<GetStartedPage />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="conversations" element={<ConversationsPage />} />
           <Route path="conversations/:sessionId" element={<ConversationsPage />} />
