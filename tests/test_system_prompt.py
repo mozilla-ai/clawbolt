@@ -151,6 +151,12 @@ class TestSectionBuilders:
         assert "heartbeat" in result
         assert "reminder" in result
 
+    def test_build_proactive_section_explains_outreach(self) -> None:
+        """Proactive section should tell the agent it can reach out without user messaging first."""
+        result = build_proactive_section()
+        assert "proactively" in result
+        assert "HEARTBEAT.md" in result
+
     def test_build_recall_section(self) -> None:
         """Should contain recall behavior rules."""
         result = build_recall_section()
@@ -335,8 +341,8 @@ class TestBuildLocalDatetimeSection:
 class TestAgentSystemPromptIncludesDate:
     @pytest.mark.asyncio
     @patch("backend.app.agent.system_prompt.datetime")
-    async def test_agent_prompt_has_current_date(self, mock_dt: MagicMock) -> None:
-        """Main agent prompt should include a Current date section."""
+    async def test_agent_prompt_has_current_date_and_time(self, mock_dt: MagicMock) -> None:
+        """Main agent prompt should include a Current date and time section."""
         mock_dt.UTC = datetime.UTC
         mock_dt.datetime.now.return_value = datetime.datetime(
             2025, 6, 16, 15, 0, tzinfo=datetime.UTC
@@ -358,9 +364,11 @@ class TestAgentSystemPromptIncludesDate:
                 message_context="hello",
             )
 
-        assert "## Current date" in result
+        assert "## Current date and time" in result
         assert "Monday" in result
         assert "2025-06-16" in result
+        # Should include time, not just the date
+        assert "08:00 AM" in result
 
 
 class TestCrossSessionContext:
