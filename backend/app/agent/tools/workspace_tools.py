@@ -80,6 +80,11 @@ class DeleteFileParams(BaseModel):
     path: str = Field(description="Relative path within your workspace (e.g. 'BOOTSTRAP.md')")
 
 
+def _extract_path(args: dict[str, object]) -> str | None:
+    """Extract the file path from workspace tool arguments."""
+    return str(args["path"]) if args.get("path") else None
+
+
 def _resolve_path(user_id: str, relative_path: str) -> tuple[Path, str | None]:
     """Resolve a relative path to an absolute path within the user directory.
 
@@ -374,6 +379,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.AUTO,
+                resource_extractor=_extract_path,
                 description_builder=lambda args: f"Write to {args.get('path', 'file')}",
             ),
         ),
@@ -389,6 +395,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             tags={ToolTags.MODIFIES_PROFILE},
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.AUTO,
+                resource_extractor=_extract_path,
                 description_builder=lambda args: f"Edit {args.get('path', 'file')}",
             ),
         ),
@@ -403,6 +410,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             tags={ToolTags.MODIFIES_PROFILE},
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_path,
                 description_builder=lambda args: f"Delete {args.get('path', 'file')}",
             ),
         ),

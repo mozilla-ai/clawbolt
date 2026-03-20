@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time
 from typing import TYPE_CHECKING, Any
 
@@ -170,6 +171,23 @@ def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
             logger.exception("Failed to persist refreshed QuickBooks tokens for user %s", user_id)
 
     return _persist_refreshed_tokens
+
+
+def _extract_query_entity(args: dict[str, Any]) -> str | None:
+    """Extract the entity name from a QBO query string (e.g. 'Invoice' from 'SELECT * FROM Invoice')."""
+    query = str(args.get("query", ""))
+    match = re.search(r"\bFROM\s+(\w+)", query, re.IGNORECASE)
+    return match.group(1) if match else None
+
+
+def _extract_entity_type(args: dict[str, Any]) -> str | None:
+    """Extract the entity_type argument."""
+    return str(args["entity_type"]) if args.get("entity_type") else None
+
+
+def _extract_send_email(args: dict[str, Any]) -> str | None:
+    """Extract the email recipient from qb_send arguments."""
+    return str(args["email"]) if args.get("email") else None
 
 
 def create_quickbooks_tools(
@@ -346,6 +364,7 @@ def create_quickbooks_tools(
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_query_entity,
                 description_builder=lambda args: (
                     f"Query QuickBooks: {str(args.get('query', ''))[:60]}"
                 ),
@@ -366,6 +385,7 @@ def create_quickbooks_tools(
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_entity_type,
                 description_builder=lambda args: (
                     f"Create {args.get('entity_type', 'entity')} in QuickBooks"
                 ),
@@ -387,6 +407,7 @@ def create_quickbooks_tools(
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_entity_type,
                 description_builder=lambda args: (
                     f"Update {args.get('entity_type', 'entity')} in QuickBooks"
                 ),
@@ -406,6 +427,7 @@ def create_quickbooks_tools(
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_send_email,
                 description_builder=lambda args: (
                     f"Send {args.get('entity_type', 'entity')} "
                     f"to {args.get('email', 'recipient')} via QuickBooks"

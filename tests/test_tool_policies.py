@@ -87,6 +87,56 @@ class TestHeartbeatToolPolicies:
         assert tool.approval_policy.default_level == PermissionLevel.AUTO
 
 
-# QuickBooks and file tools are tested indirectly through their factory
-# functions, which require service dependencies. Their policies are
-# verified by the integration tests and manual inspection.
+class TestWorkspaceResourceExtractors:
+    def test_write_file_extracts_path(self) -> None:
+        tools = create_workspace_tools("test-user")
+        tool = _find_tool(tools, ToolName.WRITE_FILE)
+        assert tool.approval_policy is not None
+        assert tool.approval_policy.resource_extractor is not None
+        resource = tool.approval_policy.resource_extractor({"path": "USER.md", "content": "x"})
+        assert resource == "USER.md"
+
+    def test_edit_file_extracts_path(self) -> None:
+        tools = create_workspace_tools("test-user")
+        tool = _find_tool(tools, ToolName.EDIT_FILE)
+        assert tool.approval_policy is not None
+        assert tool.approval_policy.resource_extractor is not None
+        resource = tool.approval_policy.resource_extractor(
+            {"path": "SOUL.md", "old_text": "a", "new_text": "b"}
+        )
+        assert resource == "SOUL.md"
+
+    def test_delete_file_extracts_path(self) -> None:
+        tools = create_workspace_tools("test-user")
+        tool = _find_tool(tools, ToolName.DELETE_FILE)
+        assert tool.approval_policy is not None
+        assert tool.approval_policy.resource_extractor is not None
+        resource = tool.approval_policy.resource_extractor({"path": "BOOTSTRAP.md"})
+        assert resource == "BOOTSTRAP.md"
+
+    def test_read_file_has_no_extractor(self) -> None:
+        tools = create_workspace_tools("test-user")
+        tool = _find_tool(tools, ToolName.READ_FILE)
+        assert tool.approval_policy is None
+
+
+class TestQuickBooksResourceExtractors:
+    def test_qb_query_extracts_entity_from_query(self) -> None:
+        from backend.app.agent.tools.quickbooks_tools import _extract_query_entity
+
+        assert _extract_query_entity({"query": "SELECT * FROM Invoice"}) == "Invoice"
+        assert _extract_query_entity({"query": "select Id from Customer"}) == "Customer"
+        assert _extract_query_entity({"query": "bad query"}) is None
+
+    def test_qb_create_extracts_entity_type(self) -> None:
+        from backend.app.agent.tools.quickbooks_tools import _extract_entity_type
+
+        assert _extract_entity_type({"entity_type": "Invoice", "data": {}}) == "Invoice"
+        assert _extract_entity_type({"entity_type": "Customer", "data": {}}) == "Customer"
+        assert _extract_entity_type({}) is None
+
+    def test_qb_send_extracts_email(self) -> None:
+        from backend.app.agent.tools.quickbooks_tools import _extract_send_email
+
+        assert _extract_send_email({"email": "bob@example.com"}) == "bob@example.com"
+        assert _extract_send_email({}) is None

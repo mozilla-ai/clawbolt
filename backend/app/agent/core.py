@@ -558,6 +558,7 @@ class ClawboltAgent:
                     publish_outbound=self._publish_outbound,
                     channel=self._channel,
                     chat_id=self._chat_id,
+                    prompt=plan_msg,
                 )
             else:
                 decision = ApprovalDecision.DENIED
