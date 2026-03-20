@@ -132,6 +132,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 existing.id,
             )
             db.add(ChannelRoute(user_id=existing.id, channel=channel, channel_identifier=sender_id))
+            provision_user(existing, db)
             db.commit()
             db.refresh(existing)
             db.expunge(existing)
