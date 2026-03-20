@@ -136,3 +136,37 @@ def test_update_channel_config_empty_string_clears_token(
     assert resp.status_code == 200
     assert resp.json()["telegram_bot_token_set"] is False
     assert settings.telegram_bot_token == ""
+
+
+def test_get_channel_config_includes_allowed_chat_ids(
+    client: TestClient,
+) -> None:
+    """GET response includes telegram_allowed_chat_ids field."""
+    original = settings.telegram_allowed_chat_ids
+    settings.telegram_allowed_chat_ids = "111,222,333"
+    try:
+        resp = client.get("/api/user/channels/config")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["telegram_allowed_chat_ids"] == "111,222,333"
+    finally:
+        settings.telegram_allowed_chat_ids = original
+
+
+def test_update_channel_config_allowed_chat_ids(
+    client: TestClient,
+) -> None:
+    """PUT updates telegram_allowed_chat_ids in settings."""
+    original = settings.telegram_allowed_chat_ids
+    with patch("backend.app.routers.user_profile.save_persistent_config"):
+        try:
+            resp = client.put(
+                "/api/user/channels/config",
+                json={"telegram_allowed_chat_ids": "444,555"},
+            )
+            assert resp.status_code == 200
+            data = resp.json()
+            assert data["telegram_allowed_chat_ids"] == "444,555"
+            assert settings.telegram_allowed_chat_ids == "444,555"
+        finally:
+            settings.telegram_allowed_chat_ids = original

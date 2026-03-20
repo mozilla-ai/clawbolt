@@ -14,5 +14,5 @@ export function renderPremiumSettingsTab(_key: string): ReactNode {
 }
 
 export function showOssSettingsTabs(_isPremium: boolean, _isAdmin: boolean): string[] {
-  return ['model', 'storage', 'heartbeat'];
+  return ['model', 'storage', 'heartbeat', 'telegram'];
 }

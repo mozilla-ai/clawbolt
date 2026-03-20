@@ -9,7 +9,7 @@ import Checkbox from '@/components/ui/checkbox';
 import Field from '@/components/ui/field';
 import api from '@/api';
 import { toast } from '@/lib/toast';
-import { useModelConfig, useUpdateModelConfig, useStorageConfig, useUpdateStorageConfig, useUpdateProfile } from '@/hooks/queries';
+import { useModelConfig, useUpdateModelConfig, useStorageConfig, useUpdateStorageConfig, useUpdateProfile, useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
   getExtraSettingsTabs,
@@ -40,6 +40,7 @@ export default function SettingsPage() {
     { key: 'model', label: 'Model' },
     { key: 'storage', label: 'Storage' },
     { key: 'heartbeat', label: 'Heartbeat' },
+    { key: 'telegram', label: 'Telegram' },
   ].filter((t) => visibleOssKeys.includes(t.key));
   const allTabs = [...ossTabs, ...extraTabs.map((t) => ({ key: t.key, label: t.label }))];
 
@@ -53,6 +54,7 @@ export default function SettingsPage() {
       case 'model': return <ModelTab />;
       case 'storage': return <StorageTab />;
       case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
+      case 'telegram': return <TelegramTab />;
       default: return null;
     }
   };
@@ -594,5 +596,70 @@ function HeartbeatTab({
         </div>
       </div>
     </Card>
+  );
+}
+
+// --- Telegram Tab ---
+
+function TelegramTab() {
+  const { data: config } = useChannelConfig();
+  const updateMutation = useUpdateChannelConfig();
+  const [botToken, setBotToken] = useState('');
+
+  const handleSave = () => {
+    if (!botToken) {
+      toast.error('No changes to save');
+      return;
+    }
+    updateMutation.mutate({ telegram_bot_token: botToken }, {
+      onSuccess: () => {
+        setBotToken('');
+        toast.success('Telegram settings updated');
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <h3 className="text-sm font-medium mb-3">Bot Configuration</h3>
+        <div className="grid gap-4">
+          <Field label="Bot Token">
+            {config === undefined ? (
+              <p className="text-sm text-muted-foreground">Loading...</p>
+            ) : (
+              <>
+                <div className="mb-2">
+                  {config.telegram_bot_token_set ? (
+                    <span className="inline-flex items-center gap-1.5 text-sm">
+                      <span className="size-2 rounded-full inline-block shrink-0 bg-success" />
+                      Configured
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center gap-1.5 text-sm">
+                      <span className="size-2 rounded-full inline-block shrink-0 bg-danger" />
+                      Not configured
+                    </span>
+                  )}
+                </div>
+                <Input
+                  type="password"
+                  value={botToken}
+                  onChange={(e) => setBotToken(e.target.value)}
+                  placeholder={config.telegram_bot_token_set ? 'Enter new token to replace' : 'Paste bot token from @BotFather'}
+                />
+              </>
+            )}
+          </Field>
+        </div>
+      </Card>
+
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
+          Save Telegram Settings
+        </Button>
+      </div>
+    </div>
   );
 }

@@ -83,6 +83,7 @@ def _build_channel_config_response() -> ChannelConfigResponse:
     return ChannelConfigResponse(
         telegram_bot_token_set=bool(settings.telegram_bot_token),
         telegram_allowed_usernames=settings.telegram_allowed_usernames,
+        telegram_allowed_chat_ids=settings.telegram_allowed_chat_ids,
     )
 
 
