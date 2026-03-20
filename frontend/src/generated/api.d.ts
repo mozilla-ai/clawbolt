@@ -480,14 +480,14 @@ export interface components {
         ChannelConfigResponse: {
             /** Telegram Bot Token Set */
             telegram_bot_token_set: boolean;
-            /** Telegram Allowed Chat Ids */
+            /** Telegram Allowed Chat Id */
             telegram_allowed_chat_id: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
             /** Telegram Bot Token */
             telegram_bot_token?: string | null;
-            /** Telegram Allowed Chat Ids */
+            /** Telegram Allowed Chat Id */
             telegram_allowed_chat_id?: string | null;
         };
         /** HTTPValidationError */
