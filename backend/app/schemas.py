@@ -113,6 +113,11 @@ class ChannelConfigUpdate(BaseModel):
     telegram_allowed_chat_id: str | None = None
 
 
+class TelegramBotInfoResponse(BaseModel):
+    bot_username: str
+    bot_link: str
+
+
 # ---------------------------------------------------------------------------
 # Provider info (used by admin panel for dynamic provider listing)
 # ---------------------------------------------------------------------------

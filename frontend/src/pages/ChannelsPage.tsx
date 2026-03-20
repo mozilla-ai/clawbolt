@@ -31,6 +31,11 @@ interface TelegramLinkData {
   connected: boolean;
 }
 
+interface TelegramBotInfo {
+  bot_username: string;
+  bot_link: string;
+}
+
 function _authHeaders(): Record<string, string> {
   const token = getAccessToken();
   return token ? { Authorization: `Bearer ${token}` } : {};
@@ -40,6 +45,12 @@ async function getTelegramLink(): Promise<TelegramLinkData> {
   const res = await fetch('/api/channels/telegram', { headers: _authHeaders() });
   if (!res.ok) throw new Error('Failed to fetch Telegram link');
   return res.json() as Promise<TelegramLinkData>;
+}
+
+async function getTelegramBotInfo(): Promise<TelegramBotInfo | null> {
+  const res = await fetch('/api/channels/telegram/bot-info', { headers: _authHeaders() });
+  if (!res.ok) return null;
+  return res.json() as Promise<TelegramBotInfo>;
 }
 
 async function setTelegramLink(telegramUserId: string): Promise<TelegramLinkData> {
@@ -64,11 +75,13 @@ function PremiumTelegramSection({
 }) {
   const connected = !!profile.channel_identifier;
   const [linkData, setLinkData] = useState<TelegramLinkData | null>(null);
+  const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
     getTelegramLink().then(setLinkData).catch(() => {});
+    getTelegramBotInfo().then(setBotInfo).catch(() => {});
   }, []);
 
   const displayedId = telegramUserId ?? linkData?.telegram_user_id ?? '';
@@ -93,6 +106,25 @@ function PremiumTelegramSection({
 
   return (
     <div className="grid gap-6">
+      {botInfo && (
+        <Card>
+          <div className="flex items-center gap-3">
+            <span className="text-sm">
+              Message{' '}
+              <a
+                href={botInfo.bot_link}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="font-medium text-primary hover:underline"
+              >
+                @{botInfo.bot_username}
+              </a>
+              {' '}on Telegram to chat with your assistant.
+            </span>
+          </div>
+        </Card>
+      )}
+
       <Card>
         <h3 className="text-sm font-medium mb-3">Telegram</h3>
         <div className="grid gap-4">
@@ -133,7 +165,10 @@ function PremiumTelegramSection({
               </div>
             ) : (
               <p className="text-sm text-muted-foreground">
-                Save your Telegram user ID above, then send a message to the bot to connect.
+                Save your Telegram user ID above, then send a message to
+                {botInfo ? (
+                  <>{' '}<a href={botInfo.bot_link} target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">@{botInfo.bot_username}</a></>
+                ) : ' the bot'} to connect.
               </p>
             )}
           </Field>

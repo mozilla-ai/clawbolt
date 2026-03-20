@@ -15,6 +15,7 @@ from backend.app.schemas import (
     ProviderInfo,
     StorageConfigResponse,
     StorageConfigUpdate,
+    TelegramBotInfoResponse,
     UserProfileResponse,
     UserProfileUpdate,
 )
@@ -134,6 +135,37 @@ async def update_channel_config(
             pass
 
     return _build_channel_config_response()
+
+
+@router.get("/channels/telegram/bot-info", response_model=TelegramBotInfoResponse)
+async def get_telegram_bot_info(
+    _current_user: User = Depends(get_current_user),
+) -> TelegramBotInfoResponse:
+    """Return the Telegram bot username, auto-discovered via getMe."""
+    if not settings.telegram_bot_token:
+        raise HTTPException(status_code=404, detail="No Telegram bot token configured")
+
+    try:
+        from backend.app.channels import get_channel
+        from backend.app.channels.telegram import TelegramChannel
+
+        channel = get_channel("telegram")
+        if not isinstance(channel, TelegramChannel):
+            raise HTTPException(status_code=404, detail="Telegram channel not available")
+
+        me = await channel.bot.get_me()
+        username = me.username or ""
+        if not username:
+            raise HTTPException(status_code=404, detail="Bot username not available")
+
+        return TelegramBotInfoResponse(
+            bot_username=username,
+            bot_link=f"https://t.me/{username}",
+        )
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch bot info: {exc}") from exc
 
 
 # ---------------------------------------------------------------------------

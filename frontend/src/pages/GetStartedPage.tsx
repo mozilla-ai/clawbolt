@@ -1,8 +1,11 @@
+import { useState, useEffect } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import { toast } from '@/lib/toast';
 import { useUpdateProfile } from '@/hooks/queries';
+import { useAuth } from '@/contexts/AuthContext';
+import { getAccessToken } from '@/lib/api-client';
 import type { AppShellContext } from '@/layouts/AppShell';
 
 const STEPS = [
@@ -44,6 +47,18 @@ export default function GetStartedPage() {
   const { reloadProfile } = useOutletContext<AppShellContext>();
   const navigate = useNavigate();
   const updateProfile = useUpdateProfile();
+  const { isPremium } = useAuth();
+  const [botUsername, setBotUsername] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!isPremium) return;
+    const token = getAccessToken();
+    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
+    fetch('/api/channels/telegram/bot-info', { headers })
+      .then((res) => (res.ok ? (res.json() as Promise<{ bot_username: string }>) : null))
+      .then((data) => { if (data) setBotUsername(data.bot_username); })
+      .catch(() => {});
+  }, [isPremium]);
 
   const handleDismiss = () => {
     updateProfile.mutate(
@@ -82,7 +97,11 @@ export default function GetStartedPage() {
                   </span>
                 </div>
                 <h3 className="text-sm font-semibold font-display">{step.title}</h3>
-                <p className="text-sm text-muted-foreground mt-1">{step.description}</p>
+                <p className="text-sm text-muted-foreground mt-1">
+                  {i === 0 && botUsername
+                    ? `Message @${botUsername} on Telegram to chat with your assistant from your phone. This is the main way to use Clawbolt.`
+                    : step.description}
+                </p>
                 <Button
                   variant="ghost"
                   size="sm"

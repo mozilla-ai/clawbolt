@@ -480,6 +480,25 @@
         }
       }
     },
+    "/api/channels/telegram/bot-info": {
+      "get": {
+        "summary": "Get Telegram Bot Info",
+        "description": "Return the Telegram bot username, auto-discovered via getMe.",
+        "operationId": "get_telegram_bot_info_api_channels_telegram_bot_info_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TelegramBotInfoResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/model/config": {
       "get": {
         "summary": "Get Model Config",
@@ -1614,6 +1633,24 @@
           "enabled"
         ],
         "title": "SubToolEntryResponse"
+      },
+      "TelegramBotInfoResponse": {
+        "properties": {
+          "bot_username": {
+            "type": "string",
+            "title": "Bot Username"
+          },
+          "bot_link": {
+            "type": "string",
+            "title": "Bot Link"
+          }
+        },
+        "type": "object",
+        "required": [
+          "bot_username",
+          "bot_link"
+        ],
+        "title": "TelegramBotInfoResponse"
       },
       "ToolConfigEntryResponse": {
         "properties": {
