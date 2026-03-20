@@ -305,4 +305,112 @@
     margin-top: 0.375rem;
     margin-bottom: 0.375rem;
   }
+
+  .prose-page {
+    font-size: 0.9375rem;
+    line-height: 1.75;
+    color: var(--color-foreground);
+  }
+
+  .prose-page h1 {
+    font-family: var(--font-display);
+    font-size: 1.5rem;
+    font-weight: 600;
+    margin-top: 1.5rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .prose-page h2 {
+    font-family: var(--font-display);
+    font-size: 1.25rem;
+    font-weight: 600;
+    margin-top: 1.25rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .prose-page h3 {
+    font-weight: 600;
+    font-size: 1.1rem;
+    margin-top: 1rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .prose-page p {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
+
+  .prose-page ul,
+  .prose-page ol {
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+    padding-left: 1.5rem;
+  }
+
+  .prose-page ul {
+    list-style-type: disc;
+  }
+
+  .prose-page ol {
+    list-style-type: decimal;
+  }
+
+  .prose-page li {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .prose-page code {
+    font-family: var(--font-mono);
+    font-size: 0.875rem;
+    background: var(--color-panel);
+    border-radius: 4px;
+    padding: 0.125rem 0.375rem;
+  }
+
+  .prose-page pre {
+    background: var(--color-panel);
+    border-radius: var(--radius-sm);
+    padding: 0.75rem 1rem;
+    overflow-x: auto;
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .prose-page pre code {
+    background: none;
+    padding: 0;
+  }
+
+  .prose-page blockquote {
+    border-left: 3px solid var(--color-primary);
+    padding-left: 1rem;
+    color: var(--color-muted-foreground);
+    margin-top: 0.75rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .prose-page hr {
+    border-color: var(--color-border);
+    margin-top: 1.5rem;
+    margin-bottom: 1.5rem;
+  }
+
+  .prose-page a {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+
+  .prose-page a:hover {
+    color: var(--color-primary-hover);
+  }
+
+  .prose-page > :first-child {
+    margin-top: 0;
+  }
+
+  .prose-page input[type="checkbox"] {
+    margin-right: 0.5rem;
+    accent-color: var(--color-primary);
+  }
 }
