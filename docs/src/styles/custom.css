@@ -1,27 +1,64 @@
+/*
+ * Amber Workshop theme for Starlight docs.
+ * Color values sourced from DESIGN.md -- see that file for rationale.
+ */
+
+/* ---------- Design tokens (reused across both modes) ---------- */
+
 :root {
-  --sl-color-accent-low: #1a2332;
-  --sl-color-accent: #3b82f6;
-  --sl-color-accent-high: #bfdbfe;
-  --sl-color-white: #ffffff;
-  --sl-color-gray-1: #eceef2;
-  --sl-color-gray-2: #c0c2c7;
-  --sl-color-gray-3: #888b96;
-  --sl-color-gray-4: #545861;
-  --sl-color-gray-5: #353841;
-  --sl-color-gray-6: #24272f;
-  --sl-color-black: #17181c;
+  /* Fonts (same families loaded in astro.config.mjs head) */
+  --sl-font: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --sl-font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+
+  /* Dark mode colors (Starlight default) */
+  --sl-color-accent-low: #332810;
+  --sl-color-accent: #D4940F;
+  --sl-color-accent-high: #FDF3E3;
+  --sl-color-white: #E8E4DE;
+  --sl-color-gray-1: #C4BEB5;
+  --sl-color-gray-2: #9A948C;
+  --sl-color-gray-3: #6E6860;
+  --sl-color-gray-4: #524D46;
+  --sl-color-gray-5: #3A3630;
+  --sl-color-gray-6: #262320;
+  --sl-color-black: #1A1816;
 }
 
 :root[data-theme="light"] {
-  --sl-color-accent-low: #dbeafe;
-  --sl-color-accent: #2563eb;
-  --sl-color-accent-high: #1e3a5f;
-  --sl-color-white: #17181c;
-  --sl-color-gray-1: #24272f;
-  --sl-color-gray-2: #353841;
-  --sl-color-gray-3: #545861;
-  --sl-color-gray-4: #888b96;
-  --sl-color-gray-5: #c0c2c7;
-  --sl-color-gray-6: #eceef2;
-  --sl-color-black: #ffffff;
+  --sl-color-accent-low: #FDF3E3;
+  --sl-color-accent: #B8720E;
+  --sl-color-accent-high: #613C07;
+  --sl-color-white: #2D2A26;
+  --sl-color-gray-1: #3E3A35;
+  --sl-color-gray-2: #5A544D;
+  --sl-color-gray-3: #7A746C;
+  --sl-color-gray-4: #94908A;
+  --sl-color-gray-5: #C4BEB5;
+  --sl-color-gray-6: #EDEAE6;
+  --sl-color-black: #F6F5F3;
+}
+
+/* ---------- Typography ---------- */
+
+/* Headings use the display font (Outfit) to match the app */
+:is(h1, h2, h3, h4, h5, h6),
+.sl-markdown-content :is(h1, h2, h3, h4, h5, h6) {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+}
+
+/* Site title in the header */
+.site-title {
+  font-family: 'Outfit', system-ui, -apple-system, sans-serif;
+  font-weight: 600;
+}
+
+/* ---------- Scrollbar (matches frontend) ---------- */
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #C4BEB5 transparent;
+}
+
+:root[data-theme="light"] * {
+  scrollbar-color: #E3DFD9 transparent;
 }

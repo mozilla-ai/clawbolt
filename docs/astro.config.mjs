@@ -15,6 +15,30 @@ export default defineConfig({
         replacesTitle: true,
       },
       favicon: "/clawbolt.png",
+      head: [
+        {
+          tag: "link",
+          attrs: {
+            rel: "preconnect",
+            href: "https://fonts.googleapis.com",
+          },
+        },
+        {
+          tag: "link",
+          attrs: {
+            rel: "preconnect",
+            href: "https://fonts.gstatic.com",
+            crossorigin: true,
+          },
+        },
+        {
+          tag: "link",
+          attrs: {
+            rel: "stylesheet",
+            href: "https://fonts.googleapis.com/css2?family=DM+Sans:opsz,wght@9..40,400;9..40,500;9..40,600;9..40,700&family=Outfit:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap",
+          },
+        },
+      ],
       social: [
         {
           icon: "github",
