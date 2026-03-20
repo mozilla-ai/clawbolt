@@ -1,25 +1,18 @@
 import { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
-import { Divider } from '@heroui/divider';
 import Field from '@/components/ui/field';
 import { toast } from '@/lib/toast';
 import { useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAccessToken } from '@/lib/api-client';
-import type { AppShellContext } from '@/layouts/AppShell';
 
 export default function ChannelsPage() {
-  const { profile } = useOutletContext<AppShellContext>();
-
-  if (!profile) return null;
-
   return (
     <div>
       <h2 className="text-xl font-semibold font-display mb-6">Channels</h2>
-      <TelegramSection profile={profile} />
+      <TelegramSection />
     </div>
   );
 }
@@ -68,12 +61,7 @@ async function setTelegramLink(telegramUserId: string): Promise<TelegramLinkData
 
 // --- Premium Telegram section ---
 
-function PremiumTelegramSection({
-  profile,
-}: {
-  profile: { channel_identifier: string; preferred_channel: string };
-}) {
-  const connected = !!profile.channel_identifier;
+function PremiumTelegramSection() {
   const [linkData, setLinkData] = useState<TelegramLinkData | null>(null);
   const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
@@ -146,49 +134,13 @@ function PremiumTelegramSection({
           </div>
         </div>
       </Card>
-
-      <Divider />
-
-      <Card>
-        <h3 className="text-sm font-medium mb-3">Connection Status</h3>
-        <div className="grid gap-4">
-          <Field label="User Connection">
-            {connected ? (
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 text-sm">
-                  <span className="size-2 rounded-full inline-block shrink-0 bg-success" />
-                  Connected
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  Chat ID: {profile.channel_identifier}
-                </span>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Save your Telegram user ID above, then send a message to
-                {botInfo ? (
-                  <>{' '}<a href={botInfo.bot_link} target="_blank" rel="noopener noreferrer" className="font-medium text-primary hover:underline">@{botInfo.bot_username}</a></>
-                ) : ' the bot'} to connect.
-              </p>
-            )}
-          </Field>
-          <Field label="Active Channel">
-            <p className="text-sm">{profile.preferred_channel || 'webchat'}</p>
-          </Field>
-        </div>
-      </Card>
     </div>
   );
 }
 
 // --- OSS Telegram section ---
 
-function OssTelegramSection({
-  profile,
-}: {
-  profile: { channel_identifier: string; preferred_channel: string };
-}) {
-  const connected = !!profile.channel_identifier;
+function OssTelegramSection() {
   const { data: config } = useChannelConfig();
   const updateMutation = useUpdateChannelConfig();
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
@@ -232,47 +184,15 @@ function OssTelegramSection({
           </div>
         </div>
       </Card>
-
-      <Divider />
-
-      <Card>
-        <h3 className="text-sm font-medium mb-3">Connection Status</h3>
-        <div className="grid gap-4">
-          <Field label="User Connection">
-            {connected ? (
-              <div className="flex items-center gap-2">
-                <span className="inline-flex items-center gap-1.5 text-sm">
-                  <span className="size-2 rounded-full inline-block shrink-0 bg-success" />
-                  Connected
-                </span>
-                <span className="text-xs text-muted-foreground">
-                  Chat ID: {profile.channel_identifier}
-                </span>
-              </div>
-            ) : (
-              <p className="text-sm text-muted-foreground">
-                Send a message to your bot on Telegram to connect.
-              </p>
-            )}
-          </Field>
-          <Field label="Active Channel">
-            <p className="text-sm">{profile.preferred_channel || 'webchat'}</p>
-          </Field>
-        </div>
-      </Card>
     </div>
   );
 }
 
-function TelegramSection({
-  profile,
-}: {
-  profile: { channel_identifier: string; preferred_channel: string };
-}) {
+function TelegramSection() {
   const { isPremium } = useAuth();
 
   if (isPremium) {
-    return <PremiumTelegramSection profile={profile} />;
+    return <PremiumTelegramSection />;
   }
-  return <OssTelegramSection profile={profile} />;
+  return <OssTelegramSection />;
 }
