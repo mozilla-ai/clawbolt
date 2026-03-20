@@ -60,7 +60,7 @@ export default function SettingsPage() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold mb-6">Settings</h2>
+      <h2 className="text-xl font-semibold font-display mb-6">Settings</h2>
       <Tabs
         selectedKey={activeTab}
         onSelectionChange={(key) => handleTabChange(String(key))}
@@ -474,7 +474,7 @@ function StorageTab() {
               </p>
               <Field label="Credentials JSON">
                 <textarea
-                  className="w-full rounded-md border border-default bg-background px-3 py-2 text-sm font-mono min-h-[120px]"
+                  className="w-full rounded-md border border-default bg-card px-3 py-2 text-sm font-mono min-h-[120px]"
                   value={form.google_drive_credentials_json}
                   onChange={(e) => set('google_drive_credentials_json', e.target.value)}
                   placeholder={config?.google_drive_credentials_json_set ? 'Leave blank to keep current credentials' : 'Paste Google Drive service account JSON'}

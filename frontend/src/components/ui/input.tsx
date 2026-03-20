@@ -27,6 +27,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
           }
         }}
         className={className}
+        classNames={{ inputWrapper: 'bg-card' }}
       />
     );
   },

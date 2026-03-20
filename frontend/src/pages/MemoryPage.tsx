@@ -31,7 +31,7 @@ export default function MemoryPage() {
       <div className="mb-6">
         <div className="flex items-center justify-between">
           <div>
-            <h2 className="text-xl font-semibold">Memory</h2>
+            <h2 className="text-xl font-semibold font-display">Memory</h2>
             <p className="text-sm text-muted-foreground mt-1">
               Long-term facts your AI assistant has learned about your business.
               Updated automatically as you chat, or edit directly below.
