@@ -810,3 +810,55 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     assert refreshed.onboarding_complete is True
     # Heartbeat items remain empty; users add them as needed
     assert not refreshed.heartbeat_text
+
+
+# ---------------------------------------------------------------------------
+# Regression test: premium OAuth users must be provisioned on first chat
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_oauth_user_provisioned_on_first_chat() -> None:
+    """User created via OAuth (no provision_user call) should be provisioned on first chat.
+
+    Regression test: premium creates User rows during Google OAuth signup
+    via UserStore.create(), which does NOT call provision_user(). When the
+    user then sends their first webchat message, _get_or_create_user()
+    found the existing user by PK but returned it without provisioning.
+    Result: no BOOTSTRAP.md, no soul_text/user_text, onboarding never triggered.
+    """
+    from backend.app.agent.ingestion import _get_or_create_user
+    from backend.app.agent.onboarding import is_onboarding_needed
+    from backend.app.config import settings as app_settings
+
+    # Simulate OAuth signup: create a bare User row (no provision_user call)
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            id="oauth-premium-user",
+            user_id="google_12345",
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        # Confirm: no soul_text, no user_text, no BOOTSTRAP.md
+        assert not user.soul_text
+        assert not user.user_text
+        assert not user.onboarding_complete
+    finally:
+        db.close()
+
+    bootstrap_path = Path(app_settings.data_dir) / "oauth-premium-user" / "BOOTSTRAP.md"
+    assert not bootstrap_path.exists()
+
+    # Simulate premium webchat: sender_id = user.id (the PK)
+    # Enable premium_plugin so the single-tenant reuse path is skipped
+    with patch.object(app_settings, "premium_plugin", "clawbolt_premium.plugin"):
+        resolved = await _get_or_create_user("webchat", "oauth-premium-user")
+
+    # User should now be provisioned
+    assert resolved.id == "oauth-premium-user"
+    assert resolved.soul_text  # seeded by provision_user
+    assert resolved.user_text  # seeded by provision_user
+    assert bootstrap_path.exists()  # created by provision_user
+    assert is_onboarding_needed(resolved) is True
