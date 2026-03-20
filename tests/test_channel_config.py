@@ -104,13 +104,16 @@ def test_update_channel_config_null_token_is_ignored(
     client: TestClient, _set_bot_token: None
 ) -> None:
     """PUT with null token should be ignored, preserving the existing value."""
-    resp = client.put(
-        "/api/user/channels/config",
-        json={"telegram_bot_token": None, "telegram_allowed_usernames": "user1"},
-    )
+    original_ids = settings.telegram_allowed_chat_ids
+    with patch("backend.app.routers.user_profile.save_persistent_config"):
+        resp = client.put(
+            "/api/user/channels/config",
+            json={"telegram_bot_token": None, "telegram_allowed_chat_ids": "111"},
+        )
     assert resp.status_code == 200
     assert resp.json()["telegram_bot_token_set"] is True
     assert settings.telegram_bot_token == "test-token-123"
+    settings.telegram_allowed_chat_ids = original_ids
 
 
 def test_update_channel_config_null_only_returns_400(

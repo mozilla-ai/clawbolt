@@ -135,10 +135,6 @@ def test_allowlist_rejects_unlisted_chat_id(client: TestClient) -> None:
             "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "111,222",
         ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "",
-        ),
     ):
         payload = make_telegram_update_payload(chat_id=999, text="Hi")
         response = client.post("/api/webhooks/telegram", json=payload)
@@ -155,10 +151,6 @@ def test_allowlist_accepts_listed_chat_id(client: TestClient) -> None:
             "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "111,123456789,333",
         ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "",
-        ),
     ):
         payload = make_telegram_update_payload(chat_id=123456789, text="Hello")
         response = client.post("/api/webhooks/telegram", json=payload)
@@ -173,10 +165,6 @@ def test_allowlist_empty_denies_all(client: TestClient) -> None:
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
             "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "",
-        ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
             "",
         ),
     ):
@@ -195,140 +183,12 @@ def test_allowlist_wildcard_allows_all(client: TestClient) -> None:
             "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
             "*",
         ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "",
-        ),
     ):
         payload = make_telegram_update_payload(chat_id=777777, text="Hi")
         response = client.post("/api/webhooks/telegram", json=payload)
 
     assert response.status_code == 200
     mock_pub.assert_called_once()
-
-
-def test_username_wildcard_allows_all(client: TestClient) -> None:
-    """Setting TELEGRAM_ALLOWED_USERNAMES to '*' should allow all users."""
-    with (
-        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "",
-        ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "*",
-        ),
-    ):
-        payload = make_telegram_update_payload(chat_id=777777, text="Hi")
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    mock_pub.assert_called_once()
-
-
-# -- Username allowlist tests --
-
-
-def test_username_allowlist_accepts_listed_user(client: TestClient) -> None:
-    """Messages from a username on the allowlist should be published."""
-    with (
-        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "",
-        ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "alice,bob",
-        ),
-    ):
-        payload = make_telegram_update_payload(chat_id=555, text="Hi", username="alice")
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    mock_pub.assert_called_once()
-
-
-def test_username_allowlist_rejects_unlisted_user(client: TestClient) -> None:
-    """Messages from a username NOT on the allowlist should be ignored."""
-    with (
-        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "",
-        ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "alice,bob",
-        ),
-    ):
-        payload = make_telegram_update_payload(chat_id=555, text="Hi", username="eve")
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    mock_pub.assert_not_called()
-
-
-def test_username_allowlist_strips_at_prefix(client: TestClient) -> None:
-    """Usernames with @ prefix in config should still match."""
-    with (
-        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "",
-        ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "@Alice, @Bob",
-        ),
-    ):
-        payload = make_telegram_update_payload(chat_id=555, text="Hi", username="alice")
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    mock_pub.assert_called_once()
-
-
-def test_username_or_chat_id_either_passes(client: TestClient) -> None:
-    """If either chat_id OR username matches, the message should be allowed."""
-    with (
-        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "999",
-        ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "alice",
-        ),
-    ):
-        # chat_id doesn't match (555 != 999), but username matches
-        payload = make_telegram_update_payload(chat_id=555, text="Hi", username="alice")
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    mock_pub.assert_called_once()
-
-
-def test_username_allowlist_no_username_in_payload(client: TestClient) -> None:
-    """Messages without a username should be rejected when only username allowlist is set."""
-    with (
-        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_chat_ids",
-            "",
-        ),
-        patch(
-            "backend.app.channels.telegram.settings.telegram_allowed_usernames",
-            "alice",
-        ),
-    ):
-        payload = make_telegram_update_payload(chat_id=555, text="Hi")
-        response = client.post("/api/webhooks/telegram", json=payload)
-
-    assert response.status_code == 200
-    mock_pub.assert_not_called()
 
 
 # -- Edge cases and error handling --
