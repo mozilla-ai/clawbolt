@@ -297,7 +297,7 @@ export default function ChatPage() {
       {/* Header */}
       <div className="py-4 sm:py-6 flex items-start justify-between gap-4">
         <div>
-          <h2 className="text-xl font-semibold">Chat</h2>
+          <h2 className="text-xl font-semibold font-display">Chat</h2>
           <p className="text-sm text-muted-foreground mt-1">
             Talk with your AI assistant directly from the dashboard.
           </p>

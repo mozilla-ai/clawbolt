@@ -44,7 +44,7 @@ export default function SoulPage() {
     <div>
       <div className="flex items-center justify-between mb-4">
         <div>
-          <h2 className="text-xl font-semibold">Soul</h2>
+          <h2 className="text-xl font-semibold font-display">Soul</h2>
           <p className="text-sm text-muted-foreground mt-1">
             Guides your assistant's personality and communication style.
           </p>

@@ -29,7 +29,7 @@ export default function OAuthCallbackPage() {
       <div className="flex flex-col items-center justify-center min-h-dvh gap-4 px-4">
         <Card className="max-w-md w-full text-center p-6">
           <div className="text-4xl mb-4">&#10003;</div>
-          <h1 className="text-xl font-semibold mb-2">Connected</h1>
+          <h1 className="text-xl font-semibold font-display mb-2">Connected</h1>
           <p className="text-sm text-muted-foreground mb-4">
             <span className="capitalize">{integration}</span> has been connected successfully.
             You can now use {integration} tools.
@@ -52,7 +52,7 @@ export default function OAuthCallbackPage() {
     <div className="flex flex-col items-center justify-center min-h-dvh gap-4 px-4">
       <Card className="max-w-md w-full text-center p-6">
         <div className="text-4xl mb-4">&#10007;</div>
-        <h1 className="text-xl font-semibold mb-2">Connection Failed</h1>
+        <h1 className="text-xl font-semibold font-display mb-2">Connection Failed</h1>
         <p className="text-sm text-muted-foreground mb-4">
           {error || 'Something went wrong during authorization. Please try again.'}
         </p>
