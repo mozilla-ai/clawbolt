@@ -352,6 +352,58 @@ def test_sse_streams_tool_call_events(
     assert text.index("search_clients") < text.index("Done!")
 
 
+def test_sse_rejects_wrong_user(
+    webchat_user: User,
+) -> None:
+    """A different user must not be able to subscribe to another user's SSE stream."""
+    # Create a second user
+    db = _db_module.SessionLocal()
+    try:
+        user_b = User(user_id="webchat-other-user")
+        db.add(user_b)
+        db.commit()
+        db.refresh(user_b)
+        db.expunge(user_b)
+    finally:
+        db.close()
+
+    # We need to switch get_current_user between requests, so track which
+    # user should be returned.
+    current = {"user": webchat_user}
+
+    async def _override_get_current_user() -> User:
+        return current["user"]
+
+    from backend.app.auth.dependencies import get_current_user
+
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.stop"),
+        patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
+        patch(
+            "backend.app.channels.webchat.message_bus.publish_inbound",
+            new_callable=AsyncMock,
+        ),
+        TestClient(app) as client,
+    ):
+        # User A creates a request
+        current["user"] = webchat_user
+        resp = client.post("/api/user/chat", data={"message": "private"})
+        assert resp.status_code == 200
+        request_id = resp.json()["request_id"]
+
+        # User B tries to subscribe to User A's SSE stream
+        current["user"] = user_b
+        sse_resp = client.get(f"/api/user/chat/events/{request_id}")
+        assert sse_resp.status_code == 403
+
+    app.dependency_overrides.clear()
+
+
 def test_bus_event_queue_lifecycle() -> None:
     """Event queues are created, receive events, and get cleaned up."""
     import asyncio
