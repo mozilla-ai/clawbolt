@@ -250,6 +250,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/channels/telegram/bot-info": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Telegram Bot Info
+         * @description Return the Telegram bot username, auto-discovered via getMe.
+         */
+        get: operations["get_telegram_bot_info_api_channels_telegram_bot_info_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/model/config": {
         parameters: {
             query?: never;
@@ -705,6 +725,13 @@ export interface components {
             description: string;
             /** Enabled */
             enabled: boolean;
+        };
+        /** TelegramBotInfoResponse */
+        TelegramBotInfoResponse: {
+            /** Bot Username */
+            bot_username: string;
+            /** Bot Link */
+            bot_link: string;
         };
         /** ToolConfigEntryResponse */
         ToolConfigEntryResponse: {
@@ -1216,6 +1243,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_telegram_bot_info_api_channels_telegram_bot_info_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TelegramBotInfoResponse"];
                 };
             };
         };
