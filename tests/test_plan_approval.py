@@ -443,3 +443,107 @@ class TestBatchApproval:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
             if isinstance(msg, OutboundMessage):
                 assert "needs OK" not in msg.content
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
+    async def test_plan_prompt_not_double_wrapped(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """The approval prompt should not wrap the plan message with a second 'Reply:' line."""
+        mock_publish = AsyncMock()
+
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response([{"name": "writer", "arguments": {"text": "data"}}]),
+            make_text_response("Done!"),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _approve_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools([_ask_tool()])
+
+        task = asyncio.create_task(_approve_soon())
+        await agent.process_message("write it")
+        await task
+
+        # Find the approval prompt message
+        approval_msgs = []
+        for call in mock_publish.call_args_list:
+            msg = call.args[0] if call.args else call.kwargs.get("msg")
+            if isinstance(msg, OutboundMessage) and "Reply:" in msg.content:
+                approval_msgs.append(msg.content)
+
+        assert len(approval_msgs) == 1
+        # "Reply:" should appear exactly once (not double-wrapped)
+        assert approval_msgs[0].count("Reply:") == 1
+        # Should not contain the _format_approval_message wrapper
+        assert "wants to use the tool" not in approval_msgs[0]
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
+    async def test_always_persists_per_resource(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """'always' with resource_extractor persists AUTO for the specific resource only."""
+        mock_publish = AsyncMock()
+
+        def _extractor(args: dict[str, object]) -> str | None:
+            return str(args["text"]) if args.get("text") else None
+
+        tool = Tool(
+            name="fetcher",
+            description="Fetch data",
+            function=_echo_tool,
+            params_model=_EchoParams,
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                resource_extractor=_extractor,
+                description_builder=lambda args: f"Fetch {args.get('text', '')}",
+            ),
+        )
+
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response([{"name": "fetcher", "arguments": {"text": "invoices"}}]),
+            make_text_response("Done!"),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _always_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools([tool])
+
+        task = asyncio.create_task(_always_soon())
+        await agent.process_message("fetch invoices")
+        await task
+
+        # "invoices" resource should be AUTO
+        store = get_approval_store()
+        assert (
+            store.check_permission(test_user.id, "fetcher", resource="invoices")
+            == PermissionLevel.AUTO
+        )
+        # Different resource should still be ASK (the default)
+        assert (
+            store.check_permission(test_user.id, "fetcher", resource="customers")
+            == PermissionLevel.ASK
+        )

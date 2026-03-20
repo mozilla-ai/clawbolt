@@ -299,8 +299,13 @@ class ApprovalGate:
         channel: str,
         chat_id: str,
         timeout: float | None = None,
+        prompt: str | None = None,
     ) -> ApprovalDecision:
         """Send an approval prompt and wait for the user's decision.
+
+        When *prompt* is provided it is sent as-is (useful when the caller
+        has already formatted a batch plan message).  Otherwise a default
+        prompt is built from *tool_name* and *description*.
 
         Returns ``DENIED`` on timeout.
         """
@@ -310,7 +315,8 @@ class ApprovalGate:
         pending = PendingApproval(tool_name=tool_name, description=description)
         self._pending[user_id] = pending
 
-        prompt = _format_approval_message(tool_name, description)
+        if prompt is None:
+            prompt = _format_approval_message(tool_name, description)
         try:
             from backend.app.bus import OutboundMessage as OMsg
 
