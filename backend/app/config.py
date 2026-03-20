@@ -47,9 +47,6 @@ class Settings(BaseSettings):
     telegram_allowed_chat_ids: str = (
         ""  # Comma-separated allowlist, or "*" for all; empty = deny all
     )
-    telegram_allowed_usernames: str = (
-        ""  # Comma-separated @usernames, or "*" for all; empty = deny all
-    )
 
     # LLM
     llm_provider: str = ""
@@ -138,7 +135,6 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
     {
         "telegram_bot_token",
         "telegram_allowed_chat_ids",
-        "telegram_allowed_usernames",
         "telegram_webhook_secret",
         "llm_provider",
         "llm_model",
