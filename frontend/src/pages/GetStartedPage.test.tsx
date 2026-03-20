@@ -54,9 +54,9 @@ describe('GetStartedPage', () => {
 
     expect(screen.getByText('Get Started')).toBeInTheDocument();
     expect(screen.getByText('Set up Telegram')).toBeInTheDocument();
-    expect(screen.getByText('Tell it about you')).toBeInTheDocument();
-    expect(screen.getByText('Customize its personality')).toBeInTheDocument();
     expect(screen.getByText('Start chatting')).toBeInTheDocument();
+    expect(screen.queryByText('Tell it about you')).not.toBeInTheDocument();
+    expect(screen.queryByText('Customize its personality')).not.toBeInTheDocument();
   });
 
   it('navigates to channels page when configure channels is clicked', async () => {

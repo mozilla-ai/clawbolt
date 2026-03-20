@@ -18,22 +18,6 @@ const STEPS = [
     icon: ChannelsIcon,
   },
   {
-    title: 'Tell it about you',
-    description:
-      'Add your name, trade, timezone, and preferences so your assistant knows who you are.',
-    link: '/app/user',
-    linkLabel: 'Edit Profile',
-    icon: UserIcon,
-  },
-  {
-    title: 'Customize its personality',
-    description:
-      'Adjust how your assistant communicates: tone, style, and what it focuses on.',
-    link: '/app/soul',
-    linkLabel: 'Edit Soul',
-    icon: SoulIcon,
-  },
-  {
     title: 'Start chatting',
     description:
       'Send your first message. Try asking for an estimate, a reminder, or just say hello.',
@@ -136,22 +120,6 @@ function ChannelsIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-    </svg>
-  );
-}
-
-function UserIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-    </svg>
-  );
-}
-
-function SoulIcon() {
-  return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.143L13 21l-2.286-6.857L5 12l5.714-2.143L13 3z" />
     </svg>
   );
 }
