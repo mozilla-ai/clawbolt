@@ -212,6 +212,7 @@ const api = {
     files?: File[],
     onEvent?: (event: { type: string; tool_name?: string; content?: string }) => void,
     forceNew?: boolean,
+    onAccepted?: (accepted: ChatAccepted) => void,
   ): Promise<ChatResponse> => {
     const formData = new FormData();
     formData.append('message', message);
@@ -239,6 +240,7 @@ const api = {
       throw new Error(b.detail || `Request failed: ${submitRes.status}`);
     }
     const accepted = (await submitRes.json()) as ChatAccepted;
+    onAccepted?.(accepted);
 
     // Step 2: Open SSE connection to receive the reply
     return new Promise<ChatResponse>((resolve, reject) => {
