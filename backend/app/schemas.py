@@ -65,21 +65,6 @@ class UserProfileUpdate(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-class SessionSummary(BaseModel):
-    id: str
-    start_time: str
-    message_count: int
-    last_message_preview: str = ""
-    channel: str = ""
-
-
-class SessionListResponse(BaseModel):
-    sessions: list[SessionSummary]
-    total: int
-    offset: int
-    limit: int
-
-
 class SessionMessage(BaseModel):
     seq: int
     direction: str

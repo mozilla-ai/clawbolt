@@ -11,7 +11,6 @@ import {
 } from '@/extensions';
 
 const ChatPage = lazy(() => import('@/pages/ChatPage'));
-const ConversationsPage = lazy(() => import('@/pages/ConversationsPage'));
 const MemoryPage = lazy(() => import('@/pages/MemoryPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
 const HeartbeatPage = lazy(() => import('@/pages/HeartbeatPage'));
@@ -63,8 +62,6 @@ export default function App() {
           <Route index element={<DefaultRedirect />} />
           <Route path="get-started" element={<GetStartedPage />} />
           <Route path="chat" element={<ChatPage />} />
-          <Route path="conversations" element={<ConversationsPage />} />
-          <Route path="conversations/:sessionId" element={<ConversationsPage />} />
           <Route path="memory" element={<MemoryPage />} />
           <Route path="heartbeat" element={<HeartbeatPage />} />
           <Route path="soul" element={<SoulPage />} />

@@ -30,14 +30,6 @@ export function useUpdateProfile() {
 
 // --- Sessions ---
 
-export function useSessions(offset: number, limit: number) {
-  return useQuery({
-    queryKey: queryKeys.sessions.list(offset, limit),
-    queryFn: () => api.listSessions(offset, limit),
-    refetchInterval: 10_000,
-  });
-}
-
 export function useSession(
   sessionId: string | null,
   refetchInterval?: number | false,
@@ -47,6 +39,7 @@ export function useSession(
     queryFn: () => api.getSession(sessionId!),
     enabled: !!sessionId,
     refetchInterval: refetchInterval ?? false,
+    retry: false,
   });
 }
 
