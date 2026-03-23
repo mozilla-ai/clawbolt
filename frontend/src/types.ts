@@ -4,9 +4,6 @@ import type { components } from '@/generated/api';
 
 export type UserProfileResponse = components['schemas']['UserProfileResponse'];
 export type UserProfileUpdate = components['schemas']['UserProfileUpdate'];
-export type SessionSummary = components['schemas']['SessionSummary'];
-export type SessionListResponse = components['schemas']['SessionListResponse'];
-export type SessionMessage = components['schemas']['SessionMessage'];
 export type SessionDetailResponse = components['schemas']['SessionDetailResponse'];
 export type MemoryResponse = components['schemas']['MemoryResponse'];
 export type MemoryUpdate = components['schemas']['MemoryUpdate'];

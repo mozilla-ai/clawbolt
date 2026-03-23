@@ -150,12 +150,11 @@ class TestDashboardSeesTelegramData:
                 },
             ],
         )
-        resp = real_auth_client.get("/api/user/sessions")
+        resp = real_auth_client.get("/api/user/sessions/1_100")
         assert resp.status_code == 200
         data = resp.json()
-        assert data["total"] == 1
-        assert data["sessions"][0]["id"] == "1_100"
-        assert data["sessions"][0]["message_count"] == 2
+        assert data["session_id"] == "1_100"
+        assert len(data["messages"]) == 2
 
     def test_memory_returns_telegram_facts(
         self,
@@ -270,11 +269,10 @@ class TestMultiChannelSingleTenant:
             patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
             TestClient(app) as c,
         ):
-            resp = c.get("/api/user/sessions")
+            resp = c.get(f"/api/user/sessions/{tg_user.id}_500")
             assert resp.status_code == 200
             data = resp.json()
-            assert data["total"] == 1
-            assert data["sessions"][0]["id"] == f"{tg_user.id}_500"
+            assert data["session_id"] == f"{tg_user.id}_500"
 
     def test_subsequent_telegram_lookup_uses_index(self) -> None:
         """After linking, future messages find the user via the channel route."""

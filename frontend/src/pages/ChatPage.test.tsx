@@ -7,7 +7,6 @@ import ChatPage from './ChatPage';
 // Mock the api module
 vi.mock('@/api', () => ({
   default: {
-    listSessions: vi.fn().mockResolvedValue({ sessions: [], total: 0, offset: 0, limit: 50 }),
     getSession: vi.fn(),
     sendChatMessage: vi.fn(),
   },
@@ -19,26 +18,12 @@ const mockApi = vi.mocked(api);
 
 beforeEach(() => {
   vi.clearAllMocks();
-  mockApi.listSessions.mockResolvedValue({ sessions: [], total: 0, offset: 0, limit: 50 });
+  localStorage.clear();
 });
 
 describe('ChatPage tool interactions', () => {
   it('displays tool interactions when loading session history', async () => {
     const sessionId = '1_1000';
-    mockApi.listSessions.mockResolvedValue({
-      sessions: [
-        {
-          id: sessionId,
-          start_time: '2025-01-01T00:00:00Z',
-          message_count: 2,
-          last_message_preview: 'Hello',
-          channel: 'webchat',
-        },
-      ],
-      total: 1,
-      offset: 0,
-      limit: 50,
-    });
     mockApi.getSession.mockResolvedValue({
       session_id: sessionId,
       user_id: '1',
@@ -80,20 +65,6 @@ describe('ChatPage tool interactions', () => {
 
   it('does not render tool section when there are no tool interactions', async () => {
     const sessionId = '1_2000';
-    mockApi.listSessions.mockResolvedValue({
-      sessions: [
-        {
-          id: sessionId,
-          start_time: '2025-01-01T00:00:00Z',
-          message_count: 2,
-          last_message_preview: 'Hello',
-          channel: 'webchat',
-        },
-      ],
-      total: 1,
-      offset: 0,
-      limit: 50,
-    });
     mockApi.getSession.mockResolvedValue({
       session_id: sessionId,
       user_id: '1',

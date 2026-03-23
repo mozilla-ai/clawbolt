@@ -68,7 +68,6 @@ class WebChatChannel(BaseChannel):
         async def send_chat_message(
             message: str = Form(default=""),
             session_id: str | None = Form(default=None),
-            force_new: bool = Form(default=False),
             files: list[UploadFile] = File(default=[]),
             user: User = Depends(get_current_user),
         ) -> _ChatAccepted:
@@ -111,7 +110,6 @@ class WebChatChannel(BaseChannel):
             session, _ = await get_or_create_conversation(
                 user.id,
                 external_session_id=session_id,
-                force_new=force_new,
             )
 
             request_id = str(uuid.uuid4())

@@ -694,57 +694,6 @@
         }
       }
     },
-    "/api/user/sessions": {
-      "get": {
-        "summary": "List Sessions",
-        "description": "List conversation sessions for the current user.",
-        "operationId": "list_sessions_api_user_sessions_get",
-        "parameters": [
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 0,
-              "title": "Offset"
-            }
-          },
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "default": 20,
-              "title": "Limit"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionListResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/user/sessions/{session_id}": {
       "get": {
         "summary": "Get Session",
@@ -896,49 +845,6 @@
           }
         }
       }
-    },
-    "/api/search": {
-      "get": {
-        "summary": "Search",
-        "description": "Search across conversations and memory facts.",
-        "operationId": "search_api_search_get",
-        "parameters": [
-          {
-            "name": "q",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "string",
-              "minLength": 0,
-              "maxLength": 200,
-              "default": "",
-              "title": "Q"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SearchResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
     }
   },
   "components": {
@@ -960,11 +866,6 @@
               }
             ],
             "title": "Session Id"
-          },
-          "force_new": {
-            "type": "boolean",
-            "title": "Force New",
-            "default": false
           },
           "files": {
             "items": {
@@ -1338,55 +1239,6 @@
         ],
         "title": "ProviderInfo"
       },
-      "SearchResponse": {
-        "properties": {
-          "results": {
-            "items": {
-              "$ref": "#/components/schemas/SearchResult"
-            },
-            "type": "array",
-            "title": "Results"
-          },
-          "query": {
-            "type": "string",
-            "title": "Query"
-          }
-        },
-        "type": "object",
-        "required": [
-          "results",
-          "query"
-        ],
-        "title": "SearchResponse"
-      },
-      "SearchResult": {
-        "properties": {
-          "type": {
-            "type": "string",
-            "title": "Type"
-          },
-          "title": {
-            "type": "string",
-            "title": "Title"
-          },
-          "preview": {
-            "type": "string",
-            "title": "Preview"
-          },
-          "url": {
-            "type": "string",
-            "title": "Url"
-          }
-        },
-        "type": "object",
-        "required": [
-          "type",
-          "title",
-          "preview",
-          "url"
-        ],
-        "title": "SearchResult"
-      },
       "SessionDetailResponse": {
         "properties": {
           "session_id": {
@@ -1433,37 +1285,6 @@
         ],
         "title": "SessionDetailResponse"
       },
-      "SessionListResponse": {
-        "properties": {
-          "sessions": {
-            "items": {
-              "$ref": "#/components/schemas/SessionSummary"
-            },
-            "type": "array",
-            "title": "Sessions"
-          },
-          "total": {
-            "type": "integer",
-            "title": "Total"
-          },
-          "offset": {
-            "type": "integer",
-            "title": "Offset"
-          },
-          "limit": {
-            "type": "integer",
-            "title": "Limit"
-          }
-        },
-        "type": "object",
-        "required": [
-          "sessions",
-          "total",
-          "offset",
-          "limit"
-        ],
-        "title": "SessionListResponse"
-      },
       "SessionMessage": {
         "properties": {
           "seq": {
@@ -1499,39 +1320,6 @@
           "timestamp"
         ],
         "title": "SessionMessage"
-      },
-      "SessionSummary": {
-        "properties": {
-          "id": {
-            "type": "string",
-            "title": "Id"
-          },
-          "start_time": {
-            "type": "string",
-            "title": "Start Time"
-          },
-          "message_count": {
-            "type": "integer",
-            "title": "Message Count"
-          },
-          "last_message_preview": {
-            "type": "string",
-            "title": "Last Message Preview",
-            "default": ""
-          },
-          "channel": {
-            "type": "string",
-            "title": "Channel",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "id",
-          "start_time",
-          "message_count"
-        ],
-        "title": "SessionSummary"
       },
       "StorageConfigResponse": {
         "properties": {

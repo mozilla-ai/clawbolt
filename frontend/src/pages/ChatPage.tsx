@@ -7,9 +7,9 @@ import { Tooltip } from '@heroui/tooltip';
 import { Spinner } from '@heroui/spinner';
 import api from '@/api';
 import { toast } from '@/lib/toast';
-import { useSessions, useSession } from '@/hooks/queries';
+import { useSession } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
-import type { SessionSummary, ToolInteraction } from '@/types';
+import type { ToolInteraction } from '@/types';
 
 interface FileAttachment {
   name: string;
@@ -37,24 +37,6 @@ function loadLastSession(): string | null {
   try { return localStorage.getItem(LAST_SESSION_KEY); } catch { return null; }
 }
 
-function clearLastSession() {
-  try { localStorage.removeItem(LAST_SESSION_KEY); } catch { /* ignore */ }
-}
-
-function formatSessionTime(dateStr: string): string {
-  const d = new Date(dateStr);
-  const now = new Date();
-  const diffMs = now.getTime() - d.getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  if (diffMins < 1) return 'Just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  const diffHours = Math.floor(diffMins / 60);
-  if (diffHours < 24) return `${diffHours}h ago`;
-  const diffDays = Math.floor(diffHours / 24);
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return d.toLocaleDateString();
-}
-
 export default function ChatPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -69,12 +51,9 @@ export default function ChatPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [approvalPrompt, setApprovalPrompt] = useState<string | null>(null);
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const forceNewRef = useRef(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const pickerRef = useRef<HTMLDivElement>(null);
   const nextId = useRef(1);
   const autoAttachDone = useRef(false);
   const mountedRef = useRef(true);
@@ -84,10 +63,6 @@ export default function ChatPage() {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
-
-  // Fetch sessions via React Query
-  const { data: sessionsData, isPending: loadingSessions } = useSessions(0, 50);
-  const sessions: SessionSummary[] = sessionsData?.sessions ?? [];
 
   // Fetch session history via React Query (poll every 3s when idle)
   const { data: sessionDetail, isPending: loadingHistoryPending, isError: historyError } = useSession(
@@ -120,32 +95,16 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Close picker when clicking outside
+  // Auto-attach to last active session from localStorage
   useEffect(() => {
-    if (!pickerOpen) return;
-    const handleClick = (e: MouseEvent) => {
-      if (pickerRef.current && !pickerRef.current.contains(e.target as Node)) {
-        setPickerOpen(false);
-      }
-    };
-    document.addEventListener('mousedown', handleClick);
-    return () => document.removeEventListener('mousedown', handleClick);
-  }, [pickerOpen]);
-
-  // Auto-attach to last active or most recent session when sessions load
-  useEffect(() => {
-    if (autoAttachDone.current || !sessionsData || searchParams.get('session')) return;
+    if (autoAttachDone.current || searchParams.get('session')) return;
     autoAttachDone.current = true;
-    if (sessionsData.sessions.length > 0) {
-      const saved = loadLastSession();
-      const match = saved ? sessionsData.sessions.find((s) => s.id === saved) : null;
-      const target = match ?? sessionsData.sessions[0];
-      if (target) {
-        setActiveSessionId(target.id);
-        setSearchParams({ session: target.id }, { replace: true });
-      }
+    const saved = loadLastSession();
+    if (saved) {
+      setActiveSessionId(saved);
+      setSearchParams({ session: saved }, { replace: true });
     }
-  }, [sessionsData, searchParams, setSearchParams]);
+  }, [searchParams, setSearchParams]);
 
   // Save active session to localStorage
   useEffect(() => {
@@ -165,30 +124,14 @@ export default function ChatPage() {
     setMessages(loaded);
   }, [sessionDetail]);
 
-  // Handle history load errors
+  // Handle history load errors (e.g. stale session in localStorage)
   useEffect(() => {
     if (historyError && activeSessionId) {
-      toast.error('Failed to load session');
+      try { localStorage.removeItem(LAST_SESSION_KEY); } catch { /* ignore */ }
       setActiveSessionId(null);
       setSearchParams({}, { replace: true });
     }
   }, [historyError, activeSessionId, setSearchParams]);
-
-  const selectSession = (sessionId: string) => {
-    setActiveSessionId(sessionId);
-    setSearchParams({ session: sessionId }, { replace: true });
-    setPickerOpen(false);
-    forceNewRef.current = false;
-  };
-
-  const startNewChat = () => {
-    setActiveSessionId(null);
-    setMessages([]);
-    clearLastSession();
-    setSearchParams({}, { replace: true });
-    setPickerOpen(false);
-    forceNewRef.current = true;
-  };
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newFiles = Array.from(e.target.files || []);
@@ -227,8 +170,6 @@ export default function ChatPage() {
     const filesToSend = selectedFiles.length > 0 ? [...selectedFiles] : undefined;
     // Capture session state at submit time so concurrent sends use correct values
     const submitSessionId = activeSessionId;
-    const submitForceNew = forceNewRef.current;
-    if (forceNewRef.current) forceNewRef.current = false;
     setInput('');
     setSelectedFiles([]);
     pendingRef.current++;
@@ -251,7 +192,6 @@ export default function ChatPage() {
             setApprovalPrompt(event.content ?? null);
           }
         },
-        submitForceNew,
         (accepted) => {
           if (!mountedRef.current) return;
           // Capture session ID immediately so follow-up messages use it
@@ -301,90 +241,15 @@ export default function ChatPage() {
   };
 
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
-  const activeSession = sessions.find((s) => s.id === activeSessionId);
 
   return (
     <div className="flex flex-col h-full -my-4 sm:-my-6">
       {/* Header */}
-      <div className="py-4 sm:py-6 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-xl font-semibold font-display">Chat</h2>
-          <p className="text-sm text-muted-foreground mt-1">
-            Talk with your AI assistant directly from the dashboard.
-          </p>
-        </div>
-        <div className="flex items-center gap-2 shrink-0">
-          {loadingSessions ? (
-            <Spinner color="primary" size="sm" aria-label="Loading" />
-          ) : (
-            <>
-              {/* Session picker */}
-              <div className="relative" ref={pickerRef}>
-                <Button
-                  variant="secondary"
-                  size="sm"
-                  onClick={() => setPickerOpen((v) => !v)}
-                  className="gap-1.5 text-base sm:text-xs max-w-[220px]"
-                >
-                  <span className="truncate">
-                    {activeSession
-                      ? (activeSession.last_message_preview
-                          ? activeSession.last_message_preview.slice(0, 30) + (activeSession.last_message_preview.length > 30 ? '...' : '')
-                          : formatSessionTime(activeSession.start_time))
-                      : 'New conversation'}
-                  </span>
-                  <ChevronIcon open={pickerOpen} />
-                </Button>
-
-                {pickerOpen && (
-                  <div className="absolute right-0 top-full mt-1 w-72 bg-card border border-border rounded-lg shadow-lg z-50 overflow-hidden">
-                    <div className="p-1.5">
-                      <Button
-                        variant="ghost"
-                        size="sm"
-                        onClick={startNewChat}
-                        className="w-full justify-start gap-2 text-primary"
-                      >
-                        <PlusIcon />
-                        New conversation
-                      </Button>
-                    </div>
-                    {sessions.length > 0 && (
-                      <>
-                        <div className="border-t border-border" />
-                        <div className="max-h-64 overflow-y-auto p-1.5 space-y-0.5">
-                          {sessions.map((s) => (
-                            <Button
-                              key={s.id}
-                              variant="ghost"
-                              size="sm"
-                              onClick={() => selectSession(s.id)}
-                              className={`w-full justify-start text-left h-auto py-2 ${
-                                s.id === activeSessionId
-                                  ? 'bg-selected-bg text-primary'
-                                  : 'text-foreground'
-                              }`}
-                            >
-                              <div className="min-w-0">
-                                <p className="text-sm truncate">
-                                  {s.last_message_preview || 'Empty conversation'}
-                                </p>
-                                <p className="text-[10px] text-muted-foreground mt-0.5 font-normal">
-                                  {formatSessionTime(s.start_time)}
-                                  {s.message_count > 0 && ` | ${s.message_count} messages`}
-                                </p>
-                              </div>
-                            </Button>
-                          ))}
-                        </div>
-                      </>
-                    )}
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </div>
+      <div className="py-4 sm:py-6">
+        <h2 className="text-xl font-semibold font-display">Chat</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Talk with your AI assistant directly from the dashboard.
+        </p>
       </div>
 
       {/* Messages area */}
@@ -668,27 +533,6 @@ function ApprovalPrompt({
         </div>
       </div>
     </div>
-  );
-}
-
-function ChevronIcon({ open }: { open: boolean }) {
-  return (
-    <svg
-      className={`w-3.5 h-3.5 shrink-0 transition-transform ${open ? 'rotate-180' : ''}`}
-      fill="none"
-      stroke="currentColor"
-      viewBox="0 0 24 24"
-    >
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
-    </svg>
-  );
-}
-
-function PlusIcon() {
-  return (
-    <svg className="w-4 h-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
-    </svg>
   );
 }
 
