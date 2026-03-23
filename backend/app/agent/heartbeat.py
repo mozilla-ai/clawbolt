@@ -25,10 +25,14 @@ from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
 
 from backend.app.agent.context import get_or_create_conversation
+from backend.app.agent.dto import HeartbeatLogEntry
 from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.session_db import get_session_store
-from backend.app.agent.system_prompt import build_heartbeat_system_prompt, to_local_time
+from backend.app.agent.system_prompt import (
+    build_heartbeat_system_prompt,
+    to_local_time,
+)
 from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel, get_default_channel, get_manager
 from backend.app.config import settings
@@ -54,6 +58,9 @@ _NAMED_FREQUENCIES: dict[str, int] = {
 
 # Minimum tick resolution: the scheduler wakes up this often.
 _TICK_RESOLUTION_MINUTES = 1
+
+# How far back to look when building heartbeat history context for the LLM.
+_HISTORY_LOOKBACK_DAYS = 7
 
 
 def parse_frequency_to_minutes(freq: str) -> int | None:
@@ -266,6 +273,43 @@ def _parse_tool_call_response(response: MessageResponse) -> HeartbeatAction:
     )
 
 
+def _format_heartbeat_history(
+    logs: list[HeartbeatLogEntry],
+    tz_name: str,
+    now: datetime.datetime,
+) -> str:
+    """Format recent heartbeat log entries into a human-readable summary.
+
+    Shows when heartbeat messages were previously sent so the Phase 1
+    evaluator can avoid duplicate sends and reason about timing.
+    """
+    if not logs:
+        return (
+            f"You have not sent any heartbeat messages to this user "
+            f"in the last {_HISTORY_LOOKBACK_DAYS} days."
+        )
+
+    lines: list[str] = []
+    for entry in logs:
+        ts = datetime.datetime.fromisoformat(entry.created_at)
+        local_ts = to_local_time(ts, tz_name)
+        formatted = local_ts.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
+        delta = now - ts
+        if delta.days == 0:
+            ago = "today"
+        elif delta.days == 1:
+            ago = "1 day ago"
+        else:
+            ago = f"{delta.days} days ago"
+        lines.append(f"- {formatted} ({ago})")
+
+    summary = "\n".join(lines)
+    return (
+        f"Your recent heartbeat messages to this user "
+        f"(last {_HISTORY_LOOKBACK_DAYS} days):\n{summary}"
+    )
+
+
 async def evaluate_heartbeat_need(
     user: User,
     channel: str = "",
@@ -290,7 +334,16 @@ async def evaluate_heartbeat_need(
     heartbeat_store = HeartbeatStore(user.id)
     heartbeat_md = heartbeat_store.read_heartbeat_md()
 
-    prompt = await build_heartbeat_system_prompt(user, recent_text, heartbeat_md=heartbeat_md)
+    # Fetch recent heartbeat send history so the LLM knows when it last
+    # messaged this user and can avoid duplicates or missed sends.
+    now = datetime.datetime.now(datetime.UTC)
+    since = now - datetime.timedelta(days=_HISTORY_LOOKBACK_DAYS)
+    recent_logs = await heartbeat_store.get_recent_logs(since)
+    heartbeat_history = _format_heartbeat_history(recent_logs, user.timezone, now)
+
+    prompt = await build_heartbeat_system_prompt(
+        user, recent_text, heartbeat_md=heartbeat_md, heartbeat_history=heartbeat_history
+    )
 
     logger.debug(
         "Heartbeat Phase 1 context for user %s: recent_messages=%d, "
