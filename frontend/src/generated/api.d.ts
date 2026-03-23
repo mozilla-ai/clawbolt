@@ -868,6 +868,11 @@ export interface components {
             heartbeat_opt_in: boolean;
             /** Heartbeat Frequency */
             heartbeat_frequency: string;
+            /**
+             * Heartbeat Max Daily
+             * @default 0
+             */
+            heartbeat_max_daily: number;
             /** Onboarding Complete */
             onboarding_complete: boolean;
             /** Is Active */
@@ -893,6 +898,8 @@ export interface components {
             heartbeat_opt_in?: boolean | null;
             /** Heartbeat Frequency */
             heartbeat_frequency?: string | null;
+            /** Heartbeat Max Daily */
+            heartbeat_max_daily?: number | null;
             /** Onboarding Complete */
             onboarding_complete?: boolean | null;
         };
