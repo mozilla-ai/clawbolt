@@ -157,6 +157,30 @@ def build_local_datetime_section(user: User) -> str:
     )
 
 
+def build_time_user_context(user: User) -> str:
+    """Build a time context string to prepend to user messages.
+
+    Moves the current time out of the system prompt (which breaks prompt
+    caching) and into the user message where it is visible to the LLM but
+    does not affect system prompt cache keys.
+    """
+    now = datetime.datetime.now(datetime.UTC)
+    local = to_local_time(now, user.timezone)
+    formatted = local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
+    if user.timezone:
+        return (
+            f"[Current time: {formatted} ({user.timezone}). "
+            "Always use this timezone when discussing times, scheduling, "
+            "or referring to deadlines.]"
+        )
+    return (
+        f"[Current time: {formatted}. "
+        "No timezone has been set for this user; this time is in UTC. "
+        "If the user mentions their location or timezone, update USER.md "
+        "with their timezone so future times are shown in their local time.]"
+    )
+
+
 def build_cross_session_context(
     user_id: str,
     current_session_id: str,
@@ -220,8 +244,6 @@ async def build_agent_system_prompt(
         instructions = build_instructions_section()
     builder.add_section("Instructions", instructions)
 
-    builder.add_section("Current date and time", build_local_datetime_section(user))
-
     builder.add_section("Proactive Messaging", build_proactive_section())
     builder.add_section("Recall Behavior", build_recall_section())
 
@@ -263,11 +285,6 @@ async def build_heartbeat_system_prompt(
 
     if heartbeat_md:
         builder.add_section("User's heartbeat (HEARTBEAT.md)", heartbeat_md)
-
-    builder.add_section(
-        "Current time",
-        build_local_datetime_section(user),
-    )
 
     if heartbeat_history:
         builder.add_section("Recent heartbeat activity", heartbeat_history)

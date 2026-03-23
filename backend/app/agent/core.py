@@ -44,7 +44,7 @@ from backend.app.agent.messages import (
     UserMessage,
     messages_to_messages_api,
 )
-from backend.app.agent.system_prompt import build_agent_system_prompt
+from backend.app.agent.system_prompt import build_agent_system_prompt, build_time_user_context
 from backend.app.agent.tool_errors import (
     _DEFAULT_ERROR_HINT,
     _ERROR_KIND_HINTS,
@@ -696,7 +696,8 @@ class ClawboltAgent:
         if conversation_history:
             messages.extend(conversation_history)
 
-        messages.append(UserMessage(content=message_context))
+        time_context = build_time_user_context(self.user)
+        messages.append(UserMessage(content=f"{time_context}\n\n{message_context}"))
 
         # Trim oldest conversation history if content exceeds the limit.
         # Uses the block-based trimmer which preserves tool-call/result pairing

@@ -89,7 +89,8 @@ async def test_agent_includes_conversation_history(mock_amessages: object, test_
     assert call_args.kwargs["system"] is not None
     assert len(messages) == 3
     assert messages[0]["content"] == "Hi, I need help"
-    assert messages[2]["content"] == "What about a deck?"
+    # Current user message has time context prepended
+    assert messages[2]["content"].endswith("What about a deck?")
 
 
 @pytest.mark.asyncio()
@@ -730,7 +731,8 @@ async def test_agent_preserves_system_and_user_during_trimming(
 
     # Latest user message is always last
     assert messages[-1]["role"] == "user"
-    assert messages[-1]["content"] == "My important question"
+    # Current user message has time context prepended
+    assert messages[-1]["content"].endswith("My important question")
 
     # At least 1 message (system is extracted to kwarg)
     assert len(messages) >= 1
