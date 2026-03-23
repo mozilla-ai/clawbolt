@@ -1958,6 +1958,11 @@
             "type": "string",
             "title": "Heartbeat Frequency"
           },
+          "heartbeat_max_daily": {
+            "type": "integer",
+            "title": "Heartbeat Max Daily",
+            "default": 0
+          },
           "onboarding_complete": {
             "type": "boolean",
             "title": "Onboarding Complete"
@@ -2073,6 +2078,18 @@
               }
             ],
             "title": "Heartbeat Frequency"
+          },
+          "heartbeat_max_daily": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 0.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Heartbeat Max Daily"
           },
           "onboarding_complete": {
             "anyOf": [

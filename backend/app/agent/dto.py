@@ -38,6 +38,7 @@ class UserData(BaseModel):
     is_active: bool = True
     heartbeat_opt_in: bool = True
     heartbeat_frequency: str = Field(default_factory=lambda: settings.heartbeat_default_frequency)
+    heartbeat_max_daily: int = 0
     created_at: datetime.datetime = Field(
         default_factory=lambda: datetime.datetime.now(datetime.UTC)
     )
