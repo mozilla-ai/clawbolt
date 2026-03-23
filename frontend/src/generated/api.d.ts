@@ -358,6 +358,66 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/heartbeat-logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Heartbeat Logs
+         * @description List heartbeat logs for the current user, most recent first.
+         */
+        get: operations["get_heartbeat_logs_api_user_heartbeat_logs_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/llm-usage": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Llm Usage
+         * @description Aggregate LLM usage for the current user over the last N days.
+         */
+        get: operations["get_llm_usage_api_user_llm_usage_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Sessions
+         * @description List sessions with message counts, ordered by last_message_at DESC.
+         */
+        get: operations["list_sessions_api_user_sessions_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/sessions/{session_id}": {
         parameters: {
             query?: never;
@@ -480,6 +540,73 @@ export interface components {
              */
             database: string;
         };
+        /** HeartbeatLogItemResponse */
+        HeartbeatLogItemResponse: {
+            /** Id */
+            id: number;
+            /** User Id */
+            user_id: string;
+            /**
+             * Action Type
+             * @default send
+             */
+            action_type: string;
+            /**
+             * Message Text
+             * @default
+             */
+            message_text: string;
+            /**
+             * Channel
+             * @default
+             */
+            channel: string;
+            /**
+             * Reasoning
+             * @default
+             */
+            reasoning: string;
+            /**
+             * Tasks
+             * @default
+             */
+            tasks: string;
+            /** Created At */
+            created_at: string;
+        };
+        /** HeartbeatLogListResponse */
+        HeartbeatLogListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["HeartbeatLogItemResponse"][];
+        };
+        /** LLMUsageByPurpose */
+        LLMUsageByPurpose: {
+            /** Purpose */
+            purpose: string;
+            /** Call Count */
+            call_count: number;
+            /** Total Input Tokens */
+            total_input_tokens: number;
+            /** Total Output Tokens */
+            total_output_tokens: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Total Cost */
+            total_cost: number;
+        };
+        /** LLMUsageSummary */
+        LLMUsageSummary: {
+            /** Total Calls */
+            total_calls: number;
+            /** Total Tokens */
+            total_tokens: number;
+            /** Total Cost */
+            total_cost: number;
+            /** By Purpose */
+            by_purpose: components["schemas"]["LLMUsageByPurpose"][];
+        };
         /** MemoryResponse */
         MemoryResponse: {
             /** Content */
@@ -583,6 +710,31 @@ export interface components {
             channel: string;
             /** Messages */
             messages: components["schemas"]["SessionMessage"][];
+        };
+        /** SessionListItem */
+        SessionListItem: {
+            /** Session Id */
+            session_id: string;
+            /**
+             * Channel
+             * @default
+             */
+            channel: string;
+            /** Is Active */
+            is_active: boolean;
+            /** Message Count */
+            message_count: number;
+            /** Created At */
+            created_at: string;
+            /** Last Message At */
+            last_message_at: string;
+        };
+        /** SessionListResponse */
+        SessionListResponse: {
+            /** Total */
+            total: number;
+            /** Items */
+            items: components["schemas"]["SessionListItem"][];
         };
         /** SessionMessage */
         SessionMessage: {
@@ -1320,6 +1472,101 @@ export interface operations {
                 };
                 content: {
                     "application/json": string[];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_heartbeat_logs_api_user_heartbeat_logs_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HeartbeatLogListResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_llm_usage_api_user_llm_usage_get: {
+        parameters: {
+            query?: {
+                days?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LLMUsageSummary"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    list_sessions_api_user_sessions_get: {
+        parameters: {
+            query?: {
+                limit?: number;
+                offset?: number;
+                is_active?: boolean | null;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionListResponse"];
                 };
             };
             /** @description Validation Error */

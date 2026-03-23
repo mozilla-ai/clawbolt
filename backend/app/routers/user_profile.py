@@ -1,15 +1,22 @@
 """Endpoints for user profile management."""
 
+import datetime
+
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import save_persistent_config, settings, update_settings
 from backend.app.database import get_db
-from backend.app.models import User
+from backend.app.models import HeartbeatLog, LLMUsageLog, User
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
+    HeartbeatLogItemResponse,
+    HeartbeatLogListResponse,
+    LLMUsageByPurpose,
+    LLMUsageSummary,
     ModelConfigResponse,
     ModelConfigUpdate,
     ProviderInfo,
@@ -291,3 +298,100 @@ async def list_provider_models(
         return await get_models(provider, api_base=api_base)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to list models: {exc}") from exc
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat logs
+# ---------------------------------------------------------------------------
+
+
+@router.get("/user/heartbeat-logs", response_model=HeartbeatLogListResponse)
+async def get_heartbeat_logs(
+    limit: int = Query(50, ge=1, le=200),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HeartbeatLogListResponse:
+    """List heartbeat logs for the current user, most recent first."""
+    total: int = (
+        db.query(sa_func.count(HeartbeatLog.id))
+        .filter(HeartbeatLog.user_id == current_user.id)
+        .scalar()
+    ) or 0
+
+    logs = (
+        db.query(HeartbeatLog)
+        .filter(HeartbeatLog.user_id == current_user.id)
+        .order_by(HeartbeatLog.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    return HeartbeatLogListResponse(
+        total=total,
+        items=[
+            HeartbeatLogItemResponse(
+                id=log.id,
+                user_id=log.user_id,
+                action_type=log.action_type or "send",
+                message_text=log.message_text or "",
+                channel=log.channel or "",
+                reasoning=log.reasoning or "",
+                tasks=log.tasks or "",
+                created_at=log.created_at.isoformat() if log.created_at else "",
+            )
+            for log in logs
+        ],
+    )
+
+
+# ---------------------------------------------------------------------------
+# LLM usage summary
+# ---------------------------------------------------------------------------
+
+
+@router.get("/user/llm-usage", response_model=LLMUsageSummary)
+async def get_llm_usage(
+    days: int = Query(30, ge=1, le=365),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> LLMUsageSummary:
+    """Aggregate LLM usage for the current user over the last N days."""
+    since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
+
+    rows = (
+        db.query(
+            LLMUsageLog.purpose,
+            sa_func.count(LLMUsageLog.id).label("call_count"),
+            sa_func.coalesce(sa_func.sum(LLMUsageLog.input_tokens), 0).label("total_input_tokens"),
+            sa_func.coalesce(sa_func.sum(LLMUsageLog.output_tokens), 0).label(
+                "total_output_tokens"
+            ),
+            sa_func.coalesce(sa_func.sum(LLMUsageLog.total_tokens), 0).label("total_tokens"),
+            sa_func.coalesce(sa_func.sum(LLMUsageLog.cost), 0).label("total_cost"),
+        )
+        .filter(
+            LLMUsageLog.user_id == current_user.id,
+            LLMUsageLog.created_at >= since,
+        )
+        .group_by(LLMUsageLog.purpose)
+        .all()
+    )
+
+    by_purpose = [
+        LLMUsageByPurpose(
+            purpose=row.purpose or "",
+            call_count=int(row.call_count),
+            total_input_tokens=int(row.total_input_tokens),
+            total_output_tokens=int(row.total_output_tokens),
+            total_tokens=int(row.total_tokens),
+            total_cost=float(row.total_cost),
+        )
+        for row in rows
+    ]
+
+    return LLMUsageSummary(
+        total_calls=sum(p.call_count for p in by_purpose),
+        total_tokens=sum(p.total_tokens for p in by_purpose),
+        total_cost=sum(p.total_cost for p in by_purpose),
+        by_purpose=by_purpose,
+    )

@@ -42,6 +42,11 @@ logger = logging.getLogger(__name__)
 def _heartbeat_log_to_dto(log: HeartbeatLog) -> HeartbeatLogEntry:
     return HeartbeatLogEntry(
         user_id=log.user_id,
+        action_type=log.action_type or "send",
+        message_text=log.message_text or "",
+        channel=log.channel or "",
+        reasoning=log.reasoning or "",
+        tasks=log.tasks or "",
         created_at=log.created_at.isoformat() if log.created_at else "",
     )
 
@@ -124,15 +129,30 @@ class HeartbeatStore:
                 user.heartbeat_text = text
                 db.commit()
 
-    async def log_heartbeat(self) -> None:
+    async def log_heartbeat(
+        self,
+        *,
+        action_type: str = "send",
+        message_text: str = "",
+        channel: str = "",
+        reasoning: str = "",
+        tasks: str = "",
+    ) -> None:
         """Insert a HeartbeatLog row."""
         with db_session() as db:
-            log = HeartbeatLog(user_id=self.user_id)
+            log = HeartbeatLog(
+                user_id=self.user_id,
+                action_type=action_type,
+                message_text=message_text,
+                channel=channel,
+                reasoning=reasoning,
+                tasks=tasks,
+            )
             db.add(log)
             db.commit()
 
     async def get_daily_count(self) -> int:
-        """Count HeartbeatLog entries for today (UTC)."""
+        """Count HeartbeatLog entries for today (UTC), excluding skips."""
         db = SessionLocal()
         try:
             today = datetime.datetime.now(datetime.UTC).date()
@@ -144,6 +164,7 @@ class HeartbeatStore:
                     HeartbeatLog.user_id == self.user_id,
                     HeartbeatLog.created_at >= today_start,
                     HeartbeatLog.created_at < tomorrow_start,
+                    HeartbeatLog.action_type != "skip",
                 )
                 .scalar()
             ) or 0

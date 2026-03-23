@@ -3,17 +3,65 @@
 import contextlib
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import func as sa_func
+from sqlalchemy.orm import Session
 
 from backend.app.agent.session_db import get_session_store
 from backend.app.auth.dependencies import get_current_user
-from backend.app.models import User
+from backend.app.database import get_db
+from backend.app.models import ChatSession, Message, User
 from backend.app.schemas import (
     SessionDetailResponse,
+    SessionListItem,
+    SessionListResponse,
     SessionMessage,
 )
 
 router = APIRouter()
+
+
+@router.get("/user/sessions", response_model=SessionListResponse)
+async def list_sessions(
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    is_active: bool | None = Query(None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> SessionListResponse:
+    """List sessions with message counts, ordered by last_message_at DESC."""
+    base_filter = [ChatSession.user_id == current_user.id]
+    if is_active is not None:
+        base_filter.append(ChatSession.is_active == is_active)
+
+    total: int = (db.query(sa_func.count(ChatSession.id)).filter(*base_filter).scalar()) or 0
+
+    # Subquery for message count
+    msg_count = sa_func.count(Message.id).label("message_count")
+    rows = (
+        db.query(ChatSession, msg_count)
+        .outerjoin(Message, Message.session_id == ChatSession.id)
+        .filter(*base_filter)
+        .group_by(ChatSession.id)
+        .order_by(ChatSession.last_message_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    items = [
+        SessionListItem(
+            session_id=cs.session_id,
+            channel=cs.channel or "",
+            is_active=cs.is_active,
+            message_count=count,
+            created_at=cs.created_at.isoformat() if cs.created_at else "",
+            last_message_at=cs.last_message_at.isoformat() if cs.last_message_at else "",
+        )
+        for cs, count in rows
+    ]
+
+    return SessionListResponse(total=total, items=items)
 
 
 @router.get("/user/sessions/{session_id}", response_model=SessionDetailResponse)

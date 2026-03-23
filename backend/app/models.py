@@ -196,6 +196,11 @@ class HeartbeatLog(Base):
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
+    action_type: Mapped[str] = mapped_column(String, default="send")
+    message_text: Mapped[str] = mapped_column(Text, default="")
+    channel: Mapped[str] = mapped_column(String, default="")
+    reasoning: Mapped[str] = mapped_column(Text, default="")
+    tasks: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
     user: Mapped["User"] = relationship("User", back_populates="heartbeat_logs")
