@@ -124,10 +124,10 @@ export default function ChatPage() {
     setMessages(loaded);
   }, [sessionDetail]);
 
-  // Handle history load errors
+  // Handle history load errors (e.g. stale session in localStorage)
   useEffect(() => {
     if (historyError && activeSessionId) {
-      toast.error('Failed to load session');
+      try { localStorage.removeItem(LAST_SESSION_KEY); } catch { /* ignore */ }
       setActiveSessionId(null);
       setSearchParams({}, { replace: true });
     }

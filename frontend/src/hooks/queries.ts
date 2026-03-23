@@ -39,6 +39,7 @@ export function useSession(
     queryFn: () => api.getSession(sessionId!),
     enabled: !!sessionId,
     refetchInterval: refetchInterval ?? false,
+    retry: false,
   });
 }
 
