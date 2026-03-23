@@ -2082,7 +2082,8 @@
           "heartbeat_max_daily": {
             "anyOf": [
               {
-                "type": "integer"
+                "type": "integer",
+                "minimum": 0.0
               },
               {
                 "type": "null"

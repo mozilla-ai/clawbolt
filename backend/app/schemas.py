@@ -58,7 +58,7 @@ class UserProfileUpdate(BaseModel):
     heartbeat_text: str | None = None
     heartbeat_opt_in: bool | None = None
     heartbeat_frequency: str | None = None
-    heartbeat_max_daily: int | None = None
+    heartbeat_max_daily: int | None = Field(default=None, ge=0)
     onboarding_complete: bool | None = None
 
 
