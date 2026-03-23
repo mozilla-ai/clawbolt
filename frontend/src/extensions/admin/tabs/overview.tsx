@@ -1,11 +1,9 @@
 import { useState, useEffect } from 'react';
 import {
   getHeartbeatLogs,
-  getSessions,
   getLLMUsage,
   getProfile,
   type HeartbeatLogItem,
-  type SessionListResponse,
   type LLMUsageSummary,
   type UserProfile,
 } from '../admin-api';
@@ -21,9 +19,9 @@ const NAMED_FREQUENCIES: Record<string, number> = {
 
 function parseFrequencyToMinutes(freq: string): number | null {
   const trimmed = freq.trim().toLowerCase();
-  if (trimmed in NAMED_FREQUENCIES) return NAMED_FREQUENCIES[trimmed];
+  if (trimmed in NAMED_FREQUENCIES) return NAMED_FREQUENCIES[trimmed] ?? null;
   const m = trimmed.match(/^(\d+)\s*([mhd])$/);
-  if (!m) return null;
+  if (!m?.[1] || !m[2]) return null;
   const value = parseInt(m[1], 10);
   const unit = m[2];
   if (unit === 'm') return Math.max(value, 1);
@@ -52,11 +50,12 @@ function computeHeartbeatHealth(
   const sends = logs.filter(l => l.action_type === 'send');
   const sentToday = sends.filter(l => new Date(l.created_at) >= todayStart).length;
 
-  if (sends.length === 0) {
+  const firstSend = sends[0];
+  if (!firstSend) {
     return { status: 'red', sentToday: 0, lastAgo: '' };
   }
 
-  const lastSend = new Date(sends[0].created_at);
+  const lastSend = new Date(firstSend.created_at);
   const minutesSinceLast = (now - lastSend.getTime()) / 60000;
 
   let lastAgo: string;
@@ -103,14 +102,13 @@ function heartbeatStatusText(status: HealthStatus): string {
 
 interface OverviewData {
   heartbeatLogs: HeartbeatLogItem[];
-  sessions: SessionListResponse;
   usage: LLMUsageSummary;
   profile: UserProfile | null;
 }
 
 // --- Overview Tab ---
 
-export default function OverviewTab({ onSwitchTab }: { onSwitchTab: (id: string) => void }) {
+export default function OverviewTab({ onSwitchTab }: { onSwitchTab: (id: 'heartbeats' | 'usage') => void }) {
   const [data, setData] = useState<OverviewData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -121,12 +119,11 @@ export default function OverviewTab({ onSwitchTab }: { onSwitchTab: (id: string)
 
     Promise.all([
       getHeartbeatLogs(200).catch(() => ({ total: 0, items: [] as HeartbeatLogItem[] })),
-      getSessions(200).catch(() => ({ total: 0, items: [] })),
       getLLMUsage(30).catch(() => ({ total_calls: 0, total_tokens: 0, total_cost: 0, by_purpose: [] })),
       getProfile().catch(() => null),
     ])
-      .then(([heartbeatLogs, sessions, usage, profile]) => {
-        setData({ heartbeatLogs: heartbeatLogs.items, sessions, usage, profile });
+      .then(([heartbeatLogs, usage, profile]) => {
+        setData({ heartbeatLogs: heartbeatLogs.items, usage, profile });
       })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
@@ -134,8 +131,7 @@ export default function OverviewTab({ onSwitchTab }: { onSwitchTab: (id: string)
 
   if (loading) {
     return (
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-        <div className="animate-pulse bg-panel rounded-[--radius-md] h-24" />
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
         <div className="animate-pulse bg-panel rounded-[--radius-md] h-24" />
         <div className="animate-pulse bg-panel rounded-[--radius-md] h-24" />
       </div>
@@ -145,8 +141,8 @@ export default function OverviewTab({ onSwitchTab }: { onSwitchTab: (id: string)
   if (error || !data) {
     return (
       <div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
-          {[0, 1, 2].map(i => (
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
+          {[0, 1].map(i => (
             <div key={i} className="bg-card border border-border rounded-[--radius-md] p-4">
               <p className="text-xl font-semibold font-display">--</p>
               <p className="text-xs text-muted-foreground">Unable to load</p>
@@ -164,14 +160,12 @@ export default function OverviewTab({ onSwitchTab }: { onSwitchTab: (id: string)
   }
 
   const health = computeHeartbeatHealth(data.heartbeatLogs, data.profile);
-  const activeSessions = data.sessions.items.filter(s => s.is_active).length;
-  const totalSessions = data.sessions.total;
   const recentActivity = data.heartbeatLogs.slice(0, 10);
 
   return (
     <div>
       {/* Health cards */}
-      <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 mb-6">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 mb-6">
         {/* Heartbeat Status */}
         <button
           className="bg-card border border-border rounded-[--radius-md] p-4 text-left cursor-pointer hover:border-primary transition-colors"
@@ -198,17 +192,6 @@ export default function OverviewTab({ onSwitchTab }: { onSwitchTab: (id: string)
               )}
             </p>
           )}
-        </button>
-
-        {/* Sessions */}
-        <button
-          className="bg-card border border-border rounded-[--radius-md] p-4 text-left cursor-pointer hover:border-primary transition-colors"
-          onClick={() => onSwitchTab('sessions')}
-        >
-          <p className="text-xl font-semibold font-display">
-            {activeSessions} active / {totalSessions} total
-          </p>
-          <p className="text-xs text-muted-foreground">Sessions</p>
         </button>
 
         {/* LLM Cost */}

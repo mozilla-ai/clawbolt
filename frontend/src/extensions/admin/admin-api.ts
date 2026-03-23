@@ -20,22 +20,6 @@ export interface HeartbeatLogList {
   items: HeartbeatLogItem[];
 }
 
-// --- Sessions ---
-
-export interface SessionListItem {
-  session_id: string;
-  channel: string;
-  is_active: boolean;
-  message_count: number;
-  created_at: string;
-  last_message_at: string;
-}
-
-export interface SessionListResponse {
-  total: number;
-  items: SessionListItem[];
-}
-
 // --- LLM Usage ---
 
 export interface LLMUsageByPurpose {
@@ -69,17 +53,6 @@ export async function getHeartbeatLogs(limit: number = 50): Promise<HeartbeatLog
   );
   if (error) throwApiError(error, 'Failed to load heartbeat logs');
   return data as HeartbeatLogList;
-}
-
-export async function getSessions(
-  limit: number = 50,
-  offset: number = 0,
-): Promise<SessionListResponse> {
-  const { data, error } = await client.GET(
-    `/api/user/sessions?limit=${limit}&offset=${offset}` as never,
-  );
-  if (error) throwApiError(error, 'Failed to load sessions');
-  return data as SessionListResponse;
 }
 
 export async function getLLMUsage(days: number = 30): Promise<LLMUsageSummary> {

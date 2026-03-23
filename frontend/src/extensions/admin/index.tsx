@@ -1,7 +1,6 @@
 import { useState, useEffect, useCallback, type KeyboardEvent } from 'react';
 import OverviewTab from './tabs/overview';
 import HeartbeatsTab from './tabs/heartbeats';
-import SessionsTab from './tabs/sessions';
 import UsageTab from './tabs/usage';
 
 // --- Tab definitions ---
@@ -9,7 +8,6 @@ import UsageTab from './tabs/usage';
 const TABS = [
   { id: 'overview', label: 'Overview' },
   { id: 'heartbeats', label: 'Heartbeats' },
-  { id: 'sessions', label: 'Sessions' },
   { id: 'usage', label: 'Usage' },
 ] as const;
 
@@ -47,7 +45,8 @@ function TabBar({
       }
 
       e.preventDefault();
-      onChange(TABS[nextIndex].id);
+      const tab = TABS[nextIndex];
+      if (tab) onChange(tab.id);
     },
     [active, onChange],
   );
@@ -112,7 +111,6 @@ export default function AdminPanel() {
       <div className="mt-4" role="tabpanel" aria-labelledby={`tab-${activeTab}`}>
         {activeTab === 'overview' && <OverviewTab onSwitchTab={handleTabChange} />}
         {activeTab === 'heartbeats' && <HeartbeatsTab />}
-        {activeTab === 'sessions' && <SessionsTab />}
         {activeTab === 'usage' && <UsageTab />}
       </div>
     </div>
