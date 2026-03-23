@@ -113,6 +113,7 @@ uv run pytest -v                                  # tests pass
 uv run ruff check backend/ tests/ alembic/                 # lint passes
 uv run ruff format --check backend/ tests/ alembic/        # format passes
 uv run ty check --python .venv backend/ tests/ alembic/    # type checking passes
+cd frontend && npm run typecheck                   # TypeScript type checking passes
 cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 ```
 

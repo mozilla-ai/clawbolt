@@ -430,6 +430,14 @@ async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
     return ctx
 
 
+async def persist_system_prompt_step(ctx: PipelineContext) -> PipelineContext:
+    """Save the system prompt to the session on first message."""
+    if ctx.response and ctx.response.system_prompt:
+        session_store = get_session_store(ctx.user.id)
+        await session_store.update_initial_system_prompt(ctx.session, ctx.response.system_prompt)
+    return ctx
+
+
 async def finalize_onboarding_step(ctx: PipelineContext) -> PipelineContext:
     """Append onboarding completion note if applicable."""
     if ctx._onboarding_sub and ctx.response:
@@ -497,6 +505,7 @@ DEFAULT_PIPELINE: list[PipelineStep] = [
     build_context_step,
     load_history_step,
     run_agent_step,
+    persist_system_prompt_step,
     finalize_onboarding_step,
     dispatch_reply_step,
     persist_outbound_step,

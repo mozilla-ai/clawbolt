@@ -1560,6 +1560,16 @@
             "title": "Channel",
             "default": ""
           },
+          "initial_system_prompt": {
+            "type": "string",
+            "title": "Initial System Prompt",
+            "default": ""
+          },
+          "last_compacted_seq": {
+            "type": "integer",
+            "title": "Last Compacted Seq",
+            "default": 0
+          },
           "messages": {
             "items": {
               "$ref": "#/components/schemas/SessionMessage"

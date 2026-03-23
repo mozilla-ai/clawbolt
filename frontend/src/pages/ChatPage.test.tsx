@@ -42,6 +42,8 @@ describe('ChatPage tool interactions', () => {
       last_message_at: '2025-01-01T00:01:00Z',
       is_active: true,
       channel: 'webchat',
+      initial_system_prompt: '',
+      last_compacted_seq: 0,
       messages: [
         {
           seq: 1,
@@ -83,6 +85,8 @@ describe('ChatPage tool interactions', () => {
       last_message_at: '2025-01-01T00:01:00Z',
       is_active: true,
       channel: 'webchat',
+      initial_system_prompt: '',
+      last_compacted_seq: 0,
       messages: [
         {
           seq: 1,

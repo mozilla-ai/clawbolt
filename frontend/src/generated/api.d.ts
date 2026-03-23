@@ -708,6 +708,16 @@ export interface components {
              * @default
              */
             channel: string;
+            /**
+             * Initial System Prompt
+             * @default
+             */
+            initial_system_prompt: string;
+            /**
+             * Last Compacted Seq
+             * @default 0
+             */
+            last_compacted_seq: number;
             /** Messages */
             messages: components["schemas"]["SessionMessage"][];
         };

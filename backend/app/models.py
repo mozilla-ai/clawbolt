@@ -123,6 +123,7 @@ class ChatSession(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     channel: Mapped[str] = mapped_column(String, default="")
     last_compacted_seq: Mapped[int] = mapped_column(Integer, default=0)
+    initial_system_prompt: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
     last_message_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 

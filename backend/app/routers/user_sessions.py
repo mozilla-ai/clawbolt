@@ -98,5 +98,7 @@ async def get_session(
         last_message_at=session.last_message_at,
         is_active=session.is_active,
         channel=session.channel,
+        initial_system_prompt=session.initial_system_prompt,
+        last_compacted_seq=session.last_compacted_seq,
         messages=messages,
     )

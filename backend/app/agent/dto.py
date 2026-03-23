@@ -81,6 +81,7 @@ class SessionState(BaseModel):
     last_message_at: str = ""
     last_compacted_seq: int = 0
     channel: str = ""
+    initial_system_prompt: str = ""
 
 
 class MediaData(BaseModel):
