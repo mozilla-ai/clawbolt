@@ -17,7 +17,6 @@ import type {
   OAuthStatusResponse,
   ProviderInfo,
   SessionDetailResponse,
-  SessionListResponse,
   ToolConfigResponse,
   ToolConfigUpdateEntry,
 } from '@/types';
@@ -72,13 +71,6 @@ const api = {
   },
 
   // Sessions
-  listSessions: async (offset = 0, limit = 20) => {
-    const { data, error } = await client.GET('/api/user/sessions', {
-      params: { query: { offset, limit } },
-    });
-    if (error) _throwApiError(error, 'Failed to list sessions');
-    return data as SessionListResponse;
-  },
   getSession: async (sessionId: string) => {
     const { data, error } = await client.GET('/api/user/sessions/{session_id}', {
       params: { path: { session_id: sessionId } },
@@ -211,16 +203,12 @@ const api = {
     sessionId?: string,
     files?: File[],
     onEvent?: (event: { type: string; tool_name?: string; content?: string }) => void,
-    forceNew?: boolean,
     onAccepted?: (accepted: ChatAccepted) => void,
   ): Promise<ChatResponse> => {
     const formData = new FormData();
     formData.append('message', message);
     if (sessionId) {
       formData.append('session_id', sessionId);
-    }
-    if (forceNew) {
-      formData.append('force_new', 'true');
     }
     if (files) {
       for (const file of files) {

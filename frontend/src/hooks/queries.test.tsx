@@ -6,7 +6,6 @@ import {
   useMemory,
   useToolConfig,
   useChannelConfig,
-  useSessions,
   useSession,
 } from './queries';
 import api from '@/api';
@@ -16,7 +15,6 @@ vi.mock('@/api', () => ({
   default: {
     getProfile: vi.fn(),
     updateProfile: vi.fn(),
-    listSessions: vi.fn(),
     getSession: vi.fn(),
     getMemory: vi.fn(),
     updateMemory: vi.fn(),
@@ -105,20 +103,6 @@ describe('useChannelConfig', () => {
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     expect(result.current.data).toEqual(mockConfig);
-  });
-});
-
-describe('useSessions', () => {
-  it('fetches and returns paginated sessions', async () => {
-    const mockResponse = { sessions: [{ id: 's1' }], total: 1, offset: 0 };
-    vi.mocked(api.listSessions).mockResolvedValue(mockResponse as never);
-
-    const { result } = renderHook(() => useSessions(0, 20), { wrapper: createWrapper() });
-
-    await waitFor(() => expect(result.current.data).toBeDefined());
-
-    expect(result.current.data).toEqual(mockResponse);
-    expect(api.listSessions).toHaveBeenCalledWith(0, 20);
   });
 });
 

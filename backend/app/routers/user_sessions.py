@@ -10,52 +10,10 @@ from backend.app.auth.dependencies import get_current_user
 from backend.app.models import User
 from backend.app.schemas import (
     SessionDetailResponse,
-    SessionListResponse,
     SessionMessage,
-    SessionSummary,
 )
 
 router = APIRouter()
-
-
-@router.get("/user/sessions", response_model=SessionListResponse)
-async def list_sessions(
-    offset: int = 0,
-    limit: int = 20,
-    current_user: User = Depends(get_current_user),
-) -> SessionListResponse:
-    """List conversation sessions for the current user."""
-    store = get_session_store(current_user.id)
-    session_ids = store.list_session_ids()
-    # Most recent first
-    session_ids = list(reversed(session_ids))
-    total = len(session_ids)
-    page = session_ids[offset : offset + limit]
-
-    summaries: list[SessionSummary] = []
-    for session_id in page:
-        session = store.load_session(session_id)
-        if session is None:
-            continue
-        preview = ""
-        if session.messages:
-            preview = session.messages[-1].body[:100]
-        summaries.append(
-            SessionSummary(
-                id=session.session_id,
-                start_time=session.created_at or session.last_message_at,
-                message_count=len(session.messages),
-                last_message_preview=preview,
-                channel=session.channel,
-            )
-        )
-
-    return SessionListResponse(
-        sessions=summaries,
-        total=total,
-        offset=offset,
-        limit=limit,
-    )
 
 
 @router.get("/user/sessions/{session_id}", response_model=SessionDetailResponse)

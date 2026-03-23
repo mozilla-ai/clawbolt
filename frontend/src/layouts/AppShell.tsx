@@ -1,12 +1,10 @@
-import { useState, useEffect, useCallback } from 'react';
-import { Outlet, NavLink, Navigate, Link as RouterLink, useSearchParams } from 'react-router-dom';
+import { useState, useCallback } from 'react';
+import { Outlet, NavLink, Navigate } from 'react-router-dom';
 import { ToastProvider } from '@heroui/toast';
 import { useQueryClient } from '@tanstack/react-query';
-import api from '@/api';
 import Button from '@/components/ui/button';
 import OfflineIndicator from '@/components/ui/OfflineIndicator';
 import { Spinner } from '@heroui/spinner';
-import SearchOverlay from '@/components/SearchOverlay';
 import { useAuth } from '@/contexts/AuthContext';
 import { Tooltip } from '@heroui/tooltip';
 import { Link } from '@heroui/link';
@@ -15,7 +13,7 @@ import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import { useProfile } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
-import type { UserProfileResponse, SessionSummary } from '@/types';
+import type { UserProfileResponse } from '@/types';
 
 /** Context value provided to child routes via useOutletContext(). */
 export interface AppShellContext {
@@ -27,7 +25,6 @@ export interface AppShellContext {
 
 const NAV_ITEMS = [
   { to: '/app/chat', label: 'Chat', icon: ChatIcon, end: false },
-  { to: '/app/conversations', label: 'Conversations', icon: ConversationsIcon, end: false },
   { to: '/app/memory', label: 'Memory', icon: MemoryIcon, end: false },
   { to: '/app/heartbeat', label: 'Heartbeat', icon: HeartbeatIcon, end: false },
   { to: '/app/soul', label: 'Soul', icon: SoulIcon, end: false },
@@ -48,10 +45,6 @@ export default function AppShell() {
   } = useProfile();
   const [sidebarOpen, setSidebarOpen] = useState(false);
 
-  const [searchOpen, setSearchOpen] = useState(false);
-  const [searchSessions, setSearchSessions] = useState<SessionSummary[]>([]);
-  const [searchMemory, setSearchMemory] = useState('');
-
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
@@ -60,29 +53,6 @@ export default function AppShell() {
   const reloadProfile = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.profile });
   }, [queryClient]);
-
-  // Global Cmd+K / Ctrl+K listener
-  useEffect(() => {
-    function handleKeyDown(e: KeyboardEvent) {
-      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
-        e.preventDefault();
-        setSearchOpen(true);
-      }
-    }
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
-  }, []);
-
-  // Fetch data when search overlay opens
-  useEffect(() => {
-    if (!searchOpen) return;
-    api.listSessions(0, 50)
-      .then((res) => setSearchSessions(res.sessions))
-      .catch((err: unknown) => console.error('[AppShell] Failed to load sessions for search:', err));
-    api.getMemory()
-      .then((res) => setSearchMemory(res.content))
-      .catch((err: unknown) => console.error('[AppShell] Failed to load memory for search:', err));
-  }, [searchOpen]);
 
   // Redirect to login if not authenticated
   if (authState === 'login') {
@@ -158,7 +128,7 @@ export default function AppShell() {
           ))}
         </nav>
 
-        <RecentConversations onNavigate={closeSidebar} />
+        <div className="flex-1" />
 
         <div className="p-2 text-xs text-muted-foreground space-y-1">
           <Divider className="mb-1" />
@@ -236,13 +206,6 @@ export default function AppShell() {
 
       <OfflineIndicator />
       <ToastProvider placement="bottom-right" />
-
-      <SearchOverlay
-        isOpen={searchOpen}
-        onClose={() => setSearchOpen(false)}
-        sessions={searchSessions}
-        memoryContent={searchMemory}
-      />
     </div>
   );
 }
@@ -253,14 +216,6 @@ function ChatIcon() {
   return (
     <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
-    </svg>
-  );
-}
-
-function ConversationsIcon() {
-  return (
-    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
     </svg>
   );
 }
@@ -322,74 +277,3 @@ function SettingsIcon() {
   );
 }
 
-// --- Recent conversations sidebar section ---
-
-/** Format an ISO timestamp as a short relative string (e.g. "5m ago", "2h ago"). */
-export function formatRelativeTime(iso: string): string {
-  const parsed = new Date(iso);
-  if (isNaN(parsed.getTime())) return iso || 'Unknown';
-  const diffMs = Date.now() - parsed.getTime();
-  const seconds = Math.max(0, Math.floor(diffMs / 1000));
-  if (seconds < 60) return 'just now';
-  const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m ago`;
-  const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h ago`;
-  const days = Math.floor(hours / 24);
-  return `${days}d ago`;
-}
-
-function RecentConversations({ onNavigate }: { onNavigate: () => void }) {
-  const [sessions, setSessions] = useState<SessionSummary[]>([]);
-  const [searchParams] = useSearchParams();
-  const activeSessionId = searchParams.get('session');
-
-  useEffect(() => {
-    api.listSessions(0, 10)
-      .then((res) => setSessions(res.sessions))
-      .catch((err: unknown) => {
-        console.error('[RecentConversations] Failed to load sessions:', err);
-      });
-  }, []);
-
-  if (sessions.length === 0) return null;
-
-  return (
-    <div className="flex-1 flex flex-col min-h-0 border-t border-border">
-      <div className="flex items-center justify-between px-3 py-2">
-        <span className="text-xs font-medium text-muted-foreground">Recent</span>
-        <RouterLink
-          to="/app/conversations"
-          onClick={onNavigate}
-          className="text-xs text-muted-foreground can-hover:hover:text-foreground transition-all duration-150"
-        >
-          View all
-        </RouterLink>
-      </div>
-      <div className="flex-1 overflow-y-auto px-1 pb-1" data-testid="recent-conversations">
-        {sessions.map((s) => {
-          const isActive = s.id === activeSessionId;
-          return (
-            <RouterLink
-              key={s.id}
-              to={`/app/chat?session=${encodeURIComponent(s.id)}`}
-              onClick={onNavigate}
-              className={`block px-3 py-1.5 rounded-md text-sm transition-all duration-150 ${
-                isActive
-                  ? 'bg-selected-bg text-primary border-l-2 border-primary'
-                  : 'text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
-              }`}
-            >
-              <p className="line-clamp-1 text-xs">
-                {s.last_message_preview || 'New conversation'}
-              </p>
-              <p className="text-[10px] text-muted-foreground mt-0.5">
-                {formatRelativeTime(s.start_time)}
-              </p>
-            </RouterLink>
-          );
-        })}
-      </div>
-    </div>
-  );
-}

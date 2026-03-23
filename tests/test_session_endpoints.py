@@ -46,36 +46,6 @@ def _create_session(
         db.close()
 
 
-def test_list_sessions_empty(client: TestClient) -> None:
-    resp = client.get("/api/user/sessions")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["sessions"] == []
-    assert data["total"] == 0
-
-
-def test_list_sessions(client: TestClient, test_user: User) -> None:
-    _create_session(
-        test_user,
-        "1_100",
-        [
-            {"direction": "inbound", "body": "Hello", "timestamp": "2025-01-15T10:01:00", "seq": 1},
-            {
-                "direction": "outbound",
-                "body": "Hi there!",
-                "timestamp": "2025-01-15T10:02:00",
-                "seq": 2,
-            },
-        ],
-    )
-    resp = client.get("/api/user/sessions")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["total"] == 1
-    assert data["sessions"][0]["message_count"] == 2
-    assert data["sessions"][0]["id"] == "1_100"
-
-
 def test_get_session_detail(client: TestClient, test_user: User) -> None:
     tool_json = json.dumps([{"tool": "save_fact", "input": {"key": "rate"}, "result": "saved"}])
     _create_session(
@@ -135,40 +105,6 @@ def test_get_session_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
-def test_list_sessions_pagination(client: TestClient, test_user: User) -> None:
-    for i in range(5):
-        _create_session(
-            test_user,
-            f"1_{i}",
-            [
-                {
-                    "direction": "inbound",
-                    "body": f"msg {i}",
-                    "timestamp": f"2025-01-15T10:0{i}:00",
-                    "seq": 1,
-                }
-            ],
-        )
-    resp = client.get("/api/user/sessions?offset=0&limit=2")
-    data = resp.json()
-    assert data["total"] == 5
-    assert len(data["sessions"]) == 2
-
-
-def test_session_list_includes_channel(client: TestClient, test_user: User) -> None:
-    """Session list should include the channel field when present in metadata."""
-    _create_session(
-        test_user,
-        "1_400",
-        [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
-        channel="telegram",
-    )
-    resp = client.get("/api/user/sessions")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["sessions"][0]["channel"] == "telegram"
-
-
 def test_session_detail_includes_channel(client: TestClient, test_user: User) -> None:
     """Session detail should include the channel field when present in metadata."""
     _create_session(
@@ -190,11 +126,6 @@ def test_session_channel_defaults_empty(client: TestClient, test_user: User) -> 
         "1_600",
         [{"direction": "inbound", "body": "Hey", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
     )
-    resp = client.get("/api/user/sessions")
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["sessions"][0]["channel"] == ""
-
     resp = client.get("/api/user/sessions/1_600")
     assert resp.status_code == 200
     data = resp.json()
