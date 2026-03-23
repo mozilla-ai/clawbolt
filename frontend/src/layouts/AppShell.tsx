@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Tooltip } from '@heroui/tooltip';
 import { Link } from '@heroui/link';
 import { Divider } from '@heroui/divider';
-import { getFeatureRequestUrl, getReportIssueUrl } from '@/extensions';
+import { getFeatureRequestUrl, getReportIssueUrl, getExtraNavItems } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import { useProfile } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
@@ -77,11 +77,14 @@ export default function AppShell() {
     );
   }
 
+  const isAdmin = currentAuthUser?.role === 'admin';
+  const extraNavItems = getExtraNavItems(isPremium, isAdmin);
+
   const ctx: AppShellContext = {
     profile: profile ?? null,
     reloadProfile,
     isPremium,
-    isAdmin: currentAuthUser?.role === 'admin',
+    isAdmin,
   };
 
   return (
@@ -113,6 +116,23 @@ export default function AppShell() {
               key={to}
               to={to}
               end={end}
+              onClick={closeSidebar}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
+                  isActive
+                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                }`
+              }
+            >
+              <Icon />
+              {label}
+            </NavLink>
+          ))}
+          {extraNavItems.map(({ to, label, icon: Icon }) => (
+            <NavLink
+              key={to}
+              to={to}
               onClick={closeSidebar}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${

@@ -101,6 +101,11 @@ class HeartbeatLogEntry(BaseModel):
     """Heartbeat log entry DTO."""
 
     user_id: str = ""
+    action_type: str = "send"
+    message_text: str = ""
+    channel: str = ""
+    reasoning: str = ""
+    tasks: str = ""
     created_at: str = Field(default_factory=lambda: datetime.datetime.now(datetime.UTC).isoformat())
 
 

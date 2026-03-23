@@ -694,6 +694,162 @@
         }
       }
     },
+    "/api/user/heartbeat-logs": {
+      "get": {
+        "summary": "Get Heartbeat Logs",
+        "description": "List heartbeat logs for the current user, most recent first.",
+        "operationId": "get_heartbeat_logs_api_user_heartbeat_logs_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HeartbeatLogListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/llm-usage": {
+      "get": {
+        "summary": "Get Llm Usage",
+        "description": "Aggregate LLM usage for the current user over the last N days.",
+        "operationId": "get_llm_usage_api_user_llm_usage_get",
+        "parameters": [
+          {
+            "name": "days",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 365,
+              "minimum": 1,
+              "default": 30,
+              "title": "Days"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LLMUsageSummary"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/sessions": {
+      "get": {
+        "summary": "List Sessions",
+        "description": "List sessions with message counts, ordered by last_message_at DESC.",
+        "operationId": "list_sessions_api_user_sessions_get",
+        "parameters": [
+          {
+            "name": "limit",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "maximum": 200,
+              "minimum": 1,
+              "default": 50,
+              "title": "Limit"
+            }
+          },
+          {
+            "name": "offset",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "minimum": 0,
+              "default": 0,
+              "title": "Offset"
+            }
+          },
+          {
+            "name": "is_active",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Is Active"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionListResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/sessions/{session_id}": {
       "get": {
         "summary": "Get Session",
@@ -956,6 +1112,144 @@
           "status"
         ],
         "title": "HealthResponse"
+      },
+      "HeartbeatLogItemResponse": {
+        "properties": {
+          "id": {
+            "type": "integer",
+            "title": "Id"
+          },
+          "user_id": {
+            "type": "string",
+            "title": "User Id"
+          },
+          "action_type": {
+            "type": "string",
+            "title": "Action Type",
+            "default": "send"
+          },
+          "message_text": {
+            "type": "string",
+            "title": "Message Text",
+            "default": ""
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "default": ""
+          },
+          "reasoning": {
+            "type": "string",
+            "title": "Reasoning",
+            "default": ""
+          },
+          "tasks": {
+            "type": "string",
+            "title": "Tasks",
+            "default": ""
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "user_id",
+          "created_at"
+        ],
+        "title": "HeartbeatLogItemResponse"
+      },
+      "HeartbeatLogListResponse": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/HeartbeatLogItemResponse"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "HeartbeatLogListResponse"
+      },
+      "LLMUsageByPurpose": {
+        "properties": {
+          "purpose": {
+            "type": "string",
+            "title": "Purpose"
+          },
+          "call_count": {
+            "type": "integer",
+            "title": "Call Count"
+          },
+          "total_input_tokens": {
+            "type": "integer",
+            "title": "Total Input Tokens"
+          },
+          "total_output_tokens": {
+            "type": "integer",
+            "title": "Total Output Tokens"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost"
+          }
+        },
+        "type": "object",
+        "required": [
+          "purpose",
+          "call_count",
+          "total_input_tokens",
+          "total_output_tokens",
+          "total_tokens",
+          "total_cost"
+        ],
+        "title": "LLMUsageByPurpose"
+      },
+      "LLMUsageSummary": {
+        "properties": {
+          "total_calls": {
+            "type": "integer",
+            "title": "Total Calls"
+          },
+          "total_tokens": {
+            "type": "integer",
+            "title": "Total Tokens"
+          },
+          "total_cost": {
+            "type": "number",
+            "title": "Total Cost"
+          },
+          "by_purpose": {
+            "items": {
+              "$ref": "#/components/schemas/LLMUsageByPurpose"
+            },
+            "type": "array",
+            "title": "By Purpose"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total_calls",
+          "total_tokens",
+          "total_cost",
+          "by_purpose"
+        ],
+        "title": "LLMUsageSummary"
       },
       "MemoryResponse": {
         "properties": {
@@ -1284,6 +1578,65 @@
           "messages"
         ],
         "title": "SessionDetailResponse"
+      },
+      "SessionListItem": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "channel": {
+            "type": "string",
+            "title": "Channel",
+            "default": ""
+          },
+          "is_active": {
+            "type": "boolean",
+            "title": "Is Active"
+          },
+          "message_count": {
+            "type": "integer",
+            "title": "Message Count"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          },
+          "last_message_at": {
+            "type": "string",
+            "title": "Last Message At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "is_active",
+          "message_count",
+          "created_at",
+          "last_message_at"
+        ],
+        "title": "SessionListItem"
+      },
+      "SessionListResponse": {
+        "properties": {
+          "total": {
+            "type": "integer",
+            "title": "Total"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SessionListItem"
+            },
+            "type": "array",
+            "title": "Items"
+          }
+        },
+        "type": "object",
+        "required": [
+          "total",
+          "items"
+        ],
+        "title": "SessionListResponse"
       },
       "SessionMessage": {
         "properties": {

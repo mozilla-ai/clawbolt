@@ -199,6 +199,67 @@ class ToolConfigUpdate(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Heartbeat logs (admin)
+# ---------------------------------------------------------------------------
+
+
+class HeartbeatLogItemResponse(BaseModel):
+    id: int
+    user_id: str
+    action_type: str = "send"
+    message_text: str = ""
+    channel: str = ""
+    reasoning: str = ""
+    tasks: str = ""
+    created_at: str
+
+
+class HeartbeatLogListResponse(BaseModel):
+    total: int
+    items: list[HeartbeatLogItemResponse]
+
+
+# ---------------------------------------------------------------------------
+# Session list (admin)
+# ---------------------------------------------------------------------------
+
+
+class SessionListItem(BaseModel):
+    session_id: str
+    channel: str = ""
+    is_active: bool
+    message_count: int
+    created_at: str
+    last_message_at: str
+
+
+class SessionListResponse(BaseModel):
+    total: int
+    items: list[SessionListItem]
+
+
+# ---------------------------------------------------------------------------
+# LLM usage summary (admin)
+# ---------------------------------------------------------------------------
+
+
+class LLMUsageByPurpose(BaseModel):
+    purpose: str
+    call_count: int
+    total_input_tokens: int
+    total_output_tokens: int
+    total_tokens: int
+    total_cost: float
+
+
+class LLMUsageSummary(BaseModel):
+    total_calls: int
+    total_tokens: int
+    total_cost: float
+    by_purpose: list[LLMUsageByPurpose]
+
+
+# ---------------------------------------------------------------------------
 # OAuth
 # ---------------------------------------------------------------------------
 

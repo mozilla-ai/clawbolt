@@ -33,7 +33,7 @@ from backend.app.agent.heartbeat import (
     run_heartbeat_for_user,
 )
 from backend.app.agent.system_prompt import to_local_time
-from backend.app.models import User
+from backend.app.models import ChannelRoute, User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -766,23 +766,35 @@ class TestRunHeartbeatForUser:
         assert result is None
 
     @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
     async def test_phase1_skip_no_phase2(
         self,
         mock_count: AsyncMock,
         mock_eval: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
         user: User,
     ) -> None:
-        """When Phase 1 returns skip, Phase 2 is not invoked."""
+        """When Phase 1 returns skip, Phase 2 is not invoked and skip is logged."""
         mock_count.return_value = 0
         mock_eval.return_value = HeartbeatDecision(
             action="skip", tasks="", reasoning="Nothing actionable right now"
         )
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
         result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
         assert result is not None
         assert result.action_type == "no_action"
         mock_eval.assert_awaited_once_with(user, channel="telegram", chat_id="+15559990000")
+        # Skip is logged with action_type="skip"
+        mock_hb_store.log_heartbeat.assert_awaited_once_with(
+            action_type="skip",
+            channel="telegram",
+            reasoning="Nothing actionable right now",
+        )
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -845,8 +857,14 @@ class TestRunHeartbeatForUser:
             chat_id="+15559990000",
             content="You have 2 unpaid invoices totaling $1,500.",
         )
-        # Heartbeat was logged for rate limiting
-        mock_hb_store.log_heartbeat.assert_awaited_once()
+        # Heartbeat was logged with enriched data
+        mock_hb_store.log_heartbeat.assert_awaited_once_with(
+            action_type="send",
+            message_text="You have 2 unpaid invoices totaling $1,500.",
+            channel="telegram",
+            reasoning="Heartbeat item due",
+            tasks="Check QuickBooks for unpaid invoices",
+        )
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
@@ -962,6 +980,19 @@ class TestGetDailyHeartbeatCount:
 
         assert await get_daily_heartbeat_count(user.id) == 0
         assert await get_daily_heartbeat_count(other_id) == 1
+
+    @pytest.mark.asyncio
+    async def test_excludes_skips(self, user: User) -> None:
+        """Skip logs should not count toward the daily rate limit."""
+        from backend.app.agent.stores import HeartbeatStore
+
+        store = HeartbeatStore(user.id)
+        await store.log_heartbeat(action_type="send", message_text="Hello")
+        await store.log_heartbeat(action_type="skip", reasoning="nothing to do")
+        await store.log_heartbeat(action_type="send", message_text="Hi again")
+
+        # Only the 2 sends should count
+        assert await get_daily_heartbeat_count(user.id) == 2
 
 
 # ---------------------------------------------------------------------------
@@ -1110,7 +1141,7 @@ class TestHeartbeatScheduler:
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
 
-        # Create real users in the DB
+        # Create real users in the DB with telegram routes
         db = _db_module.SessionLocal()
         try:
             for i in range(4):
@@ -1122,6 +1153,14 @@ class TestHeartbeatScheduler:
                     channel_identifier="",
                 )
                 db.add(user)
+                db.flush()
+                db.add(
+                    ChannelRoute(
+                        user_id=user.id,
+                        channel="telegram",
+                        channel_identifier=str(i),
+                    )
+                )
             db.commit()
         finally:
             db.close()
@@ -1146,7 +1185,7 @@ class TestHeartbeatScheduler:
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 5
 
-        # Create real users in the DB
+        # Create real users in the DB with telegram routes
         db = _db_module.SessionLocal()
         try:
             for i in range(3):
@@ -1158,6 +1197,14 @@ class TestHeartbeatScheduler:
                     channel_identifier="",
                 )
                 db.add(user)
+                db.flush()
+                db.add(
+                    ChannelRoute(
+                        user_id=user.id,
+                        channel="telegram",
+                        channel_identifier=str(i),
+                    )
+                )
             db.commit()
         finally:
             db.close()
@@ -1189,7 +1236,7 @@ class TestHeartbeatScheduler:
         mock_settings.heartbeat_concurrency = concurrency_limit
         mock_settings.heartbeat_max_daily_messages = 5
 
-        # Create real users in the DB
+        # Create real users in the DB with telegram routes
         db = _db_module.SessionLocal()
         try:
             for i in range(5):
@@ -1201,6 +1248,14 @@ class TestHeartbeatScheduler:
                     channel_identifier="",
                 )
                 db.add(user)
+                db.flush()
+                db.add(
+                    ChannelRoute(
+                        user_id=user.id,
+                        channel="telegram",
+                        channel_identifier=str(i),
+                    )
+                )
             db.commit()
         finally:
             db.close()
@@ -1354,7 +1409,7 @@ class TestPickHeartbeatChannel:
 
         mock_pick_channel.return_value = "telegram"
 
-        # Create a real user in the DB
+        # Create a real user in the DB with a telegram route
         db = _db_module.SessionLocal()
         try:
             user = User(
@@ -1365,6 +1420,14 @@ class TestPickHeartbeatChannel:
                 channel_identifier="",
             )
             db.add(user)
+            db.flush()
+            db.add(
+                ChannelRoute(
+                    user_id=user.id,
+                    channel="telegram",
+                    channel_identifier="tg-pick",
+                )
+            )
             db.commit()
             db.refresh(user)
             db.expunge(user)
@@ -1443,7 +1506,7 @@ class TestPerUserFrequencyScheduling:
 
         mock_pick_channel.return_value = "telegram"
 
-        # Create a real user in the DB
+        # Create a real user in the DB with a telegram route
         db = _db_module.SessionLocal()
         try:
             user = User(
@@ -1455,6 +1518,14 @@ class TestPerUserFrequencyScheduling:
                 heartbeat_frequency="1h",
             )
             db.add(user)
+            db.flush()
+            db.add(
+                ChannelRoute(
+                    user_id=user.id,
+                    channel="telegram",
+                    channel_identifier="tg-skip",
+                )
+            )
             db.commit()
             db.expunge(user)
         finally:
@@ -1489,7 +1560,7 @@ class TestPerUserFrequencyScheduling:
 
         mock_pick_channel.return_value = "telegram"
 
-        # Create a real user in the DB
+        # Create a real user in the DB with a telegram route
         db = _db_module.SessionLocal()
         try:
             user = User(
@@ -1501,6 +1572,14 @@ class TestPerUserFrequencyScheduling:
                 heartbeat_frequency="15m",
             )
             db.add(user)
+            db.flush()
+            db.add(
+                ChannelRoute(
+                    user_id=user.id,
+                    channel="telegram",
+                    channel_identifier="tg-elapsed",
+                )
+            )
             db.commit()
             db.refresh(user)
             user_id = user.id
@@ -1542,7 +1621,7 @@ class TestPerUserFrequencyScheduling:
 
         mock_pick_channel.return_value = "telegram"
 
-        # Create a real user in the DB
+        # Create a real user in the DB with a telegram route
         db = _db_module.SessionLocal()
         try:
             user = User(
@@ -1554,6 +1633,14 @@ class TestPerUserFrequencyScheduling:
                 heartbeat_frequency="invalid",
             )
             db.add(user)
+            db.flush()
+            db.add(
+                ChannelRoute(
+                    user_id=user.id,
+                    channel="telegram",
+                    channel_identifier="tg-freq",
+                )
+            )
             db.commit()
             db.refresh(user)
             user_id = user.id
@@ -1593,7 +1680,6 @@ class TestGetChannelIdentifier:
     """ChannelRoute DB lookup for channel identifiers."""
 
     def test_returns_matching_identifier(self) -> None:
-        from backend.app.models import ChannelRoute
 
         db = _db_module.SessionLocal()
         try:
@@ -1611,7 +1697,6 @@ class TestGetChannelIdentifier:
             db.close()
 
     def test_returns_none_when_no_match(self) -> None:
-        from backend.app.models import ChannelRoute
 
         db = _db_module.SessionLocal()
         try:
@@ -1627,7 +1712,6 @@ class TestGetChannelIdentifier:
             db.close()
 
     def test_does_not_return_other_users_identifier(self) -> None:
-        from backend.app.models import ChannelRoute
 
         db = _db_module.SessionLocal()
         try:
@@ -1664,7 +1748,6 @@ class TestTickChatIdLookup:
     ) -> None:
         """When falling back to telegram, tick should use the telegram chat_id
         from the ChannelRoute table, not the webchat channel_identifier."""
-        from backend.app.models import ChannelRoute
 
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
@@ -1705,13 +1788,13 @@ class TestTickChatIdLookup:
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
     @patch("backend.app.agent.heartbeat.settings")
-    async def test_tick_falls_back_to_channel_identifier(
+    async def test_tick_skips_user_without_channel_route(
         self,
         mock_settings: MagicMock,
         mock_pick_channel: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
-        """When no ChannelRoute exists, fall back to user.channel_identifier."""
+        """When no ChannelRoute exists for the target channel, skip the user."""
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
 
@@ -1738,10 +1821,8 @@ class TestTickChatIdLookup:
         scheduler = HeartbeatScheduler()
         await scheduler.tick()
 
-        mock_run.assert_awaited_once()
-        call_kwargs = mock_run.call_args.kwargs
-        # Falls back to user.channel_identifier
-        assert call_kwargs["chat_id"] == "web-1"
+        # No route for telegram means heartbeat is skipped entirely
+        mock_run.assert_not_awaited()
 
 
 # ---------------------------------------------------------------------------
