@@ -237,12 +237,15 @@ async def build_heartbeat_system_prompt(
     user: User,
     recent_messages: str,
     heartbeat_md: str = "",
+    heartbeat_history: str = "",
 ) -> str:
     """Assemble the system prompt for the heartbeat evaluator.
 
     When *heartbeat_md* is provided, the raw HEARTBEAT.md content is
     included as a dedicated section so the LLM can evaluate which tasks
-    need attention.
+    need attention.  When *heartbeat_history* is provided, it shows when
+    heartbeat messages were previously sent so the evaluator can reason
+    about timing and avoid duplicates or missed sends.
     """
     builder = SystemPromptBuilder()
     builder.set_preamble(load_prompt("heartbeat_preamble"))
@@ -265,6 +268,9 @@ async def build_heartbeat_system_prompt(
         "Current time",
         build_local_datetime_section(user),
     )
+
+    if heartbeat_history:
+        builder.add_section("Recent heartbeat activity", heartbeat_history)
 
     builder.add_section("Rules", load_prompt("heartbeat_rules"))
 

@@ -10,7 +10,9 @@ import pytest
 from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
 
 import backend.app.database as _db_module
+from backend.app.agent.dto import HeartbeatLogEntry
 from backend.app.agent.heartbeat import (
+    _HISTORY_LOOKBACK_DAYS,
     _NON_PUSHABLE_CHANNELS,
     COMPOSE_MESSAGE_TOOL,
     HEARTBEAT_DECISION_TOOL,
@@ -19,6 +21,7 @@ from backend.app.agent.heartbeat import (
     HeartbeatDecision,
     HeartbeatDecisionParams,
     HeartbeatScheduler,
+    _format_heartbeat_history,
     _parse_decision_response,
     _parse_tool_call_response,
     _pick_heartbeat_channel,
@@ -540,6 +543,7 @@ class TestEvaluateHeartbeatNeed:
 
         mock_hb_store = MagicMock()
         mock_hb_store.read_heartbeat_md.return_value = ""
+        mock_hb_store.get_recent_logs = AsyncMock(return_value=[])
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
         mock_build_prompt.return_value = "system prompt"
@@ -1738,3 +1742,176 @@ class TestTickChatIdLookup:
         call_kwargs = mock_run.call_args.kwargs
         # Falls back to user.channel_identifier
         assert call_kwargs["chat_id"] == "web-1"
+
+
+# ---------------------------------------------------------------------------
+# Heartbeat history formatting
+# ---------------------------------------------------------------------------
+
+
+class TestFormatHeartbeatHistory:
+    """Tests for _format_heartbeat_history."""
+
+    def test_empty_logs(self) -> None:
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        result = _format_heartbeat_history([], "America/New_York", now)
+        assert "not sent any heartbeat messages" in result
+        assert str(_HISTORY_LOOKBACK_DAYS) in result
+
+    def test_single_log_today(self) -> None:
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        log = HeartbeatLogEntry(
+            user_id="u1",
+            created_at=datetime.datetime(2026, 3, 23, 13, 15, tzinfo=datetime.UTC).isoformat(),
+        )
+        result = _format_heartbeat_history([log], "America/New_York", now)
+        assert "today" in result
+        assert "Monday" in result
+
+    def test_log_one_day_ago(self) -> None:
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        log = HeartbeatLogEntry(
+            user_id="u1",
+            created_at=datetime.datetime(2026, 3, 22, 13, 0, tzinfo=datetime.UTC).isoformat(),
+        )
+        result = _format_heartbeat_history([log], "America/New_York", now)
+        assert "1 day ago" in result
+
+    def test_log_multiple_days_ago(self) -> None:
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        log = HeartbeatLogEntry(
+            user_id="u1",
+            created_at=datetime.datetime(2026, 3, 20, 10, 0, tzinfo=datetime.UTC).isoformat(),
+        )
+        result = _format_heartbeat_history([log], "America/New_York", now)
+        assert "3 days ago" in result
+
+    def test_multiple_logs(self) -> None:
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        logs = [
+            HeartbeatLogEntry(
+                user_id="u1",
+                created_at=datetime.datetime(2026, 3, 22, 13, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                created_at=datetime.datetime(2026, 3, 23, 9, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+        ]
+        result = _format_heartbeat_history(logs, "America/New_York", now)
+        assert "1 day ago" in result
+        assert "today" in result
+
+    def test_utc_fallback_when_no_timezone(self) -> None:
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        log = HeartbeatLogEntry(
+            user_id="u1",
+            created_at=datetime.datetime(2026, 3, 23, 13, 0, tzinfo=datetime.UTC).isoformat(),
+        )
+        result = _format_heartbeat_history([log], "", now)
+        assert "today" in result
+
+
+class TestEvaluateHeartbeatNeedPassesHistory:
+    """Test that evaluate_heartbeat_need passes heartbeat history to the prompt builder."""
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.log_llm_usage")
+    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.amessages")
+    async def test_heartbeat_history_passed_to_prompt_builder(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        mock_build_prompt: AsyncMock,
+        mock_log_usage: MagicMock,
+        user: User,
+    ) -> None:
+        """Heartbeat history from recent logs must be passed to the prompt builder."""
+        mock_settings.llm_model = "gpt-4o"
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_api_base = None
+        mock_settings.heartbeat_model = ""
+        mock_settings.heartbeat_provider = ""
+        mock_settings.llm_max_tokens_heartbeat = 256
+        mock_settings.heartbeat_recent_messages_count = 5
+        mock_settings.reasoning_effort = ""
+
+        mock_session_store = MagicMock()
+        mock_session_store.get_recent_messages.return_value = []
+        mock_get_session_store.return_value = mock_session_store
+
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = ""
+        mock_hb_store.get_recent_logs = AsyncMock(
+            return_value=[
+                HeartbeatLogEntry(
+                    user_id=user.id,
+                    created_at=datetime.datetime(
+                        2026, 3, 22, 9, 0, tzinfo=datetime.UTC
+                    ).isoformat(),
+                ),
+            ]
+        )
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        mock_build_prompt.return_value = "system prompt"
+        mock_llm.return_value = _make_decision_tool_call(action="skip", tasks="", reasoning="test")
+
+        await evaluate_heartbeat_need(user)
+
+        # Verify heartbeat_history kwarg was passed and contains log info
+        call_kwargs = mock_build_prompt.call_args
+        assert "heartbeat_history" in call_kwargs.kwargs
+        assert call_kwargs.kwargs["heartbeat_history"] != ""
+        assert "heartbeat messages" in call_kwargs.kwargs["heartbeat_history"]
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.log_llm_usage")
+    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.amessages")
+    async def test_empty_history_when_no_logs(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        mock_build_prompt: AsyncMock,
+        mock_log_usage: MagicMock,
+        user: User,
+    ) -> None:
+        """When no heartbeat logs exist, history still conveys that fact."""
+        mock_settings.llm_model = "gpt-4o"
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_api_base = None
+        mock_settings.heartbeat_model = ""
+        mock_settings.heartbeat_provider = ""
+        mock_settings.llm_max_tokens_heartbeat = 256
+        mock_settings.heartbeat_recent_messages_count = 5
+        mock_settings.reasoning_effort = ""
+
+        mock_session_store = MagicMock()
+        mock_session_store.get_recent_messages.return_value = []
+        mock_get_session_store.return_value = mock_session_store
+
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = ""
+        mock_hb_store.get_recent_logs = AsyncMock(return_value=[])
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        mock_build_prompt.return_value = "system prompt"
+        mock_llm.return_value = _make_decision_tool_call(action="skip", tasks="", reasoning="test")
+
+        await evaluate_heartbeat_need(user)
+
+        call_kwargs = mock_build_prompt.call_args
+        assert "heartbeat_history" in call_kwargs.kwargs
+        assert "not sent any" in call_kwargs.kwargs["heartbeat_history"]
