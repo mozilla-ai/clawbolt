@@ -13,6 +13,9 @@ export {
   showOssSettingsTabs,
 } from './settings';
 export type { ExtensionTab } from './settings';
+export { getExtraNavItems } from './nav';
+export type { NavExtensionItem } from './nav';
+export { getAdminPageElement } from './admin';
 export {
   tryRestoreSession,
   getSubscription,

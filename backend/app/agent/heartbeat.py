@@ -292,6 +292,8 @@ def _format_heartbeat_history(
     lines: list[str] = []
     for entry in logs:
         ts = datetime.datetime.fromisoformat(entry.created_at)
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=datetime.UTC)
         local_ts = to_local_time(ts, tz_name)
         formatted = local_ts.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
         delta = now - ts
@@ -571,6 +573,13 @@ async def run_heartbeat_for_user(
             decision.action,
             not decision.tasks,
         )
+        # Log the skip so the admin page shows decision history
+        heartbeat_store = HeartbeatStore(user.id)
+        await heartbeat_store.log_heartbeat(
+            action_type="skip",
+            channel=channel,
+            reasoning=decision.reasoning,
+        )
         return HeartbeatAction(
             action_type="no_action",
             message="",
@@ -628,7 +637,13 @@ async def run_heartbeat_for_user(
 
     # Record heartbeat log for persistent rate limiting
     heartbeat_store = HeartbeatStore(user.id)
-    await heartbeat_store.log_heartbeat()
+    await heartbeat_store.log_heartbeat(
+        action_type="send",
+        message_text=reply_text,
+        channel=channel,
+        reasoning=decision.reasoning,
+        tasks=decision.tasks,
+    )
 
     return HeartbeatAction(
         action_type="send_message",
@@ -795,10 +810,12 @@ class HeartbeatScheduler:
                 try:
                     channel_name = _pick_heartbeat_channel(user)
 
-                    # Look up the channel-specific identifier from the
-                    # user index.  Falls back to the user's stored
-                    # channel_identifier or phone when no index entry
-                    # exists for the target channel.
+                    # Look up the channel-specific route for the target
+                    # channel.  A route is required: the user must have
+                    # actually messaged via the channel so we have a
+                    # verified identifier (e.g. Telegram chat ID).
+                    # Without a route the fallback identifiers may belong
+                    # to a different channel and cause send failures.
                     db = SessionLocal()
                     try:
                         route = (
@@ -806,18 +823,21 @@ class HeartbeatScheduler:
                             .filter_by(user_id=user.id, channel=channel_name)
                             .first()
                         )
-                        chat_id = (
-                            (route.channel_identifier if route else None)
-                            or user.channel_identifier
-                            or user.phone
-                        )
                     finally:
                         db.close()
+
+                    if route is None:
+                        logger.debug(
+                            "Heartbeat skipped for user %s: no %s route configured",
+                            user.id,
+                            channel_name,
+                        )
+                        return
 
                     await run_heartbeat_for_user(
                         user=user,
                         channel=channel_name,
-                        chat_id=chat_id,
+                        chat_id=route.channel_identifier,
                         max_daily=settings.heartbeat_max_daily_messages,
                     )
                     self._last_tick[user.id] = now

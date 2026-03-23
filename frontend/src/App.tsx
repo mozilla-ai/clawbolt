@@ -8,6 +8,7 @@ import {
   getPremiumRouteElements,
   getDefaultSettingsTab,
   shouldRedirectRootToApp,
+  getAdminPageElement,
 } from '@/extensions';
 
 const ChatPage = lazy(() => import('@/pages/ChatPage'));
@@ -28,6 +29,14 @@ function DefaultRedirect() {
     return <Navigate to="/app/get-started" replace />;
   }
   return <Navigate to="/app/chat" replace />;
+}
+
+/** Render admin page from extension, or redirect if not admin. */
+function AdminRoute() {
+  const { isAdmin } = useOutletContext<AppShellContext>();
+  const element = getAdminPageElement(isAdmin);
+  if (!element) return <Navigate to="/app" replace />;
+  return <>{element}</>;
 }
 
 export default function App() {
@@ -69,6 +78,7 @@ export default function App() {
           <Route path="channels" element={<ChannelsPage />} />
           <Route path="tools" element={<ToolsPage />} />
           <Route path="oauth/callback" element={<OAuthCallbackPage />} />
+          <Route path="admin" element={<AdminRoute />} />
           <Route path="settings/:tab" element={<SettingsPage />} />
           <Route path="settings" element={<Navigate to={`/app/settings/${getDefaultSettingsTab(isPremium)}`} replace />} />
         </Route>
