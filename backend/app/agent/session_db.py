@@ -59,6 +59,7 @@ def _session_to_state(
         last_message_at=cs.last_message_at.isoformat() if cs.last_message_at else "",
         last_compacted_seq=cs.last_compacted_seq,
         channel=cs.channel,
+        initial_system_prompt=cs.initial_system_prompt,
     )
 
 
@@ -312,6 +313,21 @@ class SessionStore:
                         if k in _MESSAGE_UPDATABLE_FIELDS and hasattr(m, k):
                             setattr(m, k, v)
                     break
+
+    async def update_initial_system_prompt(self, session: SessionState, system_prompt: str) -> None:
+        """Store the system prompt on the session if not already set."""
+        if session.initial_system_prompt:
+            return
+        with db_session() as db:
+            cs = (
+                db.query(ChatSession)
+                .filter_by(session_id=session.session_id, user_id=self.user_id)
+                .first()
+            )
+            if cs is not None and not cs.initial_system_prompt:
+                cs.initial_system_prompt = system_prompt
+                db.commit()
+            session.initial_system_prompt = system_prompt
 
     async def update_compaction_seq(self, session: SessionState, seq: int) -> None:
         """Update the last_compacted_seq in session metadata."""

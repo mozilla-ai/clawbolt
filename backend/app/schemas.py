@@ -80,6 +80,8 @@ class SessionDetailResponse(BaseModel):
     last_message_at: str
     is_active: bool
     channel: str = ""
+    initial_system_prompt: str = ""
+    last_compacted_seq: int = 0
     messages: list[SessionMessage]
 
 

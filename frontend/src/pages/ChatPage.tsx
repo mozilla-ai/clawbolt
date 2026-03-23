@@ -22,6 +22,7 @@ interface ChatMessage {
   role: 'user' | 'assistant';
   body: string;
   timestamp: Date;
+  seq?: number;
   attachments?: FileAttachment[];
   toolInteractions?: ToolInteraction[];
 }
@@ -51,6 +52,7 @@ export default function ChatPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [approvalPrompt, setApprovalPrompt] = useState<string | null>(null);
+  const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -124,6 +126,7 @@ export default function ChatPage() {
       role: m.direction === 'inbound' ? 'user' : 'assistant',
       body: m.body,
       timestamp: new Date(m.timestamp),
+      seq: m.seq,
       toolInteractions: m.tool_interactions && m.tool_interactions.length > 0 ? m.tool_interactions : undefined,
     }));
     setMessages(loaded);
@@ -268,11 +271,34 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {messages.map((msg) => (
-              <div
-                key={msg.id}
-                className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-              >
+            {sessionDetail?.initial_system_prompt && (
+              <div className="border border-border rounded-lg overflow-hidden">
+                <button
+                  type="button"
+                  onClick={() => setSystemPromptOpen((o) => !o)}
+                  className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-panel transition-colors"
+                >
+                  <ChevronIcon open={systemPromptOpen} />
+                  <span className="font-medium">System Prompt</span>
+                </button>
+                {systemPromptOpen && (
+                  <div className="px-3 pb-3 text-xs text-muted-foreground whitespace-pre-wrap border-t border-border bg-panel/50">
+                    {sessionDetail.initial_system_prompt}
+                  </div>
+                )}
+              </div>
+            )}
+            {messages.map((msg, idx) => {
+              const lastCompactedSeq = sessionDetail?.last_compacted_seq ?? 0;
+              const showCompactionMarker =
+                lastCompactedSeq > 0 &&
+                msg.seq !== undefined &&
+                msg.seq > lastCompactedSeq &&
+                (idx === 0 || (messages[idx - 1].seq !== undefined && messages[idx - 1].seq! <= lastCompactedSeq));
+              return (
+                <div key={msg.id}>
+                  {showCompactionMarker && <CompactionMarker />}
+                  <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                 <div
                   className={`max-w-[80%] px-4 py-2.5 animate-message-in ${
                     msg.role === 'user'
@@ -349,7 +375,9 @@ export default function ChatPage() {
                   </p>
                 </div>
               </div>
-            ))}
+                </div>
+              );
+            })}
 
             {sending && !approvalPrompt && (
               <ToolUseIndicator toolName={currentTool ?? undefined} />
@@ -613,5 +641,28 @@ function CloseIcon() {
     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
     </svg>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`w-3 h-3 transition-transform ${open ? 'rotate-90' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function CompactionMarker() {
+  return (
+    <div className="flex items-center gap-2 py-1">
+      <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
+      <span className="text-[10px] text-muted-foreground">compacted above</span>
+      <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
+    </div>
   );
 }
