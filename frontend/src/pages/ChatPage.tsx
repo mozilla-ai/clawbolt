@@ -84,6 +84,11 @@ export default function ChatPage() {
     scrollToBottom();
   }, [messages, scrollToBottom]);
 
+  // Auto-focus the chat input when the page mounts or is navigated to
+  useEffect(() => {
+    inputRef.current?.focus();
+  }, []);
+
   // Prevent iOS Safari auto-zoom on input focus. Since iOS 10, maximum-scale=1
   // only blocks automatic zoom (not user pinch-zoom), so accessibility is preserved.
   // Applied only on iOS to avoid disabling pinch-zoom on Android.

@@ -21,6 +21,17 @@ beforeEach(() => {
   localStorage.clear();
 });
 
+describe('ChatPage auto-focus', () => {
+  it('focuses the chat input on mount', async () => {
+    renderWithRouter(<ChatPage />);
+
+    const textarea = screen.getByPlaceholderText('Type a message...');
+    await waitFor(() => {
+      expect(document.activeElement).toBe(textarea);
+    });
+  });
+});
+
 describe('ChatPage tool interactions', () => {
   it('displays tool interactions when loading session history', async () => {
     const sessionId = '1_1000';
