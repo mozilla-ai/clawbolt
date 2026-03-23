@@ -31,6 +31,7 @@ from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.system_prompt import (
     build_heartbeat_system_prompt,
+    build_time_user_context,
     to_local_time,
 )
 from backend.app.agent.tools.names import ToolName
@@ -375,6 +376,7 @@ async def evaluate_heartbeat_need(
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
 
+    time_context = build_time_user_context(user)
     response = cast(
         MessageResponse,
         await amessages(
@@ -386,6 +388,7 @@ async def evaluate_heartbeat_need(
                 {
                     "role": "user",
                     "content": (
+                        f"{time_context}\n\n"
                         "Review the context above and decide whether any tasks need attention."
                     ),
                 },
