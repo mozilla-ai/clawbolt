@@ -290,11 +290,12 @@ export default function ChatPage() {
             )}
             {messages.map((msg, idx) => {
               const lastCompactedSeq = sessionDetail?.last_compacted_seq ?? 0;
+              const prevSeq = idx > 0 ? (messages[idx - 1]?.seq ?? 0) : 0;
               const showCompactionMarker =
                 lastCompactedSeq > 0 &&
                 msg.seq !== undefined &&
                 msg.seq > lastCompactedSeq &&
-                (idx === 0 || (messages[idx - 1].seq !== undefined && messages[idx - 1].seq! <= lastCompactedSeq));
+                (idx === 0 || prevSeq <= lastCompactedSeq);
               return (
                 <div key={msg.id}>
                   {showCompactionMarker && <CompactionMarker />}
