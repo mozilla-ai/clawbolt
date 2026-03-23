@@ -1826,6 +1826,113 @@ class TestTickChatIdLookup:
 
 
 # ---------------------------------------------------------------------------
+# Per-user max daily heartbeats
+# ---------------------------------------------------------------------------
+
+
+class TestPerUserMaxDaily:
+    """Tests for per-user heartbeat_max_daily override."""
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_uses_per_user_max_daily(
+        self,
+        mock_settings: MagicMock,
+        mock_pick_channel: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """When user has heartbeat_max_daily > 0, tick passes it instead of global."""
+        mock_settings.heartbeat_concurrency = 5
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        mock_pick_channel.return_value = "telegram"
+
+        db = _db_module.SessionLocal()
+        try:
+            user = User(
+                user_id="hb-maxdaily-custom",
+                phone="",
+                onboarding_complete=True,
+                preferred_channel="telegram",
+                channel_identifier="",
+                heartbeat_max_daily=10,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            db.add(
+                ChannelRoute(
+                    user_id=user.id,
+                    channel="telegram",
+                    channel_identifier="tg-custom",
+                )
+            )
+            db.commit()
+            db.expunge(user)
+        finally:
+            db.close()
+
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        mock_run.assert_awaited_once()
+        assert mock_run.call_args.kwargs["max_daily"] == 10
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_falls_back_to_global_when_zero(
+        self,
+        mock_settings: MagicMock,
+        mock_pick_channel: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """When user has heartbeat_max_daily == 0, tick uses global setting."""
+        mock_settings.heartbeat_concurrency = 5
+        mock_settings.heartbeat_max_daily_messages = 7
+
+        mock_pick_channel.return_value = "telegram"
+
+        db = _db_module.SessionLocal()
+        try:
+            user = User(
+                user_id="hb-maxdaily-default",
+                phone="",
+                onboarding_complete=True,
+                preferred_channel="telegram",
+                channel_identifier="",
+                heartbeat_max_daily=0,
+            )
+            db.add(user)
+            db.commit()
+            db.refresh(user)
+            db.add(
+                ChannelRoute(
+                    user_id=user.id,
+                    channel="telegram",
+                    channel_identifier="tg-default",
+                )
+            )
+            db.commit()
+            db.expunge(user)
+        finally:
+            db.close()
+
+        mock_run.return_value = None
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        mock_run.assert_awaited_once()
+        assert mock_run.call_args.kwargs["max_daily"] == 7
+
+
+# ---------------------------------------------------------------------------
 # Heartbeat history formatting
 # ---------------------------------------------------------------------------
 

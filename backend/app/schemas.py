@@ -43,6 +43,7 @@ class UserProfileResponse(BaseModel):
     channel_identifier: str
     heartbeat_opt_in: bool
     heartbeat_frequency: str
+    heartbeat_max_daily: int = 0
     onboarding_complete: bool
     is_active: bool
     created_at: str
@@ -57,6 +58,7 @@ class UserProfileUpdate(BaseModel):
     heartbeat_text: str | None = None
     heartbeat_opt_in: bool | None = None
     heartbeat_frequency: str | None = None
+    heartbeat_max_daily: int | None = Field(default=None, ge=0)
     onboarding_complete: bool | None = None
 
 

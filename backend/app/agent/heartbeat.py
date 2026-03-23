@@ -837,11 +837,16 @@ class HeartbeatScheduler:
                         )
                         return
 
+                    max_daily = (
+                        user.heartbeat_max_daily
+                        if user.heartbeat_max_daily > 0
+                        else settings.heartbeat_max_daily_messages
+                    )
                     await run_heartbeat_for_user(
                         user=user,
                         channel=channel_name,
                         chat_id=route.channel_identifier,
-                        max_daily=settings.heartbeat_max_daily_messages,
+                        max_daily=max_daily,
                     )
                     self._last_tick[user.id] = now
                 except Exception:

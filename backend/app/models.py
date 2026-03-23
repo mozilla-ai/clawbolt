@@ -34,6 +34,7 @@ class User(Base):
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     heartbeat_opt_in: Mapped[bool] = mapped_column(Boolean, default=True)
     heartbeat_frequency: Mapped[str] = mapped_column(String, default="30m")
+    heartbeat_max_daily: Mapped[int] = mapped_column(Integer, default=0)
     soul_text: Mapped[str] = mapped_column(Text, default="")
     user_text: Mapped[str] = mapped_column(Text, default="")
     heartbeat_text: Mapped[str] = mapped_column(Text, default="")

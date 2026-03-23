@@ -512,13 +512,14 @@ const HEARTBEAT_PRESETS = [
 function HeartbeatTab({
   profile,
 }: {
-  profile: { heartbeat_opt_in: boolean; heartbeat_frequency: string };
+  profile: { heartbeat_opt_in: boolean; heartbeat_frequency: string; heartbeat_max_daily: number };
 }) {
   const isPreset = HEARTBEAT_PRESETS.some((p) => p.value === profile.heartbeat_frequency);
   const [form, setForm] = useState({
     heartbeat_opt_in: profile.heartbeat_opt_in,
     heartbeat_frequency: isPreset ? profile.heartbeat_frequency : 'custom',
     custom_frequency: isPreset ? '' : profile.heartbeat_frequency,
+    heartbeat_max_daily: profile.heartbeat_max_daily,
   });
   const updateProfile = useUpdateProfile();
 
@@ -528,8 +529,9 @@ function HeartbeatTab({
       heartbeat_opt_in: profile.heartbeat_opt_in,
       heartbeat_frequency: preset ? profile.heartbeat_frequency : 'custom',
       custom_frequency: preset ? '' : profile.heartbeat_frequency,
+      heartbeat_max_daily: profile.heartbeat_max_daily,
     });
-  }, [profile.heartbeat_opt_in, profile.heartbeat_frequency]);
+  }, [profile.heartbeat_opt_in, profile.heartbeat_frequency, profile.heartbeat_max_daily]);
 
   const effectiveFrequency = form.heartbeat_frequency === 'custom'
     ? form.custom_frequency
@@ -540,6 +542,7 @@ function HeartbeatTab({
       {
         heartbeat_opt_in: form.heartbeat_opt_in,
         heartbeat_frequency: effectiveFrequency,
+        heartbeat_max_daily: form.heartbeat_max_daily,
       },
       {
         onSuccess: () => toast.success('Heartbeat settings updated'),
@@ -589,6 +592,19 @@ function HeartbeatTab({
             </p>
           </Field>
         )}
+        <Field label="Max daily check-ins">
+          <Input
+            type="number"
+            min={0}
+            value={form.heartbeat_max_daily}
+            onChange={(e) => setForm((prev) => ({ ...prev, heartbeat_max_daily: parseInt(e.target.value, 10) || 0 }))}
+            disabled={!form.heartbeat_opt_in}
+            placeholder="0"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            Maximum number of heartbeat messages per day. Set to 0 to use the server default.
+          </p>
+        </Field>
         <div className="flex justify-end">
           <Button onClick={handleSave} disabled={updateProfile.isPending} isLoading={updateProfile.isPending}>
             Save Heartbeat Settings

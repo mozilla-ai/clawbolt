@@ -44,6 +44,7 @@ def _profile_response(c: User) -> UserProfileResponse:
         channel_identifier=c.channel_identifier,
         heartbeat_opt_in=c.heartbeat_opt_in,
         heartbeat_frequency=c.heartbeat_frequency,
+        heartbeat_max_daily=c.heartbeat_max_daily,
         onboarding_complete=c.onboarding_complete,
         is_active=c.is_active,
         created_at=c.created_at.isoformat(),

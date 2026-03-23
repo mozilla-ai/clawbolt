@@ -69,6 +69,26 @@ def test_update_profile_empty_body(client: TestClient) -> None:
     assert resp.status_code == 400
 
 
+def test_get_profile_includes_heartbeat_max_daily(client: TestClient) -> None:
+    """GET /api/user/profile returns heartbeat_max_daily field."""
+    resp = client.get("/api/user/profile")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "heartbeat_max_daily" in data
+    assert data["heartbeat_max_daily"] == 0
+
+
+def test_update_profile_heartbeat_max_daily(client: TestClient) -> None:
+    """PUT /api/user/profile can set heartbeat_max_daily."""
+    resp = client.put(
+        "/api/user/profile",
+        json={"heartbeat_max_daily": 10},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["heartbeat_max_daily"] == 10
+
+
 def test_get_model_config(client: TestClient) -> None:
     """GET /user/model/config returns current server-level LLM settings."""
     resp = client.get("/api/user/model/config")
