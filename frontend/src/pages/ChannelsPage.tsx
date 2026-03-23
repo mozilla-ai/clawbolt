@@ -3,6 +3,7 @@ import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
 import Field from '@/components/ui/field';
+import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
@@ -116,17 +117,10 @@ function PremiumTelegramSection() {
       <Card>
         <h3 className="text-sm font-medium mb-3">Telegram</h3>
         <div className="grid gap-4">
-          <Field label="Your Telegram User ID">
-            <Input
-              value={displayedId}
-              onChange={(e) => setTelegramUserId(e.target.value)}
-              placeholder="e.g. 123456789"
-              inputMode="numeric"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Your numeric Telegram user ID. Send /start to @userinfobot on Telegram to find it.
-            </p>
-          </Field>
+          <TelegramUserIdField
+            value={displayedId}
+            onChange={(v) => setTelegramUserId(v)}
+          />
           <div className="flex justify-end">
             <Button onClick={handleSave} disabled={saving || linkData === null} isLoading={saving}>
               Save
@@ -166,17 +160,10 @@ function OssTelegramSection() {
       <Card>
         <h3 className="text-sm font-medium mb-3">Telegram</h3>
         <div className="grid gap-4">
-          <Field label="Your Telegram User ID">
-            <Input
-              value={displayedId}
-              onChange={(e) => setTelegramUserId(e.target.value)}
-              placeholder="e.g. 123456789"
-              inputMode="numeric"
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              Your numeric Telegram user ID. Send /start to @userinfobot on Telegram to find it.
-            </p>
-          </Field>
+          <TelegramUserIdField
+            value={displayedId}
+            onChange={(v) => setTelegramUserId(v)}
+          />
           <div className="flex justify-end">
             <Button onClick={handleSave} disabled={updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
               Save
@@ -185,6 +172,48 @@ function OssTelegramSection() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="10" strokeWidth="2" />
+      <path strokeWidth="2" strokeLinecap="round" d="M12 16v-4M12 8h.01" />
+    </svg>
+  );
+}
+
+const TELEGRAM_ID_TOOLTIP =
+  'Clawbolt uses your numeric ID because Telegram usernames are optional' +
+  ' and can change at any time. The numeric ID is permanent and will' +
+  ' always identify your account.';
+
+function TelegramUserIdField({
+  value,
+  onChange,
+}: {
+  value: string;
+  onChange: (value: string) => void;
+}) {
+  return (
+    <Field label="Your Telegram User ID">
+      <Input
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        placeholder="e.g. 123456789"
+        inputMode="numeric"
+      />
+      <p className="text-xs text-muted-foreground mt-1">
+        Your numeric Telegram user ID. Send /start to @userinfobot on Telegram to find it.{' '}
+        <Tooltip content={TELEGRAM_ID_TOOLTIP} delay={400} closeDelay={0}>
+          <span className="inline-flex items-center align-middle cursor-help text-muted-foreground/70 hover:text-muted-foreground">
+            <InfoIcon />
+            <span className="ml-0.5 underline decoration-dotted">Why not my username?</span>
+          </span>
+        </Tooltip>
+      </p>
+    </Field>
   );
 }
 
