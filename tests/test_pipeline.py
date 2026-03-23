@@ -15,6 +15,7 @@ from backend.app.agent.router import (
     finalize_onboarding_step,
     load_history_step,
     persist_outbound_step,
+    persist_system_prompt_step,
     prepare_media_step,
     run_agent_step,
     run_pipeline,
@@ -89,12 +90,13 @@ async def test_run_pipeline_empty_steps() -> None:
 
 
 def test_default_pipeline_contains_all_steps() -> None:
-    """DEFAULT_PIPELINE should include all seven standard steps in the correct order."""
+    """DEFAULT_PIPELINE should include all eight standard steps in the correct order."""
     expected: list[PipelineStep] = [
         prepare_media_step,
         build_context_step,
         load_history_step,
         run_agent_step,
+        persist_system_prompt_step,
         finalize_onboarding_step,
         dispatch_reply_step,
         persist_outbound_step,
@@ -103,8 +105,8 @@ def test_default_pipeline_contains_all_steps() -> None:
 
 
 def test_default_pipeline_length() -> None:
-    """DEFAULT_PIPELINE should have exactly 7 steps."""
-    assert len(DEFAULT_PIPELINE) == 7
+    """DEFAULT_PIPELINE should have exactly 8 steps."""
+    assert len(DEFAULT_PIPELINE) == 8
 
 
 @pytest.mark.asyncio

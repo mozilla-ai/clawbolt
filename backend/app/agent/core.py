@@ -92,6 +92,7 @@ class AgentResponse:
     is_error_fallback: bool = False
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    system_prompt: str = ""
 
 
 class ClawboltAgent:
@@ -779,6 +780,7 @@ class ClawboltAgent:
                     is_error_fallback=True,
                     total_input_tokens=_total_input_tokens,
                     total_output_tokens=_total_output_tokens,
+                    system_prompt=system_prompt,
                 )
 
             # Parse tool calls via shared parser
@@ -901,6 +903,7 @@ class ClawboltAgent:
             tool_calls=tool_call_records,
             total_input_tokens=_total_input_tokens,
             total_output_tokens=_total_output_tokens,
+            system_prompt=system_prompt,
         )
 
     def _find_tool(self, name: str) -> Callable[..., Any] | None:
