@@ -94,10 +94,13 @@ async function setLinqLink(phoneNumber: string): Promise<LinqLinkData> {
 // --- Premium Telegram section ---
 
 function PremiumTelegramSection() {
+  const { data: channelConfig } = useChannelConfig();
   const [linkData, setLinkData] = useState<TelegramLinkData | null>(null);
   const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const isConfigured = channelConfig?.telegram_bot_token_set ?? false;
 
   useEffect(() => {
     getTelegramLink().then(setLinkData).catch(() => {});
@@ -146,14 +149,27 @@ function PremiumTelegramSection() {
       )}
 
       <Card>
-        <h3 className="text-sm font-medium mb-3">Telegram</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium">Telegram</h3>
+          {!isConfigured && (
+            <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+              Not configured
+            </span>
+          )}
+        </div>
+        {!isConfigured && (
+          <p className="text-xs text-muted-foreground mb-4">
+            A Telegram bot token must be configured by an administrator to enable this channel.
+          </p>
+        )}
         <div className="grid gap-4">
           <TelegramUserIdField
             value={displayedId}
             onChange={(v) => setTelegramUserId(v)}
+            disabled={!isConfigured}
           />
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={saving || linkData === null} isLoading={saving}>
+            <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null} isLoading={saving}>
               Save
             </Button>
           </div>
@@ -171,6 +187,7 @@ function OssTelegramSection() {
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
 
   const displayedId = telegramUserId ?? config?.telegram_allowed_chat_id ?? '';
+  const isConfigured = config?.telegram_bot_token_set ?? false;
 
   const handleSave = () => {
     if (config && displayedId === config.telegram_allowed_chat_id) {
@@ -189,14 +206,26 @@ function OssTelegramSection() {
   return (
     <div className="grid gap-6">
       <Card>
-        <h3 className="text-sm font-medium mb-3">Telegram</h3>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium">Telegram</h3>
+          <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
+            {isConfigured ? 'Connected' : 'Not configured'}
+          </span>
+        </div>
+        {!isConfigured && (
+          <p className="text-xs text-muted-foreground mb-4">
+            Set <code className="font-mono text-[11px]">TELEGRAM_BOT_TOKEN</code> in your environment
+            or in <a href="/app/settings/telegram" className="underline">Settings &gt; Telegram</a> to enable.
+          </p>
+        )}
         <div className="grid gap-4">
           <TelegramUserIdField
             value={displayedId}
             onChange={(v) => setTelegramUserId(v)}
+            disabled={!isConfigured}
           />
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
+            <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
               Save
             </Button>
           </div>
@@ -223,9 +252,11 @@ const TELEGRAM_ID_TOOLTIP =
 function TelegramUserIdField({
   value,
   onChange,
+  disabled,
 }: {
   value: string;
   onChange: (value: string) => void;
+  disabled?: boolean;
 }) {
   return (
     <Field label="Your Telegram User ID">
@@ -234,6 +265,7 @@ function TelegramUserIdField({
         onChange={(e) => onChange(e.target.value)}
         placeholder="e.g. 123456789"
         inputMode="numeric"
+        disabled={disabled}
       />
       <p className="text-xs text-muted-foreground mt-1">
         Your numeric Telegram user ID. Send /start to @userinfobot on Telegram to find it.{' '}
@@ -260,9 +292,12 @@ function TelegramSection() {
 // --- Premium Linq section ---
 
 function PremiumTextMessagingSection() {
+  const { data: channelConfig } = useChannelConfig();
   const [linkData, setLinkData] = useState<LinqLinkData | null>(null);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+
+  const isConfigured = channelConfig?.linq_api_token_set ?? false;
 
   useEffect(() => {
     getLinqLink().then(setLinkData).catch(() => {});
@@ -290,7 +325,17 @@ function PremiumTextMessagingSection() {
 
   return (
     <Card>
-      <h3 className="text-sm font-medium mb-3">Text Messaging (iMessage / RCS / SMS)</h3>
+      <div className="flex items-center justify-between mb-3">
+        <h3 className="text-sm font-medium">Text Messaging (iMessage / RCS / SMS)</h3>
+        <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
+          {isConfigured ? 'Connected' : 'Not configured'}
+        </span>
+      </div>
+      {!isConfigured && (
+        <p className="text-xs text-muted-foreground mb-4">
+          Text messaging must be configured by an administrator to enable this channel.
+        </p>
+      )}
       <div className="grid gap-4">
         <Field label="Your Phone Number">
           <Input
@@ -298,13 +343,14 @@ function PremiumTextMessagingSection() {
             onChange={(e) => setPhoneNumber(e.target.value)}
             placeholder="e.g. +15551234567"
             inputMode="tel"
+            disabled={!isConfigured}
           />
           <p className="text-xs text-muted-foreground mt-1">
             E.164 format phone number. This is the number you'll text from.
           </p>
         </Field>
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={saving || linkData === null} isLoading={saving}>
+          <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null} isLoading={saving}>
             Save
           </Button>
         </div>
@@ -376,6 +422,7 @@ function TextMessagingSection() {
               onChange={(e) => setAllowedNumber(e.target.value)}
               placeholder="e.g. +15551234567"
               inputMode="tel"
+              disabled={!isConfigured}
             />
             <p className="text-xs text-muted-foreground mt-1">
               E.164 phone number, or * to allow all. Empty = deny all.
@@ -386,6 +433,7 @@ function TextMessagingSection() {
               value={displayedService}
               onChange={(e) => setPreferredService(e.target.value)}
               aria-label="Preferred messaging service"
+              disabled={!isConfigured}
             >
               {LINQ_SERVICES.map((svc) => (
                 <option key={svc} value={svc}>{svc}</option>
@@ -393,7 +441,7 @@ function TextMessagingSection() {
             </Select>
           </Field>
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
+            <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
               Save
             </Button>
           </div>
