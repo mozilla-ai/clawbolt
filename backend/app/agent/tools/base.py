@@ -25,6 +25,7 @@ class ToolErrorKind(StrEnum):
     SERVICE = "service"
     NOT_FOUND = "not_found"
     PERMISSION = "permission"
+    AUTH = "auth"
     INTERNAL = "internal"
 
 

@@ -37,6 +37,10 @@ _ERROR_KIND_HINTS: dict[ToolErrorKind, str] = {
         " Try a different approach or inform the user.]"
     ),
     ToolErrorKind.PERMISSION: ("[You do not have permission for this operation. Inform the user.]"),
+    ToolErrorKind.AUTH: (
+        "[This integration is not connected. Do not retry."
+        " Let the user know they need to authenticate via the web dashboard.]"
+    ),
     ToolErrorKind.INTERNAL: (
         "[An internal error occurred."
         " Inform the user that this operation is temporarily unavailable.]"

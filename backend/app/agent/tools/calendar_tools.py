@@ -565,6 +565,24 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
 # ---------------------------------------------------------------------------
 
 
+def _calendar_auth_check(ctx: ToolContext) -> str | None:
+    """Check whether Google Calendar is configured and the user has authenticated.
+
+    Returns ``None`` when ready, or a reason string when auth is missing.
+    Returns ``None`` (not a reason) when the integration is not configured
+    at all (admin has not set credentials), so it stays completely hidden.
+    """
+    if not settings.google_calendar_client_id or not settings.google_calendar_client_secret:
+        return None
+    token = oauth_service.load_token(ctx.user.id, "google_calendar")
+    if token is not None and token.access_token:
+        return None
+    return (
+        "Google Calendar is not connected. "
+        "The user needs to authenticate via the Clawbolt web dashboard."
+    )
+
+
 def _calendar_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for calendar tools, used by the registry."""
     if not settings.google_calendar_client_id or not settings.google_calendar_client_secret:
@@ -613,6 +631,7 @@ def _register() -> None:
                 "Check calendar free/busy availability",
             ),
         ],
+        auth_check=_calendar_auth_check,
     )
 
 

@@ -64,6 +64,7 @@ class ToolFactory:
     core: bool = True
     summary: str = ""
     sub_tools: list[SubToolInfo] = field(default_factory=list)
+    auth_check: Callable[[ToolContext], str | None] | None = None
 
 
 class ListCapabilitiesParams(BaseModel):
@@ -77,6 +78,7 @@ class ListCapabilitiesParams(BaseModel):
 
 def create_list_capabilities_tool(
     specialist_summaries: dict[str, str],
+    unauthenticated: dict[str, str] | None = None,
 ) -> Tool:
     """Create the ``list_capabilities`` meta-tool.
 
@@ -87,20 +89,40 @@ def create_list_capabilities_tool(
     When a category is activated that has an associated SKILL.md, the
     skill instructions are included in the response so the LLM has
     usage guidance alongside the new tool schemas.
+
+    *unauthenticated* maps category names to human-readable reasons why
+    the integration is not yet connected (e.g. missing OAuth).  These
+    categories are listed but cannot be activated.
     """
     from backend.app.agent.skills.loader import get_skill_instructions
 
+    _unauthenticated = unauthenticated or {}
+
     async def list_capabilities(category: str | None = None) -> ToolResult:
         if category is None:
-            if not specialist_summaries:
+            if not specialist_summaries and not _unauthenticated:
                 return ToolResult(content="No additional capabilities available.")
-            lines = [
-                "Available specialist capabilities "
-                "(call list_capabilities with a category name to activate):"
-            ]
-            for name, summary in sorted(specialist_summaries.items()):
-                lines.append(f"- {name}: {summary}")
+            lines: list[str] = []
+            if specialist_summaries:
+                lines.append(
+                    "Available specialist capabilities "
+                    "(call list_capabilities with a category name to activate):"
+                )
+                for name, summary in sorted(specialist_summaries.items()):
+                    lines.append(f"- {name}: {summary}")
+            if _unauthenticated:
+                lines.append("")
+                lines.append("Not connected (user must authenticate before use):")
+                for name, reason in sorted(_unauthenticated.items()):
+                    lines.append(f"- {name}: {reason}")
             return ToolResult(content="\n".join(lines))
+
+        if category in _unauthenticated:
+            return ToolResult(
+                content=_unauthenticated[category],
+                is_error=True,
+                error_kind=ToolErrorKind.AUTH,
+            )
 
         if category not in specialist_summaries:
             available = ", ".join(sorted(specialist_summaries.keys()))
@@ -122,6 +144,15 @@ def create_list_capabilities_tool(
         f"  - {name}: {summary}" for name, summary in sorted(specialist_summaries.items())
     ]
     summary_block = "\n".join(summary_lines)
+    unauth_hint = ""
+    if _unauthenticated:
+        unauth_lines = [f"  - {name} (not connected)" for name in sorted(_unauthenticated)]
+        unauth_hint = (
+            "\nThe following integrations are configured but not yet connected:\n"
+            + "\n".join(unauth_lines)
+            + "\nDo NOT attempt to activate these. If the user asks about them, "
+            "let them know they need to connect the integration first."
+        )
     return Tool(
         name=ToolName.LIST_CAPABILITIES,
         description=(
@@ -137,6 +168,7 @@ def create_list_capabilities_tool(
             "Call list_capabilities with a category name to activate the tools "
             "before using them. Activate proactively when the user's message "
             "relates to a specialist category."
+            f"{unauth_hint}"
         ),
     )
 
@@ -157,6 +189,7 @@ class ToolRegistry:
         core: bool = True,
         summary: str = "",
         sub_tools: list[SubToolInfo] | None = None,
+        auth_check: Callable[[ToolContext], str | None] | None = None,
     ) -> None:
         """Register a tool factory by name.
 
@@ -171,6 +204,11 @@ class ToolRegistry:
             summary: One-line description shown by ``list_capabilities`` for
                 specialist factories.
             sub_tools: Static metadata for individual tools this factory creates.
+            auth_check: Optional callable that checks whether the user has
+                authenticated for this integration. Returns ``None`` when
+                ready, or a human-readable reason string when auth is
+                missing. Used to surface unauthenticated integrations to
+                the LLM so it knows not to attempt activation.
         """
         if name in self._factories:
             logger.warning("Overwriting existing tool factory: %s", name)
@@ -181,6 +219,7 @@ class ToolRegistry:
             core=core,
             summary=summary,
             sub_tools=sub_tools or [],
+            auth_check=auth_check,
         )
 
     def create_tools(
@@ -251,6 +290,10 @@ class ToolRegistry:
         Used by the setup code to build the ``list_capabilities`` meta-tool
         with only the categories that are actually usable.
 
+        Factories that have an ``auth_check`` returning a non-None value
+        (i.e. user has not authenticated) are excluded here. Use
+        ``get_unauthenticated_specialists`` to retrieve those separately.
+
         When *excluded_factories* is provided, factories in that set are
         skipped.
         """
@@ -264,8 +307,40 @@ class ToolRegistry:
                 continue
             if factory.requires_outbound and context.publish_outbound is None:
                 continue
+            if factory.auth_check is not None and factory.auth_check(context) is not None:
+                continue
             summaries[name] = factory.summary
         return summaries
+
+    def get_unauthenticated_specialists(
+        self,
+        context: ToolContext,
+        *,
+        excluded_factories: set[str] | None = None,
+    ) -> dict[str, str]:
+        """Return specialist factories that are configured but not authenticated.
+
+        Returns a mapping of ``{factory_name: reason}`` for specialists whose
+        ``auth_check`` returns a non-None reason string. Factories without an
+        ``auth_check`` or whose infrastructure dependencies (storage, outbound)
+        are unmet are excluded.
+        """
+        unauthenticated: dict[str, str] = {}
+        for name, factory in self._factories.items():
+            if factory.core:
+                continue
+            if excluded_factories and name in excluded_factories:
+                continue
+            if factory.requires_storage and context.storage is None:
+                continue
+            if factory.requires_outbound and context.publish_outbound is None:
+                continue
+            if factory.auth_check is None:
+                continue
+            reason = factory.auth_check(context)
+            if reason is not None:
+                unauthenticated[name] = reason
+        return unauthenticated
 
     @property
     def core_factory_names(self) -> set[str]:
