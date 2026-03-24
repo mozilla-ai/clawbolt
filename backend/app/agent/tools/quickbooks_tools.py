@@ -453,6 +453,24 @@ def _get_quickbooks_service_for_user(user_id: str) -> QuickBooksService | None:
     return None
 
 
+def _quickbooks_auth_check(ctx: ToolContext) -> str | None:
+    """Check whether QuickBooks is configured and the user has authenticated.
+
+    Returns ``None`` when ready, or a reason string when auth is missing.
+    Returns ``None`` (not a reason) when the integration is not configured
+    at all (admin has not set credentials), so it stays completely hidden.
+    """
+    if not settings.quickbooks_client_id or not settings.quickbooks_client_secret:
+        return None
+    token = oauth_service.load_token(ctx.user.id, "quickbooks")
+    if token and token.access_token and token.realm_id:
+        return None
+    return (
+        "QuickBooks is not connected. "
+        "The user needs to authenticate via the Clawbolt web dashboard."
+    )
+
+
 def _quickbooks_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for QuickBooks tools, used by the registry."""
     if not settings.quickbooks_client_id or not settings.quickbooks_client_secret:
@@ -480,6 +498,7 @@ def _register() -> None:
             SubToolInfo(ToolName.QB_UPDATE, "Update existing entities in QuickBooks"),
             SubToolInfo(ToolName.QB_SEND, "Send invoices or estimates via QuickBooks email"),
         ],
+        auth_check=_quickbooks_auth_check,
     )
 
 
