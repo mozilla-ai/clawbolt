@@ -7,26 +7,63 @@ import Field from '@/components/ui/field';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
 import { useUpdateProfile, useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
+import { useAuth } from '@/contexts/AuthContext';
+import { getAccessToken } from '@/lib/api-client';
 import type { AppShellContext } from '@/layouts/AppShell';
+
+async function setLinqLink(phoneNumber: string): Promise<void> {
+  const token = getAccessToken();
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (token) headers['Authorization'] = `Bearer ${token}`;
+  const res = await fetch('/api/channels/linq', {
+    method: 'PUT',
+    headers,
+    body: JSON.stringify({ phone_number: phoneNumber }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { detail?: string };
+    throw new Error(body.detail || `Failed to save: ${res.status}`);
+  }
+}
 
 export default function GetStartedPage() {
   const { reloadProfile } = useOutletContext<AppShellContext>();
   const navigate = useNavigate();
+  const { isPremium } = useAuth();
   const updateProfile = useUpdateProfile();
   const { data: channelConfig } = useChannelConfig();
   const updateChannelConfig = useUpdateChannelConfig();
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneSaved, setPhoneSaved] = useState(false);
+  const [savingPhone, setSavingPhone] = useState(false);
 
   const linqConfigured = channelConfig?.linq_api_token_set ?? false;
   const fromNumber = channelConfig?.linq_from_number ?? '';
 
-  const handleSavePhone = () => {
+  const handleSavePhone = async () => {
     const trimmed = phoneNumber.trim();
     if (!trimmed) {
       toast.error('Please enter your phone number');
       return;
     }
+
+    if (isPremium) {
+      // Premium: create a ChannelRoute via PUT /api/channels/linq
+      setSavingPhone(true);
+      try {
+        await setLinqLink(trimmed);
+        updateProfile.mutate({ phone: trimmed });
+        setPhoneSaved(true);
+        toast.success('Phone number saved');
+      } catch (e) {
+        toast.error(e instanceof Error ? e.message : 'Failed to save');
+      } finally {
+        setSavingPhone(false);
+      }
+      return;
+    }
+
+    // OSS: update the channel config allowlist
     updateChannelConfig.mutate(
       { linq_allowed_numbers: trimmed },
       {
@@ -93,8 +130,8 @@ export default function GetStartedPage() {
                     {!phoneSaved ? (
                       <Button
                         onClick={handleSavePhone}
-                        disabled={updateChannelConfig.isPending || !phoneNumber.trim()}
-                        isLoading={updateChannelConfig.isPending}
+                        disabled={savingPhone || updateChannelConfig.isPending || !phoneNumber.trim()}
+                        isLoading={savingPhone || updateChannelConfig.isPending}
                       >
                         Save
                       </Button>
