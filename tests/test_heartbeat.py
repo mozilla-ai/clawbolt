@@ -1999,6 +1999,59 @@ class TestFormatHeartbeatHistory:
         result = _format_heartbeat_history([log], "", now)
         assert "today" in result
 
+    def test_send_entry_includes_tasks(self) -> None:
+        """Heartbeat history entries include the task description so the LLM
+        knows *what* was sent, not just *when*."""
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        log = HeartbeatLogEntry(
+            user_id="u1",
+            action_type="send",
+            tasks="Tell a morning joke",
+            created_at=datetime.datetime(2026, 3, 22, 12, 0, tzinfo=datetime.UTC).isoformat(),
+        )
+        result = _format_heartbeat_history([log], "America/New_York", now)
+        assert 'tasks: "Tell a morning joke"' in result
+
+    def test_skip_entry_labeled(self) -> None:
+        """Skipped heartbeat entries are labeled [skipped]."""
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        log = HeartbeatLogEntry(
+            user_id="u1",
+            action_type="skip",
+            created_at=datetime.datetime(2026, 3, 23, 10, 0, tzinfo=datetime.UTC).isoformat(),
+        )
+        result = _format_heartbeat_history([log], "America/New_York", now)
+        assert "[skipped]" in result
+
+    def test_long_tasks_truncated(self) -> None:
+        """Task descriptions longer than 120 chars are truncated with ellipsis."""
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        long_task = "A" * 200
+        log = HeartbeatLogEntry(
+            user_id="u1",
+            action_type="send",
+            tasks=long_task,
+            created_at=datetime.datetime(2026, 3, 23, 10, 0, tzinfo=datetime.UTC).isoformat(),
+        )
+        result = _format_heartbeat_history([log], "America/New_York", now)
+        assert "..." in result
+        # Should contain the truncated prefix, not the full 200-char string
+        assert "A" * 120 in result
+        assert "A" * 200 not in result
+
+    def test_send_without_tasks_no_detail(self) -> None:
+        """Send entries with empty tasks don't show a tasks label."""
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        log = HeartbeatLogEntry(
+            user_id="u1",
+            action_type="send",
+            tasks="",
+            created_at=datetime.datetime(2026, 3, 23, 10, 0, tzinfo=datetime.UTC).isoformat(),
+        )
+        result = _format_heartbeat_history([log], "America/New_York", now)
+        assert "tasks:" not in result
+        assert "[skipped]" not in result
+
 
 class TestEvaluateHeartbeatNeedPassesHistory:
     """Test that evaluate_heartbeat_need passes heartbeat history to the prompt builder."""
@@ -2103,3 +2156,112 @@ class TestEvaluateHeartbeatNeedPassesHistory:
         call_kwargs = mock_build_prompt.call_args
         assert "heartbeat_history" in call_kwargs.kwargs
         assert "not sent any" in call_kwargs.kwargs["heartbeat_history"]
+
+
+class TestRecentMessagesIncludeTimestamps:
+    """Regression: recent messages passed to the heartbeat prompt must include timestamps."""
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.log_llm_usage")
+    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.amessages")
+    async def test_recent_messages_contain_timestamps(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        mock_build_prompt: AsyncMock,
+        mock_log_usage: MagicMock,
+        user: User,
+    ) -> None:
+        """Messages with timestamps should include the time in the formatted output."""
+        from backend.app.agent.dto import StoredMessage
+
+        mock_settings.llm_model = "gpt-4o"
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_api_base = None
+        mock_settings.heartbeat_model = ""
+        mock_settings.heartbeat_provider = ""
+        mock_settings.llm_max_tokens_heartbeat = 256
+        mock_settings.heartbeat_recent_messages_count = 5
+        mock_settings.reasoning_effort = ""
+
+        msg = StoredMessage(
+            direction="outbound",
+            body="Here is your morning joke!",
+            timestamp=datetime.datetime(2026, 3, 23, 12, 30, tzinfo=datetime.UTC).isoformat(),
+        )
+        mock_session_store = MagicMock()
+        mock_session_store.get_recent_messages.return_value = [msg]
+        mock_get_session_store.return_value = mock_session_store
+
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = ""
+        mock_hb_store.get_recent_logs = AsyncMock(return_value=[])
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        mock_build_prompt.return_value = "system prompt"
+        mock_llm.return_value = _make_decision_tool_call(action="skip", tasks="", reasoning="ok")
+
+        await evaluate_heartbeat_need(user)
+
+        recent_text = mock_build_prompt.call_args.args[1]
+        # Should contain a day-of-week timestamp (e.g. "Monday 08:30 AM")
+        assert "Assistant," in recent_text
+        assert "Here is your morning joke!" in recent_text
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.log_llm_usage")
+    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.amessages")
+    async def test_message_without_timestamp_falls_back(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        mock_build_prompt: AsyncMock,
+        mock_log_usage: MagicMock,
+        user: User,
+    ) -> None:
+        """Messages with empty timestamp still render without crashing."""
+        from backend.app.agent.dto import StoredMessage
+
+        mock_settings.llm_model = "gpt-4o"
+        mock_settings.llm_provider = "openai"
+        mock_settings.llm_api_base = None
+        mock_settings.heartbeat_model = ""
+        mock_settings.heartbeat_provider = ""
+        mock_settings.llm_max_tokens_heartbeat = 256
+        mock_settings.heartbeat_recent_messages_count = 5
+        mock_settings.reasoning_effort = ""
+
+        msg = StoredMessage(
+            direction="inbound",
+            body="Hello!",
+            timestamp="",
+        )
+        mock_session_store = MagicMock()
+        mock_session_store.get_recent_messages.return_value = [msg]
+        mock_get_session_store.return_value = mock_session_store
+
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = ""
+        mock_hb_store.get_recent_logs = AsyncMock(return_value=[])
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        mock_build_prompt.return_value = "system prompt"
+        mock_llm.return_value = _make_decision_tool_call(action="skip", tasks="", reasoning="ok")
+
+        await evaluate_heartbeat_need(user)
+
+        recent_text = mock_build_prompt.call_args.args[1]
+        # Falls back to label-only format without a timestamp
+        assert "[User] Hello!" in recent_text
