@@ -19,13 +19,13 @@ export default function ChannelsPage() {
       <h2 className="text-xl font-semibold font-display mb-6">Channels</h2>
       <div className="grid gap-6 lg:grid-cols-2">
         <TelegramSection />
-        {!isPremium && <TextMessagingSection />}
+        {isPremium ? <PremiumTextMessagingSection /> : <TextMessagingSection />}
       </div>
     </div>
   );
 }
 
-// --- Premium Telegram linking helpers ---
+// --- Premium linking helpers ---
 
 interface TelegramLinkData {
   telegram_user_id: string | null;
@@ -35,6 +35,11 @@ interface TelegramLinkData {
 interface TelegramBotInfo {
   bot_username: string;
   bot_link: string;
+}
+
+interface LinqLinkData {
+  phone_number: string | null;
+  connected: boolean;
 }
 
 function _authHeaders(): Record<string, string> {
@@ -65,6 +70,25 @@ async function setTelegramLink(telegramUserId: string): Promise<TelegramLinkData
     throw new Error(body.detail || `Failed to save: ${res.status}`);
   }
   return res.json() as Promise<TelegramLinkData>;
+}
+
+async function getLinqLink(): Promise<LinqLinkData> {
+  const res = await fetch('/api/channels/linq', { headers: _authHeaders() });
+  if (!res.ok) throw new Error('Failed to fetch Linq link');
+  return res.json() as Promise<LinqLinkData>;
+}
+
+async function setLinqLink(phoneNumber: string): Promise<LinqLinkData> {
+  const res = await fetch('/api/channels/linq', {
+    method: 'PUT',
+    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
+    body: JSON.stringify({ phone_number: phoneNumber }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({})) as { detail?: string };
+    throw new Error(body.detail || `Failed to save: ${res.status}`);
+  }
+  return res.json() as Promise<LinqLinkData>;
 }
 
 // --- Premium Telegram section ---
@@ -231,6 +255,62 @@ function TelegramSection() {
     return <PremiumTelegramSection />;
   }
   return <OssTelegramSection />;
+}
+
+// --- Premium Linq section ---
+
+function PremiumTextMessagingSection() {
+  const [linkData, setLinkData] = useState<LinqLinkData | null>(null);
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  useEffect(() => {
+    getLinqLink().then(setLinkData).catch(() => {});
+  }, []);
+
+  const displayedNumber = phoneNumber ?? linkData?.phone_number ?? '';
+
+  const handleSave = async () => {
+    if (linkData && displayedNumber === (linkData.phone_number ?? '')) {
+      toast.error('No changes to save');
+      return;
+    }
+    setSaving(true);
+    try {
+      const result = await setLinqLink(displayedNumber);
+      setLinkData(result);
+      setPhoneNumber(null);
+      toast.success('Text messaging settings updated');
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Card>
+      <h3 className="text-sm font-medium mb-3">Text Messaging (iMessage / RCS / SMS)</h3>
+      <div className="grid gap-4">
+        <Field label="Your Phone Number">
+          <Input
+            value={displayedNumber}
+            onChange={(e) => setPhoneNumber(e.target.value)}
+            placeholder="e.g. +15551234567"
+            inputMode="tel"
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            E.164 format phone number. This is the number you'll text from.
+          </p>
+        </Field>
+        <div className="flex justify-end">
+          <Button onClick={handleSave} disabled={saving || linkData === null} isLoading={saving}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </Card>
+  );
 }
 
 // --- OSS Linq section ---
