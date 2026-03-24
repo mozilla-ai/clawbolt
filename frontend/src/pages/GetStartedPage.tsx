@@ -1,48 +1,45 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
+import { QRCodeSVG } from 'qrcode.react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
+import Input from '@/components/ui/input';
+import Field from '@/components/ui/field';
 import { toast } from '@/lib/toast';
-import { useUpdateProfile } from '@/hooks/queries';
-import { useAuth } from '@/contexts/AuthContext';
-import { getAccessToken } from '@/lib/api-client';
+import { useUpdateProfile, useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
-
-const STEPS = [
-  {
-    title: 'Set up Telegram',
-    description:
-      'Connect your Telegram bot so you can chat with your assistant from your phone. This is the main way to use Clawbolt.',
-    link: '/app/channels',
-    linkLabel: 'Configure Channels',
-    icon: ChannelsIcon,
-  },
-  {
-    title: 'Start chatting',
-    description:
-      'Send your first message. Try asking for an estimate, a reminder, or just say hello.',
-    link: '/app/chat',
-    linkLabel: 'Open Chat',
-    icon: ChatIcon,
-  },
-] as const;
 
 export default function GetStartedPage() {
   const { reloadProfile } = useOutletContext<AppShellContext>();
   const navigate = useNavigate();
   const updateProfile = useUpdateProfile();
-  const { isPremium } = useAuth();
-  const [botUsername, setBotUsername] = useState<string | null>(null);
+  const { data: channelConfig } = useChannelConfig();
+  const updateChannelConfig = useUpdateChannelConfig();
+  const [phoneNumber, setPhoneNumber] = useState('');
+  const [phoneSaved, setPhoneSaved] = useState(false);
 
-  useEffect(() => {
-    if (!isPremium) return;
-    const token = getAccessToken();
-    const headers: Record<string, string> = token ? { Authorization: `Bearer ${token}` } : {};
-    fetch('/api/channels/telegram/bot-info', { headers })
-      .then((res) => (res.ok ? (res.json() as Promise<{ bot_username: string }>) : null))
-      .then((data) => { if (data) setBotUsername(data.bot_username); })
-      .catch(() => {});
-  }, [isPremium]);
+  const linqConfigured = channelConfig?.linq_api_token_set ?? false;
+  const fromNumber = channelConfig?.linq_from_number ?? '';
+  const smsUri = fromNumber ? `sms:${fromNumber}` : '';
+
+  const handleSavePhone = () => {
+    const trimmed = phoneNumber.trim();
+    if (!trimmed) {
+      toast.error('Please enter your phone number');
+      return;
+    }
+    updateChannelConfig.mutate(
+      { linq_allowed_numbers: trimmed },
+      {
+        onSuccess: () => {
+          updateProfile.mutate({ phone: trimmed });
+          setPhoneSaved(true);
+          toast.success('Phone number saved');
+        },
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
 
   const handleDismiss = () => {
     updateProfile.mutate(
@@ -62,42 +59,132 @@ export default function GetStartedPage() {
       <div className="mb-8">
         <h2 className="text-xl font-semibold font-display">Get Started</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Clawbolt is your AI assistant for the trades. Set up a few things here, then head to
-          Telegram to run your business from your phone.
+          Clawbolt is your AI assistant for the trades. Enter your phone number below
+          and you can start texting your assistant right away.
         </p>
       </div>
 
       <div className="grid gap-4">
-        {STEPS.map((step, i) => (
-          <Card key={step.title}>
-            <div className="flex items-start gap-4">
-              <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
-                <step.icon />
+        {/* Step 1: Enter phone number */}
+        <Card>
+          <div className="flex items-start gap-4">
+            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
+              <PhoneIcon />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-medium text-muted-foreground">Step 1</span>
               </div>
-              <div className="flex-1 min-w-0">
-                <div className="flex items-center gap-2 mb-1">
-                  <span className="text-xs font-medium text-muted-foreground">
-                    Step {i + 1}
-                  </span>
-                </div>
-                <h3 className="text-sm font-semibold font-display">{step.title}</h3>
-                <p className="text-sm text-muted-foreground mt-1">
-                  {i === 0 && botUsername
-                    ? `Message @${botUsername} on Telegram to chat with your assistant from your phone. This is the main way to use Clawbolt.`
-                    : step.description}
-                </p>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="mt-2 -ml-2"
-                  onClick={() => navigate(step.link)}
-                >
-                  {step.linkLabel}
-                </Button>
+              <h3 className="text-sm font-semibold font-display">Enter your phone number</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                This is the number you will text Clawbolt from.
+              </p>
+              <div className="mt-3">
+                <Field label="Phone Number">
+                  <div className="flex gap-2">
+                    <div className="flex-1">
+                      <Input
+                        value={phoneNumber}
+                        onChange={(e) => setPhoneNumber(e.target.value)}
+                        placeholder="e.g. +15551234567"
+                        inputMode="tel"
+                        disabled={phoneSaved}
+                      />
+                    </div>
+                    {!phoneSaved ? (
+                      <Button
+                        onClick={handleSavePhone}
+                        disabled={updateChannelConfig.isPending || !phoneNumber.trim()}
+                        isLoading={updateChannelConfig.isPending}
+                      >
+                        Save
+                      </Button>
+                    ) : (
+                      <Button variant="ghost" onClick={() => setPhoneSaved(false)}>
+                        Edit
+                      </Button>
+                    )}
+                  </div>
+                  <p className="text-xs text-muted-foreground mt-1">
+                    Use E.164 format with country code (e.g. +1 for US).
+                  </p>
+                </Field>
               </div>
             </div>
-          </Card>
-        ))}
+          </div>
+        </Card>
+
+        {/* Step 2: Text the number */}
+        <Card>
+          <div className="flex items-start gap-4">
+            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
+              <ChatIcon />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-medium text-muted-foreground">Step 2</span>
+              </div>
+              <h3 className="text-sm font-semibold font-display">Send a message</h3>
+              {linqConfigured && fromNumber ? (
+                <div className="mt-2">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    Text this number from your phone to start chatting with your assistant.
+                  </p>
+                  <div className="flex items-start gap-5">
+                    <div>
+                      <p className="font-mono text-lg font-medium">{fromNumber}</p>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Just say hello to get started.
+                      </p>
+                    </div>
+                    <a href={smsUri} className="shrink-0">
+                      <QRCodeSVG value={smsUri} size={80} />
+                    </a>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-sm text-muted-foreground mt-1">
+                  Text messaging is not configured yet. You can also{' '}
+                  <button
+                    type="button"
+                    className="text-primary hover:underline font-medium"
+                    onClick={() => navigate('/app/chat')}
+                  >
+                    chat from the web
+                  </button>
+                  {' '}or{' '}
+                  <button
+                    type="button"
+                    className="text-primary hover:underline font-medium"
+                    onClick={() => navigate('/app/channels')}
+                  >
+                    set up Telegram
+                  </button>
+                  .
+                </p>
+              )}
+            </div>
+          </div>
+        </Card>
+
+        {/* Step 3: You're off to the races */}
+        <Card>
+          <div className="flex items-start gap-4">
+            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
+              <RocketIcon />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-medium text-muted-foreground">Step 3</span>
+              </div>
+              <h3 className="text-sm font-semibold font-display">You're off to the races</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                That's it. Clawbolt learns about you and your business as you chat.
+                You can always fine-tune settings later from the sidebar.
+              </p>
+            </div>
+          </div>
+        </Card>
       </div>
 
       <div className="mt-8 flex justify-center">
@@ -116,10 +203,10 @@ export default function GetStartedPage() {
 
 // --- Step icons (inline SVG) ---
 
-function ChannelsIcon() {
+function PhoneIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
     </svg>
   );
 }
@@ -128,6 +215,14 @@ function ChatIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
+    </svg>
+  );
+}
+
+function RocketIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.63 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.841M3.75 21h.008v.008H3.75V21z" />
     </svg>
   );
 }
