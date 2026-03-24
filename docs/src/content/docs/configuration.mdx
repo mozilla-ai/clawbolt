@@ -52,6 +52,18 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 | `TELEGRAM_WEBHOOK_SECRET` | (auto-derived) | Webhook validation secret. Auto-derived from bot token if not set |
 | `TELEGRAM_ALLOWED_CHAT_ID` | (empty) | Your numeric Telegram user ID, or `*` to allow all. Only a single ID is allowed per user. Empty = deny all |
 
+## Linq settings (iMessage/RCS/SMS)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `LINQ_API_TOKEN` | | Linq Partner API V3 bearer token |
+| `LINQ_FROM_NUMBER` | | Your Linq-provisioned phone number in E.164 format |
+| `LINQ_WEBHOOK_SIGNING_SECRET` | | HMAC signing secret from webhook subscription creation |
+| `LINQ_ALLOWED_NUMBERS` | (empty) | E.164 phone number, `*` for all, or empty to deny all |
+| `LINQ_PREFERRED_SERVICE` | `iMessage` | Preferred messaging service: `iMessage`, `SMS`, or `RCS` |
+
+When `LINQ_API_TOKEN` is set, the Linq channel is active and users can text their assistant from their phone's native messaging app. Linq provides iMessage, RCS, and SMS access via [linqapp.com](https://linqapp.com).
+
 ## Storage settings
 
 | Variable | Default | Description |

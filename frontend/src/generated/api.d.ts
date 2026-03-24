@@ -517,6 +517,26 @@ export interface components {
             telegram_bot_token_set: boolean;
             /** Telegram Allowed Chat Id */
             telegram_allowed_chat_id: string;
+            /**
+             * Linq Api Token Set
+             * @default false
+             */
+            linq_api_token_set: boolean;
+            /**
+             * Linq From Number
+             * @default
+             */
+            linq_from_number: string;
+            /**
+             * Linq Allowed Numbers
+             * @default
+             */
+            linq_allowed_numbers: string;
+            /**
+             * Linq Preferred Service
+             * @default iMessage
+             */
+            linq_preferred_service: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -524,6 +544,16 @@ export interface components {
             telegram_bot_token?: string | null;
             /** Telegram Allowed Chat Id */
             telegram_allowed_chat_id?: string | null;
+            /** Linq Api Token */
+            linq_api_token?: string | null;
+            /** Linq From Number */
+            linq_from_number?: string | null;
+            /** Linq Webhook Signing Secret */
+            linq_webhook_signing_secret?: string | null;
+            /** Linq Allowed Numbers */
+            linq_allowed_numbers?: string | null;
+            /** Linq Preferred Service */
+            linq_preferred_service?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {

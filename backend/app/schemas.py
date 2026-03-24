@@ -95,11 +95,20 @@ class SessionDetailResponse(BaseModel):
 class ChannelConfigResponse(BaseModel):
     telegram_bot_token_set: bool
     telegram_allowed_chat_id: str
+    linq_api_token_set: bool = False
+    linq_from_number: str = ""
+    linq_allowed_numbers: str = ""
+    linq_preferred_service: str = "iMessage"
 
 
 class ChannelConfigUpdate(BaseModel):
     telegram_bot_token: str | None = None
     telegram_allowed_chat_id: str | None = None
+    linq_api_token: str | None = None
+    linq_from_number: str | None = None
+    linq_webhook_signing_secret: str | None = None
+    linq_allowed_numbers: str | None = None
+    linq_preferred_service: str | None = None
 
 
 class TelegramBotInfoResponse(BaseModel):

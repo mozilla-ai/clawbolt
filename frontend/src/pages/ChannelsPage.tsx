@@ -3,6 +3,7 @@ import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
 import Field from '@/components/ui/field';
+import Select from '@/components/ui/select';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
@@ -10,10 +11,15 @@ import { useAuth } from '@/contexts/AuthContext';
 import { getAccessToken } from '@/lib/api-client';
 
 export default function ChannelsPage() {
+  const { isPremium } = useAuth();
+
   return (
     <div>
       <h2 className="text-xl font-semibold font-display mb-6">Channels</h2>
-      <TelegramSection />
+      <div className="grid gap-6 lg:grid-cols-2">
+        <TelegramSection />
+        {!isPremium && <LinqSection />}
+      </div>
     </div>
   );
 }
@@ -224,4 +230,87 @@ function TelegramSection() {
     return <PremiumTelegramSection />;
   }
   return <OssTelegramSection />;
+}
+
+// --- OSS Linq section ---
+
+const LINQ_SERVICES = ['iMessage', 'SMS', 'RCS'] as const;
+
+function LinqSection() {
+  const { data: config } = useChannelConfig();
+  const updateMutation = useUpdateChannelConfig();
+  const [allowedNumber, setAllowedNumber] = useState<string | null>(null);
+  const [preferredService, setPreferredService] = useState<string | null>(null);
+
+  const displayedNumber = allowedNumber ?? config?.linq_allowed_numbers ?? '';
+  const displayedService = preferredService ?? config?.linq_preferred_service ?? 'iMessage';
+  const isConfigured = config?.linq_api_token_set ?? false;
+
+  const handleSave = () => {
+    const updates: Record<string, string> = {};
+    if (allowedNumber !== null && allowedNumber !== (config?.linq_allowed_numbers ?? '')) {
+      updates.linq_allowed_numbers = allowedNumber;
+    }
+    if (preferredService !== null && preferredService !== (config?.linq_preferred_service ?? 'iMessage')) {
+      updates.linq_preferred_service = preferredService;
+    }
+    if (Object.keys(updates).length === 0) {
+      toast.error('No changes to save');
+      return;
+    }
+    updateMutation.mutate(updates, {
+      onSuccess: () => {
+        setAllowedNumber(null);
+        setPreferredService(null);
+        toast.success('Linq settings updated');
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  return (
+    <div className="grid gap-6">
+      <Card>
+        <div className="flex items-center justify-between mb-3">
+          <h3 className="text-sm font-medium">Linq (iMessage / RCS / SMS)</h3>
+          <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
+            {isConfigured ? 'Connected' : 'Not configured'}
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground mb-4">
+          Connect via Linq to let users text your assistant from their phone's native messaging app.
+          Set <code className="font-mono text-[11px]">LINQ_API_TOKEN</code> in your environment to enable.
+        </p>
+        <div className="grid gap-4">
+          <Field label="Allowed Phone Number">
+            <Input
+              value={displayedNumber}
+              onChange={(e) => setAllowedNumber(e.target.value)}
+              placeholder="e.g. +15551234567"
+              inputMode="tel"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              E.164 phone number, or * to allow all. Empty = deny all.
+            </p>
+          </Field>
+          <Field label="Preferred Service">
+            <Select
+              value={displayedService}
+              onChange={(e) => setPreferredService(e.target.value)}
+              aria-label="Preferred messaging service"
+            >
+              {LINQ_SERVICES.map((svc) => (
+                <option key={svc} value={svc}>{svc}</option>
+              ))}
+            </Select>
+          </Field>
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
+              Save
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
+  );
 }
