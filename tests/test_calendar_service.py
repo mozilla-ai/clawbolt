@@ -141,6 +141,40 @@ async def test_list_events_api_error(service: GoogleCalendarService) -> None:
 
 
 # ---------------------------------------------------------------------------
+# all-day event parsing
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_list_events_all_day_returns_tz_aware(service: GoogleCalendarService) -> None:
+    """All-day events should have timezone-aware datetimes (not naive)."""
+    api_response = {
+        "items": [
+            {
+                "id": "all-day-1",
+                "summary": "Day Off",
+                "start": {"date": "2026-03-25"},
+                "end": {"date": "2026-03-26"},
+                "status": "confirmed",
+            }
+        ]
+    }
+
+    with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = api_response
+        events = await service.list_events(
+            "primary",
+            datetime(2026, 3, 25, tzinfo=UTC),
+            datetime(2026, 3, 27, tzinfo=UTC),
+        )
+
+    assert len(events) == 1
+    assert events[0].all_day is True
+    assert events[0].start.tzinfo is not None
+    assert events[0].end.tzinfo is not None
+
+
+# ---------------------------------------------------------------------------
 # create_event
 # ---------------------------------------------------------------------------
 

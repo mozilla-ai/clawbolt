@@ -236,8 +236,8 @@ def _parse_event(item: dict[str, Any]) -> CalendarEventData:
     all_day = "date" in start_raw and "dateTime" not in start_raw
 
     if all_day:
-        start = datetime.fromisoformat(start_raw["date"])
-        end = datetime.fromisoformat(end_raw.get("date", start_raw["date"]))
+        start = datetime.fromisoformat(start_raw["date"]).replace(tzinfo=UTC)
+        end = datetime.fromisoformat(end_raw.get("date", start_raw["date"])).replace(tzinfo=UTC)
     else:
         start = datetime.fromisoformat(start_raw.get("dateTime", ""))
         end = datetime.fromisoformat(end_raw.get("dateTime", ""))
