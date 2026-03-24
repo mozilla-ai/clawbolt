@@ -40,6 +40,7 @@ interface TelegramBotInfo {
 interface LinqLinkData {
   phone_number: string | null;
   connected: boolean;
+  linq_from_number?: string;
 }
 
 function _authHeaders(): Record<string, string> {
@@ -292,18 +293,16 @@ function TelegramSection() {
 // --- Premium Linq section ---
 
 function PremiumTextMessagingSection() {
-  const { data: channelConfig } = useChannelConfig();
   const [linkData, setLinkData] = useState<LinqLinkData | null>(null);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-
-  const isConfigured = channelConfig?.linq_api_token_set ?? false;
 
   useEffect(() => {
     getLinqLink().then(setLinkData).catch(() => {});
   }, []);
 
   const displayedNumber = phoneNumber ?? linkData?.phone_number ?? '';
+  const fromNumber = linkData?.linq_from_number ?? '';
 
   const handleSave = async () => {
     if (linkData && displayedNumber === (linkData.phone_number ?? '')) {
@@ -324,38 +323,30 @@ function PremiumTextMessagingSection() {
   };
 
   return (
-    <Card>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium">Text Messaging (iMessage / RCS / SMS)</h3>
-        <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
-          {isConfigured ? 'Connected' : 'Not configured'}
-        </span>
-      </div>
-      {!isConfigured && (
-        <p className="text-xs text-muted-foreground mb-4">
-          Text messaging must be configured by an administrator to enable this channel.
-        </p>
-      )}
-      <div className="grid gap-4">
-        <Field label="Your Phone Number">
-          <Input
-            value={displayedNumber}
-            onChange={(e) => setPhoneNumber(e.target.value)}
-            placeholder="e.g. +15551234567"
-            inputMode="tel"
-            disabled={!isConfigured}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            E.164 format phone number. This is the number you'll text from.
-          </p>
-        </Field>
-        <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null} isLoading={saving}>
-            Save
-          </Button>
+    <div className="grid gap-6">
+      {fromNumber && <TextAssistantCard fromNumber={fromNumber} />}
+      <Card>
+        <h3 className="text-sm font-medium mb-3">Text Messaging (iMessage / RCS / SMS)</h3>
+        <div className="grid gap-4">
+          <Field label="Your Phone Number">
+            <Input
+              value={displayedNumber}
+              onChange={(e) => setPhoneNumber(e.target.value)}
+              placeholder="e.g. +15551234567"
+              inputMode="tel"
+            />
+            <p className="text-xs text-muted-foreground mt-1">
+              E.164 format phone number. This is the number you'll text from.
+            </p>
+          </Field>
+          <div className="flex justify-end">
+            <Button onClick={handleSave} disabled={saving || linkData === null} isLoading={saving}>
+              Save
+            </Button>
+          </div>
         </div>
-      </div>
-    </Card>
+      </Card>
+    </div>
   );
 }
 
