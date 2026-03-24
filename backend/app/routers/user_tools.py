@@ -32,7 +32,9 @@ router = APIRouter()
 ensure_tool_modules_imported()
 
 # Factories whose tools are always available and cannot be disabled.
-_CORE_FACTORIES: frozenset[str] = frozenset({"workspace", "profile", "memory", "messaging"})
+_CORE_FACTORIES: frozenset[str] = frozenset(
+    {"workspace", "profile", "memory", "messaging", "file", "heartbeat"}
+)
 
 # Consolidated metadata for each factory group: description, display group,
 # and sort order.  Adding a new tool only requires one entry here.
@@ -49,16 +51,8 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
     "profile": _FactoryMeta("View and update user profile information"),
     "memory": _FactoryMeta("Save, recall, and forget long-term facts"),
     "messaging": _FactoryMeta("Send text and media replies to the user"),
-    "file": _FactoryMeta(
-        "Upload and organize files in cloud storage",
-        domain_group="Local Management",
-        domain_group_order=1,
-    ),
-    "heartbeat": _FactoryMeta(
-        "View and edit heartbeat notes",
-        domain_group="Local Management",
-        domain_group_order=1,
-    ),
+    "file": _FactoryMeta("Upload and organize files in cloud storage"),
+    "heartbeat": _FactoryMeta("View and edit heartbeat notes"),
     "quickbooks": _FactoryMeta(
         "Query, create, and manage QuickBooks Online entities",
         domain_group="Integrations",
