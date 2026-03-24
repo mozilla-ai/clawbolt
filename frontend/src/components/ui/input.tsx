@@ -4,7 +4,7 @@ import { Input as HeroInput } from '@heroui/input';
 type InputProps = Omit<InputHTMLAttributes<HTMLInputElement>, 'size' | 'color'>;
 
 const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ className, disabled, onChange, value, placeholder, type, id, autoComplete, ...rest }, ref) => {
+  ({ className, disabled, onChange, value, placeholder, type, id, autoComplete, inputMode, ...rest }, ref) => {
     void rest;
     return (
       <HeroInput
@@ -18,6 +18,7 @@ const Input = forwardRef<HTMLInputElement, InputProps>(
         type={type}
         id={id}
         autoComplete={autoComplete}
+        inputMode={inputMode}
         onValueChange={(val) => {
           if (onChange) {
             const syntheticEvent = {

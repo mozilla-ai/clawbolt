@@ -91,17 +91,6 @@ export default function ChatPage() {
     inputRef.current?.focus();
   }, []);
 
-  // Prevent iOS Safari auto-zoom on input focus. Since iOS 10, maximum-scale=1
-  // only blocks automatic zoom (not user pinch-zoom), so accessibility is preserved.
-  // Applied only on iOS to avoid disabling pinch-zoom on Android.
-  useEffect(() => {
-    if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) return;
-    const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
-    if (meta && !meta.content.includes('maximum-scale')) {
-      meta.setAttribute('content', meta.content + ', maximum-scale=1');
-    }
-  }, []);
-
   // Auto-attach to last active session from localStorage, or discover from API
   useEffect(() => {
     if (autoAttachDone.current || searchParams.get('session')) return;

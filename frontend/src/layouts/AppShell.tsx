@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Outlet, NavLink, Navigate } from 'react-router-dom';
 import { ToastProvider } from '@heroui/toast';
 import { useQueryClient } from '@tanstack/react-query';
@@ -49,6 +49,17 @@ export default function AppShell() {
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
 
   useSwipeSidebar({ isOpen: sidebarOpen, onOpen: openSidebar, onClose: closeSidebar });
+
+  // Prevent iOS Safari auto-zoom on input focus. Since iOS 10, maximum-scale=1
+  // only blocks automatic zoom (not user pinch-zoom), so accessibility is preserved.
+  // Applied only on iOS to avoid disabling pinch-zoom on Android.
+  useEffect(() => {
+    if (!/iPhone|iPad|iPod/.test(navigator.userAgent)) return;
+    const meta = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+    if (meta && !meta.content.includes('maximum-scale')) {
+      meta.setAttribute('content', meta.content + ', maximum-scale=1');
+    }
+  }, []);
 
   const reloadProfile = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.profile });
