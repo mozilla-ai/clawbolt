@@ -1,0 +1,55 @@
+name: Check Linq API spec for updates
+
+on:
+  schedule:
+    - cron: "0 9 * * 1"  # Every Monday at 9am UTC
+  workflow_dispatch:
+
+jobs:
+  check-spec:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download latest Linq API spec
+        run: |
+          curl -sSfL \
+            -o docs/linq-api-v3.yaml.new \
+            "https://openapi.gitbook.com/o/PIgpM5U0eB9KuZhHHFgT/spec/linq-api-v3.yaml"
+
+      - name: Compare specs
+        id: diff
+        run: |
+          if diff -q docs/linq-api-v3.yaml docs/linq-api-v3.yaml.new > /dev/null 2>&1; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Open issue if spec changed
+        if: steps.diff.outputs.changed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Check for an existing open issue
+          existing=$(gh issue list --label "linq-spec-update" --state open --json number -q '.[0].number')
+          if [ -n "$existing" ]; then
+            echo "Issue #$existing already open, skipping"
+            exit 0
+          fi
+          gh issue create \
+            --title "Linq API spec has been updated" \
+            --label "linq-spec-update" \
+            --body "$(cat <<'BODY'
+          The upstream Linq Partner API spec has changed since the last time we synced.
+
+          **Upstream URL**: https://openapi.gitbook.com/o/PIgpM5U0eB9KuZhHHFgT/spec/linq-api-v3.yaml
+          **Local copy**: docs/linq-api-v3.yaml
+
+          To update:
+          1. Download the new spec: \`curl -sSfL -o docs/linq-api-v3.yaml "https://openapi.gitbook.com/o/PIgpM5U0eB9KuZhHHFgT/spec/linq-api-v3.yaml"\`
+          2. Review the diff for breaking changes to webhook payloads or message endpoints
+          3. Update \`backend/app/channels/linq.py\` if needed
+          4. Commit the updated spec
+          BODY
+          )"

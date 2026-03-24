@@ -92,6 +92,10 @@ def _build_channel_config_response() -> ChannelConfigResponse:
     return ChannelConfigResponse(
         telegram_bot_token_set=bool(settings.telegram_bot_token),
         telegram_allowed_chat_id=settings.telegram_allowed_chat_id,
+        linq_api_token_set=bool(settings.linq_api_token),
+        linq_from_number=settings.linq_from_number,
+        linq_allowed_numbers=settings.linq_allowed_numbers,
+        linq_preferred_service=settings.linq_preferred_service,
     )
 
 
@@ -139,6 +143,18 @@ async def update_channel_config(
             if isinstance(channel, TelegramChannel):
                 channel._token = settings.telegram_bot_token
                 channel._bot = None
+        except KeyError:
+            pass
+
+    # If the Linq API token changed, reset the httpx client so it picks up the new token.
+    if "linq_api_token" in updates:
+        try:
+            from backend.app.channels import get_channel
+            from backend.app.channels.linq import LinqChannel
+
+            channel = get_channel("linq")
+            if isinstance(channel, LinqChannel):
+                channel._client = None
         except KeyError:
             pass
 

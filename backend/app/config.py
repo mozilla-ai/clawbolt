@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     quickbooks_client_secret: str = ""
     quickbooks_environment: str = "sandbox"  # "sandbox" or "production"
 
+    # Linq (iMessage/RCS/SMS)
+    linq_api_token: str = ""
+    linq_from_number: str = ""  # E.164 format
+    linq_webhook_signing_secret: str = ""
+    linq_allowed_numbers: str = ""  # E.164 phone number, "*", or empty
+    linq_preferred_service: str = "iMessage"  # "iMessage", "SMS", or "RCS"
+
     # Google Calendar
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
@@ -138,6 +145,11 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "telegram_bot_token",
         "telegram_allowed_chat_id",
         "telegram_webhook_secret",
+        "linq_api_token",
+        "linq_from_number",
+        "linq_webhook_signing_secret",
+        "linq_allowed_numbers",
+        "linq_preferred_service",
         "llm_provider",
         "llm_model",
         "llm_api_base",

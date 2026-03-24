@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
+from backend.app.channels.linq import LinqChannel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.channels.webchat import WebChatChannel
 from backend.app.config import load_persistent_config, log_config_warnings, settings
@@ -41,6 +42,7 @@ logger = logging.getLogger(__name__)
 
 register_channel(TelegramChannel(bot_token=settings.telegram_bot_token))
 register_channel(WebChatChannel())
+register_channel(LinqChannel())
 
 
 async def _verify_llm_settings() -> None:
@@ -159,6 +161,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             "All messages will be rejected. "
             'Set to "*" to allow all users, or provide a single numeric chat ID.'
         )
+
+    if settings.linq_api_token:
+        logger.info("Linq channel enabled (from: %s)", settings.linq_from_number)
+        if not settings.linq_allowed_numbers:
+            logger.warning(
+                "No Linq allowed numbers configured (LINQ_ALLOWED_NUMBERS). "
+                "All messages will be rejected. "
+                'Set to "*" to allow all, or provide an E.164 phone number.'
+            )
 
     # Start all registered channels concurrently.
     manager = get_manager()

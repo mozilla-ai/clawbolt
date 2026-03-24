@@ -202,6 +202,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/webhooks/linq": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Linq Inbound
+         * @description Receive inbound messages from Linq.
+         */
+        post: operations["linq_inbound_api_webhooks_linq_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/profile": {
         parameters: {
             query?: never;
@@ -517,6 +537,26 @@ export interface components {
             telegram_bot_token_set: boolean;
             /** Telegram Allowed Chat Id */
             telegram_allowed_chat_id: string;
+            /**
+             * Linq Api Token Set
+             * @default false
+             */
+            linq_api_token_set: boolean;
+            /**
+             * Linq From Number
+             * @default
+             */
+            linq_from_number: string;
+            /**
+             * Linq Allowed Numbers
+             * @default
+             */
+            linq_allowed_numbers: string;
+            /**
+             * Linq Preferred Service
+             * @default iMessage
+             */
+            linq_preferred_service: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -524,6 +564,16 @@ export interface components {
             telegram_bot_token?: string | null;
             /** Telegram Allowed Chat Id */
             telegram_allowed_chat_id?: string | null;
+            /** Linq Api Token */
+            linq_api_token?: string | null;
+            /** Linq From Number */
+            linq_from_number?: string | null;
+            /** Linq Webhook Signing Secret */
+            linq_webhook_signing_secret?: string | null;
+            /** Linq Allowed Numbers */
+            linq_allowed_numbers?: string | null;
+            /** Linq Preferred Service */
+            linq_preferred_service?: string | null;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1213,6 +1263,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    linq_inbound_api_webhooks_linq_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
