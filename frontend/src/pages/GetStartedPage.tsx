@@ -20,7 +20,7 @@ const STEPS = [
   {
     title: 'Start chatting',
     description:
-      'Send your first message. Try asking for an estimate, a reminder, or just say hello.',
+      'Send your first message. Try asking for an estimate, a reminder, or just say hello. Tip: use the microphone button on your phone keyboard to dictate instead of typing.',
     link: '/app/chat',
     linkLabel: 'Open Chat',
     icon: ChatIcon,
