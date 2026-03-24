@@ -16,7 +16,10 @@ You now have access to Google Calendar tools. Here is how to use them effectivel
 
 All dates use ISO 8601 format: `2026-03-25T09:00:00`
 
-Use the user's timezone from their profile. If unknown, ask.
+Use the user's timezone from their profile when constructing dates. Include the timezone
+offset in all date strings you pass to calendar tools (e.g. `2026-03-25T09:00:00-04:00`
+for Eastern Daylight Time). If the user's timezone is unknown, ask before making any
+calendar calls.
 
 ## Event Naming Convention
 

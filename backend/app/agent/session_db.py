@@ -352,8 +352,6 @@ class SessionStore:
                 .filter(ChatSession.user_id == self.user_id, Message.direction == direction)
                 .scalar()
             )
-            if result is not None and result.tzinfo is None:
-                result = result.replace(tzinfo=datetime.UTC)
             return result
         finally:
             db.close()
