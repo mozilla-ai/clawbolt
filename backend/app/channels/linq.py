@@ -330,7 +330,7 @@ class LinqChannel(BaseChannel):
                 logger.warning("Linq webhook received invalid JSON")
                 return JSONResponse(content={"ok": True})
 
-            logger.info("Linq webhook raw payload: %s", raw)
+            logger.debug("Linq webhook raw payload: %s", raw)
 
             try:
                 payload = LinqWebhookPayload.model_validate(raw)
@@ -339,7 +339,7 @@ class LinqChannel(BaseChannel):
                 return JSONResponse(content={"ok": True})
 
             data = payload.data
-            logger.info(
+            logger.debug(
                 "Linq webhook parsed: event_type=%s direction=%s sender=%s parts=%d",
                 payload.event_type,
                 data.direction if data else "",
@@ -349,7 +349,7 @@ class LinqChannel(BaseChannel):
 
             inbound = LinqChannel.parse_webhook(payload)
             if inbound is None:
-                logger.info("Linq parse_webhook returned None, skipping")
+                logger.debug("Linq parse_webhook returned None, skipping")
                 return JSONResponse(content={"ok": True})
 
             if not channel.is_allowed(inbound.sender_id, ""):
