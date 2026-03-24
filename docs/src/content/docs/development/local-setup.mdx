@@ -9,6 +9,7 @@ For development, you can run Clawbolt directly with Python and uv.
 
 - Python 3.11+
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
+- PostgreSQL (for data storage)
 
 ## Install dependencies
 
@@ -24,9 +25,24 @@ cp .env.example .env
 ```
 
 Edit `.env` with your credentials. At minimum:
-- `TELEGRAM_BOT_TOKEN`
 - An LLM API key
-- `TELEGRAM_ALLOWED_CHAT_ID` -- your numeric Telegram user ID. Set to `*` to allow everyone. **Messages are rejected by default when empty.**
+- At least one messaging channel:
+  - **Texting (Linq):** `LINQ_API_TOKEN` and `LINQ_FROM_NUMBER`
+  - **Telegram:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_ID`
+
+## Set up PostgreSQL
+
+Create the development database:
+
+```bash
+createdb -U clawbolt clawbolt
+```
+
+Run migrations:
+
+```bash
+uv run alembic upgrade head
+```
 
 ## Start the server
 
@@ -40,23 +56,23 @@ The server starts on `http://localhost:8000`.
 
 The default storage provider is `local`, which saves files to `data/storage/` on disk. No cloud credentials needed.
 
-```bash
-# Uploaded files appear here:
-ls data/storage/
-```
+## Set up a messaging webhook
 
-## Set up the Telegram webhook
-
-Without Docker, you need to set up a tunnel manually:
+Without Docker, you need a tunnel to give messaging providers a public URL:
 
 ```bash
 # Install cloudflared, then:
 cloudflared tunnel --url http://localhost:8000
+```
 
-# Copy the tunnel URL and register the webhook:
+If using **Linq**, the webhook registers automatically when the server detects the tunnel URL.
+
+If using **Telegram**, copy the tunnel URL and register the webhook manually:
+
+```bash
 curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
   -H "Content-Type: application/json" \
   -d '{"url": "https://<tunnel-url>/api/webhooks/telegram"}'
 ```
 
-See [Telegram Setup](../../deployment/telegram-setup/) for details.
+See [Linq Setup](../../deployment/linq-setup/) or [Telegram Setup](../../deployment/telegram-setup/) for details.

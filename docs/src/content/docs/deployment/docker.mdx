@@ -23,21 +23,19 @@ docker compose up --build
 | Service | Description |
 |---------|-------------|
 | **app** | FastAPI server on port 8000, with ffmpeg for audio |
+| **db** | PostgreSQL database for all structured data |
 | **tunnel** | Cloudflare Tunnel for HTTPS webhook registration |
 
 On startup, the app:
-1. Creates the `data/` directory for file-based storage
+1. Runs database migrations automatically
 2. Starts the FastAPI server
-3. Auto-registers the Telegram webhook via the Cloudflare Tunnel URL
+3. Auto-registers webhooks (Telegram and Linq) via the Cloudflare Tunnel URL
 
 ## Data persistence
 
-All data is stored as files under the `data/` directory. By default, Docker Compose bind-mounts `./data` from your host into the container at `/app/data`. Data persists across container restarts.
+Structured data (users, messages, memory, etc.) is stored in PostgreSQL. The Docker Compose file includes a PostgreSQL service with a named volume for persistence.
 
-```bash
-# View stored data
-ls data/users/
-```
+File uploads and media are stored under the `data/` directory. By default, Docker Compose bind-mounts `./data` from your host into the container at `/app/data`.
 
 ## Verify it's running
 
