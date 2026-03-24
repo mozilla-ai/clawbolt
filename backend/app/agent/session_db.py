@@ -10,13 +10,13 @@ from __future__ import annotations
 import datetime
 import logging
 import uuid
-from collections import OrderedDict
 from typing import Any
 
 from sqlalchemy import func
 from sqlalchemy.exc import IntegrityError
 
 from backend.app.agent.dto import SessionState, StoredMessage
+from backend.app.agent.store_cache import StoreCache
 from backend.app.config import settings
 from backend.app.database import SessionLocal, db_session
 from backend.app.models import ChatSession, Message
@@ -404,26 +404,18 @@ class SessionStore:
 # LRU cache
 # ---------------------------------------------------------------------------
 
-_MAX_CACHED_STORES = 256
-_stores: OrderedDict[str, SessionStore] = OrderedDict()
+_cache: StoreCache[SessionStore] = StoreCache(SessionStore)
 
 
 def get_session_store(user_id: str) -> SessionStore:
     """Get or create a SessionStore for the given user.
 
-    Uses an LRU cache bounded to ``_MAX_CACHED_STORES`` entries to prevent
-    unbounded memory growth in multi-tenant deployments.
+    Uses an LRU cache bounded to 256 entries to prevent unbounded memory
+    growth in multi-tenant deployments.
     """
-    if user_id in _stores:
-        _stores.move_to_end(user_id)
-        return _stores[user_id]
-    store = SessionStore(user_id)
-    _stores[user_id] = store
-    if len(_stores) > _MAX_CACHED_STORES:
-        _stores.popitem(last=False)
-    return store
+    return _cache.get(user_id)
 
 
 def reset_session_stores() -> None:
     """Clear the session store cache (for tests)."""
-    _stores.clear()
+    _cache.clear()

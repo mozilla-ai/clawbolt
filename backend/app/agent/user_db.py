@@ -4,7 +4,7 @@ Replaces the file-based UserStore from the old file_store.py. Uses the User
 ORM model for persistence, while keeping UserData Pydantic model as the public
 API surface for backward compatibility with premium.
 
-Follows the same SessionLocal() / try-finally pattern used in session_db.py.
+Uses the db_session() context manager for all UserStore methods.
 """
 
 from __future__ import annotations
@@ -113,21 +113,15 @@ class UserStore:
 
     async def get_by_id(self, user_id: str | int) -> UserData | None:
         """Look up a user by primary key (id)."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             user = db.query(User).filter_by(id=str(user_id)).first()
             return _user_to_dto(user) if user else None
-        finally:
-            db.close()
 
     async def get_by_user_id(self, user_id: str) -> UserData | None:
         """Look up a user by user_id (e.g., 'google_12345')."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             user = db.query(User).filter_by(user_id=user_id).first()
             return _user_to_dto(user) if user else None
-        finally:
-            db.close()
 
     async def create(self, user_id: str, **fields: Any) -> UserData:
         """Create a new User row and return it as a DTO."""
@@ -153,12 +147,9 @@ class UserStore:
 
     async def list_all(self) -> list[UserData]:
         """Return all users."""
-        db = SessionLocal()
-        try:
+        with db_session() as db:
             users = db.query(User).order_by(User.created_at).all()
             return [_user_to_dto(u) for u in users]
-        finally:
-            db.close()
 
 
 _user_store: UserStore | None = None
