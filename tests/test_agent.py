@@ -200,6 +200,23 @@ async def test_system_prompt_skips_tools_without_hints(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
+async def test_system_prompt_includes_mobile_formatting_rules(
+    mock_amessages: object, test_user: User
+) -> None:
+    """System prompt should include mobile-friendly formatting rules."""
+    mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+
+    agent = ClawboltAgent(user=test_user)
+    await agent.process_message("Hello")
+
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    system_prompt = call_args.kwargs["system"]
+    assert "Never use markdown tables" in system_prompt
+    assert "Never use bold markers" in system_prompt
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
 async def test_agent_does_not_pass_api_key(mock_amessages: object, test_user: User) -> None:
     """acompletion should be called without api_key so the SDK resolves keys from env."""
     mock_amessages.return_value = make_text_response("Hi!")  # type: ignore[union-attr]
