@@ -21,12 +21,14 @@ vi.mock('react-router-dom', async () => {
   };
 });
 
+let mockIsPremium = false;
+
 vi.mock('@/contexts/AuthContext', () => ({
   useAuth: () => ({
     authState: 'ready',
     currentAuthUser: { id: 1, name: 'Test User' },
     authConfig: { required: false },
-    isPremium: false,
+    isPremium: mockIsPremium,
     handleLogin: vi.fn(),
     handleLogout: vi.fn(),
   }),
@@ -130,6 +132,42 @@ describe('GetStartedPage', () => {
       expect(screen.getByText('+15559876543')).toBeInTheDocument();
     });
     expect(screen.getByText(/say hello to get started/)).toBeInTheDocument();
+  });
+
+  it('saves phone number via premium channel route when isPremium is true', async () => {
+    mockIsPremium = true;
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () => Promise.resolve({ phone_number: '+15551234567', connected: true }),
+    });
+    vi.stubGlobal('fetch', mockFetch);
+
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const input = screen.getByPlaceholderText('e.g. +15551234567');
+    await user.type(input, '+15551234567');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+
+    await waitFor(() => {
+      const calls = mockFetch.mock.calls.filter(
+        (args: unknown[]) =>
+          args[0] === '/api/channels/linq' &&
+          (args[1] as RequestInit | undefined)?.method === 'PUT',
+      );
+      expect(calls).toHaveLength(1);
+      const body = (calls[0]![1] as RequestInit).body as string;
+      expect(JSON.parse(body)).toEqual({
+        phone_number: '+15551234567',
+      });
+    });
+
+    // Should NOT have called the OSS channel config endpoint
+    expect(mockUpdateChannelConfig).not.toHaveBeenCalled();
+
+    vi.unstubAllGlobals();
+    mockIsPremium = false;
   });
 
   it('shows fallback messaging when linq is not configured', async () => {
