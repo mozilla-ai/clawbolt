@@ -320,10 +320,15 @@ class TelegramChannel(BaseChannel):
     def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return ``True`` if the sender passes the Telegram allowlist gate.
 
-        Only a single chat ID is supported per user. The setting defaults to
-        empty, which rejects all senders (deny by default). Set to ``"*"`` to
-        explicitly allow everyone through.
+        In premium mode, approval is based on whether a ``ChannelRoute``
+        exists for this sender. In OSS mode, the static allowlist setting
+        is used: empty rejects all, ``"*"`` allows all, or a specific
+        chat ID must match.
         """
+        premium = self._check_premium_route(sender_id)
+        if premium is not None:
+            return premium
+
         allowed = settings.telegram_allowed_chat_id.strip()
 
         if not allowed:

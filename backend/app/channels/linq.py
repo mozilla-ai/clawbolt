@@ -231,10 +231,15 @@ class LinqChannel(BaseChannel):
     def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return True if the sender passes the Linq allowlist.
 
-        ``sender_id`` is the phone number in E.164 format.
-        ``settings.linq_allowed_numbers`` can be empty (deny all),
-        ``"*"`` (allow all), or a specific E.164 number.
+        In premium mode, approval is based on whether a ``ChannelRoute``
+        exists for this sender. In OSS mode, ``sender_id`` (E.164 phone
+        number) is checked against ``settings.linq_allowed_numbers``:
+        empty denies all, ``"*"`` allows all, or a specific number must match.
         """
+        premium = self._check_premium_route(sender_id)
+        if premium is not None:
+            return premium
+
         allowed = settings.linq_allowed_numbers.strip()
         if not allowed:
             return False

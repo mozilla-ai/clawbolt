@@ -40,6 +40,29 @@ class BaseChannel(ABC):
     def is_allowed(self, sender_id: str, username: str) -> bool:
         """Return ``True`` if the sender passes the channel's allowlist."""
 
+    def _check_premium_route(self, sender_id: str) -> bool | None:
+        """Check for an existing ``ChannelRoute`` in premium mode.
+
+        Returns ``True``/``False`` if a premium plugin is configured,
+        or ``None`` if running in OSS mode (caller should fall through
+        to its own static allowlist logic).
+        """
+        from backend.app.config import settings
+
+        if not settings.premium_plugin:
+            return None
+
+        from backend.app.database import db_session
+        from backend.app.models import ChannelRoute
+
+        with db_session() as db:
+            route = (
+                db.query(ChannelRoute)
+                .filter_by(channel=self.name, channel_identifier=sender_id)
+                .first()
+            )
+            return route is not None
+
     # -- Outbound --------------------------------------------------------------
 
     @abstractmethod
