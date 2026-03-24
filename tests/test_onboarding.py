@@ -162,6 +162,16 @@ def test_build_onboarding_system_prompt_new_user() -> None:
     assert "help them with that request FIRST" in prompt
 
 
+def test_build_onboarding_system_prompt_includes_dictation_tip() -> None:
+    """Onboarding system prompt should include the phone dictation tip."""
+    user = User(id="6b", user_id="dictation-user", phone="+15550006666")
+    _create_bootstrap(user)
+
+    prompt = build_onboarding_system_prompt(user)
+    assert "dictation" in prompt.lower()
+    assert "microphone" in prompt.lower()
+
+
 def test_build_onboarding_system_prompt_includes_tool_capabilities() -> None:
     """Onboarding system prompt should inject available specialist tool descriptions."""
     user = User(id="6", user_id="new-user", phone="+15550001111")
