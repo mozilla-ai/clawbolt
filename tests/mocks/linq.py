@@ -14,7 +14,7 @@ def make_linq_webhook_payload(
     message_id: str = "msg-uuid-001",
     direction: str = "inbound",
 ) -> dict:
-    """Build a Linq webhook JSON payload (2026-02-03 format)."""
+    """Build a Linq webhook JSON payload matching the real v3 2026-02-03 format."""
     parts: list[dict] = []
     if text:
         parts.append({"type": "text", "value": text})
@@ -22,19 +22,38 @@ def make_linq_webhook_payload(
         parts.append({"type": "media", "url": media_url, "value": ""})
 
     return {
+        "api_version": "v3",
         "webhook_version": "2026-02-03",
+        "event_type": event,
         "event_id": f"evt-{message_id}",
-        "type": event,
-        "direction": direction,
-        "sender_handle": sender,
-        "chat": {
-            "id": chat_id,
-            "is_group": False,
-            "owner_handle": "+15550000000",
+        "created_at": "2026-03-24T12:00:00Z",
+        "trace_id": "test-trace-id",
+        "partner_id": "test-partner-id",
+        "data": {
+            "id": message_id,
+            "direction": direction,
+            "sender_handle": {
+                "handle": sender,
+                "id": "sender-uuid",
+                "is_me": False,
+                "service": "iMessage",
+                "status": "active",
+            },
+            "chat": {
+                "id": chat_id,
+                "is_group": False,
+                "owner_handle": {
+                    "handle": "+15550000000",
+                    "id": "owner-uuid",
+                    "is_me": True,
+                    "service": "iMessage",
+                    "status": "active",
+                },
+            },
+            "parts": parts,
+            "service": "iMessage",
+            "sent_at": "2026-03-24T12:00:00Z",
         },
-        "id": message_id,
-        "parts": parts,
-        "sent_at": "2026-03-24T12:00:00Z",
     }
 
 

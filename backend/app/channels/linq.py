@@ -92,12 +92,33 @@ class LinqMessagePart(BaseModel):
     url: str = ""
 
 
+class LinqHandle(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
+    handle: str = ""
+    service: str = ""
+    is_me: bool = False
+
+
 class LinqChat(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str = ""
     is_group: bool = False
-    owner_handle: str = ""
+    owner_handle: LinqHandle | None = None
+
+
+class LinqMessageData(BaseModel):
+    """The ``data`` object inside a Linq webhook event."""
+
+    model_config = ConfigDict(extra="ignore")
+
+    id: str = ""
+    direction: str = ""  # "inbound" | "outbound"
+    sender_handle: LinqHandle | None = None
+    chat: LinqChat | None = None
+    parts: list[LinqMessagePart] = []
+    service: str = ""
 
 
 class LinqWebhookPayload(BaseModel):
@@ -105,14 +126,11 @@ class LinqWebhookPayload(BaseModel):
 
     model_config = ConfigDict(extra="ignore")
 
+    api_version: str = ""
     webhook_version: str = ""
+    event_type: str = ""  # "message.received", etc.
     event_id: str = ""
-    type: str = ""  # "message.received", etc.
-    direction: str = ""  # "inbound" | "outbound"
-    sender_handle: str = ""
-    chat: LinqChat | None = None
-    id: str = ""  # message id
-    parts: list[LinqMessagePart] = []
+    data: LinqMessageData | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -250,31 +268,36 @@ class LinqChannel(BaseChannel):
 
         Returns None if the payload should be ignored.
         """
-        if payload.type != "message.received":
+        if payload.event_type != "message.received":
             return None
 
-        if payload.direction == "outbound":
+        data = payload.data
+        if not data:
             return None
 
-        if not payload.sender_handle:
+        if data.direction == "outbound":
+            return None
+
+        sender = data.sender_handle
+        if not sender or not sender.handle:
             logger.warning("Linq message missing sender_handle, ignoring")
             return None
 
         text_parts: list[str] = []
         media_refs: list[tuple[str, str]] = []
 
-        for part in payload.parts:
+        for part in data.parts:
             if part.type == "text" and part.value:
                 text_parts.append(part.value)
             elif part.type == "media" and part.url:
                 media_refs.append((part.url, LinqChannel._guess_mime(part.url)))
 
         text = " ".join(text_parts)
-        external_id = f"linq_{payload.id}" if payload.id else ""
+        external_id = f"linq_{data.id}" if data.id else ""
 
         return InboundMessage(
             channel="linq",
-            sender_id=payload.sender_handle,
+            sender_id=sender.handle,
             text=text,
             media_refs=media_refs,
             external_message_id=external_id,
@@ -314,12 +337,13 @@ class LinqChannel(BaseChannel):
                 logger.warning("Linq webhook payload failed validation")
                 return JSONResponse(content={"ok": True})
 
+            data = payload.data
             logger.info(
-                "Linq webhook parsed: type=%s direction=%s sender=%s parts=%d",
-                payload.type,
-                payload.direction,
-                payload.sender_handle,
-                len(payload.parts),
+                "Linq webhook parsed: event_type=%s direction=%s sender=%s parts=%d",
+                payload.event_type,
+                data.direction if data else "",
+                data.sender_handle.handle if data and data.sender_handle else "",
+                len(data.parts) if data else 0,
             )
 
             inbound = LinqChannel.parse_webhook(payload)
@@ -332,8 +356,8 @@ class LinqChannel(BaseChannel):
                 return JSONResponse(content={"ok": True})
 
             # Cache the chat_id for outbound use
-            if payload.chat and payload.chat.id and payload.sender_handle:
-                channel._chat_cache[payload.sender_handle] = payload.chat.id
+            if data and data.chat and data.chat.id and data.sender_handle:
+                channel._chat_cache[data.sender_handle.handle] = data.chat.id
 
             # Idempotency: skip duplicate messages
             if inbound.external_message_id:
