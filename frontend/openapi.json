@@ -368,6 +368,23 @@
         }
       }
     },
+    "/api/webhooks/linq": {
+      "post": {
+        "summary": "Linq Inbound",
+        "description": "Receive inbound messages from Linq.",
+        "operationId": "linq_inbound_api_webhooks_linq_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/profile": {
       "get": {
         "summary": "Get Profile",
@@ -1045,6 +1062,26 @@
           "telegram_allowed_chat_id": {
             "type": "string",
             "title": "Telegram Allowed Chat Id"
+          },
+          "linq_api_token_set": {
+            "type": "boolean",
+            "title": "Linq Api Token Set",
+            "default": false
+          },
+          "linq_from_number": {
+            "type": "string",
+            "title": "Linq From Number",
+            "default": ""
+          },
+          "linq_allowed_numbers": {
+            "type": "string",
+            "title": "Linq Allowed Numbers",
+            "default": ""
+          },
+          "linq_preferred_service": {
+            "type": "string",
+            "title": "Linq Preferred Service",
+            "default": "iMessage"
           }
         },
         "type": "object",
@@ -1077,6 +1114,61 @@
               }
             ],
             "title": "Telegram Allowed Chat Id"
+          },
+          "linq_api_token": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linq Api Token"
+          },
+          "linq_from_number": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linq From Number"
+          },
+          "linq_webhook_signing_secret": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linq Webhook Signing Secret"
+          },
+          "linq_allowed_numbers": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linq Allowed Numbers"
+          },
+          "linq_preferred_service": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Linq Preferred Service"
           }
         },
         "type": "object",
