@@ -77,6 +77,17 @@ describe('AppShell', () => {
     expect(screen.queryByText('Conversations')).not.toBeInTheDocument();
   });
 
+  it('main element has min-h-0 for iOS Safari flex layout fix', async () => {
+    renderWithRouter(<AppShell />, { route: '/app' });
+
+    await waitFor(() => {
+      expect(screen.getByText('Chat')).toBeInTheDocument();
+    });
+
+    const main = document.querySelector('main');
+    expect(main).toHaveClass('min-h-0');
+  });
+
   it('shows error state when profile fails to load', async () => {
     mockApi.getProfile.mockRejectedValue(new Error('Network error'));
 
