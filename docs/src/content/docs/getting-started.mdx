@@ -8,7 +8,7 @@ The fastest way to run Clawbolt is with Docker Compose.
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- A Telegram bot token (see [Telegram Setup](../../deployment/telegram-setup/))
+- A messaging channel: either a [Linq account](../deployment/linq-setup/) (iMessage/RCS/SMS) or a [Telegram bot token](../deployment/telegram-setup/)
 - An LLM provider API key (OpenAI, Anthropic, etc.)
 
 ## 1. Clone the repository
@@ -27,10 +27,11 @@ cp .env.example .env
 Edit `.env` and fill in the required credentials. See [Configuration](../configuration/) for full details.
 
 At minimum you need:
-- `TELEGRAM_BOT_TOKEN` -- your Telegram bot token
 - An LLM API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
-- `TELEGRAM_ALLOWED_CHAT_ID` -- your numeric Telegram user ID. Set to `*` to allow everyone. **Messages are rejected by default when empty.**
 - `VISION_MODEL` -- the model used for image analysis (defaults to `LLM_MODEL` if not set)
+- At least one messaging channel configured:
+  - **Texting (recommended):** `LINQ_API_TOKEN` and `LINQ_FROM_NUMBER` for iMessage/RCS/SMS via [Linq](../deployment/linq-setup/)
+  - **Telegram:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_ID` for Telegram via [Telegram Setup](../deployment/telegram-setup/)
 
 ## 3. Start the services
 
@@ -39,9 +40,10 @@ docker compose up --build
 ```
 
 This will:
+- Start PostgreSQL for data storage
 - Build the app image (Python 3.11, ffmpeg for audio processing)
+- Run database migrations automatically
 - Start the FastAPI server on port 8000
-- Create the `data/` directory for file-based storage
 
 ## 4. Verify it's running
 
@@ -52,9 +54,9 @@ curl http://localhost:8000/api/health
 
 ## 5. Start chatting
 
-The Telegram webhook is registered automatically: Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app and calls `setWebhook` on startup. No Cloudflare account or auth token required.
+Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app and registers webhooks automatically. No Cloudflare account or auth token required.
 
-Send a message to your bot on Telegram and Clawbolt will respond.
+Send a message to your assistant and Clawbolt will respond. If you configured Linq, text the Linq phone number from your phone. If you configured Telegram, message your bot on Telegram.
 
 ## Next steps
 
