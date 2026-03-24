@@ -269,8 +269,13 @@ async def run_agent(
     specialist_summaries = default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=disabled_groups or None
     )
-    if specialist_summaries:
-        tools.append(create_list_capabilities_tool(specialist_summaries))
+    unauthenticated = default_registry.get_unauthenticated_specialists(
+        tool_context, excluded_factories=disabled_groups or None
+    )
+    if specialist_summaries or unauthenticated:
+        tools.append(
+            create_list_capabilities_tool(specialist_summaries, unauthenticated=unauthenticated)
+        )
     agent.register_tools(tools)
 
     # Build onboarding prompt now that tools are available, so that tool
