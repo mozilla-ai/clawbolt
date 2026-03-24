@@ -7,6 +7,7 @@ import time
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
@@ -225,6 +226,13 @@ def create_calendar_tools(
         except ValueError as exc:
             return ToolResult(
                 content=f"Invalid date format: {exc}. Use ISO 8601.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        if end_dt <= start_dt:
+            return ToolResult(
+                content="End time must be after start time.",
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
@@ -494,8 +502,6 @@ def create_calendar_tools(
 # ---------------------------------------------------------------------------
 # Error handling
 # ---------------------------------------------------------------------------
-
-import httpx  # noqa: E402 (already imported at top, repeated for readability)
 
 
 def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:

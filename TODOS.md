@@ -22,7 +22,7 @@
 
 **Why:** Phase 1 only supports Google Calendar users. An iCal feed is provider-agnostic: anyone with Apple Calendar, Outlook, or any CalDAV client can subscribe. This completes the calendar vision from issue #708.
 
-**Context:** The CalendarProvider protocol from Phase 1 is designed to support this. CalendarEvent table stores events locally (write-through on create/update/delete). ICalFeedService generates .ics feeds per user with a secret feed_token for auth. The CalendarConfig model already has a feed_token column ready for this.
+**Context:** The CalendarProvider protocol from Phase 1 is designed to support this. CalendarEvent table stores events locally (write-through on create/update/delete). ICalFeedService generates .ics feeds per user with a secret feed_token for auth. Phase 2 will add a feed_token column to CalendarConfig for this purpose.
 
 **Effort:** M (human: ~1 week / CC: ~30 min)
 **Priority:** P2

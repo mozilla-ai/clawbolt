@@ -137,7 +137,13 @@ class GoogleCalendarService:
         }
         data = await self._request("GET", f"/calendars/{calendar_id}/events", params=params)
         items = (data or {}).get("items", [])
-        return [_parse_event(item) for item in items]
+        events: list[CalendarEventData] = []
+        for item in items:
+            try:
+                events.append(_parse_event(item))
+            except (KeyError, ValueError) as exc:
+                logger.warning("Skipping malformed calendar event %s: %s", item.get("id"), exc)
+        return events
 
     async def create_event(
         self,
@@ -195,7 +201,12 @@ class GoogleCalendarService:
         }
         data = await self._request("POST", "/freeBusy", json=body)
         calendars = (data or {}).get("calendars", {})
-        busy_list = calendars.get(calendar_id, {}).get("busy", [])
+        # Google may return the resolved email as key instead of "primary",
+        # so collect busy slots from all calendars in the response (we only
+        # requested one).
+        busy_list: list[dict[str, str]] = []
+        for cal_data in calendars.values():
+            busy_list.extend(cal_data.get("busy", []))
         return [
             BusySlot(
                 start=datetime.fromisoformat(slot["start"]),

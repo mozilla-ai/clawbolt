@@ -286,6 +286,20 @@ async def test_create_event_invalid_date(cal_tools: list[Tool]) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_create_event_end_before_start(cal_tools: list[Tool]) -> None:
+    """Should reject end time before start time."""
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Test Event",
+        start="2026-03-28T17:00:00",
+        end="2026-03-28T09:00:00",
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "after start" in result.content.lower()
+
+
+@pytest.mark.asyncio()
 async def test_create_event_api_error(
     cal_service: MockGoogleCalendarService,
 ) -> None:

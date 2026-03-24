@@ -91,6 +91,39 @@ async def test_list_events_empty(service: GoogleCalendarService) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_list_events_skips_malformed_events(service: GoogleCalendarService) -> None:
+    """Should skip malformed events instead of crashing the entire list."""
+    api_response = {
+        "items": [
+            {
+                "id": "good-event",
+                "summary": "Valid Event",
+                "start": {"dateTime": "2026-03-25T09:00:00+00:00"},
+                "end": {"dateTime": "2026-03-25T17:00:00+00:00"},
+                "status": "confirmed",
+            },
+            {
+                "id": "bad-event",
+                "summary": "Missing start/end",
+                "start": {},
+                "end": {},
+            },
+        ]
+    }
+
+    with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = api_response
+        events = await service.list_events(
+            "primary",
+            datetime(2026, 3, 25, tzinfo=UTC),
+            datetime(2026, 3, 26, tzinfo=UTC),
+        )
+
+    assert len(events) == 1
+    assert events[0].id == "good-event"
+
+
+@pytest.mark.asyncio()
 async def test_list_events_api_error(service: GoogleCalendarService) -> None:
     """Should propagate API errors."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
@@ -246,6 +279,34 @@ async def test_check_availability_busy(service: GoogleCalendarService) -> None:
     api_response = {
         "calendars": {
             "primary": {
+                "busy": [
+                    {
+                        "start": "2026-03-25T09:00:00+00:00",
+                        "end": "2026-03-25T17:00:00+00:00",
+                    }
+                ]
+            }
+        }
+    }
+
+    with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = api_response
+        slots = await service.check_availability(
+            "primary",
+            datetime(2026, 3, 25, tzinfo=UTC),
+            datetime(2026, 3, 26, tzinfo=UTC),
+        )
+
+    assert len(slots) == 1
+    assert slots[0].start.hour == 9
+
+
+@pytest.mark.asyncio()
+async def test_check_availability_email_key(service: GoogleCalendarService) -> None:
+    """Should find busy slots even when Google returns email as key instead of 'primary'."""
+    api_response = {
+        "calendars": {
+            "user@gmail.com": {
                 "busy": [
                     {
                         "start": "2026-03-25T09:00:00+00:00",

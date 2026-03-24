@@ -42,6 +42,7 @@ class OAuthConfig:
     scopes: list[str]
     callback_path: str = "/api/oauth/callback"
     use_pkce: bool = True
+    extra_auth_params: dict[str, str] = field(default_factory=dict)
 
     @property
     def is_configured(self) -> bool:
@@ -164,6 +165,8 @@ class OAuthService:
         if config.use_pkce:
             params["code_challenge"] = challenge
             params["code_challenge_method"] = "S256"
+        if config.extra_auth_params:
+            params.update(config.extra_auth_params)
 
         return str(httpx.URL(config.authorize_url, params=params))
 
@@ -350,6 +353,7 @@ def get_google_calendar_oauth_config() -> OAuthConfig | None:
         token_url=GOOGLE_CALENDAR_TOKEN_URL,
         scopes=GOOGLE_CALENDAR_SCOPES,
         use_pkce=False,
+        extra_auth_params={"access_type": "offline", "prompt": "consent"},
     )
     return config if config.is_configured else None
 
