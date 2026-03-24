@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
-import { QRCodeSVG } from 'qrcode.react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
 import Field from '@/components/ui/field';
+import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
 import { useUpdateProfile, useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
 import type { AppShellContext } from '@/layouts/AppShell';
@@ -20,7 +20,6 @@ export default function GetStartedPage() {
 
   const linqConfigured = channelConfig?.linq_api_token_set ?? false;
   const fromNumber = channelConfig?.linq_from_number ?? '';
-  const smsUri = fromNumber ? `sms:${fromNumber}` : '';
 
   const handleSavePhone = () => {
     const trimmed = phoneNumber.trim();
@@ -127,20 +126,11 @@ export default function GetStartedPage() {
               <h3 className="text-sm font-semibold font-display">Send a message</h3>
               {linqConfigured && fromNumber ? (
                 <div className="mt-2">
-                  <p className="text-sm text-muted-foreground mb-3">
-                    Text this number from your phone to start chatting with your assistant.
-                  </p>
-                  <div className="flex items-start gap-5">
-                    <div>
-                      <p className="font-mono text-lg font-medium">{fromNumber}</p>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Just say hello to get started.
-                      </p>
-                    </div>
-                    <a href={smsUri} className="shrink-0">
-                      <QRCodeSVG value={smsUri} size={80} />
-                    </a>
-                  </div>
+                  <TextAssistantCard
+                    fromNumber={fromNumber}
+                    subtitle="Just say hello to get started."
+                    qrSize={80}
+                  />
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-1">

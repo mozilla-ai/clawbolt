@@ -129,7 +129,7 @@ describe('GetStartedPage', () => {
     await waitFor(() => {
       expect(screen.getByText('+15559876543')).toBeInTheDocument();
     });
-    expect(screen.getByText(/Text this number from your phone/)).toBeInTheDocument();
+    expect(screen.getByText(/say hello to get started/)).toBeInTheDocument();
   });
 
   it('shows fallback messaging when linq is not configured', async () => {
