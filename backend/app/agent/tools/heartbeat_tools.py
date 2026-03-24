@@ -75,7 +75,7 @@ def _register() -> None:
     default_registry.register(
         "heartbeat",
         _heartbeat_factory,
-        core=False,
+        core=True,
         summary="View and edit heartbeat notes",
         sub_tools=[
             SubToolInfo(ToolName.GET_HEARTBEAT, "Read heartbeat notes"),

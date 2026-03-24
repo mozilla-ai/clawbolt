@@ -407,7 +407,7 @@ def _register() -> None:
         "file",
         _file_factory,
         requires_storage=True,
-        core=False,
+        core=True,
         summary="Upload and organize files in cloud storage (Dropbox/Google Drive)",
         sub_tools=[
             SubToolInfo(ToolName.UPLOAD_TO_STORAGE, "Upload files to cloud storage"),

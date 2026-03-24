@@ -90,17 +90,18 @@ def test_create_core_tools_excludes_disabled_factories() -> None:
     assert "read_file" not in excluded_names
 
 
-def test_specialist_summaries_excludes_disabled_factories() -> None:
-    """get_available_specialist_summaries should skip excluded factories."""
+def test_specialist_summaries_excludes_core_factories() -> None:
+    """Core factories (including file and heartbeat) should not appear in specialist summaries."""
     user = User(id="999", user_id="test")
     ctx = ToolContext(user=user)
 
-    all_summaries = default_registry.get_available_specialist_summaries(ctx)
-    excluded_summaries = default_registry.get_available_specialist_summaries(
-        ctx, excluded_factories={"heartbeat"}
-    )
-    assert "heartbeat" in all_summaries
-    assert "heartbeat" not in excluded_summaries
+    summaries = default_registry.get_available_specialist_summaries(ctx)
+    for core_name in ("workspace", "profile", "memory", "messaging", "file", "heartbeat"):
+        assert core_name not in summaries, f"{core_name} should not be a specialist"
+
+    # quickbooks and calendar are specialists (though they may be filtered by auth_check)
+    assert "quickbooks" in default_registry.specialist_factory_names
+    assert "calendar" in default_registry.specialist_factory_names
 
 
 # ---------------------------------------------------------------------------
@@ -161,28 +162,30 @@ def test_put_tool_config_disable_domain_tool(client: TestClient) -> None:
     """PUT /api/user/tools can disable a domain tool."""
     response = client.put(
         "/api/user/tools",
-        json={"tools": [{"name": "heartbeat", "enabled": False}]},
+        json={"tools": [{"name": "quickbooks", "enabled": False}]},
     )
     assert response.status_code == 200
     data = response.json()
     tools_by_name = {t["name"]: t for t in data["tools"]}
-    assert tools_by_name["heartbeat"]["enabled"] is False
+    assert tools_by_name["quickbooks"]["enabled"] is False
 
     # Verify it persists
     get_response = client.get("/api/user/tools")
     tools_by_name = {t["name"]: t for t in get_response.json()["tools"]}
-    assert tools_by_name["heartbeat"]["enabled"] is False
+    assert tools_by_name["quickbooks"]["enabled"] is False
 
 
 def test_put_tool_config_cannot_disable_core_tool(client: TestClient) -> None:
     """PUT /api/user/tools silently ignores attempts to disable core tools."""
-    response = client.put(
-        "/api/user/tools",
-        json={"tools": [{"name": "workspace", "enabled": False}]},
-    )
-    assert response.status_code == 200
-    tools_by_name = {t["name"]: t for t in response.json()["tools"]}
-    assert tools_by_name["workspace"]["enabled"] is True
+    # Test original core tools and newly promoted core tools
+    for tool_name in ("workspace", "heartbeat", "file"):
+        response = client.put(
+            "/api/user/tools",
+            json={"tools": [{"name": tool_name, "enabled": False}]},
+        )
+        assert response.status_code == 200
+        tools_by_name = {t["name"]: t for t in response.json()["tools"]}
+        assert tools_by_name[tool_name]["enabled"] is True, f"{tool_name} should not be disableable"
 
 
 def test_put_tool_config_reenable(client: TestClient) -> None:
@@ -190,16 +193,16 @@ def test_put_tool_config_reenable(client: TestClient) -> None:
     # Disable
     client.put(
         "/api/user/tools",
-        json={"tools": [{"name": "heartbeat", "enabled": False}]},
+        json={"tools": [{"name": "quickbooks", "enabled": False}]},
     )
     # Re-enable
     response = client.put(
         "/api/user/tools",
-        json={"tools": [{"name": "heartbeat", "enabled": True}]},
+        json={"tools": [{"name": "quickbooks", "enabled": True}]},
     )
     assert response.status_code == 200
     tools_by_name = {t["name"]: t for t in response.json()["tools"]}
-    assert tools_by_name["heartbeat"]["enabled"] is True
+    assert tools_by_name["quickbooks"]["enabled"] is True
 
 
 def test_put_tool_config_empty_body(client: TestClient) -> None:
