@@ -219,7 +219,7 @@ export default function AppShell() {
           <h1 className="text-lg font-bold font-display text-foreground">Clawbolt</h1>
         </header>
 
-        <main className="flex-1 overflow-y-auto p-4 sm:p-6 max-w-5xl w-full mx-auto">
+        <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 max-w-5xl w-full mx-auto">
           <Outlet context={ctx} />
         </main>
       </div>

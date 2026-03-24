@@ -372,6 +372,22 @@ def test_google_calendar_oauth_config_configured() -> None:
     assert config.client_id == "gcal-cid"
     assert config.integration == "google_calendar"
     assert config.use_pkce is False
+    assert config.extra_auth_params == {"access_type": "offline", "prompt": "consent"}
+
+
+def test_google_calendar_auth_url_includes_access_type_offline(
+    oauth_svc: OAuthService,
+) -> None:
+    """Google Calendar auth URL must include access_type=offline for refresh tokens."""
+    with (
+        patch.object(settings, "google_calendar_client_id", "gcal-cid"),
+        patch.object(settings, "google_calendar_client_secret", "gcal-csec"),
+    ):
+        config = get_google_calendar_oauth_config()
+    assert config is not None
+    url = oauth_svc.get_authorization_url(config, user_id="1")
+    assert "access_type=offline" in url
+    assert "prompt=consent" in url
 
 
 def test_get_oauth_config_dispatches_google_calendar() -> None:

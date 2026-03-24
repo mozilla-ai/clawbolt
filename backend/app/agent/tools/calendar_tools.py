@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
-from datetime import UTC, datetime
+import zoneinfo
+from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
@@ -122,11 +124,28 @@ def _format_event(event: Any) -> str:
     return " | ".join(parts)
 
 
-def _parse_dt(value: str) -> datetime:
-    """Parse an ISO 8601 datetime string. Assumes UTC if no timezone."""
+def _resolve_tz(tz_name: str) -> tzinfo:
+    """Resolve an IANA timezone name, falling back to UTC."""
+    if not tz_name:
+        return UTC
+    try:
+        return zoneinfo.ZoneInfo(tz_name)
+    except (zoneinfo.ZoneInfoNotFoundError, KeyError, ValueError):
+        logger.warning("Invalid timezone %r, falling back to UTC", tz_name)
+        return UTC
+
+
+def _parse_dt(value: str, default_tz: tzinfo = UTC) -> datetime:
+    """Parse an ISO 8601 datetime string.
+
+    If the string has no timezone offset, *default_tz* is used instead of
+    blindly assuming UTC.  This lets callers pass the user's local timezone
+    so that ``2026-03-24T09:00:00`` is interpreted as 9 AM in the user's
+    timezone rather than 9 AM UTC.
+    """
     dt = datetime.fromisoformat(value)
     if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=UTC)
+        dt = dt.replace(tzinfo=default_tz)
     return dt
 
 
@@ -167,16 +186,24 @@ def _make_token_refresh_callback(user_id: str) -> Any:
 
 def create_calendar_tools(
     service: GoogleCalendarService | Any,
+    user_timezone: str = "",
 ) -> list[Tool]:
-    """Create calendar tools bound to a calendar service instance."""
+    """Create calendar tools bound to a calendar service instance.
+
+    *user_timezone* is an IANA timezone name (e.g. ``America/New_York``).
+    When the LLM omits a timezone offset from date strings, this timezone
+    is used instead of UTC so that ``09:00`` means 9 AM in the user's
+    local time.
+    """
+    default_tz = _resolve_tz(user_timezone)
 
     async def calendar_list_events(
         start_date: str, end_date: str, calendar_id: str = "primary"
     ) -> ToolResult:
         """List calendar events in a time range."""
         try:
-            time_min = _parse_dt(start_date)
-            time_max = _parse_dt(end_date)
+            time_min = _parse_dt(start_date, default_tz)
+            time_max = _parse_dt(end_date, default_tz)
         except ValueError as exc:
             return ToolResult(
                 content=f"Invalid date format: {exc}. Use ISO 8601 (e.g. 2026-03-23T00:00:00).",
@@ -220,11 +247,18 @@ def create_calendar_tools(
     ) -> ToolResult:
         """Create a new calendar event."""
         try:
-            start_dt = _parse_dt(start)
-            end_dt = _parse_dt(end)
+            start_dt = _parse_dt(start, default_tz)
+            end_dt = _parse_dt(end, default_tz)
         except ValueError as exc:
             return ToolResult(
                 content=f"Invalid date format: {exc}. Use ISO 8601.",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
+        if end_dt <= start_dt:
+            return ToolResult(
+                content="End time must be after start time.",
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
             )
@@ -278,7 +312,7 @@ def create_calendar_tools(
         end_dt = None
         if start is not None:
             try:
-                start_dt = _parse_dt(start)
+                start_dt = _parse_dt(start, default_tz)
             except ValueError as exc:
                 return ToolResult(
                     content=f"Invalid start date: {exc}. Use ISO 8601.",
@@ -287,7 +321,7 @@ def create_calendar_tools(
                 )
         if end is not None:
             try:
-                end_dt = _parse_dt(end)
+                end_dt = _parse_dt(end, default_tz)
             except ValueError as exc:
                 return ToolResult(
                     content=f"Invalid end date: {exc}. Use ISO 8601.",
@@ -360,8 +394,8 @@ def create_calendar_tools(
     ) -> ToolResult:
         """Check calendar availability (free/busy) in a time range."""
         try:
-            time_min = _parse_dt(start_date)
-            time_max = _parse_dt(end_date)
+            time_min = _parse_dt(start_date, default_tz)
+            time_max = _parse_dt(end_date, default_tz)
         except ValueError as exc:
             return ToolResult(
                 content=f"Invalid date format: {exc}. Use ISO 8601.",
@@ -495,8 +529,6 @@ def create_calendar_tools(
 # Error handling
 # ---------------------------------------------------------------------------
 
-import httpx  # noqa: E402 (already imported at top, repeated for readability)
-
 
 def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
     """Convert an HTTP error into a user-friendly ToolResult."""
@@ -548,7 +580,7 @@ def _calendar_factory(ctx: ToolContext) -> list[Tool]:
         on_token_refresh=_make_token_refresh_callback(ctx.user.id),
         token_expires_at=token.expires_at,
     )
-    return create_calendar_tools(service)
+    return create_calendar_tools(service, user_timezone=ctx.user.timezone)
 
 
 def _register() -> None:

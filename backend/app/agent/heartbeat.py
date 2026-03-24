@@ -293,8 +293,6 @@ def _format_heartbeat_history(
     lines: list[str] = []
     for entry in logs:
         ts = datetime.datetime.fromisoformat(entry.created_at)
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=datetime.UTC)
         local_ts = to_local_time(ts, tz_name)
         formatted = local_ts.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
         delta = now - ts
@@ -304,7 +302,16 @@ def _format_heartbeat_history(
             ago = "1 day ago"
         else:
             ago = f"{delta.days} days ago"
-        lines.append(f"- {formatted} ({ago})")
+        detail = ""
+        if entry.action_type == "skip":
+            detail = " [skipped]"
+        elif entry.tasks:
+            # Truncate long task descriptions to keep the prompt concise.
+            task_preview = entry.tasks[:120]
+            if len(entry.tasks) > 120:
+                task_preview += "..."
+            detail = f' | tasks: "{task_preview}"'
+        lines.append(f"- {formatted} ({ago}){detail}")
 
     summary = "\n".join(lines)
     return (
@@ -326,13 +333,24 @@ async def evaluate_heartbeat_need(
     """
     session_store = get_session_store(user.id)
     recent = session_store.get_recent_messages(count=settings.heartbeat_recent_messages_count)
-    recent_text = (
-        "\n".join(
-            f"[{'User' if m.direction == MessageDirection.INBOUND else 'Assistant'}] {m.body}"
-            for m in recent
-        )
-        or "(no recent messages)"
-    )
+    recent_lines: list[str] = []
+    for m in recent:
+        label = "User" if m.direction == MessageDirection.INBOUND else "Assistant"
+        ts_str = ""
+        if m.timestamp:
+            try:
+                ts = datetime.datetime.fromisoformat(m.timestamp)
+                if ts.tzinfo is None:
+                    ts = ts.replace(tzinfo=datetime.UTC)
+                local_ts = to_local_time(ts, user.timezone)
+                ts_str = local_ts.strftime("%A %I:%M %p").strip()
+            except (ValueError, TypeError):
+                pass
+        if ts_str:
+            recent_lines.append(f"[{label}, {ts_str}] {m.body}")
+        else:
+            recent_lines.append(f"[{label}] {m.body}")
+    recent_text = "\n".join(recent_lines) or "(no recent messages)"
 
     heartbeat_store = HeartbeatStore(user.id)
     heartbeat_md = heartbeat_store.read_heartbeat_md()
