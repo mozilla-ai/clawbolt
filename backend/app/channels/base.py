@@ -1,13 +1,10 @@
 """Abstract base class for messaging channels."""
 
-import logging
 from abc import ABC, abstractmethod
 
 from fastapi import APIRouter
 
 from backend.app.media.download import DownloadedMedia
-
-logger = logging.getLogger(__name__)
 
 
 class BaseChannel(ABC):
