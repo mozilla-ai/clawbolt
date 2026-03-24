@@ -17,6 +17,7 @@ import type {
   OAuthStatusResponse,
   ProviderInfo,
   SessionDetailResponse,
+  SessionListResponse,
   ToolConfigResponse,
   ToolConfigUpdateEntry,
 } from '@/types';
@@ -77,6 +78,13 @@ const api = {
     });
     if (error) _throwApiError(error, 'Failed to get session');
     return data as SessionDetailResponse;
+  },
+  listSessions: async (params?: { limit?: number; offset?: number; is_active?: boolean }) => {
+    const { data, error } = await client.GET('/api/user/sessions', {
+      params: { query: params },
+    });
+    if (error) _throwApiError(error, 'Failed to list sessions');
+    return data as SessionListResponse;
   },
 
   // Memory
