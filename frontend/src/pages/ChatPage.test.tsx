@@ -9,6 +9,7 @@ vi.mock('@/api', () => ({
   default: {
     getSession: vi.fn(),
     sendChatMessage: vi.fn(),
+    listSessions: vi.fn().mockResolvedValue({ total: 0, items: [] }),
   },
 }));
 
@@ -113,6 +114,77 @@ describe('ChatPage tool interactions', () => {
 
     // No "Tool:" labels should appear
     expect(screen.queryByText('Tool:')).not.toBeInTheDocument();
+  });
+});
+
+describe('ChatPage session auto-discovery', () => {
+  it('discovers the most recent active session when no session is saved', async () => {
+    const sessionId = '1_3000';
+    mockApi.listSessions.mockResolvedValue({
+      total: 1,
+      items: [
+        {
+          session_id: sessionId,
+          channel: 'webchat',
+          is_active: true,
+          message_count: 2,
+          created_at: '2025-01-01T00:00:00Z',
+          last_message_at: '2025-01-01T00:01:00Z',
+        },
+      ],
+    });
+    mockApi.getSession.mockResolvedValue({
+      session_id: sessionId,
+      user_id: '1',
+      created_at: '2025-01-01T00:00:00Z',
+      last_message_at: '2025-01-01T00:01:00Z',
+      is_active: true,
+      channel: 'webchat',
+      initial_system_prompt: '',
+      last_compacted_seq: 0,
+      messages: [
+        {
+          seq: 1,
+          direction: 'inbound',
+          body: 'Previous message',
+          timestamp: '2025-01-01T00:00:00Z',
+          tool_interactions: [],
+        },
+        {
+          seq: 2,
+          direction: 'outbound',
+          body: 'Previous reply',
+          timestamp: '2025-01-01T00:01:00Z',
+          tool_interactions: [],
+        },
+      ],
+    });
+
+    // Render without ?session= param and with empty localStorage
+    renderWithRouter(<ChatPage />, { route: '/app/chat' });
+
+    // Should discover the session and load its history
+    await waitFor(() => {
+      expect(mockApi.listSessions).toHaveBeenCalledWith({ is_active: true, limit: 1 });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Previous message')).toBeInTheDocument();
+      expect(screen.getByText('Previous reply')).toBeInTheDocument();
+    });
+  });
+
+  it('shows empty state when no active sessions exist', async () => {
+    mockApi.listSessions.mockResolvedValue({ total: 0, items: [] });
+
+    renderWithRouter(<ChatPage />, { route: '/app/chat' });
+
+    await waitFor(() => {
+      expect(mockApi.listSessions).toHaveBeenCalled();
+    });
+
+    // Should show the empty state prompt
+    expect(screen.getByText('Send a message to start chatting.')).toBeInTheDocument();
   });
 });
 

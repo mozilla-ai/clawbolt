@@ -102,7 +102,7 @@ export default function ChatPage() {
     }
   }, []);
 
-  // Auto-attach to last active session from localStorage
+  // Auto-attach to last active session from localStorage, or discover from API
   useEffect(() => {
     if (autoAttachDone.current || searchParams.get('session')) return;
     autoAttachDone.current = true;
@@ -110,7 +110,20 @@ export default function ChatPage() {
     if (saved) {
       setActiveSessionId(saved);
       setSearchParams({ session: saved }, { replace: true });
+      return;
     }
+    // No saved session: discover the most recent active session from the backend
+    api.listSessions({ is_active: true, limit: 1 }).then((res) => {
+      if (!mountedRef.current) return;
+      const latest = res.items[0];
+      if (latest) {
+        setActiveSessionId(latest.session_id);
+        setSearchParams({ session: latest.session_id }, { replace: true });
+        saveLastSession(latest.session_id);
+      }
+    }).catch(() => {
+      // Silently ignore: user may not have any sessions yet
+    });
   }, [searchParams, setSearchParams]);
 
   // Save active session to localStorage
