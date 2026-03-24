@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { QRCodeSVG } from 'qrcode.react';
 import Card from '@/components/ui/card';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
@@ -18,7 +19,7 @@ export default function ChannelsPage() {
       <h2 className="text-xl font-semibold font-display mb-6">Channels</h2>
       <div className="grid gap-6 lg:grid-cols-2">
         <TelegramSection />
-        {!isPremium && <LinqSection />}
+        {!isPremium && <TextMessagingSection />}
       </div>
     </div>
   );
@@ -236,7 +237,7 @@ function TelegramSection() {
 
 const LINQ_SERVICES = ['iMessage', 'SMS', 'RCS'] as const;
 
-function LinqSection() {
+function TextMessagingSection() {
   const { data: config } = useChannelConfig();
   const updateMutation = useUpdateChannelConfig();
   const [allowedNumber, setAllowedNumber] = useState<string | null>(null);
@@ -268,25 +269,40 @@ function LinqSection() {
     });
   };
 
+  const fromNumber = config?.linq_from_number ?? '';
+  const smsUri = fromNumber ? `sms:${fromNumber}` : '';
+
   return (
     <div className="grid gap-6">
+      {isConfigured && fromNumber && (
+        <Card>
+          <div className="flex items-start gap-5">
+            <div className="flex-1">
+              <h3 className="text-sm font-medium mb-1">Text your assistant</h3>
+              <p className="text-xs text-muted-foreground mb-3">
+                Scan the QR code or text this number from your phone.
+              </p>
+              <p className="font-mono text-lg font-medium">{fromNumber}</p>
+            </div>
+            <a href={smsUri} className="shrink-0">
+              <QRCodeSVG value={smsUri} size={96} />
+            </a>
+          </div>
+        </Card>
+      )}
       <Card>
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-medium">Linq (iMessage / RCS / SMS)</h3>
+          <h3 className="text-sm font-medium">Text Messaging (iMessage / RCS / SMS)</h3>
           <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
             {isConfigured ? 'Connected' : 'Not configured'}
           </span>
         </div>
-        {isConfigured && config?.linq_from_number && (
-          <p className="text-sm text-muted-foreground mb-4">
-            Your assistant's phone number:{' '}
-            <span className="font-mono font-medium text-foreground">{config.linq_from_number}</span>
+        {!isConfigured && (
+          <p className="text-xs text-muted-foreground mb-4">
+            Let users text your assistant from their phone's native messaging app.
+            Set <code className="font-mono text-[11px]">LINQ_API_TOKEN</code> in your environment to enable.
           </p>
         )}
-        <p className="text-xs text-muted-foreground mb-4">
-          Connect via Linq to let users text your assistant from their phone's native messaging app.
-          Set <code className="font-mono text-[11px]">LINQ_API_TOKEN</code> in your environment to enable.
-        </p>
         <div className="grid gap-4">
           <Field label="Allowed Phone Number">
             <Input
