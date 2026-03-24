@@ -11,12 +11,12 @@
   <img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
   <a href="https://github.com/mozilla-ai/any-llm"><img src="https://img.shields.io/badge/LLM-any--llm-blueviolet" alt="any-llm"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="License: Apache 2.0"></a>
-  <img src="https://img.shields.io/badge/messaging-Telegram-26A5E4?logo=telegram&logoColor=white" alt="Telegram">
+  <img src="https://img.shields.io/badge/messaging-iMessage%20%7C%20RCS%20%7C%20SMS%20%7C%20Telegram-25D366" alt="iMessage | RCS | SMS | Telegram">
 </p>
 
 ---
 
-Clawbolt is a messaging-first AI assistant that helps users manage their business: estimates, client records, job photos, voice memos, and more, all through Telegram. No app to install, no dashboard to learn. Just text.
+Clawbolt is a messaging-first AI assistant that helps users manage their business: estimates, client records, job photos, voice memos, and more. Text your assistant from iMessage, RCS, SMS, or Telegram. No app to install, no dashboard to learn. Just text.
 
 **[Read the full documentation](https://mozilla-ai.github.io/clawbolt)**
 
@@ -32,6 +32,7 @@ Clawbolt is a messaging-first AI assistant that helps users manage their busines
 - **File cataloging** -- Photos and documents auto-organized in Dropbox or Google Drive
 - **Proactive heartbeat** -- Clawbolt checks in periodically with reminders and follow-ups
 - **QuickBooks Online** -- Query, create, and send invoices and estimates via QuickBooks (experimental)
+- **Google Calendar** -- Check availability, schedule jobs, and manage events from chat (experimental)
 - **Onboarding** -- First-time users get a friendly conversation to set up their profile
 
 ## Quick Start
@@ -40,7 +41,7 @@ Clawbolt is a messaging-first AI assistant that helps users manage their busines
 git clone https://github.com/mozilla-ai/clawbolt.git
 cd clawbolt
 cp .env.example .env
-# Edit .env with your TELEGRAM_BOT_TOKEN and LLM API key
+# Edit .env with your LLM API key and messaging channel credentials
 docker compose up --build
 ```
 
@@ -51,10 +52,10 @@ curl http://localhost:8000/api/health
 # {"status":"ok"}
 ```
 
-The Telegram webhook is registered automatically via a Cloudflare Tunnel. Send a message to your bot and Clawbolt will respond.
+Webhooks are registered automatically via a Cloudflare Tunnel. Text the Linq phone number or message your Telegram bot and Clawbolt will respond.
 
-See the docs for [full configuration options](https://mozilla-ai.github.io/clawbolt/configuration/), [storage setup](https://mozilla-ai.github.io/clawbolt/deployment/storage/), and [Telegram bot setup](https://mozilla-ai.github.io/clawbolt/deployment/telegram-setup/).
+See the docs for [full configuration options](https://mozilla-ai.github.io/clawbolt/configuration/), [Linq setup](https://mozilla-ai.github.io/clawbolt/deployment/linq-setup/), and [Telegram setup](https://mozilla-ai.github.io/clawbolt/deployment/telegram-setup/).
 
 ## Contributing
 
-See [DEVELOPMENT.md](DEVELOPMENT.md) for local setup and running tests, or read the [full contributing guide](https://mozilla-ai.github.io/clawbolt/development/contributing/).
+See the [local setup guide](https://mozilla-ai.github.io/clawbolt/development/local-setup/) for development, or read the [full contributing guide](https://mozilla-ai.github.io/clawbolt/development/contributing/).
