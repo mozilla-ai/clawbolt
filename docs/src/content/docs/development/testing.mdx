@@ -3,7 +3,7 @@ title: Testing
 description: Run tests and understand the test infrastructure.
 ---
 
-Clawbolt uses pytest with FastAPI's TestClient. Tests use temporary directories for file-based storage, so no external services are needed.
+Clawbolt uses pytest with FastAPI's TestClient. Tests require a running PostgreSQL instance with a `clawbolt_test` database.
 
 ## Run all tests
 
@@ -25,11 +25,20 @@ uv run ruff format --check backend/ tests/
 uv run ty check --python .venv backend/ tests/
 ```
 
+## Database setup
+
+Tests connect to `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test`. The conftest handles table creation and per-test transaction rollback automatically.
+
+```bash
+# Create the test database (one-time setup)
+createdb -U clawbolt clawbolt_test
+```
+
 ## Test infrastructure
 
-### File store isolation
+### Store isolation
 
-Tests use `tmp_path` fixtures to point file stores at a temporary directory. The `_isolate_file_stores` autouse fixture patches `settings.data_dir` and calls `reset_stores()` to clear cached store singletons between tests.
+The `_isolate_file_stores` autouse fixture patches `settings.data_dir` and calls `reset_stores()` to clear cached store singletons between tests. Each test runs in a database transaction that is rolled back after the test completes.
 
 ### Mock factories
 

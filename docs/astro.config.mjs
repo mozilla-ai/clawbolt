@@ -65,6 +65,7 @@ export default defineConfig({
             { label: "Voice", slug: "features/voice" },
             { label: "File Cataloging", slug: "features/file-cataloging" },
             { label: "Heartbeat", slug: "features/heartbeat" },
+            { label: "Google Calendar", slug: "features/calendar" },
             { label: "QuickBooks Online", slug: "features/quickbooks" },
           ],
         },
@@ -72,8 +73,9 @@ export default defineConfig({
           label: "Deployment",
           items: [
             { label: "Docker", slug: "deployment/docker" },
-            { label: "Storage Providers", slug: "deployment/storage" },
+            { label: "Linq Setup (Texting)", slug: "deployment/linq-setup" },
             { label: "Telegram Setup", slug: "deployment/telegram-setup" },
+            { label: "Storage Providers", slug: "deployment/storage" },
           ],
         },
         {

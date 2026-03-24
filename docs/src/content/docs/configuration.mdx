@@ -47,7 +47,7 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MESSAGING_PROVIDER` | `telegram` | Messaging backend (currently only `telegram` is supported) |
+| `MESSAGING_PROVIDER` | `telegram` | Default messaging backend. Both Telegram and Linq channels can run simultaneously |
 | `TELEGRAM_BOT_TOKEN` | | Bot token from @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | (auto-derived) | Webhook validation secret. Auto-derived from bot token if not set |
 | `TELEGRAM_ALLOWED_CHAT_ID` | (empty) | Your numeric Telegram user ID, or `*` to allow all. Only a single ID is allowed per user. Empty = deny all |

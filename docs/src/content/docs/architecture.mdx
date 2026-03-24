@@ -3,31 +3,31 @@ title: Architecture
 description: How Clawbolt is built, from webhook to reply.
 ---
 
-Clawbolt is a FastAPI backend with a Telegram messaging interface and a custom tool-calling agent loop built on [any-llm](https://github.com/mozilla-ai/any-llm).
+Clawbolt is a FastAPI backend with a multi-channel messaging interface and a custom tool-calling agent loop built on [any-llm](https://github.com/mozilla-ai/any-llm).
 
 ## Request flow
 
 ```
-User sends a Telegram message
+User sends a message (iMessage/RCS/SMS or Telegram)
         |
         v
-  Telegram webhook  -->  Media pipeline (photos, voice, docs)
+  Channel webhook  -->  Media pipeline (photos, voice, docs)
         |                        |
         v                        v
   Agent loop (any-llm)  <--  Processed context
         |
         v
-  Tool execution (memory, file upload, heartbeat)
+  Tool execution (memory, file upload, heartbeat, calendar)
         |
         v
-  Reply sent via Telegram
+  Reply sent via originating channel
 ```
 
-1. **Webhook**: Telegram sends an update to `/api/webhooks/telegram`
+1. **Webhook**: A channel delivers an inbound message (Linq sends to `/api/webhooks/linq`, Telegram to `/api/webhooks/telegram`)
 2. **Media pipeline**: Photos, voice notes, and documents are downloaded and processed (transcription, image analysis)
 3. **Agent loop**: The LLM receives the message plus conversation history and available tools, then decides what to do
-4. **Tool execution**: The agent calls tools (edit memory, upload a file, query QuickBooks, etc.)
-5. **Reply**: The agent's response is sent back via Telegram
+4. **Tool execution**: The agent calls tools (edit memory, upload a file, query QuickBooks, check calendar, etc.)
+5. **Reply**: The agent's response is sent back via the originating channel
 
 ## Tech stack
 
@@ -36,16 +36,17 @@ User sends a Telegram message
 - **Pydantic v2** for data classes and request/response schemas
 - **any-llm** for LLM provider abstraction (swap between OpenAI, Anthropic, etc.)
 - **python-telegram-bot** for the Telegram Bot API
+- **httpx** for the Linq Partner API (iMessage/RCS/SMS)
 - **faster-whisper** for voice memo transcription
 
 ## Storage
 
-All structured data is stored in PostgreSQL via SQLAlchemy 2.0 ORM. The database has 10 tables:
+All structured data is stored in PostgreSQL via SQLAlchemy 2.0 ORM. The database has 11 tables:
 
 | Table | Purpose |
 |---|---|
 | `users` | User profiles, personality text, preferences |
-| `channel_routes` | Channel -> user routing (Telegram, webchat, etc.) |
+| `channel_routes` | Channel -> user routing (Telegram, Linq, webchat, etc.) |
 | `sessions` | Chat session metadata |
 | `messages` | Chat messages (FK to sessions) |
 | `media_files` | Media file manifest |
@@ -54,6 +55,7 @@ All structured data is stored in PostgreSQL via SQLAlchemy 2.0 ORM. The database
 | `idempotency_keys` | Webhook deduplication |
 | `llm_usage_logs` | Token usage tracking |
 | `tool_configs` | Per-user tool configuration |
+| `calendar_configs` | Per-user calendar integration settings |
 
 Key store modules:
 - `UserStore` (singleton via `get_user_store()`)
@@ -74,6 +76,7 @@ The agent has access to these tool groups:
 | Heartbeat | `get_heartbeat`, `update_heartbeat` | Read and update heartbeat notes |
 | Files | `upload_to_storage`, `organize_file` | Store and organize files in cloud storage |
 | QuickBooks | `qb_query`, `qb_create`, `qb_update`, `qb_send` | Query, create, update, and send QuickBooks entities (specialist) |
+| Calendar | `calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_check_availability` | Read and manage Google Calendar events (specialist) |
 
 Tool selection is context-aware: the registry picks relevant tools based on message keywords and context, with a fallback to all tools for ambiguous messages.
 
@@ -81,7 +84,7 @@ Tool selection is context-aware: the registry picks relevant tools based on mess
 
 ### Channel abstraction
 
-The async message bus (`bus.py`) decouples the agent from delivery mechanics. Channels publish inbound messages to the bus and the `ChannelManager` dispatches outbound replies to the correct channel. The agent only interacts with the bus, never with channel implementations directly. The current channel is Telegram, but new channels can be added without modifying the agent.
+The async message bus (`bus.py`) decouples the agent from delivery mechanics. Channels publish inbound messages to the bus and the `ChannelManager` dispatches outbound replies to the correct channel. The agent only interacts with the bus, never with channel implementations directly. Current channels are Linq (iMessage/RCS/SMS) and Telegram, and new channels can be added without modifying the agent.
 
 ### Storage abstraction
 
