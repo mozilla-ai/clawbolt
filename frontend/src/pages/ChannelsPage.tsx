@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
-import { QRCodeSVG } from 'qrcode.react';
 import Card from '@/components/ui/card';
+import TextAssistantCard from '@/components/TextAssistantCard';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
 import Field from '@/components/ui/field';
@@ -270,25 +270,11 @@ function TextMessagingSection() {
   };
 
   const fromNumber = config?.linq_from_number ?? '';
-  const smsUri = fromNumber ? `sms:${fromNumber}` : '';
 
   return (
     <div className="grid gap-6">
       {isConfigured && fromNumber && (
-        <Card>
-          <div className="flex items-start gap-5">
-            <div className="flex-1">
-              <h3 className="text-sm font-medium mb-1">Text your assistant</h3>
-              <p className="text-xs text-muted-foreground mb-3">
-                Scan the QR code or text this number from your phone.
-              </p>
-              <p className="font-mono text-lg font-medium">{fromNumber}</p>
-            </div>
-            <a href={smsUri} className="shrink-0">
-              <QRCodeSVG value={smsUri} size={96} />
-            </a>
-          </div>
-        </Card>
+        <TextAssistantCard fromNumber={fromNumber} />
       )}
       <Card>
         <div className="flex items-center justify-between mb-3">
