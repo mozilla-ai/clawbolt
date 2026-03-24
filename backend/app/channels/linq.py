@@ -5,7 +5,6 @@ import hashlib
 import hmac
 import logging
 import time
-import uuid
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -90,6 +89,7 @@ class LinqMessagePart(BaseModel):
     type: str = ""  # "text", "media", "link"
     value: str = ""
     url: str = ""
+    mime_type: str = ""
 
 
 class LinqHandle(BaseModel):
@@ -290,7 +290,8 @@ class LinqChannel(BaseChannel):
             if part.type == "text" and part.value:
                 text_parts.append(part.value)
             elif part.type == "media" and part.url:
-                media_refs.append((part.url, LinqChannel._guess_mime(part.url)))
+                mime = part.mime_type or LinqChannel._guess_mime(part.url)
+                media_refs.append((part.url, mime))
 
         text = " ".join(text_parts)
         external_id = f"linq_{data.id}" if data.id else ""
@@ -386,43 +387,36 @@ class LinqChannel(BaseChannel):
         Uses cached chat_id if available, otherwise creates a new chat.
         Returns the message ID from the Linq API response.
         """
-        idempotency_key = str(uuid.uuid4())
         cached_chat_id = self._chat_cache.get(phone)
 
         if cached_chat_id:
-            # Send to existing chat
             resp = await self._http.post(
                 f"/chats/{cached_chat_id}/messages",
-                json={
-                    "parts": parts,
-                    "idempotency_key": idempotency_key,
-                    "preferred_service": settings.linq_preferred_service,
-                },
+                json={"message": {"parts": parts}},
             )
         else:
-            # Create new chat
             resp = await self._http.post(
                 "/chats",
                 json={
                     "from": settings.linq_from_number,
-                    "to": phone,
-                    "message": {
-                        "parts": parts,
-                    },
-                    "idempotency_key": idempotency_key,
-                    "preferred_service": settings.linq_preferred_service,
+                    "to": [phone],
+                    "message": {"parts": parts},
                 },
             )
 
+        if resp.status_code >= 400:
+            logger.error(
+                "Linq send failed: %s %s %s", resp.status_code, resp.request.url, resp.text
+            )
         resp.raise_for_status()
         data = resp.json()
 
         # Cache the chat_id from the response
-        chat_id = data.get("chat_id") or data.get("id", "")
+        chat_id = data.get("chat_id", "")
         if chat_id:
             self._chat_cache[phone] = chat_id
 
-        return data.get("message_id") or data.get("id") or idempotency_key
+        return data.get("message_id", "")
 
     async def send_text(self, to: str, body: str) -> str:
         """Send a text message. *to* is a phone number in E.164 format."""

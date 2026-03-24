@@ -276,6 +276,7 @@ def _make_mock_http(json_response: dict | None = None) -> AsyncMock:
     mock = AsyncMock()
     if json_response is not None:
         mock_resp = AsyncMock()
+        mock_resp.status_code = 200
         mock_resp.raise_for_status = lambda: None
         mock_resp.json = lambda: json_response
         mock_resp.content = b""
@@ -305,7 +306,7 @@ async def test_send_text_without_cached_chat_id() -> None:
     """send_text should create a new chat when no cached chat_id exists."""
     channel = LinqChannel()
 
-    mock_http = _make_mock_http({"id": "new-chat-uuid", "message_id": "new-msg-001"})
+    mock_http = _make_mock_http({"chat_id": "new-chat-uuid", "message_id": "new-msg-001"})
     channel._client = mock_http
 
     await channel.send_text("+15559876543", "Hello")
