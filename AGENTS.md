@@ -117,6 +117,17 @@ cd frontend && npm run typecheck                   # TypeScript type checking pa
 cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 ```
 
+### Frontend generated types
+
+When backend schemas change (`backend/app/schemas.py`, route signatures, or response models), you **must** regenerate the frontend OpenAPI types. Never hand-edit `frontend/src/generated/api.d.ts`. CI will fail if the committed file doesn't match what the generator produces.
+
+```bash
+uv run python scripts/export_openapi.py           # export openapi.json from backend
+cd frontend && npm run generate:api                # regenerate src/generated/api.d.ts
+```
+
+Commit both `frontend/openapi.json` and `frontend/src/generated/api.d.ts`.
+
 - Bug fixes include regression tests
 - New features evaluate whether the docs site (`docs/`) needs updates
 - When you manage a pull request, you must always adhere to the pull request template at .github/pull_request_template.md
