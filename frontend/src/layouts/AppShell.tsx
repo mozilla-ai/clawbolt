@@ -156,7 +156,7 @@ export default function AppShell() {
             to="/app/get-started"
             onClick={closeSidebar}
             className={({ isActive }) =>
-              `flex items-center gap-2 px-3 py-1 rounded-md text-xs transition-all duration-150 ${
+              `flex items-center gap-2 px-3 py-2 rounded-md text-xs transition-all duration-150 ${
                 isActive
                   ? 'text-primary font-medium'
                   : 'text-muted-foreground can-hover:hover:text-foreground'
