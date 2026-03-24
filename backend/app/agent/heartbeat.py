@@ -293,8 +293,6 @@ def _format_heartbeat_history(
     lines: list[str] = []
     for entry in logs:
         ts = datetime.datetime.fromisoformat(entry.created_at)
-        if ts.tzinfo is None:
-            ts = ts.replace(tzinfo=datetime.UTC)
         local_ts = to_local_time(ts, tz_name)
         formatted = local_ts.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
         delta = now - ts

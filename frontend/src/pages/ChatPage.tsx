@@ -372,7 +372,7 @@ export default function ChatPage() {
                       msg.role === 'user' ? 'text-white/60' : 'text-muted-foreground'
                     }`}
                   >
-                    {msg.timestamp.toLocaleTimeString()}
+                    {msg.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                   </p>
                 </div>
               </div>

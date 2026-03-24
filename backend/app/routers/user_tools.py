@@ -64,6 +64,11 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         domain_group="Integrations",
         domain_group_order=2,
     ),
+    "calendar": _FactoryMeta(
+        "Read and manage Google Calendar events",
+        domain_group="Integrations",
+        domain_group_order=2,
+    ),
 }
 
 

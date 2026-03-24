@@ -38,9 +38,11 @@ class User(Base):
     soul_text: Mapped[str] = mapped_column(Text, default="")
     user_text: Mapped[str] = mapped_column(Text, default="")
     heartbeat_text: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
@@ -96,6 +98,9 @@ class User(Base):
     tool_configs: Mapped[list["ToolConfig"]] = relationship(
         "ToolConfig", back_populates="user", cascade="all, delete-orphan"
     )
+    calendar_configs: Mapped[list["CalendarConfig"]] = relationship(
+        "CalendarConfig", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class ChannelRoute(Base):
@@ -108,7 +113,9 @@ class ChannelRoute(Base):
     )
     channel: Mapped[str] = mapped_column(String, nullable=False)
     channel_identifier: Mapped[str] = mapped_column(String, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="channel_routes")
 
@@ -125,8 +132,12 @@ class ChatSession(Base):
     channel: Mapped[str] = mapped_column(String, default="")
     last_compacted_seq: Mapped[int] = mapped_column(Integer, default=0)
     initial_system_prompt: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
-    last_message_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    last_message_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(
@@ -149,7 +160,9 @@ class Message(Base):
     tool_interactions_json: Mapped[str] = mapped_column(Text, default="")
     external_message_id: Mapped[str] = mapped_column(String, default="")
     media_urls_json: Mapped[str] = mapped_column(Text, default="")
-    timestamp: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    timestamp: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
     session: Mapped["ChatSession"] = relationship("ChatSession", back_populates="messages")
 
@@ -167,7 +180,9 @@ class MediaFile(Base):
     processed_text: Mapped[str] = mapped_column(Text, default="")
     storage_url: Mapped[str] = mapped_column(Text, default="")
     storage_path: Mapped[str] = mapped_column(String, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="media_files")
 
@@ -181,9 +196,11 @@ class MemoryDocument(Base):
     )
     memory_text: Mapped[str] = mapped_column(Text, default="")
     history_text: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
     updated_at: Mapped[datetime] = mapped_column(
-        DateTime,
+        DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
     )
@@ -203,7 +220,9 @@ class HeartbeatLog(Base):
     channel: Mapped[str] = mapped_column(String, default="")
     reasoning: Mapped[str] = mapped_column(Text, default="")
     tasks: Mapped[str] = mapped_column(Text, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="heartbeat_logs")
 
@@ -213,7 +232,9 @@ class IdempotencyKey(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     external_id: Mapped[str] = mapped_column(String, unique=True, nullable=False, index=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
 
 class LLMUsageLog(Base):
@@ -230,9 +251,32 @@ class LLMUsageLog(Base):
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0.000000"))
     purpose: Mapped[str] = mapped_column(String, default="")
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
 
     user: Mapped["User"] = relationship("User", back_populates="llm_usage_logs")
+
+
+class CalendarConfig(Base):
+    __tablename__ = "calendar_configs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_calendar_config_user_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    display_name: Mapped[str] = mapped_column(String, default="")
+    calendar_id: Mapped[str] = mapped_column(String, default="primary")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="calendar_configs")
 
 
 class ToolConfig(Base):

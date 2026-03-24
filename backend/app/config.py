@@ -97,6 +97,10 @@ class Settings(BaseSettings):
     quickbooks_client_secret: str = ""
     quickbooks_environment: str = "sandbox"  # "sandbox" or "production"
 
+    # Google Calendar
+    google_calendar_client_id: str = ""
+    google_calendar_client_secret: str = ""
+
     # OAuth
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks
 

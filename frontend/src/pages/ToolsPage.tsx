@@ -12,6 +12,7 @@ import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } 
 // Map tool factory names to OAuth integration names.
 const TOOL_OAUTH_MAP: Record<string, string> = {
   quickbooks: 'quickbooks',
+  calendar: 'google_calendar',
 };
 
 export default function ToolsPage() {
