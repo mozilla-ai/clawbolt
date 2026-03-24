@@ -277,6 +277,12 @@ function LinqSection() {
             {isConfigured ? 'Connected' : 'Not configured'}
           </span>
         </div>
+        {isConfigured && config?.linq_from_number && (
+          <p className="text-sm text-muted-foreground mb-4">
+            Your assistant's phone number:{' '}
+            <span className="font-mono font-medium text-foreground">{config.linq_from_number}</span>
+          </p>
+        )}
         <p className="text-xs text-muted-foreground mb-4">
           Connect via Linq to let users text your assistant from their phone's native messaging app.
           Set <code className="font-mono text-[11px]">LINQ_API_TOKEN</code> in your environment to enable.

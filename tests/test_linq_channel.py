@@ -98,8 +98,8 @@ def test_invalid_hmac_does_not_publish(linq_client: TestClient) -> None:
         payload = make_linq_webhook_payload(text="Hi")
         body = json.dumps(payload).encode()
         headers = {
-            "X-Linq-Signature": "invalid-signature",
-            "X-Linq-Timestamp": str(int(time.time())),
+            "X-Webhook-Signature": "invalid-signature",
+            "X-Webhook-Timestamp": str(int(time.time())),
             "Content-Type": "application/json",
         }
         resp = linq_client.post("/api/webhooks/linq", content=body, headers=headers)
@@ -175,10 +175,10 @@ def test_invalid_json_returns_200(linq_client: TestClient) -> None:
     assert resp.json() == {"ok": True}
 
 
-def test_is_from_me_ignored(linq_client: TestClient) -> None:
-    """Messages sent by us (is_from_me=True) should be ignored."""
+def test_outbound_direction_ignored(linq_client: TestClient) -> None:
+    """Outbound messages should be ignored."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
-        payload = make_linq_webhook_payload(text="Echo", is_from_me=True)
+        payload = make_linq_webhook_payload(text="Echo", direction="outbound")
         resp = _post_webhook(linq_client, payload)
 
     assert resp.status_code == 200
@@ -381,3 +381,141 @@ def test_webhook_populates_chat_cache(linq_client: TestClient) -> None:
     channel = get_channel("linq")
     assert isinstance(channel, LinqChannel)
     assert channel._chat_cache.get("+15551234567") == "webhook-chat-uuid"
+
+
+# ---------------------------------------------------------------------------
+# Webhook auto-registration tests
+# ---------------------------------------------------------------------------
+
+
+async def test_register_linq_webhook_success() -> None:
+    """register_linq_webhook should POST to webhook-subscriptions and return True."""
+    from backend.app.channels.linq import register_linq_webhook
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.json = lambda: {"id": "sub-001", "signing_secret": "new-secret"}
+    mock_resp.text = ""
+
+    with (
+        patch("backend.app.channels.linq.settings.linq_api_token", "test-token"),
+        patch("backend.app.channels.linq.settings.linq_webhook_signing_secret", ""),
+        patch("backend.app.channels.linq.settings.http_timeout_seconds", 10),
+        patch("backend.app.channels.linq.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+        mock_client_cls.return_value = mock_client
+
+        result = await register_linq_webhook("https://tunnel.example.com/api/webhooks/linq")
+
+    assert result is True
+    mock_client.post.assert_called_once()
+
+
+async def test_register_linq_webhook_failure() -> None:
+    """register_linq_webhook should return False on HTTP error."""
+    from backend.app.channels.linq import register_linq_webhook
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 422
+    mock_resp.text = "Unprocessable Entity"
+
+    with (
+        patch("backend.app.channels.linq.settings.linq_api_token", "test-token"),
+        patch("backend.app.channels.linq.settings.http_timeout_seconds", 10),
+        patch("backend.app.channels.linq.httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.post.return_value = mock_resp
+        mock_client_cls.return_value = mock_client
+
+        result = await register_linq_webhook("https://tunnel.example.com/api/webhooks/linq")
+
+    assert result is False
+
+
+async def test_start_skips_without_token() -> None:
+    """start() should be a no-op when linq_api_token is empty."""
+    channel = LinqChannel()
+    with patch("backend.app.channels.linq.settings.linq_api_token", ""):
+        await channel.start()
+    # No exception, no calls -- just returns
+
+
+async def test_start_skips_without_tunnel() -> None:
+    """start() should skip registration when no tunnel is detected."""
+    channel = LinqChannel()
+    with (
+        patch("backend.app.channels.linq.settings.linq_api_token", "test-token"),
+        patch("backend.app.channels.linq.asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "backend.app.channels.linq.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value=None,
+        ),
+        patch(
+            "backend.app.channels.linq.register_linq_webhook",
+            new_callable=AsyncMock,
+        ) as mock_register,
+    ):
+        await channel.start()
+
+    mock_register.assert_not_called()
+
+
+async def test_start_skips_on_dns_failure() -> None:
+    """start() should skip registration when DNS resolution fails."""
+    channel = LinqChannel()
+    with (
+        patch("backend.app.channels.linq.settings.linq_api_token", "test-token"),
+        patch("backend.app.channels.linq.asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "backend.app.channels.linq.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.channels.linq.wait_for_dns",
+            new_callable=AsyncMock,
+            return_value=False,
+        ),
+        patch(
+            "backend.app.channels.linq.register_linq_webhook",
+            new_callable=AsyncMock,
+        ) as mock_register,
+    ):
+        await channel.start()
+
+    mock_register.assert_not_called()
+
+
+async def test_start_registers_webhook_on_success() -> None:
+    """start() should call register_linq_webhook when tunnel + DNS succeed."""
+    channel = LinqChannel()
+    with (
+        patch("backend.app.channels.linq.settings.linq_api_token", "test-token"),
+        patch("backend.app.channels.linq.asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "backend.app.channels.linq.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.channels.linq.wait_for_dns",
+            new_callable=AsyncMock,
+            return_value=True,
+        ),
+        patch(
+            "backend.app.channels.linq.register_linq_webhook",
+            new_callable=AsyncMock,
+            return_value=True,
+        ) as mock_register,
+    ):
+        await channel.start()
+
+    mock_register.assert_called_once_with("https://tunnel.example.com/api/webhooks/linq")

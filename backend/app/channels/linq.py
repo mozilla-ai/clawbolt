@@ -1,5 +1,6 @@
 """Linq channel: inbound webhook + outbound messaging (iMessage/RCS/SMS)."""
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -18,26 +19,69 @@ from backend.app.channels.base import BaseChannel
 from backend.app.config import settings
 from backend.app.media.download import DownloadedMedia, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
+from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 
 logger = logging.getLogger(__name__)
 
 LINQ_API_BASE = "https://api.linqapp.com/api/partner/v3"
-LINQ_SIGNATURE_HEADER = "X-Linq-Signature"
-LINQ_TIMESTAMP_HEADER = "X-Linq-Timestamp"
+LINQ_SIGNATURE_HEADER = "X-Webhook-Signature"
+LINQ_TIMESTAMP_HEADER = "X-Webhook-Timestamp"
 REPLAY_WINDOW_SECONDS = 300  # 5 minutes
+STARTUP_DELAY_SECONDS = 3
+
+
+# ---------------------------------------------------------------------------
+# Webhook auto-registration
+# ---------------------------------------------------------------------------
+
+
+async def register_linq_webhook(webhook_url: str) -> bool:
+    """Create a Linq webhook subscription and store the signing secret.
+
+    Calls ``POST /v3/webhook-subscriptions`` to register *webhook_url* for
+    ``message.received`` events. If the response includes a signing secret,
+    it is applied to the running settings so HMAC verification activates
+    immediately.
+
+    Returns ``True`` on success.
+    """
+    url = f"{LINQ_API_BASE}/webhook-subscriptions"
+    payload = {
+        "target_url": webhook_url,
+        "subscribed_events": ["message.received"],
+    }
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.post(
+                url,
+                json=payload,
+                headers={
+                    "Authorization": f"Bearer {settings.linq_api_token}",
+                    "Content-Type": "application/json",
+                },
+                timeout=settings.http_timeout_seconds,
+            )
+            if resp.status_code >= 400:
+                logger.error("Linq webhook registration failed: %s %s", resp.status_code, resp.text)
+                return False
+
+            data = resp.json()
+            # Store signing secret if returned
+            secret = data.get("signing_secret") or data.get("secret", "")
+            if secret and not settings.linq_webhook_signing_secret:
+                settings.linq_webhook_signing_secret = secret
+                logger.info("Linq webhook signing secret auto-configured from API response")
+
+            logger.info("Linq webhook registered: %s", webhook_url)
+            return True
+    except httpx.HTTPError:
+        logger.exception("Failed to register Linq webhook")
+        return False
 
 
 # ---------------------------------------------------------------------------
 # Pydantic models for Linq webhook payloads
 # ---------------------------------------------------------------------------
-
-
-class LinqHandle(BaseModel):
-    model_config = ConfigDict(extra="ignore")
-
-    handle: str = ""
-    service: str = ""
-    is_me: bool = False
 
 
 class LinqMessagePart(BaseModel):
@@ -48,21 +92,27 @@ class LinqMessagePart(BaseModel):
     url: str = ""
 
 
-class LinqMessage(BaseModel):
+class LinqChat(BaseModel):
     model_config = ConfigDict(extra="ignore")
 
     id: str = ""
-    chat_id: str = ""
-    from_handle: LinqHandle | None = None
-    parts: list[LinqMessagePart] = []
-    is_from_me: bool = False
+    is_group: bool = False
+    owner_handle: str = ""
 
 
 class LinqWebhookPayload(BaseModel):
+    """Linq webhook payload (2026-02-03 format)."""
+
     model_config = ConfigDict(extra="ignore")
 
-    event: str = ""
-    data: LinqMessage | None = None
+    webhook_version: str = ""
+    event_id: str = ""
+    type: str = ""  # "message.received", etc.
+    direction: str = ""  # "inbound" | "outbound"
+    sender_handle: str = ""
+    chat: LinqChat | None = None
+    id: str = ""  # message id
+    parts: list[LinqMessagePart] = []
 
 
 # ---------------------------------------------------------------------------
@@ -99,6 +149,36 @@ class LinqChannel(BaseChannel):
         return "linq"
 
     # -- Lifecycle -------------------------------------------------------------
+
+    async def start(self) -> None:
+        """Discover Cloudflare Tunnel URL and auto-register Linq webhook.
+
+        Mirrors Telegram's auto-registration pattern: waits for the tunnel,
+        then creates a webhook subscription via the Linq API. The signing
+        secret from the response is stored for HMAC verification.
+        """
+        if not settings.linq_api_token:
+            return
+
+        await asyncio.sleep(STARTUP_DELAY_SECONDS)
+        tunnel_url = await discover_tunnel_url()
+        if not tunnel_url:
+            logger.debug("Cloudflare tunnel not detected: skipping Linq webhook auto-registration")
+            return
+
+        webhook_url = f"{tunnel_url}/api/webhooks/linq"
+
+        if not await wait_for_dns(tunnel_url):
+            logger.warning(
+                "Tunnel hostname never became resolvable: skipping Linq webhook registration"
+            )
+            return
+
+        ok = await register_linq_webhook(webhook_url)
+        if ok:
+            logger.info("Linq webhook auto-registered: %s", webhook_url)
+        else:
+            logger.warning("Failed to auto-register Linq webhook")
 
     async def stop(self) -> None:
         """Close the httpx client on shutdown."""
@@ -145,62 +225,56 @@ class LinqChannel(BaseChannel):
         return sender_id == allowed
 
     @staticmethod
+    def _guess_mime(url: str) -> str:
+        """Guess MIME type from a CDN URL extension."""
+        url_lower = url.lower()
+        if any(url_lower.endswith(ext) for ext in (".jpg", ".jpeg")):
+            return "image/jpeg"
+        if url_lower.endswith(".png"):
+            return "image/png"
+        if url_lower.endswith(".gif"):
+            return "image/gif"
+        if url_lower.endswith(".mp4"):
+            return "video/mp4"
+        if url_lower.endswith(".mp3"):
+            return "audio/mpeg"
+        if url_lower.endswith(".ogg"):
+            return "audio/ogg"
+        if url_lower.endswith(".pdf"):
+            return "application/pdf"
+        return "application/octet-stream"
+
+    @staticmethod
     def parse_webhook(payload: LinqWebhookPayload) -> InboundMessage | None:
         """Parse a Linq webhook payload into an InboundMessage.
 
         Returns None if the payload should be ignored.
         """
-        if payload.event != "message.received":
+        if payload.type != "message.received":
             return None
 
-        msg = payload.data
-        if not msg:
+        if payload.direction == "outbound":
             return None
 
-        # Skip messages sent by us
-        if msg.is_from_me:
+        if not payload.sender_handle:
+            logger.warning("Linq message missing sender_handle, ignoring")
             return None
 
-        handle = msg.from_handle
-        if not handle or not handle.handle:
-            logger.warning("Linq message missing from_handle, ignoring")
-            return None
-
-        sender_phone = handle.handle
-
-        # Extract text and media from parts
         text_parts: list[str] = []
         media_refs: list[tuple[str, str]] = []
 
-        for part in msg.parts:
+        for part in payload.parts:
             if part.type == "text" and part.value:
                 text_parts.append(part.value)
             elif part.type == "media" and part.url:
-                # Use the CDN URL as the file_id, guess mime from URL
-                mime = "application/octet-stream"
-                url_lower = part.url.lower()
-                if any(url_lower.endswith(ext) for ext in (".jpg", ".jpeg")):
-                    mime = "image/jpeg"
-                elif url_lower.endswith(".png"):
-                    mime = "image/png"
-                elif url_lower.endswith(".gif"):
-                    mime = "image/gif"
-                elif url_lower.endswith(".mp4"):
-                    mime = "video/mp4"
-                elif url_lower.endswith(".mp3"):
-                    mime = "audio/mpeg"
-                elif url_lower.endswith(".ogg"):
-                    mime = "audio/ogg"
-                elif url_lower.endswith(".pdf"):
-                    mime = "application/pdf"
-                media_refs.append((part.url, mime))
+                media_refs.append((part.url, LinqChannel._guess_mime(part.url)))
 
         text = " ".join(text_parts)
-        external_id = f"linq_{msg.id}" if msg.id else ""
+        external_id = f"linq_{payload.id}" if payload.id else ""
 
         return InboundMessage(
             channel="linq",
-            sender_id=sender_phone,
+            sender_id=payload.sender_handle,
             text=text,
             media_refs=media_refs,
             external_message_id=external_id,
@@ -247,8 +321,8 @@ class LinqChannel(BaseChannel):
                 return JSONResponse(content={"ok": True})
 
             # Cache the chat_id for outbound use
-            if payload.data and payload.data.chat_id and payload.data.from_handle:
-                channel._chat_cache[payload.data.from_handle.handle] = payload.data.chat_id
+            if payload.chat and payload.chat.id and payload.sender_handle:
+                channel._chat_cache[payload.sender_handle] = payload.chat.id
 
             # Idempotency: skip duplicate messages
             if inbound.external_message_id:

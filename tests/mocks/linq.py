@@ -12,10 +12,9 @@ def make_linq_webhook_payload(
     event: str = "message.received",
     chat_id: str = "chat-uuid-001",
     message_id: str = "msg-uuid-001",
-    is_from_me: bool = False,
-    service: str = "iMessage",
+    direction: str = "inbound",
 ) -> dict:
-    """Build a realistic Linq webhook JSON payload."""
+    """Build a Linq webhook JSON payload (2026-02-03 format)."""
     parts: list[dict] = []
     if text:
         parts.append({"type": "text", "value": text})
@@ -23,18 +22,19 @@ def make_linq_webhook_payload(
         parts.append({"type": "media", "url": media_url, "value": ""})
 
     return {
-        "event": event,
-        "data": {
-            "id": message_id,
-            "chat_id": chat_id,
-            "from_handle": {
-                "handle": sender,
-                "service": service,
-                "is_me": is_from_me,
-            },
-            "parts": parts,
-            "is_from_me": is_from_me,
+        "webhook_version": "2026-02-03",
+        "event_id": f"evt-{message_id}",
+        "type": event,
+        "direction": direction,
+        "sender_handle": sender,
+        "chat": {
+            "id": chat_id,
+            "is_group": False,
+            "owner_handle": "+15550000000",
         },
+        "id": message_id,
+        "parts": parts,
+        "sent_at": "2026-03-24T12:00:00Z",
     }
 
 
@@ -51,7 +51,7 @@ def make_linq_webhook_headers(
         digestmod=hashlib.sha256,
     ).hexdigest()
     return {
-        "X-Linq-Signature": signature,
-        "X-Linq-Timestamp": ts,
+        "X-Webhook-Signature": signature,
+        "X-Webhook-Timestamp": ts,
         "Content-Type": "application/json",
     }
