@@ -10,6 +10,7 @@ from backend.app.auth.dependencies import get_current_user
 from backend.app.config import save_persistent_config, settings, update_settings
 from backend.app.database import get_db
 from backend.app.models import HeartbeatLog, LLMUsageLog, User
+from backend.app.query_helpers import get_or_404
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
@@ -72,9 +73,7 @@ async def update_profile(
         raise HTTPException(status_code=400, detail="No fields to update")
 
     # Re-query user in the current session to avoid detached instance issues
-    user = db.query(User).filter_by(id=current_user.id).first()
-    if not user:
-        raise HTTPException(status_code=404, detail="User not found")
+    user = get_or_404(db, User, detail="User not found", id=current_user.id)
 
     for key, value in updates.items():
         setattr(user, key, value)
