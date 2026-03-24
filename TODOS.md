@@ -14,6 +14,32 @@
 **Priority:** P2
 **Depends on:** Core voice-to-estimate workflow must ship first
 
+## Calendar
+
+### Calendar Phase 2: CalendarEvent table + iCal feed
+
+**What:** Add a local CalendarEvent table as a write-through cache, plus an iCal feed endpoint (ICalFeedService) that lets users subscribe to their job schedule from any calendar app.
+
+**Why:** Phase 1 only supports Google Calendar users. An iCal feed is provider-agnostic: anyone with Apple Calendar, Outlook, or any CalDAV client can subscribe. This completes the calendar vision from issue #708.
+
+**Context:** The CalendarProvider protocol from Phase 1 is designed to support this. CalendarEvent table stores events locally (write-through on create/update/delete). ICalFeedService generates .ics feeds per user with a secret feed_token for auth. The CalendarConfig model already has a feed_token column ready for this.
+
+**Effort:** M (human: ~1 week / CC: ~30 min)
+**Priority:** P2
+**Depends on:** Phase 1 calendar integration must ship first
+
+### Multi-calendar selection
+
+**What:** Add a list_calendars tool and calendar picker so users can choose which Google Calendar to use (e.g., a dedicated "Jobs" calendar vs personal).
+
+**Why:** Phase 1 defaults to "primary" calendar. Contractors who keep separate work/personal calendars need to target the right one. Without this, job events end up on the personal calendar.
+
+**Context:** Requires a new calendar_list_calendars tool (GET /users/me/calendarList), a selection UI in the frontend, and storing the chosen calendar_id in CalendarConfig. The CalendarConfig.calendar_id column already exists with default="primary".
+
+**Effort:** S (human: ~3 hours / CC: ~15 min)
+**Priority:** P2
+**Depends on:** Phase 1 calendar integration must ship first
+
 ## Permissions
 
 ### /permissions chat command

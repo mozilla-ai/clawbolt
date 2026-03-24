@@ -31,6 +31,13 @@ class ToolName:
     QB_UPDATE = "qb_update"
     QB_SEND = "qb_send"
 
+    # Calendar
+    CALENDAR_LIST_EVENTS = "calendar_list_events"
+    CALENDAR_CREATE_EVENT = "calendar_create_event"
+    CALENDAR_UPDATE_EVENT = "calendar_update_event"
+    CALENDAR_DELETE_EVENT = "calendar_delete_event"
+    CALENDAR_CHECK_AVAILABILITY = "calendar_check_availability"
+
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
 

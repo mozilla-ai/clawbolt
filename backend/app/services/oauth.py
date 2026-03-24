@@ -41,6 +41,7 @@ class OAuthConfig:
     token_url: str
     scopes: list[str]
     callback_path: str = "/api/oauth/callback"
+    use_pkce: bool = True
 
     @property
     def is_configured(self) -> bool:
@@ -159,9 +160,10 @@ class OAuthService:
             "response_type": "code",
             "scope": " ".join(config.scopes),
             "state": state,
-            "code_challenge": challenge,
-            "code_challenge_method": "S256",
         }
+        if config.use_pkce:
+            params["code_challenge"] = challenge
+            params["code_challenge_method"] = "S256"
 
         return str(httpx.URL(config.authorize_url, params=params))
 
@@ -208,14 +210,16 @@ class OAuthService:
     ) -> OAuthTokenData:
         """Exchange authorization code for access and refresh tokens."""
         http = self._get_http()
+        token_data: dict[str, str] = {
+            "grant_type": "authorization_code",
+            "code": code,
+            "redirect_uri": redirect_uri,
+        }
+        if config.use_pkce:
+            token_data["code_verifier"] = code_verifier
         resp = await http.post(
             config.token_url,
-            data={
-                "grant_type": "authorization_code",
-                "code": code,
-                "redirect_uri": redirect_uri,
-                "code_verifier": code_verifier,
-            },
+            data=token_data,
             auth=(config.client_id, config.client_secret),
         )
         resp.raise_for_status()
@@ -311,8 +315,16 @@ QBO_AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
 QBO_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 QBO_SCOPES = ["com.intuit.quickbooks.accounting"]
 
+# Google Calendar OAuth 2.0 endpoints
+GOOGLE_CALENDAR_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_CALENDAR_TOKEN_URL = "https://oauth2.googleapis.com/token"
+GOOGLE_CALENDAR_SCOPES = [
+    "https://www.googleapis.com/auth/calendar.events",
+    "https://www.googleapis.com/auth/calendar.readonly",
+]
+
 # Registry of all supported OAuth integrations.
-_OAUTH_INTEGRATIONS = ("quickbooks",)
+_OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar")
 
 
 def get_quickbooks_oauth_config() -> OAuthConfig | None:
@@ -328,10 +340,26 @@ def get_quickbooks_oauth_config() -> OAuthConfig | None:
     return config if config.is_configured else None
 
 
+def get_google_calendar_oauth_config() -> OAuthConfig | None:
+    """Build the Google Calendar OAuth config from settings."""
+    config = OAuthConfig(
+        integration="google_calendar",
+        client_id=settings.google_calendar_client_id,
+        client_secret=settings.google_calendar_client_secret,
+        authorize_url=GOOGLE_CALENDAR_AUTHORIZE_URL,
+        token_url=GOOGLE_CALENDAR_TOKEN_URL,
+        scopes=GOOGLE_CALENDAR_SCOPES,
+        use_pkce=False,
+    )
+    return config if config.is_configured else None
+
+
 def get_oauth_config(integration: str) -> OAuthConfig | None:
     """Return the OAuth config for the named integration, or None."""
     if integration == "quickbooks":
         return get_quickbooks_oauth_config()
+    if integration == "google_calendar":
+        return get_google_calendar_oauth_config()
     return None
 
 

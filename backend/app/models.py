@@ -96,6 +96,9 @@ class User(Base):
     tool_configs: Mapped[list["ToolConfig"]] = relationship(
         "ToolConfig", back_populates="user", cascade="all, delete-orphan"
     )
+    calendar_configs: Mapped[list["CalendarConfig"]] = relationship(
+        "CalendarConfig", back_populates="user", cascade="all, delete-orphan"
+    )
 
 
 class ChannelRoute(Base):
@@ -233,6 +236,25 @@ class LLMUsageLog(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
 
     user: Mapped["User"] = relationship("User", back_populates="llm_usage_logs")
+
+
+class CalendarConfig(Base):
+    __tablename__ = "calendar_configs"
+    __table_args__ = (
+        UniqueConstraint("user_id", "provider", name="uq_calendar_config_user_provider"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    provider: Mapped[str] = mapped_column(String, nullable=False)
+    display_name: Mapped[str] = mapped_column(String, default="")
+    calendar_id: Mapped[str] = mapped_column(String, default="primary")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=lambda: datetime.now(UTC))
+
+    user: Mapped["User"] = relationship("User", back_populates="calendar_configs")
 
 
 class ToolConfig(Base):

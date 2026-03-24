@@ -22,6 +22,8 @@ from backend.app.services.oauth import (
     OAuthService,
     OAuthTokenData,
     _generate_pkce_pair,
+    get_google_calendar_oauth_config,
+    get_oauth_config,
     get_quickbooks_oauth_config,
     oauth_service,
 )
@@ -347,6 +349,124 @@ def test_quickbooks_oauth_config_configured() -> None:
     assert config is not None
     assert config.client_id == "cid"
     assert config.integration == "quickbooks"
+
+
+def test_google_calendar_oauth_config_not_configured() -> None:
+    """When calendar client_id/secret are empty, config should be None."""
+    with (
+        patch.object(settings, "google_calendar_client_id", ""),
+        patch.object(settings, "google_calendar_client_secret", ""),
+    ):
+        config = get_google_calendar_oauth_config()
+    assert config is None
+
+
+def test_google_calendar_oauth_config_configured() -> None:
+    """When calendar client_id/secret are set, config should be returned."""
+    with (
+        patch.object(settings, "google_calendar_client_id", "gcal-cid"),
+        patch.object(settings, "google_calendar_client_secret", "gcal-csec"),
+    ):
+        config = get_google_calendar_oauth_config()
+    assert config is not None
+    assert config.client_id == "gcal-cid"
+    assert config.integration == "google_calendar"
+    assert config.use_pkce is False
+
+
+def test_get_oauth_config_dispatches_google_calendar() -> None:
+    """get_oauth_config('google_calendar') should return Google Calendar config."""
+    with (
+        patch.object(settings, "google_calendar_client_id", "gcal-cid"),
+        patch.object(settings, "google_calendar_client_secret", "gcal-csec"),
+    ):
+        config = get_oauth_config("google_calendar")
+    assert config is not None
+    assert config.integration == "google_calendar"
+
+
+def test_pkce_params_omitted_when_disabled(
+    oauth_svc: OAuthService,
+) -> None:
+    """Authorization URL should not contain PKCE params when use_pkce=False."""
+    config = OAuthConfig(
+        integration="test_no_pkce",
+        client_id="cid",
+        client_secret="csec",
+        authorize_url="https://example.com/auth",
+        token_url="https://example.com/token",
+        scopes=["scope1"],
+        use_pkce=False,
+    )
+    url = oauth_svc.get_authorization_url(config, user_id="1")
+    assert "code_challenge=" not in url
+    assert "code_challenge_method=" not in url
+
+
+def test_pkce_params_present_when_enabled(
+    oauth_svc: OAuthService,
+) -> None:
+    """Authorization URL should contain PKCE params when use_pkce=True (default)."""
+    config = OAuthConfig(
+        integration="test_pkce",
+        client_id="cid",
+        client_secret="csec",
+        authorize_url="https://example.com/auth",
+        token_url="https://example.com/token",
+        scopes=["scope1"],
+        use_pkce=True,
+    )
+    url = oauth_svc.get_authorization_url(config, user_id="1")
+    assert "code_challenge=" in url
+    assert "code_challenge_method=S256" in url
+
+
+@pytest.mark.asyncio()
+async def test_code_verifier_omitted_when_pkce_disabled(
+    oauth_svc: OAuthService,
+) -> None:
+    """Token exchange should not include code_verifier when use_pkce=False."""
+    config = OAuthConfig(
+        integration="no_pkce",
+        client_id="cid",
+        client_secret="csec",
+        authorize_url="https://example.com/auth",
+        token_url="https://example.com/token",
+        scopes=["scope1"],
+        use_pkce=False,
+    )
+
+    url = oauth_svc.get_authorization_url(config, user_id="1")
+    import urllib.parse
+
+    state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
+
+    mock_request = httpx.Request("POST", "https://example.com/token")
+    mock_response = httpx.Response(
+        200,
+        json={
+            "access_token": "at",
+            "refresh_token": "rt",
+            "expires_in": 3600,
+        },
+        request=mock_request,
+    )
+
+    with patch.object(oauth_svc, "_get_http") as mock_http_fn:
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_http_fn.return_value = mock_client
+
+        with patch(
+            "backend.app.services.oauth.get_oauth_config",
+            return_value=config,
+        ):
+            await oauth_svc.handle_callback(state, "auth-code")
+
+    # Verify code_verifier was NOT in the POST data
+    call_kwargs = mock_client.post.call_args
+    post_data = call_kwargs.kwargs.get("data") or call_kwargs[1].get("data", {})
+    assert "code_verifier" not in post_data
 
 
 # ---------------------------------------------------------------------------

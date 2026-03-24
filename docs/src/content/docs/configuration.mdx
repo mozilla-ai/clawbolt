@@ -142,6 +142,15 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 
 When `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set, users can connect their QuickBooks account via the web dashboard. Once connected, the agent gains specialist QuickBooks tools (`qb_query`, `qb_create`, `qb_update`, `qb_send`).
 
+## Google Calendar
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `GOOGLE_CALENDAR_CLIENT_ID` | | OAuth client ID from the Google Cloud console |
+| `GOOGLE_CALENDAR_CLIENT_SECRET` | | OAuth client secret from the Google Cloud console |
+
+When `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` are set, users can connect their Google Calendar via the web dashboard. Once connected, the agent gains specialist calendar tools (`calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_check_availability`).
+
 ## HTTP timeouts
 
 | Variable | Default | Description |
