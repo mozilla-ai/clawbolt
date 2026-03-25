@@ -872,3 +872,39 @@ async def test_oauth_user_provisioned_on_first_chat() -> None:
     assert resolved.user_text  # seeded by provision_user
     assert bootstrap_path.exists()  # created by provision_user
     assert is_onboarding_needed(resolved) is True
+
+
+@pytest.mark.asyncio()
+async def test_preferred_channel_updates_on_channel_switch() -> None:
+    """preferred_channel should update when a returning user messages from a different channel.
+
+    Regression: heartbeat used preferred_channel to pick the delivery channel,
+    but preferred_channel was never updated in premium mode when the user
+    switched from Telegram to iMessage (linq). Heartbeats kept going to the
+    old channel.
+    """
+    from backend.app.agent.ingestion import _get_or_create_user
+    from backend.app.models import ChannelRoute
+
+    # Create a user who signed up via Telegram
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            id="channel-switch-user",
+            user_id="google_switch",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.flush()
+        db.add(ChannelRoute(user_id=user.id, channel="telegram", channel_identifier="tg_123"))
+        db.add(ChannelRoute(user_id=user.id, channel="linq", channel_identifier="linq_456"))
+        db.commit()
+    finally:
+        db.close()
+
+    # User sends a message via linq (iMessage)
+    resolved = await _get_or_create_user("linq", "linq_456")
+
+    assert resolved.id == "channel-switch-user"
+    assert resolved.preferred_channel == "linq"
