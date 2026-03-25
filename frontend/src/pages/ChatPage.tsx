@@ -116,9 +116,10 @@ export default function ChatPage() {
     });
   }, [searchParams, setSearchParams]);
 
-  // Save active session to localStorage
+  // Save active session to localStorage and reset expand state
   useEffect(() => {
     if (activeSessionId) saveLastSession(activeSessionId);
+    setExpandedTools(new Set());
   }, [activeSessionId]);
 
   // Populate messages from session history when it loads
@@ -365,7 +366,7 @@ export default function ChatPage() {
                         const hasArgs = args && Object.keys(args).length > 0;
                         const isError = tool['is_error'] === true;
                         const toolCallId = tool['tool_call_id'] as string | undefined;
-                        const expandKey = `${msg.id}-${i}`;
+                        const expandKey = `${msg.seq ?? msg.id}-${i}`;
                         const isExpanded = expandedTools.has(expandKey);
                         const hasDetails = 'result' in tool || hasArgs;
 
@@ -430,7 +431,7 @@ export default function ChatPage() {
                                       Args
                                     </span>
                                     <pre className="font-mono text-[14px] whitespace-pre-wrap max-h-40 overflow-y-auto bg-panel/50 rounded px-2 py-1.5 mt-0.5">
-                                      {JSON.stringify(args, null, 2)}
+                                      {(() => { try { return JSON.stringify(args, null, 2); } catch { return String(args); } })()}
                                     </pre>
                                   </div>
                                 )}
