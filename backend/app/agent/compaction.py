@@ -114,6 +114,12 @@ async def compact_session(
     memory_store = get_memory_store(user_id)
     current_memory = memory_store.read_memory()
     current_user_profile = memory_store.read_user()
+    current_soul = memory_store.read_soul()
+
+    from backend.app.agent.stores import HeartbeatStore
+
+    heartbeat_store = HeartbeatStore(user_id)
+    current_heartbeat = heartbeat_store.read_heartbeat_md()
 
     user_prompt_parts = [
         "<current_memory>",
@@ -123,6 +129,14 @@ async def compact_session(
         "<user_profile>",
         current_user_profile or "(empty)",
         "</user_profile>",
+        "",
+        "<soul>",
+        current_soul or "(empty)",
+        "</soul>",
+        "",
+        "<heartbeat>",
+        current_heartbeat or "(empty)",
+        "</heartbeat>",
         "",
         "<conversation>",
         conversation_text,
