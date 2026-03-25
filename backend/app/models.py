@@ -133,6 +133,7 @@ class ChannelRoute(Base):
     )
     channel: Mapped[str] = mapped_column(String, nullable=False)
     channel_identifier: Mapped[str] = mapped_column(String, nullable=False)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

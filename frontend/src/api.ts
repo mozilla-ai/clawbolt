@@ -9,6 +9,8 @@ import type {
   MemoryUpdate,
   ChannelConfigResponse,
   ChannelConfigUpdate,
+  ChannelRouteListResponse,
+  ChannelRouteResponse,
   ModelConfigResponse,
   ModelConfigUpdate,
   StorageConfigResponse,
@@ -113,6 +115,21 @@ const api = {
     });
     if (error) _throwApiError(error, 'Failed to update channel config');
     return data as ChannelConfigResponse;
+  },
+
+  // Channel routes
+  getChannelRoutes: async () => {
+    const { data, error } = await client.GET('/api/user/channels/routes');
+    if (error) _throwApiError(error, 'Failed to get channel routes');
+    return data as ChannelRouteListResponse;
+  },
+  toggleChannelRoute: async (channel: string, enabled: boolean) => {
+    const { data, error } = await client.PATCH('/api/user/channels/routes/{channel}', {
+      params: { path: { channel } },
+      body: { enabled } as never,
+    });
+    if (error) _throwApiError(error, 'Failed to toggle channel route');
+    return data as ChannelRouteResponse;
   },
 
   // Model config

@@ -57,6 +57,23 @@ class InboundMessage:
     session_id: str | None = None
 
 
+def _check_channel_route_enabled(user_id: str, channel: str) -> bool | None:
+    """Check whether a channel route is enabled for a user.
+
+    Returns True if the route exists and is enabled, False if it exists
+    and is disabled, or None if no route exists (backward compat: treat
+    as enabled).
+    """
+    db = SessionLocal()
+    try:
+        route = db.query(ChannelRoute).filter_by(user_id=user_id, channel=channel).first()
+        if route is None:
+            return None
+        return route.enabled
+    finally:
+        db.close()
+
+
 async def _send_error_fallback(
     channel: str,
     user: User,
@@ -121,7 +138,9 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             if user is not None:
                 # Track the most recently used channel so heartbeat and other
                 # proactive messages are delivered to the right place.
-                if user.preferred_channel != channel:
+                # Skip update if the route is disabled so we don't switch
+                # the preferred channel to a disabled one.
+                if user.preferred_channel != channel and route.enabled:
                     user.preferred_channel = channel
                     db.commit()
                     db.refresh(user)
@@ -383,6 +402,28 @@ async def process_inbound_from_bus(
         inbound.channel,
         inbound.sender_id,
     )
+
+    # -- Check if channel is disabled for this user --
+    route_enabled = _check_channel_route_enabled(user.id, inbound.channel)
+    if route_enabled is False:
+        from backend.app.bus import OutboundMessage, message_bus
+
+        await message_bus.publish_outbound(
+            OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.sender_id,
+                content=(
+                    "This channel is currently disabled. Please message from your enabled channel."
+                ),
+                request_id=inbound.request_id,
+            )
+        )
+        logger.info(
+            "Dropped inbound from %s/%s: channel disabled",
+            inbound.channel,
+            inbound.sender_id,
+        )
+        return
 
     # -- Intercept approval responses before normal processing --
     gate = get_approval_gate()

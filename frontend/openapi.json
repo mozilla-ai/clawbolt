@@ -497,6 +497,75 @@
         }
       }
     },
+    "/api/user/channels/routes": {
+      "get": {
+        "summary": "Get Channel Routes",
+        "description": "Return the current user's channel routes with enabled status.",
+        "operationId": "get_channel_routes_api_user_channels_routes_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelRouteListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/channels/routes/{channel}": {
+      "patch": {
+        "summary": "Update Channel Route",
+        "description": "Toggle enabled status for a channel route.\n\nIf the user has no route for this channel yet (e.g. they configured\ncredentials but haven't messaged through the channel), a placeholder\nroute is created so the enabled flag can be persisted.",
+        "operationId": "update_channel_route_api_user_channels_routes__channel__patch",
+        "parameters": [
+          {
+            "name": "channel",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Channel"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChannelRouteUpdate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ChannelRouteResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/channels/telegram/bot-info": {
       "get": {
         "summary": "Get Telegram Bot Info",
@@ -1173,6 +1242,63 @@
         },
         "type": "object",
         "title": "ChannelConfigUpdate"
+      },
+      "ChannelRouteListResponse": {
+        "properties": {
+          "routes": {
+            "items": {
+              "$ref": "#/components/schemas/ChannelRouteResponse"
+            },
+            "type": "array",
+            "title": "Routes"
+          }
+        },
+        "type": "object",
+        "required": [
+          "routes"
+        ],
+        "title": "ChannelRouteListResponse"
+      },
+      "ChannelRouteResponse": {
+        "properties": {
+          "channel": {
+            "type": "string",
+            "title": "Channel"
+          },
+          "channel_identifier": {
+            "type": "string",
+            "title": "Channel Identifier"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "created_at": {
+            "type": "string",
+            "title": "Created At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "channel",
+          "channel_identifier",
+          "enabled",
+          "created_at"
+        ],
+        "title": "ChannelRouteResponse"
+      },
+      "ChannelRouteUpdate": {
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          }
+        },
+        "type": "object",
+        "required": [
+          "enabled"
+        ],
+        "title": "ChannelRouteUpdate"
       },
       "HTTPValidationError": {
         "properties": {

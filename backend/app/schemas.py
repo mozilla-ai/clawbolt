@@ -111,6 +111,21 @@ class ChannelConfigUpdate(BaseModel):
     linq_preferred_service: str | None = None
 
 
+class ChannelRouteResponse(BaseModel):
+    channel: str
+    channel_identifier: str
+    enabled: bool
+    created_at: str
+
+
+class ChannelRouteListResponse(BaseModel):
+    routes: list[ChannelRouteResponse]
+
+
+class ChannelRouteUpdate(BaseModel):
+    enabled: bool
+
+
 class TelegramBotInfoResponse(BaseModel):
     bot_username: str
     bot_link: str

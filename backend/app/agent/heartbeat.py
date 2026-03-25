@@ -755,7 +755,7 @@ def resolve_heartbeat_route(
 
     route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel_name).first()
 
-    if route is not None:
+    if route is not None and route.enabled:
         return channel_name, route
 
     # Fallback: try any other pushable channel route the user has.
@@ -769,7 +769,7 @@ def resolve_heartbeat_route(
         route_channels,
     )
     for r in routes:
-        if r.channel not in _NON_PUSHABLE_CHANNELS:
+        if r.channel not in _NON_PUSHABLE_CHANNELS and r.enabled:
             try:
                 get_channel(r.channel)
             except KeyError:
