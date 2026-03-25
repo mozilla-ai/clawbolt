@@ -102,6 +102,12 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         if route:
             user = db.query(User).filter_by(id=route.user_id).first()
             if user is not None:
+                # Track the most recently used channel so heartbeat and other
+                # proactive messages are delivered to the right place.
+                if user.preferred_channel != channel:
+                    user.preferred_channel = channel
+                    db.commit()
+                    db.refresh(user)
                 logger.debug("_get_or_create_user: found via channel route -> user %s", user.id)
                 db.expunge(user)
                 return user
