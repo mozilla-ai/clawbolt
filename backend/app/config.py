@@ -128,6 +128,9 @@ class Settings(BaseSettings):
     heartbeat_concurrency: int = Field(default=5, ge=1)
     heartbeat_recent_messages_count: int = Field(default=5, ge=1)
 
+    # Observability
+    log_request_timing: bool = False  # Set True (or LOG_REQUEST_TIMING=1) to log per-request timing
+
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8", "extra": "ignore"}
 
 

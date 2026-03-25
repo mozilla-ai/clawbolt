@@ -187,6 +187,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
 app = FastAPI(title="Clawbolt", version="0.1.0", lifespan=lifespan)
 
+if settings.log_request_timing:
+    from backend.app.middleware.request_logging import RequestLoggingMiddleware
+
+    app.add_middleware(RequestLoggingMiddleware)
+
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]
     allow_origins=settings.cors_origins.split(","),
