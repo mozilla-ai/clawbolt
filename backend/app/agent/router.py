@@ -272,9 +272,16 @@ async def run_agent(
     unauthenticated = default_registry.get_unauthenticated_specialists(
         tool_context, excluded_factories=disabled_groups or None
     )
+    disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(
+        disabled_sub_tools or set()
+    )
     if specialist_summaries or unauthenticated:
         tools.append(
-            create_list_capabilities_tool(specialist_summaries, unauthenticated=unauthenticated)
+            create_list_capabilities_tool(
+                specialist_summaries,
+                unauthenticated=unauthenticated,
+                disabled_sub_tools=disabled_specialist_subs or None,
+            )
         )
     agent.register_tools(tools)
 

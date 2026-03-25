@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.registry import (
+    SubToolInfo,
     ToolContext,
     ToolRegistry,
     create_list_capabilities_tool,
@@ -286,3 +287,134 @@ class TestCalendarAuthCheck:
             reason = _calendar_auth_check(ctx)
             assert reason is not None
             assert "not connected" in reason.lower()
+
+
+# ---------------------------------------------------------------------------
+# Registry: get_disabled_specialist_sub_tools / get_factory_for_sub_tool
+# ---------------------------------------------------------------------------
+
+
+def _build_sub_tool_registry() -> ToolRegistry:
+    """Build a registry with specialist sub-tools for testing."""
+    registry = ToolRegistry()
+    registry.register("workspace", lambda ctx: [_make_tool("read_file")])
+    registry.register(
+        "quickbooks",
+        lambda ctx: [],
+        core=False,
+        summary="QuickBooks accounting tools",
+        sub_tools=[
+            SubToolInfo("qb_query", "Query QB entities"),
+            SubToolInfo("qb_create", "Create QB entities"),
+            SubToolInfo("qb_update", "Update QB entities"),
+        ],
+    )
+    registry.register(
+        "calendar",
+        lambda ctx: [],
+        core=False,
+        summary="Google Calendar tools",
+        sub_tools=[
+            SubToolInfo("calendar_list_events", "List events"),
+            SubToolInfo("calendar_create_event", "Create events"),
+        ],
+    )
+    return registry
+
+
+class TestGetDisabledSpecialistSubTools:
+    """get_disabled_specialist_sub_tools maps specialists to disabled sub-tools."""
+
+    def test_returns_correct_disabled(self) -> None:
+        registry = _build_sub_tool_registry()
+        result = registry.get_disabled_specialist_sub_tools({"qb_create", "qb_update"})
+        assert "quickbooks" in result
+        assert len(result["quickbooks"]) == 2
+        names = {st.name for st in result["quickbooks"]}
+        assert names == {"qb_create", "qb_update"}
+
+    def test_empty_set_returns_empty_dict(self) -> None:
+        registry = _build_sub_tool_registry()
+        assert registry.get_disabled_specialist_sub_tools(set()) == {}
+
+    def test_ignores_core_factories(self) -> None:
+        registry = ToolRegistry()
+        registry.register(
+            "workspace",
+            lambda ctx: [_make_tool("read_file")],
+            core=True,
+            sub_tools=[SubToolInfo("read_file", "Read a file")],
+        )
+        result = registry.get_disabled_specialist_sub_tools({"read_file"})
+        assert "workspace" not in result
+
+    def test_multiple_specialists(self) -> None:
+        registry = _build_sub_tool_registry()
+        result = registry.get_disabled_specialist_sub_tools({"qb_create", "calendar_create_event"})
+        assert "quickbooks" in result
+        assert "calendar" in result
+        assert len(result["quickbooks"]) == 1
+        assert result["quickbooks"][0].name == "qb_create"
+        assert result["calendar"][0].name == "calendar_create_event"
+
+    def test_no_match_returns_empty(self) -> None:
+        registry = _build_sub_tool_registry()
+        result = registry.get_disabled_specialist_sub_tools({"nonexistent_tool"})
+        assert result == {}
+
+
+# ---------------------------------------------------------------------------
+# list_capabilities with disabled sub-tools
+# ---------------------------------------------------------------------------
+
+
+class TestListCapabilitiesWithDisabledSubTools:
+    """list_capabilities shows disabled sub-tool info when provided."""
+
+    @pytest.mark.asyncio
+    async def test_listing_shows_disabled_info(self) -> None:
+        summaries = {"quickbooks": "QB tools"}
+        disabled = {
+            "quickbooks": [SubToolInfo("qb_create", "Create"), SubToolInfo("qb_update", "Update")]
+        }
+        tool = create_list_capabilities_tool(summaries, disabled_sub_tools=disabled)
+        result = await tool.function(category=None)
+        assert "qb_create" in result.content
+        assert "qb_update" in result.content
+        assert "disabled" in result.content.lower()
+
+    @pytest.mark.asyncio
+    async def test_activation_notes_disabled_tools(self) -> None:
+        summaries = {"quickbooks": "QB tools"}
+        disabled = {"quickbooks": [SubToolInfo("qb_create", "Create")]}
+        tool = create_list_capabilities_tool(summaries, disabled_sub_tools=disabled)
+        result = await tool.function(category="quickbooks")
+        assert not result.is_error
+        assert "activated" in result.content.lower()
+        assert "qb_create" in result.content
+        assert "disabled" in result.content.lower()
+
+    @pytest.mark.asyncio
+    async def test_no_disabled_no_change(self) -> None:
+        summaries = {"quickbooks": "QB tools"}
+        tool = create_list_capabilities_tool(summaries)
+        result = await tool.function(category=None)
+        assert "disabled" not in result.content.lower()
+
+    @pytest.mark.asyncio
+    async def test_activation_without_disabled_no_note(self) -> None:
+        summaries = {"quickbooks": "QB tools"}
+        tool = create_list_capabilities_tool(summaries)
+        result = await tool.function(category="quickbooks")
+        assert "disabled" not in result.content.lower()
+
+    def test_usage_hint_updated_with_disabled(self) -> None:
+        summaries = {"quickbooks": "QB tools"}
+        disabled = {"quickbooks": [SubToolInfo("qb_create", "Create")]}
+        tool = create_list_capabilities_tool(summaries, disabled_sub_tools=disabled)
+        assert "disabled" in tool.usage_hint.lower()
+
+    def test_usage_hint_no_disabled(self) -> None:
+        summaries = {"quickbooks": "QB tools"}
+        tool = create_list_capabilities_tool(summaries)
+        assert "disabled" not in tool.usage_hint.lower()
