@@ -8,6 +8,7 @@ import pytest
 
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.quickbooks_tools import (
+    _describe_qb_query,
     _quickbooks_factory,
     create_quickbooks_tools,
 )
@@ -198,3 +199,33 @@ def test_quickbooks_factory_returns_empty_when_not_connected() -> None:
         tools = _quickbooks_factory(ctx)
 
     assert tools == []
+
+
+# -- _describe_qb_query --
+
+
+class TestDescribeQbQuery:
+    def test_known_entity(self) -> None:
+        """Known entity returns human-readable label."""
+        desc = _describe_qb_query({"query": "SELECT * FROM Estimate ORDERBY TxnDate DESC"})
+        assert desc == "Look up estimates in QuickBooks"
+
+    def test_unknown_entity(self) -> None:
+        """Unknown entity falls back to lowercased name + 's'."""
+        desc = _describe_qb_query({"query": "SELECT * FROM Widget"})
+        assert desc == "Look up widgets in QuickBooks"
+
+    def test_no_from_clause(self) -> None:
+        """Missing FROM clause returns generic fallback."""
+        desc = _describe_qb_query({"query": "SELECT something"})
+        assert desc == "Look up data in QuickBooks"
+
+    def test_salesreceipt_label(self) -> None:
+        """Multi-word entity labels are correct."""
+        desc = _describe_qb_query({"query": "SELECT * FROM SalesReceipt"})
+        assert desc == "Look up sales receipts in QuickBooks"
+
+    def test_empty_query(self) -> None:
+        """Empty query returns generic fallback."""
+        desc = _describe_qb_query({})
+        assert desc == "Look up data in QuickBooks"

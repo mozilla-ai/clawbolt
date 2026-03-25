@@ -181,8 +181,13 @@ def test_update_event_description_builder(cal_tools: list[Tool]) -> None:
     tool = _get_tool(cal_tools, ToolName.CALENDAR_UPDATE_EVENT)
     assert tool.approval_policy is not None
     assert tool.approval_policy.description_builder is not None
-    desc = tool.approval_policy.description_builder({"event_id": "evt-001"})
-    assert "evt-001" in desc
+    # With title: shows the title
+    desc = tool.approval_policy.description_builder({"event_id": "evt-001", "title": "Job: Smith"})
+    assert "Job: Smith" in desc
+    # Without title: generic description, no raw event ID
+    desc_no_title = tool.approval_policy.description_builder({"event_id": "evt-001"})
+    assert "evt-001" not in desc_no_title
+    assert desc_no_title == "Update a calendar event"
 
 
 def test_delete_event_description_builder(cal_tools: list[Tool]) -> None:
@@ -190,7 +195,9 @@ def test_delete_event_description_builder(cal_tools: list[Tool]) -> None:
     assert tool.approval_policy is not None
     assert tool.approval_policy.description_builder is not None
     desc = tool.approval_policy.description_builder({"event_id": "evt-002"})
-    assert "evt-002" in desc
+    # Should not expose raw event ID
+    assert "evt-002" not in desc
+    assert desc == "Delete a calendar event"
 
 
 # ---------------------------------------------------------------------------
