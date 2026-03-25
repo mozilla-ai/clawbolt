@@ -117,6 +117,173 @@ describe('ChatPage tool interactions', () => {
   });
 });
 
+describe('ChatPage tool interaction expand/collapse', () => {
+  const sessionId = '1_4000';
+
+  function mockSessionWithTools(toolInteractions: Record<string, unknown>[]) {
+    mockApi.getSession.mockResolvedValue({
+      session_id: sessionId,
+      user_id: '1',
+      created_at: '2025-01-01T00:00:00Z',
+      last_message_at: '2025-01-01T00:01:00Z',
+      is_active: true,
+      channel: 'webchat',
+      initial_system_prompt: '',
+      last_compacted_seq: 0,
+      messages: [
+        {
+          seq: 1,
+          direction: 'inbound',
+          body: 'Do something',
+          timestamp: '2025-01-01T00:00:00Z',
+          tool_interactions: [],
+        },
+        {
+          seq: 2,
+          direction: 'outbound',
+          body: 'Done.',
+          timestamp: '2025-01-01T00:01:00Z',
+          tool_interactions: toolInteractions,
+        },
+      ],
+    });
+  }
+
+  it('expands a tool interaction to show full result on click', async () => {
+    const fullResult = 'A'.repeat(200);
+    mockSessionWithTools([
+      { name: 'long_tool', args: {}, result: fullResult, is_error: false, tool_call_id: 'tc_123' },
+    ]);
+
+    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByText('long_tool')).toBeInTheDocument();
+    });
+
+    // Should show truncated result by default
+    expect(screen.getByText('A'.repeat(80) + '...')).toBeInTheDocument();
+    // Full result should not be visible
+    expect(screen.queryByText(fullResult)).not.toBeInTheDocument();
+
+    // Click to expand
+    await user.click(screen.getByText('long_tool'));
+
+    // Full result should now be visible
+    expect(screen.getByText(fullResult)).toBeInTheDocument();
+    // tool_call_id should be visible
+    expect(screen.getByText('tc_123')).toBeInTheDocument();
+  });
+
+  it('collapses an expanded tool interaction on second click', async () => {
+    mockSessionWithTools([
+      { name: 'toggle_tool', args: {}, result: 'some result', is_error: false, tool_call_id: 'tc_456' },
+    ]);
+
+    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByText('toggle_tool')).toBeInTheDocument();
+    });
+
+    // Expand
+    await user.click(screen.getByText('toggle_tool'));
+    expect(screen.getByText('tc_456')).toBeInTheDocument();
+
+    // Collapse
+    await user.click(screen.getByText('toggle_tool'));
+    expect(screen.queryByText('tc_456')).not.toBeInTheDocument();
+  });
+
+  it('shows error badge for tool interactions with is_error true', async () => {
+    mockSessionWithTools([
+      { name: 'failing_tool', args: {}, result: 'Something went wrong', is_error: true },
+    ]);
+
+    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+
+    await waitFor(() => {
+      expect(screen.getByText('failing_tool')).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Error')).toBeInTheDocument();
+  });
+
+  it('shows formatted args when expanded and args are present', async () => {
+    mockSessionWithTools([
+      {
+        name: 'args_tool',
+        args: { customer: 'John', amount: 500 },
+        result: 'OK',
+        is_error: false,
+      },
+    ]);
+
+    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByText('args_tool')).toBeInTheDocument();
+    });
+
+    // Args label should not be visible when collapsed
+    expect(screen.queryByText('Args')).not.toBeInTheDocument();
+
+    // Expand
+    await user.click(screen.getByText('args_tool'));
+
+    // Args label and formatted JSON should be visible
+    expect(screen.getByText('Args')).toBeInTheDocument();
+    expect(screen.getByText(/"customer": "John"/)).toBeInTheDocument();
+  });
+
+  it('hides args section when args are empty', async () => {
+    mockSessionWithTools([
+      { name: 'no_args_tool', args: {}, result: 'Done', is_error: false },
+    ]);
+
+    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByText('no_args_tool')).toBeInTheDocument();
+    });
+
+    // Expand
+    await user.click(screen.getByText('no_args_tool'));
+
+    // Args section should not be shown
+    expect(screen.queryByText('Args')).not.toBeInTheDocument();
+    // Result should still be shown
+    expect(screen.getByText('Done')).toBeInTheDocument();
+  });
+
+  it('shows "No result" placeholder when result is empty', async () => {
+    mockSessionWithTools([
+      { name: 'empty_result_tool', args: { key: 'val' }, result: '', is_error: false },
+    ]);
+
+    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByText('empty_result_tool')).toBeInTheDocument();
+    });
+
+    // Expand
+    await user.click(screen.getByText('empty_result_tool'));
+
+    expect(screen.getByText('No result')).toBeInTheDocument();
+  });
+});
+
 describe('ChatPage session auto-discovery', () => {
   it('discovers the most recent active session when no session is saved', async () => {
     const sessionId = '1_3000';

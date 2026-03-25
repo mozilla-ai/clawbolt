@@ -50,6 +50,7 @@ export default function ChatPage() {
     searchParams.get('session'),
   );
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [currentTool, setCurrentTool] = useState<string | null>(null);
   const [approvalPrompt, setApprovalPrompt] = useState<string | null>(null);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
@@ -115,9 +116,10 @@ export default function ChatPage() {
     });
   }, [searchParams, setSearchParams]);
 
-  // Save active session to localStorage
+  // Save active session to localStorage and reset expand state
   useEffect(() => {
     if (activeSessionId) saveLastSession(activeSessionId);
+    setExpandedTools(new Set());
   }, [activeSessionId]);
 
   // Populate messages from session history when it loads
@@ -250,6 +252,15 @@ export default function ChatPage() {
     }
   };
 
+  const toggleToolExpand = (key: string) => {
+    setExpandedTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+  };
+
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
 
   return (
@@ -348,24 +359,92 @@ export default function ChatPage() {
 
                   {msg.toolInteractions && msg.toolInteractions.length > 0 && (
                     <div className="mt-2 space-y-1">
-                      {msg.toolInteractions.map((tool, i) => (
-                        <div
-                          key={i}
-                          className={`text-xs px-2 py-1 rounded ${
-                            msg.role === 'user'
-                              ? 'bg-white/10'
-                              : 'bg-panel'
-                          }`}
-                        >
-                          <span className="font-medium">Tool: </span>
-                          {String(tool['name'] ?? tool['tool'] ?? 'unknown')}
-                          {'result' in tool && (
-                            <span className="opacity-70">
-                              {' '}- {String(tool['result']).slice(0, 100)}
-                            </span>
-                          )}
-                        </div>
-                      ))}
+                      {msg.toolInteractions.map((tool, i) => {
+                        const toolName = String(tool['name'] ?? tool['tool'] ?? 'unknown');
+                        const result = 'result' in tool ? String(tool['result']) : '';
+                        const args = tool['args'] as Record<string, unknown> | undefined;
+                        const hasArgs = args && Object.keys(args).length > 0;
+                        const isError = tool['is_error'] === true;
+                        const toolCallId = tool['tool_call_id'] as string | undefined;
+                        const expandKey = `${msg.seq ?? msg.id}-${i}`;
+                        const isExpanded = expandedTools.has(expandKey);
+                        const hasDetails = 'result' in tool || hasArgs;
+
+                        return (
+                          <div
+                            key={i}
+                            className={`rounded text-[13px] ${
+                              msg.role === 'user'
+                                ? 'bg-white/10'
+                                : isError
+                                  ? 'bg-danger/5'
+                                  : 'bg-panel'
+                            }`}
+                          >
+                            <button
+                              type="button"
+                              onClick={() => hasDetails && toggleToolExpand(expandKey)}
+                              aria-expanded={hasDetails ? isExpanded : undefined}
+                              className={`w-full flex items-center gap-1.5 px-2 py-1.5 text-left ${
+                                hasDetails ? 'cursor-pointer' : 'cursor-default'
+                              }`}
+                            >
+                              {hasDetails && (
+                                <svg
+                                  className={`w-3 h-3 shrink-0 transition-transform duration-150 ${
+                                    isExpanded ? 'rotate-90' : ''
+                                  }`}
+                                  fill="none"
+                                  stroke="currentColor"
+                                  viewBox="0 0 24 24"
+                                >
+                                  <path
+                                    strokeLinecap="round"
+                                    strokeLinejoin="round"
+                                    strokeWidth={2}
+                                    d="M9 5l7 7-7 7"
+                                  />
+                                </svg>
+                              )}
+                              <span className="font-medium">{toolName}</span>
+                              {isError && (
+                                <span className="text-[12px] font-medium text-danger">
+                                  Error
+                                </span>
+                              )}
+                              {!isExpanded && result && (
+                                <span className="opacity-50 truncate text-xs">
+                                  {result.length > 80
+                                    ? result.slice(0, 80) + '...'
+                                    : result}
+                                </span>
+                              )}
+                            </button>
+                            {isExpanded && (
+                              <div className="px-2 pb-2 space-y-2">
+                                <div className="font-mono text-[14px] whitespace-pre-wrap max-h-60 overflow-y-auto bg-panel/50 rounded px-2 py-1.5">
+                                  {result || 'No result'}
+                                </div>
+                                {hasArgs && (
+                                  <div>
+                                    <span className="text-xs font-medium opacity-70">
+                                      Args
+                                    </span>
+                                    <pre className="font-mono text-[14px] whitespace-pre-wrap max-h-40 overflow-y-auto bg-panel/50 rounded px-2 py-1.5 mt-0.5">
+                                      {(() => { try { return JSON.stringify(args, null, 2); } catch { return String(args); } })()}
+                                    </pre>
+                                  </div>
+                                )}
+                                {toolCallId && (
+                                  <p className="text-[11px] opacity-40">
+                                    {toolCallId}
+                                  </p>
+                                )}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
 
