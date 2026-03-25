@@ -1132,6 +1132,46 @@ class TestHeartbeatScheduler:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
     @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_skips_inactive_user(
+        self,
+        mock_settings: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """Tick should skip users with is_active=False even if onboarding is complete (#811)."""
+        mock_settings.heartbeat_concurrency = 2
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        db = _db_module.SessionLocal()
+        try:
+            user = User(
+                user_id="hb-inactive-test",
+                phone="+15550001111",
+                onboarding_complete=True,
+                is_active=False,
+                preferred_channel="telegram",
+                channel_identifier="",
+            )
+            db.add(user)
+            db.flush()
+            db.add(
+                ChannelRoute(
+                    user_id=user.id,
+                    channel="telegram",
+                    channel_identifier="inactive-chat-id",
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        scheduler = HeartbeatScheduler()
+        await scheduler.tick()
+
+        mock_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_concurrent_processing(
         self,
         mock_settings: MagicMock,
