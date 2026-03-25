@@ -23,6 +23,7 @@ from typing import Any, Literal, cast
 from any_llm import amessages
 from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.dto import HeartbeatLogEntry
@@ -732,6 +733,61 @@ def _pick_heartbeat_channel(user: User) -> str:
     return get_default_channel().name
 
 
+def resolve_heartbeat_route(
+    user: User,
+    db: Session,
+) -> tuple[str, ChannelRoute] | None:
+    """Pick the best channel for *user* and find a matching route.
+
+    Returns ``(channel_name, route)`` on success, or ``None`` when no
+    pushable route can be found.  The caller supplies an open DB session;
+    this function performs read-only queries.
+
+    Resolution order:
+
+    1. The channel selected by ``_pick_heartbeat_channel`` (preferred or
+       first registered pushable channel).
+    2. If no route exists for that channel, iterate all of the user's
+       routes and return the first one whose channel is pushable and
+       registered.
+    """
+    channel_name = _pick_heartbeat_channel(user)
+
+    route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel_name).first()
+
+    if route is not None:
+        return channel_name, route
+
+    # Fallback: try any other pushable channel route the user has.
+    routes = db.query(ChannelRoute).filter_by(user_id=user.id).all()
+    route_channels = [r.channel for r in routes]
+    logger.debug(
+        "Heartbeat for user %s: no %s route, searching %d route(s): %s",
+        user.id,
+        channel_name,
+        len(routes),
+        route_channels,
+    )
+    for r in routes:
+        if r.channel not in _NON_PUSHABLE_CHANNELS:
+            try:
+                get_channel(r.channel)
+            except KeyError:
+                continue
+            logger.debug(
+                "Heartbeat for user %s: fell back to %s route",
+                user.id,
+                r.channel,
+            )
+            return r.channel, r
+
+    logger.debug(
+        "Heartbeat skipped for user %s: no pushable route configured",
+        user.id,
+    )
+    return None
+
+
 # ---------------------------------------------------------------------------
 # Scheduler
 # ---------------------------------------------------------------------------
@@ -860,58 +916,16 @@ class HeartbeatScheduler:
             """Process a single user."""
             async with semaphore:
                 try:
-                    channel_name = _pick_heartbeat_channel(user)
-
-                    # Look up the channel-specific route for the target
-                    # channel.  A route is required: the user must have
-                    # actually messaged via the channel so we have a
-                    # verified identifier (e.g. Telegram chat ID).
-                    # Without a route the fallback identifiers may belong
-                    # to a different channel and cause send failures.
                     db = SessionLocal()
                     try:
-                        route = (
-                            db.query(ChannelRoute)
-                            .filter_by(user_id=user.id, channel=channel_name)
-                            .first()
-                        )
-
-                        # If no route for the preferred channel, try any
-                        # other pushable channel route the user has.
-                        if route is None:
-                            routes = db.query(ChannelRoute).filter_by(user_id=user.id).all()
-                            route_channels = [r.channel for r in routes]
-                            logger.debug(
-                                "Heartbeat for user %s: no %s route, searching %d route(s): %s",
-                                user.id,
-                                channel_name,
-                                len(routes),
-                                route_channels,
-                            )
-                            for r in routes:
-                                if r.channel not in _NON_PUSHABLE_CHANNELS:
-                                    try:
-                                        get_channel(r.channel)
-                                    except KeyError:
-                                        continue
-                                    route = r
-                                    channel_name = r.channel
-                                    logger.debug(
-                                        "Heartbeat for user %s: fell back to %s route",
-                                        user.id,
-                                        channel_name,
-                                    )
-                                    break
+                        result = resolve_heartbeat_route(user, db)
                     finally:
                         db.close()
 
-                    if route is None:
-                        logger.debug(
-                            "Heartbeat skipped for user %s: no pushable route configured",
-                            user.id,
-                        )
+                    if result is None:
                         return
 
+                    channel_name, route = result
                     max_daily = (
                         user.heartbeat_max_daily
                         if user.heartbeat_max_daily > 0
