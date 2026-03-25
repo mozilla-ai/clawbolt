@@ -728,6 +728,34 @@ def _pick_heartbeat_channel(user: User) -> str:
 # ---------------------------------------------------------------------------
 
 
+def user_interval_minutes(user: User) -> int:
+    """Return the heartbeat interval in minutes for a given user.
+
+    Parses the user's ``heartbeat_frequency`` string (e.g. "30m", "2h"),
+    falling back to the global ``settings.heartbeat_interval_minutes``.
+    """
+    parsed = parse_frequency_to_minutes(user.heartbeat_frequency)
+    if parsed is not None:
+        return parsed
+    return settings.heartbeat_interval_minutes
+
+
+def is_user_due(
+    user: User,
+    now: datetime.datetime,
+    last_tick: dict[str, datetime.datetime],
+) -> bool:
+    """Return True if enough time has elapsed since the last tick for this user.
+
+    ``last_tick`` maps user IDs to the last evaluation timestamp.
+    """
+    last = last_tick.get(user.id)
+    if last is None:
+        return True
+    interval = user_interval_minutes(user)
+    return (now - last).total_seconds() >= interval * 60
+
+
 class HeartbeatScheduler:
     """Manages the periodic heartbeat loop as an asyncio background task.
 
@@ -776,20 +804,14 @@ class HeartbeatScheduler:
                 logger.exception("Heartbeat tick failed")
             await asyncio.sleep(_TICK_RESOLUTION_MINUTES * 60)
 
-    def _user_interval_minutes(self, user: User) -> int:
+    @staticmethod
+    def _user_interval_minutes(user: User) -> int:
         """Return the heartbeat interval in minutes for a given user."""
-        parsed = parse_frequency_to_minutes(user.heartbeat_frequency)
-        if parsed is not None:
-            return parsed
-        return settings.heartbeat_interval_minutes
+        return user_interval_minutes(user)
 
     def _is_user_due(self, user: User, now: datetime.datetime) -> bool:
         """Return True if enough time has elapsed since the last tick for this user."""
-        last = self._last_tick.get(user.id)
-        if last is None:
-            return True
-        interval = self._user_interval_minutes(user)
-        return (now - last).total_seconds() >= interval * 60
+        return is_user_due(user, now, self._last_tick)
 
     async def tick(self) -> None:
         """Single heartbeat pass: evaluate due users concurrently."""
