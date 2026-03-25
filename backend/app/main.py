@@ -190,7 +190,7 @@ app = FastAPI(title="Clawbolt", version="0.1.0", lifespan=lifespan)
 if settings.log_request_timing:
     from backend.app.middleware.request_logging import RequestLoggingMiddleware
 
-    app.add_middleware(RequestLoggingMiddleware)
+    app.add_middleware(RequestLoggingMiddleware)  # ty: ignore[invalid-argument-type]
 
 app.add_middleware(
     CORSMiddleware,  # type: ignore[arg-type]
