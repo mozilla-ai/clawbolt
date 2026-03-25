@@ -86,9 +86,26 @@ async def _send_error_fallback(
 async def _get_or_create_user(channel: str, sender_id: str) -> User:
     """Look up or create a user by channel-specific sender ID.
 
-    In single-tenant (OSS) mode there should be exactly one user shared
-    across all channels.  When a new channel arrives and a user already
-    exists, link the channel to that user instead of creating a duplicate.
+    Handles three distinct scenarios (in order of evaluation):
+
+    1. **Channel route exists** -- the sender has messaged before on this
+       channel.  Return the linked user immediately.  This is the common
+       path for both OSS and premium.
+
+    2. **Single-tenant reuse (OSS only)** -- exactly one user exists and
+       ``settings.premium_plugin`` is not set.  Link the new channel to
+       the existing user so that sessions from every channel are visible
+       in the dashboard.  Skipped in premium mode to prevent cross-tenant
+       linking.
+
+    3. **Sender ID matches an existing user PK (premium only)** -- the
+       webchat sends ``sender_id = user.id`` (the UUID primary key).
+       Link the existing user to this channel and provision defaults.
+       This avoids creating a duplicate account when a premium user
+       first opens the webchat.
+
+    If none of the above match, a new ``User`` and ``ChannelRoute`` are
+    created.  An ``IntegrityError`` race is handled by re-querying.
     """
     from sqlalchemy.exc import IntegrityError
 

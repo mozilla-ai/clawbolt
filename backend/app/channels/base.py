@@ -1,10 +1,30 @@
 """Abstract base class for messaging channels."""
 
 from abc import ABC, abstractmethod
+from collections.abc import Callable
 
 from fastapi import APIRouter
 
 from backend.app.media.download import DownloadedMedia
+
+# Type for the pluggable allowlist override. The callback receives
+# (channel_name, sender_id) and returns True/False. When set, channels
+# delegate to this instead of their static allowlist.
+IsAllowedOverride = Callable[[str, str], bool]
+
+# Module-level override set by premium during plugin initialization.
+_is_allowed_override: IsAllowedOverride | None = None
+
+
+def set_is_allowed_override(fn: IsAllowedOverride) -> None:
+    """Register a global allowlist override (called by the premium plugin)."""
+    global _is_allowed_override
+    _is_allowed_override = fn
+
+
+def get_is_allowed_override() -> IsAllowedOverride | None:
+    """Return the current allowlist override, or None if not set."""
+    return _is_allowed_override
 
 
 class BaseChannel(ABC):
@@ -41,27 +61,16 @@ class BaseChannel(ABC):
         """Return ``True`` if the sender passes the channel's allowlist."""
 
     def _check_premium_route(self, sender_id: str) -> bool | None:
-        """Check for an existing ``ChannelRoute`` in premium mode.
+        """Check if a plugin-level allowlist override handles this sender.
 
-        Returns ``True``/``False`` if a premium plugin is configured,
-        or ``None`` if running in OSS mode (caller should fall through
-        to its own static allowlist logic).
+        Returns ``True``/``False`` if an override is registered (e.g. premium
+        checks ``ChannelRoute`` existence), or ``None`` if no override is set
+        (caller should fall through to its own static allowlist logic).
         """
-        from backend.app.config import settings
-
-        if not settings.premium_plugin:
+        override = _is_allowed_override
+        if override is None:
             return None
-
-        from backend.app.database import db_session
-        from backend.app.models import ChannelRoute
-
-        with db_session() as db:
-            route = (
-                db.query(ChannelRoute)
-                .filter_by(channel=self.name, channel_identifier=sender_id)
-                .first()
-            )
-            return route is not None
+        return override(self.name, sender_id)
 
     # -- Outbound --------------------------------------------------------------
 
