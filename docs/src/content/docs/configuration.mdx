@@ -149,6 +149,7 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APP_BASE_URL` | `http://localhost:8000` | Public URL where the server is reachable, used for OAuth callback URLs |
+| `ENCRYPTION_KEY` | | Encrypts OAuth tokens at rest in the database. Generate with `python -c "import secrets; print(secrets.token_urlsafe(32))"`. Required for production. |
 
 ## QuickBooks Online
 

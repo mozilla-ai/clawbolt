@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import time
 from collections.abc import Generator
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -12,7 +11,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.app.database as _db_module
-from backend.app.agent.file_store import reset_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
 from backend.app.main import app
@@ -31,14 +29,6 @@ from backend.app.services.oauth import (
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
-
-
-@pytest.fixture(autouse=True)
-def _isolate(tmp_path: Path) -> Generator[None]:
-    with patch.object(settings, "data_dir", str(tmp_path)):
-        reset_stores()
-        yield
-    reset_stores()
 
 
 @pytest.fixture()
@@ -157,24 +147,37 @@ def test_token_no_expiry_not_expired() -> None:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests: token persistence
+# Unit tests: token persistence (database-backed)
 # ---------------------------------------------------------------------------
 
 
-def test_save_and_load_token(oauth_svc: OAuthService) -> None:
-    """Saved tokens should be loadable."""
+def test_save_and_load_token(oauth_svc: OAuthService, test_user: User) -> None:
+    """Saved tokens should be loadable from the database."""
     token = OAuthTokenData(
         access_token="at-123",
         refresh_token="rt-456",
         realm_id="realm-1",
         expires_at=time.time() + 3600,
     )
-    oauth_svc.save_token("1", "quickbooks", token)
-    loaded = oauth_svc.load_token("1", "quickbooks")
+    oauth_svc.save_token(test_user.id, "quickbooks", token)
+    loaded = oauth_svc.load_token(test_user.id, "quickbooks")
     assert loaded is not None
     assert loaded.access_token == "at-123"
     assert loaded.refresh_token == "rt-456"
     assert loaded.realm_id == "realm-1"
+
+
+def test_save_token_upsert(oauth_svc: OAuthService, test_user: User) -> None:
+    """Saving a token twice should update the existing row, not create a duplicate."""
+    token1 = OAuthTokenData(access_token="first")
+    oauth_svc.save_token(test_user.id, "quickbooks", token1)
+
+    token2 = OAuthTokenData(access_token="second")
+    oauth_svc.save_token(test_user.id, "quickbooks", token2)
+
+    loaded = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert loaded is not None
+    assert loaded.access_token == "second"
 
 
 def test_load_nonexistent_token(oauth_svc: OAuthService) -> None:
@@ -182,15 +185,15 @@ def test_load_nonexistent_token(oauth_svc: OAuthService) -> None:
     assert oauth_svc.load_token("999", "quickbooks") is None
 
 
-def test_delete_token(oauth_svc: OAuthService) -> None:
-    """Deleting a token should remove the file."""
+def test_delete_token(oauth_svc: OAuthService, test_user: User) -> None:
+    """Deleting a token should remove the row."""
     token = OAuthTokenData(access_token="at")
-    oauth_svc.save_token("1", "quickbooks", token)
-    assert oauth_svc.is_connected("1", "quickbooks") is True
+    oauth_svc.save_token(test_user.id, "quickbooks", token)
+    assert oauth_svc.is_connected(test_user.id, "quickbooks") is True
 
-    deleted = oauth_svc.delete_token("1", "quickbooks")
+    deleted = oauth_svc.delete_token(test_user.id, "quickbooks")
     assert deleted is True
-    assert oauth_svc.is_connected("1", "quickbooks") is False
+    assert oauth_svc.is_connected(test_user.id, "quickbooks") is False
 
 
 def test_delete_nonexistent_token(oauth_svc: OAuthService) -> None:
@@ -198,12 +201,57 @@ def test_delete_nonexistent_token(oauth_svc: OAuthService) -> None:
     assert oauth_svc.delete_token("999", "quickbooks") is False
 
 
-def test_is_connected(oauth_svc: OAuthService) -> None:
-    """is_connected should reflect whether a token file exists."""
-    assert oauth_svc.is_connected("1", "quickbooks") is False
+def test_is_connected(oauth_svc: OAuthService, test_user: User) -> None:
+    """is_connected should reflect whether a token row exists."""
+    assert oauth_svc.is_connected(test_user.id, "quickbooks") is False
     token = OAuthTokenData(access_token="at")
-    oauth_svc.save_token("1", "quickbooks", token)
-    assert oauth_svc.is_connected("1", "quickbooks") is True
+    oauth_svc.save_token(test_user.id, "quickbooks", token)
+    assert oauth_svc.is_connected(test_user.id, "quickbooks") is True
+
+
+def test_scopes_and_extra_round_trip(oauth_svc: OAuthService, test_user: User) -> None:
+    """Scopes and extra dict should survive save/load via JSON serialization."""
+    token = OAuthTokenData(
+        access_token="at",
+        scopes=["scope1", "scope2"],
+        extra={"key": "value"},
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", token)
+    loaded = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert loaded is not None
+    assert loaded.scopes == ["scope1", "scope2"]
+    assert loaded.extra == {"key": "value"}
+
+
+def test_multiple_integrations_per_user(oauth_svc: OAuthService, test_user: User) -> None:
+    """Different integrations for the same user should be independent."""
+    oauth_svc.save_token(test_user.id, "quickbooks", OAuthTokenData(access_token="qb-token"))
+    oauth_svc.save_token(test_user.id, "google_calendar", OAuthTokenData(access_token="gcal-token"))
+
+    qb = oauth_svc.load_token(test_user.id, "quickbooks")
+    gcal = oauth_svc.load_token(test_user.id, "google_calendar")
+    assert qb is not None and qb.access_token == "qb-token"
+    assert gcal is not None and gcal.access_token == "gcal-token"
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: encryption round-trip
+# ---------------------------------------------------------------------------
+
+
+def test_encrypted_token_round_trip(oauth_svc: OAuthService, test_user: User) -> None:
+    """Tokens should survive save/load with encryption enabled."""
+    with patch.object(settings, "encryption_key", "test-key-at-least-16-chars!!"):
+        token = OAuthTokenData(
+            access_token="secret-access",
+            refresh_token="secret-refresh",
+        )
+        oauth_svc.save_token(test_user.id, "quickbooks", token)
+        loaded = oauth_svc.load_token(test_user.id, "quickbooks")
+
+    assert loaded is not None
+    assert loaded.access_token == "secret-access"
+    assert loaded.refresh_token == "secret-refresh"
 
 
 # ---------------------------------------------------------------------------
@@ -283,10 +331,10 @@ async def test_handle_callback_invalid_state(oauth_svc: OAuthService) -> None:
 
 @pytest.mark.asyncio()
 async def test_handle_callback_exchanges_code(
-    oauth_svc: OAuthService, qb_config: OAuthConfig
+    oauth_svc: OAuthService, qb_config: OAuthConfig, test_user: User
 ) -> None:
     """Successful callback should exchange code and store token."""
-    url = oauth_svc.get_authorization_url(qb_config, user_id="1")
+    url = oauth_svc.get_authorization_url(qb_config, user_id=test_user.id)
     import urllib.parse
 
     state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]
@@ -318,8 +366,8 @@ async def test_handle_callback_exchanges_code(
     assert token.refresh_token == "new-refresh-token"
     assert token.realm_id == "realm-1"
 
-    # Should be persisted
-    loaded = oauth_svc.load_token("1", "quickbooks")
+    # Should be persisted in DB
+    loaded = oauth_svc.load_token(test_user.id, "quickbooks")
     assert loaded is not None
     assert loaded.access_token == "new-access-token"
 
@@ -439,7 +487,7 @@ def test_pkce_params_present_when_enabled(
 
 @pytest.mark.asyncio()
 async def test_code_verifier_omitted_when_pkce_disabled(
-    oauth_svc: OAuthService,
+    oauth_svc: OAuthService, test_user: User
 ) -> None:
     """Token exchange should not include code_verifier when use_pkce=False."""
     config = OAuthConfig(
@@ -452,7 +500,7 @@ async def test_code_verifier_omitted_when_pkce_disabled(
         use_pkce=False,
     )
 
-    url = oauth_svc.get_authorization_url(config, user_id="1")
+    url = oauth_svc.get_authorization_url(config, user_id=test_user.id)
     import urllib.parse
 
     state = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["state"][0]

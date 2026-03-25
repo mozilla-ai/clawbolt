@@ -1,5 +1,7 @@
 """SQLAlchemy ORM models for clawbolt."""
 
+import base64
+import logging
 import uuid as _uuid
 from collections.abc import Callable
 from datetime import UTC, datetime
@@ -8,6 +10,7 @@ from decimal import Decimal
 from sqlalchemy import (
     Boolean,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     Numeric,
@@ -16,9 +19,67 @@ from sqlalchemy import (
     UniqueConstraint,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.types import TypeDecorator
 
 from .config import settings
 from .database import Base
+
+_logger = logging.getLogger(__name__)
+
+
+class EncryptedString(TypeDecorator):
+    """Transparently encrypts/decrypts string values using Fernet.
+
+    When ``encryption_key`` is set in settings, values are encrypted before
+    storage and decrypted on retrieval. When the key is empty (local dev),
+    values pass through as plaintext with a logged warning on first use.
+    """
+
+    impl = Text
+    cache_ok = True
+
+    _warned_no_key = False
+
+    def _get_fernet(self):  # noqa: ANN202
+        key = settings.encryption_key
+        if not key:
+            if not EncryptedString._warned_no_key:
+                _logger.warning("encryption_key not set; OAuth tokens stored unencrypted")
+                EncryptedString._warned_no_key = True
+            return None
+
+        from cryptography.fernet import Fernet
+        from cryptography.hazmat.primitives import hashes
+        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+
+        hkdf = HKDF(
+            algorithm=hashes.SHA256(),
+            length=32,
+            salt=None,
+            info=b"oauth-token-encryption",
+        )
+        derived = hkdf.derive(key.encode())
+        return Fernet(base64.urlsafe_b64encode(derived))
+
+    def process_bind_param(self, value, dialect):  # noqa: ANN001, ANN201
+        if value is None:
+            return value
+        fernet = self._get_fernet()
+        if fernet is None:
+            return value
+        return fernet.encrypt(value.encode()).decode()
+
+    def process_result_value(self, value, dialect):  # noqa: ANN001, ANN201
+        if value is None:
+            return value
+        fernet = self._get_fernet()
+        if fernet is None:
+            return value
+        try:
+            return fernet.decrypt(value.encode()).decode()
+        except Exception:
+            # Value may be plaintext (stored before encryption was enabled).
+            return value
 
 
 class User(Base):
@@ -120,6 +181,9 @@ class User(Base):
     )
     calendar_configs: Mapped[list["CalendarConfig"]] = relationship(
         "CalendarConfig", back_populates="user", cascade="all, delete-orphan"
+    )
+    oauth_tokens: Mapped[list["OAuthToken"]] = relationship(
+        "OAuthToken", back_populates="user", cascade="all, delete-orphan"
     )
 
 
@@ -317,3 +381,39 @@ class ToolConfig(Base):
     disabled_sub_tools: Mapped[str] = mapped_column(Text, default="")
 
     user: Mapped["User"] = relationship("User", back_populates="tool_configs")
+
+
+class OAuthToken(Base):
+    """Persisted OAuth token for a user-integration pair.
+
+    Sensitive fields (access_token, refresh_token) are encrypted at rest
+    via the ``EncryptedString`` type when ``ENCRYPTION_KEY`` is configured.
+    """
+
+    __tablename__ = "oauth_tokens"
+    __table_args__ = (
+        UniqueConstraint("user_id", "integration", name="uq_oauth_token_user_integration"),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    integration: Mapped[str] = mapped_column(String, nullable=False)
+    access_token: Mapped[str] = mapped_column(EncryptedString(), default="")
+    refresh_token: Mapped[str] = mapped_column(EncryptedString(), default="")
+    token_type: Mapped[str] = mapped_column(String, default="Bearer")
+    expires_at: Mapped[float] = mapped_column(Float, default=0.0)
+    scopes_json: Mapped[str] = mapped_column(Text, default="[]")
+    realm_id: Mapped[str] = mapped_column(String, default="")
+    extra_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="oauth_tokens")

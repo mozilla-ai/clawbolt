@@ -1,8 +1,8 @@
 """Generic OAuth 2.0 service with PKCE support.
 
 Handles authorization URL generation, callback processing, token storage,
-and automatic token refresh. Tokens are stored as JSON files in the user's
-data directory, consistent with Clawbolt's file-based storage pattern.
+and automatic token refresh. Tokens are persisted in PostgreSQL (oauth_tokens
+table) with encrypted access/refresh token columns.
 """
 
 from __future__ import annotations
@@ -14,12 +14,13 @@ import logging
 import secrets
 import time
 from dataclasses import dataclass, field
-from pathlib import Path
 from typing import Any
 
 import httpx
+from sqlalchemy import select
 
 from backend.app.config import settings
+from backend.app.database import db_session
 
 logger = logging.getLogger(__name__)
 
@@ -109,17 +110,11 @@ def _generate_pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
-def _oauth_token_path(user_id: str, integration: str) -> Path:
-    """Return the file path for storing an OAuth token."""
-    return Path(settings.data_dir) / str(user_id) / "oauth" / f"{integration}.json"
-
-
 class OAuthService:
     """Manages OAuth flows and token lifecycle.
 
-    State is held in memory (pending authorization flows) and on disk
-    (persisted tokens). This matches Clawbolt's single-process, file-based
-    storage architecture.
+    State is held in memory (pending authorization flows) and in PostgreSQL
+    (persisted tokens via the oauth_tokens table).
     """
 
     def __init__(self) -> None:
@@ -243,7 +238,7 @@ class OAuthService:
             scopes=scopes,
         )
 
-    # -- Token persistence (file-based) ----------------------------------------
+    # -- Token persistence (database-backed) ------------------------------------
 
     def save_token(
         self,
@@ -251,42 +246,104 @@ class OAuthService:
         integration: str,
         token: OAuthTokenData,
     ) -> None:
-        """Persist token data to the user's data directory."""
-        path = _oauth_token_path(user_id, integration)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(json.dumps(token.to_dict(), indent=2) + "\n", encoding="utf-8")
+        """Persist token data to the oauth_tokens table (upsert)."""
+        from backend.app.models import OAuthToken
+
+        with db_session() as db:
+            row = db.execute(
+                select(OAuthToken).where(
+                    OAuthToken.user_id == user_id,
+                    OAuthToken.integration == integration,
+                )
+            ).scalar_one_or_none()
+
+            if row is None:
+                row = OAuthToken(user_id=user_id, integration=integration)
+                db.add(row)
+
+            row.access_token = token.access_token
+            row.refresh_token = token.refresh_token
+            row.token_type = token.token_type
+            row.expires_at = token.expires_at
+            row.scopes_json = json.dumps(token.scopes)
+            row.realm_id = token.realm_id
+            row.extra_json = json.dumps(token.extra)
+            db.commit()
 
     def load_token(
         self,
         user_id: str,
         integration: str,
     ) -> OAuthTokenData | None:
-        """Load token data from the user's data directory."""
-        path = _oauth_token_path(user_id, integration)
-        if not path.is_file():
-            return None
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-            return OAuthTokenData.from_dict(data)
-        except (json.JSONDecodeError, OSError) as exc:
-            logger.warning("Failed to load OAuth token for %s: %s", integration, exc)
-            return None
+        """Load token data from the oauth_tokens table."""
+        from backend.app.models import OAuthToken
+
+        with db_session() as db:
+            row = db.execute(
+                select(OAuthToken).where(
+                    OAuthToken.user_id == user_id,
+                    OAuthToken.integration == integration,
+                )
+            ).scalar_one_or_none()
+
+            if row is None:
+                return None
+
+            try:
+                scopes = json.loads(row.scopes_json) if row.scopes_json else []
+            except json.JSONDecodeError:
+                scopes = []
+
+            try:
+                extra = json.loads(row.extra_json) if row.extra_json else {}
+            except json.JSONDecodeError:
+                extra = {}
+
+            return OAuthTokenData(
+                access_token=row.access_token,
+                refresh_token=row.refresh_token,
+                token_type=row.token_type,
+                expires_at=row.expires_at,
+                scopes=scopes,
+                realm_id=row.realm_id,
+                extra=extra,
+            )
 
     def delete_token(
         self,
         user_id: str,
         integration: str,
     ) -> bool:
-        """Remove stored token data."""
-        path = _oauth_token_path(user_id, integration)
-        if path.is_file():
-            path.unlink()
+        """Remove a stored token row."""
+        from backend.app.models import OAuthToken
+
+        with db_session() as db:
+            row = db.execute(
+                select(OAuthToken).where(
+                    OAuthToken.user_id == user_id,
+                    OAuthToken.integration == integration,
+                )
+            ).scalar_one_or_none()
+
+            if row is None:
+                return False
+
+            db.delete(row)
+            db.commit()
             return True
-        return False
 
     def is_connected(self, user_id: str, integration: str) -> bool:
-        """Check if a token file exists (no refresh check)."""
-        return _oauth_token_path(user_id, integration).is_file()
+        """Check if a token row exists for this user/integration."""
+        from backend.app.models import OAuthToken
+
+        with db_session() as db:
+            row = db.execute(
+                select(OAuthToken.id).where(
+                    OAuthToken.user_id == user_id,
+                    OAuthToken.integration == integration,
+                )
+            ).scalar_one_or_none()
+            return row is not None
 
     # -- State management helpers ----------------------------------------------
 
