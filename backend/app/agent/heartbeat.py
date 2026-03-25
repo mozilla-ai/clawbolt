@@ -801,7 +801,7 @@ class HeartbeatScheduler:
                 db.expunge(u)
         finally:
             db.close()
-        users = [c for c in all_users if c.onboarding_complete]
+        users = [c for c in all_users if c.onboarding_complete and c.is_active]
 
         if not users:
             logger.debug("Heartbeat tick: no onboarded users found")
