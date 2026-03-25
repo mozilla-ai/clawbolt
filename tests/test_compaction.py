@@ -22,6 +22,7 @@ from backend.app.agent.file_store import SessionState, StoredMessage, UserData
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.stores import HeartbeatStore
 from backend.app.enums import MessageDirection
 from backend.app.models import User
 from tests.mocks.llm import make_text_response
@@ -272,6 +273,141 @@ async def test_compact_session_user_profile_in_separate_xml_section(
     system_prompt = call_kwargs.kwargs.get("system", "")
     assert "<user_profile>" in system_prompt
     assert "<current_memory>" in system_prompt
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_includes_soul_and_heartbeat(
+    test_user: UserData,
+) -> None:
+    """compact_session should pass soul and heartbeat text to the LLM in XML tags."""
+    store = get_memory_store(test_user.id)
+    store.write_memory("## Clients\n- Alice: 555-0100")
+    store.write_soul("You are a friendly assistant for trades professionals.")
+
+    heartbeat_store = HeartbeatStore(test_user.id)
+    await heartbeat_store.write_heartbeat_md("- Follow up with Bob about the deck estimate")
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": "## Clients\n- Alice: 555-0100", "summary": ""})
+    )
+
+    messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+        await compact_session(test_user.id, messages)
+
+    call_kwargs = mock_llm.call_args
+    assert call_kwargs is not None
+    user_content = call_kwargs.kwargs["messages"][0]["content"]
+
+    assert "<soul>" in user_content
+    assert "</soul>" in user_content
+    assert "friendly assistant for trades professionals" in user_content
+
+    assert "<heartbeat>" in user_content
+    assert "</heartbeat>" in user_content
+    assert "Follow up with Bob about the deck estimate" in user_content
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_soul_in_separate_xml_section(
+    test_user: UserData,
+) -> None:
+    """Regression: soul content must be in <soul>, not in <current_memory>."""
+    store = get_memory_store(test_user.id)
+    store.write_memory("## Clients\n- Bob: 555-0100")
+    store.write_soul("You are a helpful construction assistant.")
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": "## Clients\n- Bob: 555-0100", "summary": ""})
+    )
+
+    messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+        await compact_session(test_user.id, messages)
+
+    call_kwargs = mock_llm.call_args
+    assert call_kwargs is not None
+    user_content = call_kwargs.kwargs["messages"][0]["content"]
+
+    # Soul content must be inside <soul> tags
+    soul_start = user_content.index("<soul>")
+    soul_end = user_content.index("</soul>")
+    soul_section = user_content[soul_start:soul_end]
+    assert "helpful construction assistant" in soul_section
+
+    # Soul content must NOT appear in the memory section
+    mem_start = user_content.index("<current_memory>")
+    mem_end = user_content.index("</current_memory>")
+    memory_section = user_content[mem_start:mem_end]
+    assert "helpful construction assistant" not in memory_section
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_heartbeat_in_separate_xml_section(
+    test_user: UserData,
+) -> None:
+    """Regression: heartbeat content must be in <heartbeat>, not in <current_memory>."""
+    store = get_memory_store(test_user.id)
+    store.write_memory("## Facts\n- Rate: $50/hr")
+
+    heartbeat_store = HeartbeatStore(test_user.id)
+    await heartbeat_store.write_heartbeat_md("- Call supplier about lumber delivery")
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": "## Facts\n- Rate: $50/hr", "summary": ""})
+    )
+
+    messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+        await compact_session(test_user.id, messages)
+
+    call_kwargs = mock_llm.call_args
+    assert call_kwargs is not None
+    user_content = call_kwargs.kwargs["messages"][0]["content"]
+
+    # Heartbeat content must be inside <heartbeat> tags
+    hb_start = user_content.index("<heartbeat>")
+    hb_end = user_content.index("</heartbeat>")
+    heartbeat_section = user_content[hb_start:hb_end]
+    assert "Call supplier about lumber delivery" in heartbeat_section
+
+    # Heartbeat content must NOT appear in the memory section
+    mem_start = user_content.index("<current_memory>")
+    mem_end = user_content.index("</current_memory>")
+    memory_section = user_content[mem_start:mem_end]
+    assert "Call supplier about lumber delivery" not in memory_section
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_empty_soul_and_heartbeat(
+    test_user: UserData,
+) -> None:
+    """When soul and heartbeat are unset, their XML sections should show '(empty)'."""
+    mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
+
+    messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+        await compact_session(test_user.id, messages)
+
+    call_kwargs = mock_llm.call_args
+    assert call_kwargs is not None
+    user_content = call_kwargs.kwargs["messages"][0]["content"]
+
+    # Soul section should have (empty) placeholder
+    soul_start = user_content.index("<soul>")
+    soul_end = user_content.index("</soul>")
+    soul_section = user_content[soul_start:soul_end]
+    assert "(empty)" in soul_section
+
+    # Heartbeat section should have (empty) placeholder
+    hb_start = user_content.index("<heartbeat>")
+    hb_end = user_content.index("</heartbeat>")
+    heartbeat_section = user_content[hb_start:hb_end]
+    assert "(empty)" in heartbeat_section
 
 
 @pytest.mark.asyncio()
