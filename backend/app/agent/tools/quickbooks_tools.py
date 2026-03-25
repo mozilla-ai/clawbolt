@@ -49,6 +49,24 @@ _QUERYABLE_ENTITIES = {
     "JOURNALENTRY",
 }
 
+# Human-readable labels for queryable entities.
+_ENTITY_LABELS: dict[str, str] = {
+    "INVOICE": "invoices",
+    "ESTIMATE": "estimates",
+    "CUSTOMER": "customers",
+    "ITEM": "items",
+    "PAYMENT": "payments",
+    "BILL": "bills",
+    "VENDOR": "vendors",
+    "SALESRECEIPT": "sales receipts",
+    "CREDITMEMO": "credit memos",
+    "PURCHASEORDER": "purchase orders",
+    "TIMEACTIVITY": "time entries",
+    "DEPOSIT": "deposits",
+    "TRANSFER": "transfers",
+    "JOURNALENTRY": "journal entries",
+}
+
 # Entity types that qb_create is allowed to create.
 _CREATABLE_ENTITIES = {"Customer", "Estimate", "Invoice"}
 
@@ -178,6 +196,17 @@ def _extract_query_entity(args: dict[str, Any]) -> str | None:
     query = str(args.get("query", ""))
     match = re.search(r"\bFROM\s+(\w+)", query, re.IGNORECASE)
     return match.group(1) if match else None
+
+
+def _describe_qb_query(args: dict[str, Any]) -> str:
+    """Build a human-readable description for a QuickBooks query."""
+    query = str(args.get("query", ""))
+    match = re.search(r"\bFROM\s+(\w+)", query, re.IGNORECASE)
+    if not match:
+        return "Look up data in QuickBooks"
+    entity = match.group(1).upper()
+    label = _ENTITY_LABELS.get(entity, match.group(1).lower() + "s")
+    return f"Look up {label} in QuickBooks"
 
 
 def _extract_entity_type(args: dict[str, Any]) -> str | None:
@@ -365,9 +394,7 @@ def create_quickbooks_tools(
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 resource_extractor=_extract_query_entity,
-                description_builder=lambda args: (
-                    f"Query QuickBooks: {str(args.get('query', ''))[:60]}"
-                ),
+                description_builder=_describe_qb_query,
             ),
         ),
         Tool(

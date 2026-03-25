@@ -141,10 +141,12 @@ def format_plan_message(
     if not ask_steps:
         return ""
 
+    _reply_line = "Reply yes or no (always/never to remember your choice)"
+
     # Single ask, no auto: simple prompt
     if len(ask_steps) == 1 and not auto_steps:
         desc = ask_steps[0].description
-        return f"{desc}\n\nReply: yes | no | always | never"
+        return f"{desc}\n\n{_reply_line}"
 
     # Single ask with auto steps: compact format
     if len(ask_steps) == 1:
@@ -154,7 +156,7 @@ def format_plan_message(
             f"{plan_description}\n"
             f"I'll {auto_desc.lower()} [auto]. "
             f"{ask_desc} [needs OK]\n\n"
-            "Reply: yes | no | always | never"
+            f"{_reply_line}"
         )
 
     # Multiple ask steps: full numbered plan
@@ -172,7 +174,7 @@ def format_plan_message(
         lines.append(f"  {step_num}. [needs OK] {step.description}")
 
     lines.append("")
-    lines.append("Reply: yes | no | always | never")
+    lines.append(_reply_line)
     return "\n".join(lines)
 
 
@@ -374,11 +376,7 @@ def _parse_approval_response(text: str) -> ApprovalDecision | None:
 
 def _format_approval_message(tool_name: str, description: str) -> str:
     """Build a plain-text approval prompt for the user."""
-    return (
-        f"The assistant wants to use the tool '{tool_name}':\n"
-        f"{description}\n\n"
-        "Reply: yes | no | always | never"
-    )
+    return f"I'd like to: {description}\n\nReply yes or no (always/never to remember your choice)"
 
 
 # ---------------------------------------------------------------------------

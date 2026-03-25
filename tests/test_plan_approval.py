@@ -480,12 +480,12 @@ class TestBatchApproval:
         approval_msgs = []
         for call in mock_publish.call_args_list:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
-            if isinstance(msg, OutboundMessage) and "Reply:" in msg.content:
+            if isinstance(msg, OutboundMessage) and "Reply yes or no" in msg.content:
                 approval_msgs.append(msg.content)
 
         assert len(approval_msgs) == 1
-        # "Reply:" should appear exactly once (not double-wrapped)
-        assert approval_msgs[0].count("Reply:") == 1
+        # "Reply yes or no" should appear exactly once (not double-wrapped)
+        assert approval_msgs[0].count("Reply yes or no") == 1
         # Should not contain the _format_approval_message wrapper
         assert "wants to use the tool" not in approval_msgs[0]
 

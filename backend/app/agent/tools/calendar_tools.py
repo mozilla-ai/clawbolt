@@ -485,7 +485,9 @@ def create_calendar_tools(
                 default_level=PermissionLevel.ASK,
                 resource_extractor=lambda args: f"update {args.get('event_id', '')}",
                 description_builder=lambda args: (
-                    f"Update calendar event {args.get('event_id', '')}"
+                    f"Update calendar event: {args['title']}"
+                    if args.get("title")
+                    else "Update a calendar event"
                 ),
             ),
         ),
@@ -501,9 +503,7 @@ def create_calendar_tools(
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 resource_extractor=lambda args: f"delete {args.get('event_id', '')}",
-                description_builder=lambda args: (
-                    f"Delete calendar event {args.get('event_id', '')}"
-                ),
+                description_builder=lambda args: "Delete a calendar event",
             ),
         ),
         Tool(

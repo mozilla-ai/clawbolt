@@ -71,7 +71,7 @@ class TestMessagingToolPolicies:
         desc = tool.approval_policy.description_builder(
             {"message": "hi", "media_url": "https://example.com/file.pdf"}
         )
-        assert "example.com/file.pdf" in desc
+        assert desc == "Send a file attachment"
 
 
 class TestHeartbeatToolPolicies:

@@ -98,7 +98,7 @@ def create_messaging_tools(
             usage_hint=("When sending estimates or files, use this to send media to the user."),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
-                description_builder=lambda args: f"Send media: {args.get('media_url', 'file')}",
+                description_builder=lambda args: "Send a file attachment",
             ),
         ),
     ]

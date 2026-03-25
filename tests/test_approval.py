@@ -159,12 +159,13 @@ class TestParseApprovalResponse:
 class TestFormatApprovalMessage:
     def test_output_format(self) -> None:
         msg = _format_approval_message("web_fetch", "fetch content from https://example.com")
-        assert "web_fetch" in msg
         assert "fetch content from https://example.com" in msg
         assert "yes" in msg
         assert "no" in msg
         assert "always" in msg
         assert "never" in msg
+        # Tool name should NOT appear in the user-facing message
+        assert "web_fetch" not in msg
 
 
 # ---------------------------------------------------------------------------
