@@ -224,7 +224,13 @@ async def update_model_config(
     body: ModelConfigUpdate,
     _current_user: User = Depends(get_current_user),
 ) -> ModelConfigResponse:
-    """Update server-level LLM model configuration."""
+    """Update server-level LLM model configuration.
+
+    NOTE: In single-tenant (OSS) mode, all authenticated users are
+    effectively admins and can modify these settings. The premium layer
+    adds role-based guards via AdminConfigGuardMiddleware to restrict
+    this to admin users only.
+    """
     updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
