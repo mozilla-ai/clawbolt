@@ -305,6 +305,11 @@ export interface paths {
         /**
          * Update Model Config
          * @description Update server-level LLM model configuration.
+         *
+         *     NOTE: In single-tenant (OSS) mode, all authenticated users are
+         *     effectively admins and can modify these settings. The premium layer
+         *     adds role-based guards via AdminConfigGuardMiddleware to restrict
+         *     this to admin users only.
          */
         put: operations["update_model_config_api_user_model_config_put"];
         post?: never;

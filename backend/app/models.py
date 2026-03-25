@@ -22,6 +22,26 @@ from .database import Base
 
 
 class User(Base):
+    """A Clawbolt user.
+
+    **Dual channel identity system:**
+
+    Channel identity lives in two places that serve different purposes:
+
+    * ``ChannelRoute`` (separate table) -- authoritative mapping of
+      ``(channel, channel_identifier)`` to a user.  Used for inbound
+      routing and allowlist checks.  Supports multiple channels per user.
+
+    * ``User.channel_identifier`` / ``User.preferred_channel`` -- cached
+      shortcut to the user's most-recently-used channel.  Used by
+      heartbeat and proactive messaging to quickly determine where to
+      deliver messages without joining through ``ChannelRoute``.
+
+    Both are kept in sync by ``_get_or_create_user()`` in ingestion.py.
+    When they diverge, ``ChannelRoute`` is authoritative for routing and
+    the User-level fields are authoritative for "default delivery channel".
+    """
+
     __tablename__ = "users"
 
     id: Mapped[str] = mapped_column(String, primary_key=True, default=lambda: str(_uuid.uuid4()))

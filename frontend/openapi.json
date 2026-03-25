@@ -536,7 +536,7 @@
       },
       "put": {
         "summary": "Update Model Config",
-        "description": "Update server-level LLM model configuration.",
+        "description": "Update server-level LLM model configuration.\n\nNOTE: In single-tenant (OSS) mode, all authenticated users are\neffectively admins and can modify these settings. The premium layer\nadds role-based guards via AdminConfigGuardMiddleware to restrict\nthis to admin users only.",
         "operationId": "update_model_config_api_user_model_config_put",
         "requestBody": {
           "content": {
