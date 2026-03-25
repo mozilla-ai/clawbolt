@@ -115,15 +115,19 @@ async def compact_session(
     current_memory = memory_store.read_memory()
     current_user_profile = memory_store.read_user()
 
-    user_prompt_parts = []
-    user_prompt_parts.append("## Current Long-term Memory")
-    user_prompt_parts.append(current_memory or "(empty)")
-    user_prompt_parts.append("")
-    user_prompt_parts.append("## User Profile (USER.md)")
-    user_prompt_parts.append(current_user_profile or "(empty)")
-    user_prompt_parts.append("")
-    user_prompt_parts.append("## Conversation to Process")
-    user_prompt_parts.append(conversation_text)
+    user_prompt_parts = [
+        "<current_memory>",
+        current_memory or "(empty)",
+        "</current_memory>",
+        "",
+        "<user_profile>",
+        current_user_profile or "(empty)",
+        "</user_profile>",
+        "",
+        "<conversation>",
+        conversation_text,
+        "</conversation>",
+    ]
 
     model = settings.compaction_model or settings.llm_model
     provider = settings.compaction_provider or settings.llm_provider
