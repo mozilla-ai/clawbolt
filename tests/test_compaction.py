@@ -210,13 +210,68 @@ async def test_compact_session_includes_current_memory_and_user(
     with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
         await compact_session(test_user.id, messages)
 
-    # Verify the LLM received current memory and user profile
+    # Verify the LLM received current memory and user profile in XML-tagged sections
     call_kwargs = mock_llm.call_args
     assert call_kwargs is not None
     user_content = call_kwargs.kwargs["messages"][0]["content"]
     assert "Old fact: still relevant" in user_content
     assert "Nathan" in user_content
     assert "General contractor" in user_content
+    # Verify XML tags are used to separate sections (prevents user profile leaking)
+    assert "<current_memory>" in user_content
+    assert "</current_memory>" in user_content
+    assert "<user_profile>" in user_content
+    assert "</user_profile>" in user_content
+    assert "<conversation>" in user_content
+    assert "</conversation>" in user_content
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_user_profile_in_separate_xml_section(
+    test_user: UserData,
+) -> None:
+    """Regression test for #823: user profile must be in a distinct <user_profile>
+    section so the LLM does not merge it into memory_update."""
+    store = get_memory_store(test_user.id)
+    store.write_memory("## Clients\n- Bob: 555-0100")
+    store.write_user("- Name: Nathan\n- Trade: General contractor\n- Location: Portland")
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": "## Clients\n- Bob: 555-0100", "summary": ""})
+    )
+
+    messages: list[AgentMessage] = [UserMessage(content="Just chatting")]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
+        await compact_session(test_user.id, messages)
+
+    call_kwargs = mock_llm.call_args
+    assert call_kwargs is not None
+    user_content = call_kwargs.kwargs["messages"][0]["content"]
+
+    # Memory content must be inside <current_memory> tags
+    mem_start = user_content.index("<current_memory>")
+    mem_end = user_content.index("</current_memory>")
+    memory_section = user_content[mem_start:mem_end]
+    assert "Bob: 555-0100" in memory_section
+
+    # User profile must be inside <user_profile> tags, NOT in <current_memory>
+    prof_start = user_content.index("<user_profile>")
+    prof_end = user_content.index("</user_profile>")
+    profile_section = user_content[prof_start:prof_end]
+    assert "Nathan" in profile_section
+    assert "General contractor" in profile_section
+    assert "Portland" in profile_section
+
+    # User profile content must NOT appear in the memory section
+    assert "Nathan" not in memory_section
+    assert "General contractor" not in memory_section
+    assert "Portland" not in memory_section
+
+    # System prompt should reference XML structure
+    system_prompt = call_kwargs.kwargs.get("system", "")
+    assert "<user_profile>" in system_prompt
+    assert "<current_memory>" in system_prompt
 
 
 @pytest.mark.asyncio()
