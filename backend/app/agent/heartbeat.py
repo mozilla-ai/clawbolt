@@ -698,9 +698,18 @@ def _pick_heartbeat_channel(user: User) -> str:
     if preferred not in _NON_PUSHABLE_CHANNELS:
         try:
             get_channel(preferred)
+            logger.debug(
+                "Heartbeat for user %s: using preferred channel %r",
+                user.id,
+                preferred,
+            )
             return preferred
         except KeyError:
-            pass
+            logger.debug(
+                "Heartbeat for user %s: preferred channel %r not registered, searching fallbacks",
+                user.id,
+                preferred,
+            )
 
     # Preferred channel is non-pushable or not registered: find the
     # first registered channel that can deliver proactive messages.
@@ -866,14 +875,40 @@ class HeartbeatScheduler:
                             .filter_by(user_id=user.id, channel=channel_name)
                             .first()
                         )
+
+                        # If no route for the preferred channel, try any
+                        # other pushable channel route the user has.
+                        if route is None:
+                            routes = db.query(ChannelRoute).filter_by(user_id=user.id).all()
+                            route_channels = [r.channel for r in routes]
+                            logger.debug(
+                                "Heartbeat for user %s: no %s route, searching %d route(s): %s",
+                                user.id,
+                                channel_name,
+                                len(routes),
+                                route_channels,
+                            )
+                            for r in routes:
+                                if r.channel not in _NON_PUSHABLE_CHANNELS:
+                                    try:
+                                        get_channel(r.channel)
+                                    except KeyError:
+                                        continue
+                                    route = r
+                                    channel_name = r.channel
+                                    logger.debug(
+                                        "Heartbeat for user %s: fell back to %s route",
+                                        user.id,
+                                        channel_name,
+                                    )
+                                    break
                     finally:
                         db.close()
 
                     if route is None:
                         logger.debug(
-                            "Heartbeat skipped for user %s: no %s route configured",
+                            "Heartbeat skipped for user %s: no pushable route configured",
                             user.id,
-                            channel_name,
                         )
                         return
 
