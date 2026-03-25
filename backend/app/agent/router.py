@@ -543,6 +543,35 @@ def get_active_pipeline() -> list[PipelineStep]:
     return _pipeline_override if _pipeline_override is not None else DEFAULT_PIPELINE
 
 
+def build_pipeline(
+    *,
+    replace: dict[PipelineStep, PipelineStep] | None = None,
+    insert_before: dict[PipelineStep, list[PipelineStep]] | None = None,
+    insert_after: dict[PipelineStep, list[PipelineStep]] | None = None,
+) -> list[PipelineStep]:
+    """Build a pipeline by modifying ``DEFAULT_PIPELINE``.
+
+    This allows plugins (e.g. premium) to define their pipeline relative
+    to the OSS default instead of hardcoding the full list.
+
+    * ``replace``: swap one step for another
+    * ``insert_before``: inject steps immediately before a given step
+    * ``insert_after``: inject steps immediately after a given step
+    """
+    replace = replace or {}
+    insert_before = insert_before or {}
+    insert_after = insert_after or {}
+
+    result: list[PipelineStep] = []
+    for step in DEFAULT_PIPELINE:
+        if step in insert_before:
+            result.extend(insert_before[step])
+        result.append(replace.get(step, step))
+        if step in insert_after:
+            result.extend(insert_after[step])
+    return result
+
+
 # ---------------------------------------------------------------------------
 # Orchestrator
 # ---------------------------------------------------------------------------

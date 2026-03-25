@@ -11,6 +11,7 @@ from backend.app.agent.router import (
     PipelineContext,
     PipelineStep,
     build_context_step,
+    build_pipeline,
     dispatch_reply_step,
     finalize_onboarding_step,
     load_history_step,
@@ -250,3 +251,78 @@ async def test_prepare_media_step_preserves_pre_downloaded_media() -> None:
 
     assert len(result.downloaded_media) == 1
     assert result.downloaded_media[0] is pre_downloaded
+
+
+# ---------------------------------------------------------------------------
+# build_pipeline() tests
+# ---------------------------------------------------------------------------
+
+
+async def _noop_step(ctx: PipelineContext) -> PipelineContext:
+    return ctx
+
+
+def test_build_pipeline_no_modifications() -> None:
+    """build_pipeline() with no args returns a copy of DEFAULT_PIPELINE."""
+    result = build_pipeline()
+    assert result == DEFAULT_PIPELINE
+    assert result is not DEFAULT_PIPELINE
+
+
+def test_build_pipeline_replace() -> None:
+    """build_pipeline(replace=...) should swap a step."""
+    result = build_pipeline(replace={run_agent_step: _noop_step})
+    assert _noop_step in result
+    assert run_agent_step not in result
+    assert len(result) == len(DEFAULT_PIPELINE)
+
+
+def test_build_pipeline_insert_before() -> None:
+    """build_pipeline(insert_before=...) should inject steps before a target."""
+    result = build_pipeline(insert_before={run_agent_step: [_noop_step]})
+    idx_noop = result.index(_noop_step)
+    idx_agent = result.index(run_agent_step)
+    assert idx_noop == idx_agent - 1
+    assert len(result) == len(DEFAULT_PIPELINE) + 1
+
+
+def test_build_pipeline_insert_after() -> None:
+    """build_pipeline(insert_after=...) should inject steps after a target."""
+    result = build_pipeline(insert_after={persist_outbound_step: [_noop_step]})
+    idx_persist = result.index(persist_outbound_step)
+    idx_noop = result.index(_noop_step)
+    assert idx_noop == idx_persist + 1
+    assert len(result) == len(DEFAULT_PIPELINE) + 1
+
+
+def test_build_pipeline_combined() -> None:
+    """build_pipeline with replace + insert_before + insert_after."""
+
+    async def quota_step(ctx: PipelineContext) -> PipelineContext:
+        return ctx
+
+    async def guarded_agent(ctx: PipelineContext) -> PipelineContext:
+        return ctx
+
+    async def track_step(ctx: PipelineContext) -> PipelineContext:
+        return ctx
+
+    result = build_pipeline(
+        insert_before={run_agent_step: [quota_step]},
+        replace={run_agent_step: guarded_agent},
+        insert_after={persist_outbound_step: [track_step]},
+    )
+
+    # All default steps except run_agent_step should still be present
+    for step in DEFAULT_PIPELINE:
+        if step is not run_agent_step:
+            assert step in result
+
+    # The three injected steps should be present
+    assert quota_step in result
+    assert guarded_agent in result
+    assert track_step in result
+
+    # Order: quota_step before guarded_agent, track_step after persist_outbound
+    assert result.index(quota_step) < result.index(guarded_agent)
+    assert result.index(persist_outbound_step) < result.index(track_step)
