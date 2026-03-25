@@ -9,11 +9,14 @@ from sqlalchemy.orm import Session
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import save_persistent_config, settings, update_settings
 from backend.app.database import get_db
-from backend.app.models import HeartbeatLog, LLMUsageLog, User
+from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
 from backend.app.query_helpers import get_or_404
 from backend.app.schemas import (
     ChannelConfigResponse,
     ChannelConfigUpdate,
+    ChannelRouteListResponse,
+    ChannelRouteResponse,
+    ChannelRouteUpdate,
     HeartbeatLogItemResponse,
     HeartbeatLogListResponse,
     LLMUsageByPurpose,
@@ -158,6 +161,68 @@ async def update_channel_config(
             pass
 
     return _build_channel_config_response()
+
+
+@router.get("/user/channels/routes", response_model=ChannelRouteListResponse)
+async def get_channel_routes(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChannelRouteListResponse:
+    """Return the current user's channel routes with enabled status."""
+    routes = (
+        db.query(ChannelRoute)
+        .filter(ChannelRoute.user_id == current_user.id)
+        .order_by(ChannelRoute.created_at)
+        .all()
+    )
+    return ChannelRouteListResponse(
+        routes=[
+            ChannelRouteResponse(
+                channel=r.channel,
+                channel_identifier=r.channel_identifier,
+                enabled=r.enabled,
+                created_at=r.created_at.isoformat() if r.created_at else "",
+            )
+            for r in routes
+        ]
+    )
+
+
+@router.patch("/user/channels/routes/{channel}", response_model=ChannelRouteResponse)
+async def update_channel_route(
+    channel: str,
+    body: ChannelRouteUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ChannelRouteResponse:
+    """Toggle enabled status for a channel route.
+
+    If the user has no route for this channel yet (e.g. they configured
+    credentials but haven't messaged through the channel), a placeholder
+    route is created so the enabled flag can be persisted.
+    """
+    route = db.query(ChannelRoute).filter_by(user_id=current_user.id, channel=channel).first()
+    if route is None:
+        # Create a placeholder route so the toggle state is persisted.
+        # The channel_identifier will be updated when the user actually
+        # messages through this channel.
+        route = ChannelRoute(
+            user_id=current_user.id,
+            channel=channel,
+            channel_identifier=current_user.channel_identifier or current_user.id,
+            enabled=body.enabled,
+        )
+        db.add(route)
+    else:
+        route.enabled = body.enabled
+    db.commit()
+    db.refresh(route)
+    return ChannelRouteResponse(
+        channel=route.channel,
+        channel_identifier=route.channel_identifier,
+        enabled=route.enabled,
+        created_at=route.created_at.isoformat() if route.created_at else "",
+    )
 
 
 @router.get("/channels/telegram/bot-info", response_model=TelegramBotInfoResponse)

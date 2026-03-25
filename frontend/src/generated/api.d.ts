@@ -270,6 +270,50 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/channels/routes": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Channel Routes
+         * @description Return the current user's channel routes with enabled status.
+         */
+        get: operations["get_channel_routes_api_user_channels_routes_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/user/channels/routes/{channel}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /**
+         * Update Channel Route
+         * @description Toggle enabled status for a channel route.
+         *
+         *     If the user has no route for this channel yet (e.g. they configured
+         *     credentials but haven't messaged through the channel), a placeholder
+         *     route is created so the enabled flag can be persisted.
+         */
+        patch: operations["update_channel_route_api_user_channels_routes__channel__patch"];
+        trace?: never;
+    };
     "/api/channels/telegram/bot-info": {
         parameters: {
             query?: never;
@@ -579,6 +623,27 @@ export interface components {
             linq_allowed_numbers?: string | null;
             /** Linq Preferred Service */
             linq_preferred_service?: string | null;
+        };
+        /** ChannelRouteListResponse */
+        ChannelRouteListResponse: {
+            /** Routes */
+            routes: components["schemas"]["ChannelRouteResponse"][];
+        };
+        /** ChannelRouteResponse */
+        ChannelRouteResponse: {
+            /** Channel */
+            channel: string;
+            /** Channel Identifier */
+            channel_identifier: string;
+            /** Enabled */
+            enabled: boolean;
+            /** Created At */
+            created_at: string;
+        };
+        /** ChannelRouteUpdate */
+        ChannelRouteUpdate: {
+            /** Enabled */
+            enabled: boolean;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1385,6 +1450,61 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ChannelConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_channel_routes_api_user_channels_routes_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelRouteListResponse"];
+                };
+            };
+        };
+    };
+    update_channel_route_api_user_channels_routes__channel__patch: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                channel: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChannelRouteUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChannelRouteResponse"];
                 };
             };
             /** @description Validation Error */

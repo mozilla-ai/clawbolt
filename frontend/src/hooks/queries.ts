@@ -138,6 +138,26 @@ export function useUpdateModelConfig() {
   });
 }
 
+// --- Channel routes ---
+
+export function useChannelRoutes() {
+  return useQuery({
+    queryKey: queryKeys.channelRoutes,
+    queryFn: () => api.getChannelRoutes(),
+  });
+}
+
+export function useToggleChannelRoute() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ channel, enabled }: { channel: string; enabled: boolean }) =>
+      api.toggleChannelRoute(channel, enabled),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channelRoutes });
+    },
+  });
+}
+
 // --- Channels ---
 
 export function useChannelConfig() {

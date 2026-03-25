@@ -9,6 +9,7 @@ export const queryKeys = {
   },
   tools: ['tools'] as const,
   channels: ['channels'] as const,
+  channelRoutes: ['channelRoutes'] as const,
   modelConfig: ['modelConfig'] as const,
   storageConfig: ['storageConfig'] as const,
   oauth: ['oauth'] as const,

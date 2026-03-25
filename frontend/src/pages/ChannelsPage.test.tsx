@@ -5,11 +5,15 @@ import ChannelsPage from './ChannelsPage';
 
 const mockGetChannelConfig = vi.fn();
 const mockUpdateChannelConfig = vi.fn();
+const mockGetChannelRoutes = vi.fn();
+const mockToggleChannelRoute = vi.fn();
 
 vi.mock('@/api', () => ({
   default: {
     getChannelConfig: (...args: unknown[]) => mockGetChannelConfig(...args),
     updateChannelConfig: (...args: unknown[]) => mockUpdateChannelConfig(...args),
+    getChannelRoutes: (...args: unknown[]) => mockGetChannelRoutes(...args),
+    toggleChannelRoute: (...args: unknown[]) => mockToggleChannelRoute(...args),
   },
 }));
 
@@ -57,6 +61,8 @@ beforeEach(() => {
     linq_allowed_numbers: '*',
     linq_preferred_service: 'iMessage',
   });
+  mockGetChannelRoutes.mockResolvedValue({ routes: [] });
+  mockToggleChannelRoute.mockResolvedValue({ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' });
   vi.stubGlobal('fetch', vi.fn());
 });
 
@@ -351,5 +357,90 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
     await waitFor(() => {
       expect(screen.getByText(/LINQ_API_TOKEN/)).toBeInTheDocument();
     });
+  });
+});
+
+describe('ChannelsPage - channel route toggles', () => {
+  it('shows toggle switch for connected channels (OSS)', async () => {
+    mockIsPremium = false;
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
+      ],
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      const labels = screen.getAllByText('Enabled');
+      expect(labels.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('shows toggle as Enabled for configured channels even without routes (OSS)', async () => {
+    mockIsPremium = false;
+    mockGetChannelRoutes.mockResolvedValue({ routes: [] });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      const labels = screen.getAllByText('Enabled');
+      expect(labels.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('does not show toggle for unconfigured channels (OSS)', async () => {
+    mockIsPremium = false;
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: false,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+    });
+    mockGetChannelRoutes.mockResolvedValue({ routes: [] });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Telegram')).toBeInTheDocument();
+    });
+
+    expect(screen.queryByText('Enabled')).not.toBeInTheDocument();
+    expect(screen.queryByText('Paused')).not.toBeInTheDocument();
+  });
+
+  it('shows Paused label for disabled channel (OSS)', async () => {
+    mockIsPremium = false;
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        { channel: 'telegram', channel_identifier: '111', enabled: false, created_at: '' },
+      ],
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Paused')).toBeInTheDocument();
+    });
+  });
+
+  it('dims card fields when channel is disabled (OSS)', async () => {
+    mockIsPremium = false;
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        { channel: 'telegram', channel_identifier: '111', enabled: false, created_at: '' },
+      ],
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Paused')).toBeInTheDocument();
+    });
+
+    const telegramInput = screen.getByPlaceholderText('e.g. 123456789');
+    expect(telegramInput).toBeDisabled();
   });
 });
