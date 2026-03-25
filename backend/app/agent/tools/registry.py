@@ -79,6 +79,7 @@ class ListCapabilitiesParams(BaseModel):
 def create_list_capabilities_tool(
     specialist_summaries: dict[str, str],
     unauthenticated: dict[str, str] | None = None,
+    disabled_sub_tools: dict[str, list[SubToolInfo]] | None = None,
 ) -> Tool:
     """Create the ``list_capabilities`` meta-tool.
 
@@ -93,10 +94,16 @@ def create_list_capabilities_tool(
     *unauthenticated* maps category names to human-readable reasons why
     the integration is not yet connected (e.g. missing OAuth).  These
     categories are listed but cannot be activated.
+
+    *disabled_sub_tools* maps specialist factory names to lists of
+    ``SubToolInfo`` for individual tools the user has disabled.  This
+    information is surfaced in listings and activation messages so the
+    LLM can tell users about disabled capabilities.
     """
     from backend.app.agent.skills.loader import get_skill_instructions
 
     _unauthenticated = unauthenticated or {}
+    _disabled_subs = disabled_sub_tools or {}
 
     async def list_capabilities(category: str | None = None) -> ToolResult:
         if category is None:
@@ -109,7 +116,12 @@ def create_list_capabilities_tool(
                     "(call list_capabilities with a category name to activate):"
                 )
                 for name, summary in sorted(specialist_summaries.items()):
-                    lines.append(f"- {name}: {summary}")
+                    disabled_for_cat = _disabled_subs.get(name, [])
+                    if disabled_for_cat:
+                        disabled_names = ", ".join(st.name for st in disabled_for_cat)
+                        lines.append(f"- {name}: {summary} [disabled: {disabled_names}]")
+                    else:
+                        lines.append(f"- {name}: {summary}")
             if _unauthenticated:
                 lines.append("")
                 lines.append("Not connected (user must authenticate before use):")
@@ -135,6 +147,14 @@ def create_list_capabilities_tool(
         activation_msg = (
             f'Category "{category}" activated. Tools are available in your next response.'
         )
+        disabled_for_cat = _disabled_subs.get(category, [])
+        if disabled_for_cat:
+            disabled_names = ", ".join(st.name for st in disabled_for_cat)
+            activation_msg += (
+                f"\nNote: the following tools in this category are disabled by the user "
+                f"and will not be available: {disabled_names}. "
+                "The user can re-enable them in Settings."
+            )
         skill_instructions = get_skill_instructions(category)
         if skill_instructions:
             activation_msg += f"\n\n{skill_instructions}"
@@ -153,6 +173,13 @@ def create_list_capabilities_tool(
             + "\nDo NOT attempt to activate these. If the user asks about them, "
             "let them know they need to connect the integration first."
         )
+    disabled_hint = ""
+    if _disabled_subs:
+        disabled_hint = (
+            "\nSome tools are disabled by the user. If a user asks about a "
+            "capability that seems related to an available category, check if "
+            "it might be a disabled tool and let them know they can re-enable it."
+        )
     return Tool(
         name=ToolName.LIST_CAPABILITIES,
         description=(
@@ -169,6 +196,7 @@ def create_list_capabilities_tool(
             "before using them. Activate proactively when the user's message "
             "relates to a specialist category."
             f"{unauth_hint}"
+            f"{disabled_hint}"
         ),
     )
 
@@ -361,6 +389,27 @@ class ToolRegistry:
         """Return sub-tool metadata for a factory, or empty list if unknown."""
         factory = self._factories.get(factory_name)
         return factory.sub_tools if factory else []
+
+    def get_disabled_specialist_sub_tools(
+        self,
+        disabled_sub_tool_names: set[str],
+    ) -> dict[str, list[SubToolInfo]]:
+        """Map specialist factory names to their disabled sub-tools.
+
+        Given a flat set of disabled sub-tool names (from ``ToolConfigStore``),
+        returns only specialist factories that have at least one disabled
+        sub-tool, mapped to the list of those disabled ``SubToolInfo`` objects.
+        """
+        if not disabled_sub_tool_names:
+            return {}
+        result: dict[str, list[SubToolInfo]] = {}
+        for name, factory in self._factories.items():
+            if factory.core:
+                continue
+            disabled = [st for st in factory.sub_tools if st.name in disabled_sub_tool_names]
+            if disabled:
+                result[name] = disabled
+        return result
 
     @property
     def specialist_summaries(self) -> dict[str, str]:
