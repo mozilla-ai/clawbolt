@@ -1199,6 +1199,16 @@
             "type": "string",
             "title": "Linq Preferred Service",
             "default": "iMessage"
+          },
+          "bluebubbles_configured": {
+            "type": "boolean",
+            "title": "Bluebubbles Configured",
+            "default": false
+          },
+          "bluebubbles_allowed_numbers": {
+            "type": "string",
+            "title": "Bluebubbles Allowed Numbers",
+            "default": ""
           }
         },
         "type": "object",
@@ -1286,6 +1296,39 @@
               }
             ],
             "title": "Linq Preferred Service"
+          },
+          "bluebubbles_server_url": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bluebubbles Server Url"
+          },
+          "bluebubbles_password": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bluebubbles Password"
+          },
+          "bluebubbles_allowed_numbers": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bluebubbles Allowed Numbers"
           }
         },
         "type": "object",

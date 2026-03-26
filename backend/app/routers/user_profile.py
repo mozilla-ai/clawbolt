@@ -99,6 +99,10 @@ def _build_channel_config_response() -> ChannelConfigResponse:
         linq_from_number=settings.linq_from_number,
         linq_allowed_numbers=settings.linq_allowed_numbers,
         linq_preferred_service=settings.linq_preferred_service,
+        bluebubbles_configured=bool(
+            settings.bluebubbles_server_url and settings.bluebubbles_password
+        ),
+        bluebubbles_allowed_numbers=settings.bluebubbles_allowed_numbers,
     )
 
 

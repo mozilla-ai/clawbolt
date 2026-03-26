@@ -657,6 +657,16 @@ export interface components {
              * @default iMessage
              */
             linq_preferred_service: string;
+            /**
+             * Bluebubbles Configured
+             * @default false
+             */
+            bluebubbles_configured: boolean;
+            /**
+             * Bluebubbles Allowed Numbers
+             * @default
+             */
+            bluebubbles_allowed_numbers: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -674,6 +684,12 @@ export interface components {
             linq_allowed_numbers?: string | null;
             /** Linq Preferred Service */
             linq_preferred_service?: string | null;
+            /** Bluebubbles Server Url */
+            bluebubbles_server_url?: string | null;
+            /** Bluebubbles Password */
+            bluebubbles_password?: string | null;
+            /** Bluebubbles Allowed Numbers */
+            bluebubbles_allowed_numbers?: string | null;
         };
         /** ChannelRouteListResponse */
         ChannelRouteListResponse: {

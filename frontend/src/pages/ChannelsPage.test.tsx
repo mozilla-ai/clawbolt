@@ -60,6 +60,8 @@ beforeEach(() => {
     linq_from_number: '+15551234567',
     linq_allowed_numbers: '*',
     linq_preferred_service: 'iMessage',
+    bluebubbles_configured: false,
+    bluebubbles_allowed_numbers: '',
   });
   mockGetChannelRoutes.mockResolvedValue({ routes: [] });
   mockToggleChannelRoute.mockResolvedValue({ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' });
@@ -98,6 +100,8 @@ describe('ChannelsPage - PremiumTelegramSection', () => {
       linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     const mockFetch = vi.fn().mockImplementation((url: string) => {
@@ -151,6 +155,8 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
       linq_from_number: '+15551234567',
       linq_allowed_numbers: '*',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     const mockFetch = vi.fn().mockImplementation((url: string) => {
@@ -173,7 +179,8 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Not configured')).toBeInTheDocument();
+      const badges = screen.getAllByText('Not configured');
+      expect(badges.length).toBeGreaterThanOrEqual(1);
     });
 
     const telegramInput = screen.getByPlaceholderText('e.g. 123456789');
@@ -220,6 +227,8 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
       linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     renderWithRouter(<ChannelsPage />);
@@ -242,12 +251,15 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
       linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Not configured')).toBeInTheDocument();
+      const badges = screen.getAllByText('Not configured');
+      expect(badges.length).toBeGreaterThanOrEqual(1);
     });
 
     const phoneInput = screen.getByPlaceholderText('e.g. +15551234567');
@@ -266,6 +278,8 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
       linq_from_number: '+15551234567',
       linq_allowed_numbers: '*',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     renderWithRouter(<ChannelsPage />);
@@ -291,6 +305,8 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
       linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     const mockFetch = vi.fn().mockImplementation((url: string) => {
@@ -316,7 +332,8 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Not configured')).toBeInTheDocument();
+      const badges = screen.getAllByText('Not configured');
+      expect(badges.length).toBeGreaterThanOrEqual(1);
     });
 
     const phoneInput = screen.getByPlaceholderText('e.g. +15551234567');
@@ -332,6 +349,8 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
       linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     renderWithRouter(<ChannelsPage />);
@@ -350,6 +369,8 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
       linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     renderWithRouter(<ChannelsPage />);
@@ -398,6 +419,8 @@ describe('ChannelsPage - channel route toggles', () => {
       linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
     mockGetChannelRoutes.mockResolvedValue({ routes: [] });
 

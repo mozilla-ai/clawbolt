@@ -50,6 +50,8 @@ const mockUpdateChannelConfig = vi.fn().mockResolvedValue({
   linq_from_number: '+15559876543',
   linq_allowed_numbers: '+15551234567',
   linq_preferred_service: 'iMessage',
+  bluebubbles_configured: false,
+  bluebubbles_allowed_numbers: '',
 });
 const mockGetChannelConfig = vi.fn().mockResolvedValue({
   telegram_bot_token_set: false,
@@ -58,6 +60,8 @@ const mockGetChannelConfig = vi.fn().mockResolvedValue({
   linq_from_number: '+15559876543',
   linq_allowed_numbers: '',
   linq_preferred_service: 'iMessage',
+  bluebubbles_configured: false,
+  bluebubbles_allowed_numbers: '',
 });
 
 vi.mock('@/api', () => ({
@@ -178,6 +182,8 @@ describe('GetStartedPage', () => {
       linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
 
     renderWithRouter(<GetStartedPage />);

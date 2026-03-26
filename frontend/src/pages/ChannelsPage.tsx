@@ -22,6 +22,7 @@ export default function ChannelsPage() {
       <div className="grid gap-6 lg:grid-cols-2">
         <TelegramSection />
         {isPremium ? <PremiumTextMessagingSection /> : <TextMessagingSection />}
+        <BlueBubblesSection />
       </div>
     </div>
   );
@@ -512,5 +513,74 @@ function TextMessagingSection() {
         </div>
       </Card>
     </div>
+  );
+}
+
+// --- BlueBubbles (iMessage via self-hosted Mac bridge) section ---
+
+function BlueBubblesSection() {
+  const { data: config } = useChannelConfig();
+  const updateMutation = useUpdateChannelConfig();
+  const [allowedNumbers, setAllowedNumbers] = useState<string | null>(null);
+  const isChannelDisabled = useIsChannelDisabled('bluebubbles');
+
+  const displayedNumbers = allowedNumbers ?? config?.bluebubbles_allowed_numbers ?? '';
+  const isConfigured = config?.bluebubbles_configured ?? false;
+
+  const handleSave = () => {
+    const updates: Record<string, string> = {};
+    if (allowedNumbers !== null && allowedNumbers !== (config?.bluebubbles_allowed_numbers ?? '')) {
+      updates.bluebubbles_allowed_numbers = allowedNumbers;
+    }
+    if (Object.keys(updates).length === 0) {
+      toast.error('No changes to save');
+      return;
+    }
+    updateMutation.mutate(updates, {
+      onSuccess: () => {
+        setAllowedNumbers(null);
+        toast.success('BlueBubbles settings updated');
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  return (
+    <Card>
+      <div className="flex items-center justify-between mb-3">
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-medium">BlueBubbles (iMessage)</h3>
+          <ChannelToggle channel="bluebubbles" isConfigured={isConfigured} />
+        </div>
+        <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
+          {isConfigured ? 'Connected' : 'Not configured'}
+        </span>
+      </div>
+      {!isConfigured && (
+        <p className="text-xs text-muted-foreground mb-4">
+          Self-hosted iMessage bridge via a Mac with BlueBubbles.
+          Set <code className="font-mono text-[11px]">BLUEBUBBLES_SERVER_URL</code> and{' '}
+          <code className="font-mono text-[11px]">BLUEBUBBLES_PASSWORD</code> in your environment to enable.
+        </p>
+      )}
+      <div className={`grid gap-4${!isConfigured || isChannelDisabled ? ' opacity-50 pointer-events-none' : ''}`}>
+        <Field label="Allowed Sender">
+          <Input
+            value={displayedNumbers}
+            onChange={(e) => setAllowedNumbers(e.target.value)}
+            placeholder="e.g. +15551234567 or user@icloud.com"
+            disabled={!isConfigured || isChannelDisabled}
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            E.164 phone number or iCloud email, or * to allow all. Empty = deny all.
+          </p>
+        </Field>
+        <div className="flex justify-end">
+          <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined || isChannelDisabled} isLoading={updateMutation.isPending}>
+            Save
+          </Button>
+        </div>
+      </div>
+    </Card>
   );
 }
