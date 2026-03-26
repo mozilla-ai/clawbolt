@@ -511,6 +511,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/sessions/{session_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Conversation History
+         * @description Delete all messages from a session, preserving memory and the session itself.
+         *
+         *     Resets the compaction pointer and system prompt so the conversation
+         *     continues with a clean slate while retaining compacted memory.
+         */
+        delete: operations["delete_conversation_history_api_user_sessions__session_id__messages_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/memory": {
         parameters: {
             query?: never;
@@ -648,6 +671,13 @@ export interface components {
         ChannelRouteUpdate: {
             /** Enabled */
             enabled: boolean;
+        };
+        /** DeleteMessagesResponse */
+        DeleteMessagesResponse: {
+            /** Status */
+            status: string;
+            /** Messages Deleted */
+            messages_deleted: number;
         };
         /** HTTPValidationError */
         HTTPValidationError: {
@@ -1794,6 +1824,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_conversation_history_api_user_sessions__session_id__messages_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteMessagesResponse"];
                 };
             };
             /** @description Validation Error */

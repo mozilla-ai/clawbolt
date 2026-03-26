@@ -7,11 +7,13 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
+from backend.app.agent.concurrency import user_locks
 from backend.app.agent.session_db import get_session_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import get_db
 from backend.app.models import ChatSession, Message, User
 from backend.app.schemas import (
+    DeleteMessagesResponse,
     SessionDetailResponse,
     SessionListItem,
     SessionListResponse,
@@ -102,3 +104,25 @@ async def get_session(
         last_compacted_seq=session.last_compacted_seq,
         messages=messages,
     )
+
+
+@router.delete(
+    "/user/sessions/{session_id}/messages",
+    response_model=DeleteMessagesResponse,
+)
+async def delete_conversation_history(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+) -> DeleteMessagesResponse:
+    """Delete all messages from a session, preserving memory and the session itself.
+
+    Resets the compaction pointer and system prompt so the conversation
+    continues with a clean slate while retaining compacted memory.
+    """
+    store = get_session_store(current_user.id)
+    async with user_locks.acquire(current_user.id):
+        session = store.load_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        deleted = store.delete_messages(session_id)
+    return DeleteMessagesResponse(status="deleted", messages_deleted=deleted)

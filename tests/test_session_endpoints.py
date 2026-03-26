@@ -130,3 +130,131 @@ def test_session_channel_defaults_empty(client: TestClient, test_user: User) -> 
     assert resp.status_code == 200
     data = resp.json()
     assert data["channel"] == ""
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/user/sessions/{session_id}/messages
+# ---------------------------------------------------------------------------
+
+
+def test_delete_conversation_history(client: TestClient, test_user: User) -> None:
+    """Deleting conversation history removes messages but preserves the session."""
+    _create_session(
+        test_user,
+        "del_1",
+        [
+            {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
+            {
+                "direction": "outbound",
+                "body": "Hello!",
+                "timestamp": "2025-01-15T10:02:00",
+                "seq": 2,
+            },
+        ],
+    )
+    # Delete messages
+    resp = client.delete("/api/user/sessions/del_1/messages")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "deleted"
+    assert data["messages_deleted"] == 2
+
+    # Session still exists but has no messages
+    resp = client.get("/api/user/sessions/del_1")
+    assert resp.status_code == 200
+    detail = resp.json()
+    assert detail["session_id"] == "del_1"
+    assert len(detail["messages"]) == 0
+    assert detail["last_compacted_seq"] == 0
+    assert detail["initial_system_prompt"] == ""
+
+
+def test_delete_conversation_history_preserves_memory(client: TestClient, test_user: User) -> None:
+    """Memory documents are not affected by conversation history deletion."""
+    from backend.app.agent.memory_db import get_memory_store
+
+    _create_session(
+        test_user,
+        "del_mem",
+        [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+    )
+    # Write something to memory
+    mem_store = get_memory_store(test_user.id)
+    mem_store.write_memory("# Test Memory\nImportant fact.")
+
+    # Delete conversation history
+    resp = client.delete("/api/user/sessions/del_mem/messages")
+    assert resp.status_code == 200
+
+    # Memory is intact
+    content = mem_store.read_memory()
+    assert "Important fact." in content
+
+
+def test_delete_conversation_history_not_found(client: TestClient) -> None:
+    """Deleting messages from a nonexistent session returns 404."""
+    resp = client.delete("/api/user/sessions/nonexistent/messages")
+    assert resp.status_code == 404
+
+
+def test_delete_conversation_history_empty_session(client: TestClient, test_user: User) -> None:
+    """Deleting messages from a session with no messages returns 0 deleted."""
+    _create_session(test_user, "del_empty", [])
+    resp = client.delete("/api/user/sessions/del_empty/messages")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["messages_deleted"] == 0
+
+
+def test_delete_conversation_history_cross_user_isolation(
+    client: TestClient, test_user: User
+) -> None:
+    """A user cannot delete another user's conversation history."""
+    # Create a session owned by a different user
+    other_user_id = "other-user-for-isolation-test"
+    db = _db_module.SessionLocal()
+    try:
+        other_user = User(
+            id=other_user_id,
+            user_id="other-user",
+            phone="+15559999999",
+            channel_identifier="999999",
+        )
+        db.add(other_user)
+        db.flush()
+        cs = ChatSession(
+            session_id="other_session",
+            user_id=other_user_id,
+            is_active=True,
+            channel="",
+            last_compacted_seq=0,
+            created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
+            last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
+        )
+        db.add(cs)
+        db.flush()
+        msg = Message(
+            session_id=cs.id,
+            seq=1,
+            direction="inbound",
+            body="secret",
+            timestamp=datetime(2025, 1, 15, 10, 1, 0, tzinfo=UTC),
+        )
+        db.add(msg)
+        db.commit()
+    finally:
+        db.close()
+
+    # Authenticated as test_user, try to delete other user's session
+    resp = client.delete("/api/user/sessions/other_session/messages")
+    assert resp.status_code == 404
+
+    # Verify the other user's message is still intact
+    db = _db_module.SessionLocal()
+    try:
+        cs = db.query(ChatSession).filter_by(session_id="other_session").first()
+        assert cs is not None
+        count = db.query(Message).filter_by(session_id=cs.id).count()
+        assert count == 1
+    finally:
+        db.close()

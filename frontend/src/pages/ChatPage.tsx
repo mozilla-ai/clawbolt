@@ -55,6 +55,7 @@ export default function ChatPage() {
   const [activityTool, setActivityTool] = useState<string | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
   const [waitingForApproval, setWaitingForApproval] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -305,11 +306,48 @@ export default function ChatPage() {
   return (
     <div className="flex flex-col h-full -my-4 sm:-my-6">
       {/* Header */}
-      <div className="py-4 sm:py-6">
-        <h2 className="text-xl font-semibold font-display">Chat</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Talk with your AI assistant directly from the dashboard.
-        </p>
+      <div className="py-4 sm:py-6 flex items-start justify-between">
+        <div>
+          <h2 className="text-xl font-semibold font-display">Chat</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Talk with your AI assistant directly from the dashboard.
+          </p>
+        </div>
+        {activeSessionId && messages.length > 0 && (
+          <Tooltip content="Delete conversation history" delay={400} closeDelay={0}>
+            <Button
+              variant="ghost"
+              size="sm"
+              disabled={isDeleting || sending}
+              className="text-muted-foreground hover:text-danger shrink-0"
+              onClick={async () => {
+                if (!activeSessionId || isDeleting) return;
+                const ok = window.confirm(
+                  'Delete all conversation messages? Your memory and personality will be kept.',
+                );
+                if (!ok) return;
+                setIsDeleting(true);
+                try {
+                  await api.deleteConversationHistory(activeSessionId);
+                  setMessages([]);
+                  void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+                  void queryClient.invalidateQueries({
+                    queryKey: queryKeys.sessions.detail(activeSessionId),
+                  });
+                  toast.success('Conversation history deleted');
+                } catch (err: unknown) {
+                  const msg = err instanceof Error ? err.message : 'Failed to delete history';
+                  toast.error(msg);
+                } finally {
+                  setIsDeleting(false);
+                }
+              }}
+            >
+              <TrashIcon />
+              <span className="ml-1.5 hidden sm:inline">Clear history</span>
+            </Button>
+          </Tooltip>
+        )}
       </div>
 
       {/* Messages area */}
@@ -709,6 +747,19 @@ function ChevronIcon({ open }: { open: boolean }) {
       viewBox="0 0 24 24"
     >
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function TrashIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
     </svg>
   );
 }
