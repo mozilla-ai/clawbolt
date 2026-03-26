@@ -26,3 +26,5 @@ export type {
   PlanInfo,
 } from './types';
 export { QuotaBanner, OnboardingBanner, isQuotaError } from './quota';
+export { renderSidebarFooter } from './sidebar-footer';
+export type { SidebarFooterProps } from './sidebar-footer';
