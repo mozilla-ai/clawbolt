@@ -393,9 +393,10 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
 
     Returns None if the LLM call fails or the response is not approval-related.
     """
-    from typing import Literal
+    from typing import Literal, cast
 
     from any_llm import acompletion
+    from any_llm.types.completion import ChatCompletion
     from pydantic import BaseModel, Field
 
     from backend.app.config import settings
@@ -418,30 +419,34 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
     provider = settings.compaction_provider or settings.llm_provider
 
     try:
-        response = await acompletion(
-            model=model,
-            provider=provider,
-            api_base=settings.llm_api_base,
-            messages=[
-                {
-                    "role": "system",
-                    "content": (
-                        "The user was asked to approve or deny a tool action. "
-                        "They were told: 'Reply yes or no (always/never to remember your choice)'. "
-                        "Classify their response."
-                    ),
-                },
-                {"role": "user", "content": text},
-            ],
-            response_format=ApprovalClassification,
-            max_tokens=50,
-            temperature=0,
+        response = cast(
+            ChatCompletion,
+            await acompletion(
+                model=model,
+                provider=provider,
+                api_base=settings.llm_api_base,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "The user was asked to approve or deny a tool action. "
+                            "They were told: "
+                            "'Reply yes or no (always/never to remember your choice)'. "
+                            "Classify their response."
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                response_format=ApprovalClassification,
+                max_tokens=50,
+                temperature=0,
+            ),
         )
     except Exception:
         logger.warning("LLM approval classification failed for text: %r", text[:100], exc_info=True)
         return None
 
-    parsed = response.choices[0].message.parsed
+    parsed = response.choices[0].message.parsed  # type: ignore[union-attr]
     if parsed is None:
         logger.warning("LLM approval classification returned no parsed result")
         return None
