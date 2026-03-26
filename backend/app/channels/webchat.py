@@ -22,10 +22,6 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.app.agent.approval import (
-    _parse_approval_response,
-    get_approval_gate,
-)
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.auth.dependencies import get_current_user
@@ -43,10 +39,6 @@ _SESSION_ID_RE = re.compile(r"^[\w-]+_\d+(_[\w]+)?$")
 class _ChatAccepted(BaseModel):
     request_id: str
     session_id: str
-
-
-class _ApprovalRequest(BaseModel):
-    decision: str
 
 
 class WebChatChannel(BaseChannel):
@@ -187,23 +179,6 @@ class WebChatChannel(BaseChannel):
                     "X-Accel-Buffering": "no",
                 },
             )
-
-        @router.post("/user/chat/approve")
-        async def approve_tool(
-            body: _ApprovalRequest,
-            user: User = Depends(get_current_user),
-        ) -> dict[str, str]:
-            """Resolve a pending tool approval from the web chat UI."""
-            decision = _parse_approval_response(body.decision)
-            if decision is None:
-                raise HTTPException(
-                    status_code=422,
-                    detail="Invalid decision. Use: yes, no, always, or never.",
-                )
-            gate = get_approval_gate()
-            if not gate.resolve(str(user.id), decision):
-                raise HTTPException(status_code=404, detail="No pending approval.")
-            return {"status": "ok", "decision": body.decision}
 
         return router
 

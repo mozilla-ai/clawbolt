@@ -52,7 +52,7 @@ export default function ChatPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [currentTool, setCurrentTool] = useState<string | null>(null);
-  const [approvalPrompt, setApprovalPrompt] = useState<string | null>(null);
+  const [waitingForApproval, setWaitingForApproval] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -201,7 +201,17 @@ export default function ChatPage() {
               toolNames.push(event.tool_name);
             }
           } else if (event.type === 'approval_request') {
-            setApprovalPrompt(event.content ?? null);
+            // Display approval requests as regular assistant messages
+            // so the user replies by typing (like Telegram/iMessage)
+            const approvalMsg: ChatMessage = {
+              id: nextId.current++,
+              role: 'assistant',
+              body: event.content ?? '',
+              timestamp: new Date(),
+            };
+            setMessages((prev) => [...prev, approvalMsg]);
+            setCurrentTool(null);
+            setWaitingForApproval(true);
           }
         },
         (accepted) => {
@@ -247,7 +257,7 @@ export default function ChatPage() {
       // Only clear indicators when all pending requests are done
       if (pendingRef.current === 0) {
         setCurrentTool(null);
-        setApprovalPrompt(null);
+        setWaitingForApproval(false);
       }
     }
   };
@@ -461,22 +471,8 @@ export default function ChatPage() {
               );
             })}
 
-            {sending && !approvalPrompt && (
+            {sending && !waitingForApproval && (
               <ToolUseIndicator toolName={currentTool ?? undefined} />
-            )}
-            {approvalPrompt && (
-              <ApprovalPrompt
-                description={approvalPrompt}
-                onDecision={async (decision) => {
-                  try {
-                    await api.sendApproval(decision);
-                    setApprovalPrompt(null);
-                    setCurrentTool(null);
-                  } catch {
-                    toast.error('Failed to send approval');
-                  }
-                }}
-              />
             )}
           </div>
         )}
@@ -591,60 +587,6 @@ function ToolUseIndicator({ toolName }: { toolName?: string }) {
           <span className="text-xs text-muted-foreground">
             {toolName ? `Using ${toolName}...` : 'Thinking...'}
           </span>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ApprovalPrompt({
-  description,
-  onDecision,
-}: {
-  description: string;
-  onDecision: (decision: string) => void;
-}) {
-  const [responding, setResponding] = useState(false);
-  const handleClick = (decision: string) => {
-    setResponding(true);
-    onDecision(decision);
-  };
-  return (
-    <div className="flex justify-start">
-      <div className="max-w-[80%] bg-card border border-border rounded-[12px_12px_12px_4px] px-4 py-3 animate-message-in">
-        <p className="text-sm whitespace-pre-wrap mb-3">{description}</p>
-        <div className="flex flex-wrap gap-2">
-          <Button
-            size="sm"
-            onClick={() => handleClick('yes')}
-            disabled={responding}
-          >
-            Yes
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => handleClick('no')}
-            disabled={responding}
-          >
-            No
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => handleClick('always')}
-            disabled={responding}
-          >
-            Always allow
-          </Button>
-          <Button
-            variant="secondary"
-            size="sm"
-            onClick={() => handleClick('never')}
-            disabled={responding}
-          >
-            Never allow
-          </Button>
         </div>
       </div>
     </div>
