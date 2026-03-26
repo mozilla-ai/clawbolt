@@ -83,8 +83,14 @@ export default function ChatPage() {
       } else if (event.type === 'done') {
         setAgentBusy(false);
         setActivityTool(null);
-        // Refresh session data to pick up the new message
-        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+        // Refresh session data to pick up the new message, but only when
+        // webchat isn't actively waiting for its own SSE reply. When sending,
+        // handleSubmit adds the reply and invalidates queries itself. Without
+        // this guard, the activity refresh can load the reply from the DB
+        // before the SSE resolves, and then the SSE handler appends a duplicate.
+        if (pendingRef.current === 0) {
+          void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+        }
       }
     });
     return () => controller.abort();
