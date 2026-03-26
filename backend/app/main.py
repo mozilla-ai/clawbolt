@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
+from backend.app.channels.bluebubbles import BlueBubblesChannel
 from backend.app.channels.linq import LinqChannel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.channels.webchat import WebChatChannel
@@ -43,6 +44,7 @@ logger = logging.getLogger(__name__)
 register_channel(TelegramChannel(bot_token=settings.telegram_bot_token))
 register_channel(WebChatChannel())
 register_channel(LinqChannel())
+register_channel(BlueBubblesChannel())
 
 
 async def _verify_llm_settings() -> None:
@@ -167,6 +169,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         if not settings.linq_allowed_numbers:
             logger.warning(
                 "No Linq allowed numbers configured (LINQ_ALLOWED_NUMBERS). "
+                "All messages will be rejected. "
+                'Set to "*" to allow all, or provide an E.164 phone number.'
+            )
+
+    if settings.bluebubbles_server_url:
+        logger.info("BlueBubbles channel enabled (server: %s)", settings.bluebubbles_server_url)
+        if not settings.bluebubbles_allowed_numbers:
+            logger.warning(
+                "No BlueBubbles allowed numbers configured (BLUEBUBBLES_ALLOWED_NUMBERS). "
                 "All messages will be rejected. "
                 'Set to "*" to allow all, or provide an E.164 phone number.'
             )

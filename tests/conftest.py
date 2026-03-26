@@ -221,6 +221,43 @@ def linq_client(test_user: User) -> Generator[TestClient]:
 
 
 @pytest.fixture()
+def bluebubbles_client(test_user: User) -> Generator[TestClient]:
+    """FastAPI test client with BlueBubbles channel available.
+
+    Patches settings to allow all numbers and disable password validation.
+    """
+
+    def _override_get_current_user() -> User:
+        return test_user
+
+    webhook_rate_limiter.reset()
+    app.dependency_overrides[get_current_user] = _override_get_current_user
+
+    # Reset the BlueBubbles channel's chat cache between tests
+    from backend.app.channels import get_channel
+    from backend.app.channels.bluebubbles import BlueBubblesChannel
+
+    channel = get_channel("bluebubbles")
+    if isinstance(channel, BlueBubblesChannel):
+        channel._chat_cache.clear()
+
+    with (
+        patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
+        patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
+        patch("backend.app.channels.bluebubbles.settings.bluebubbles_allowed_numbers", "*"),
+        patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", ""),
+        patch("backend.app.channels.telegram.settings.telegram_allowed_chat_id", "*"),
+        patch("backend.app.channels.telegram.settings.telegram_bot_token", ""),
+        patch("backend.app.channels.linq.settings.linq_allowed_numbers", "*"),
+        patch("backend.app.channels.linq.settings.linq_webhook_signing_secret", ""),
+        patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
+        TestClient(app) as c,
+    ):
+        yield c
+    app.dependency_overrides.clear()
+
+
+@pytest.fixture()
 def client(test_user: User) -> Generator[TestClient]:
     """FastAPI test client with overridden auth."""
 

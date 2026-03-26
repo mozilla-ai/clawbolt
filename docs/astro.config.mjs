@@ -73,6 +73,7 @@ export default defineConfig({
           label: "Deployment",
           items: [
             { label: "Docker", slug: "deployment/docker" },
+            { label: "BlueBubbles Setup (iMessage)", slug: "deployment/bluebubbles-setup" },
             { label: "Linq Setup (Texting)", slug: "deployment/linq-setup" },
             { label: "Telegram Setup", slug: "deployment/telegram-setup" },
             { label: "Storage Providers", slug: "deployment/storage" },
