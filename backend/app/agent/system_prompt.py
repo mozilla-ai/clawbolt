@@ -142,16 +142,12 @@ def build_time_user_context(user: User) -> str:
     """
     now = datetime.datetime.now(datetime.UTC)
     local = to_local_time(now, user.timezone)
-    formatted = local.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
+    formatted = local.strftime("%A, %Y-%m-%d %I:%M %p").strip()
     if user.timezone:
-        return (
-            f"[Current time: {formatted} ({user.timezone}). "
-            "Always use this timezone when discussing times, scheduling, "
-            "or referring to deadlines.]"
-        )
+        return f"[Current time: {formatted}]"
     return (
         f"[Current time: {formatted}. "
-        "No timezone has been set for this user; this time is in UTC. "
+        "No timezone has been configured yet. "
         "If the user mentions their location or timezone, update USER.md "
         "with their timezone so future times are shown in their local time.]"
     )

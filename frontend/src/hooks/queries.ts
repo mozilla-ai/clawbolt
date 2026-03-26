@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '@/lib/query-keys';
 import api from '@/api';
@@ -12,10 +13,24 @@ import type {
 // --- Profile ---
 
 export function useProfile() {
-  return useQuery({
+  const query = useQuery({
     queryKey: queryKeys.profile,
     queryFn: () => api.getProfile(),
   });
+  const { mutate } = useUpdateProfile();
+  const backfilled = useRef(false);
+
+  useEffect(() => {
+    if (query.data && !query.data.timezone && !backfilled.current) {
+      backfilled.current = true;
+      const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
+      if (tz) {
+        mutate({ timezone: tz });
+      }
+    }
+  }, [query.data, mutate]);
+
+  return query;
 }
 
 export function useUpdateProfile() {

@@ -295,7 +295,7 @@ def _format_heartbeat_history(
     for entry in logs:
         ts = datetime.datetime.fromisoformat(entry.created_at)
         local_ts = to_local_time(ts, tz_name)
-        formatted = local_ts.strftime("%A, %Y-%m-%d %I:%M %p %Z").strip()
+        formatted = local_ts.strftime("%A, %Y-%m-%d %I:%M %p").strip()
         delta = now - ts
         if delta.days == 0:
             ago = "today"
