@@ -905,6 +905,12 @@ class ClawboltAgent:
             # generating a tool call, the JSON payload may be incomplete.
             response_truncated = response.stop_reason == "max_tokens"
 
+            # Activate any specialist factories requested via list_capabilities
+            # BEFORE executing tools so specialist tools called in the same
+            # round (e.g. qb_query alongside list_capabilities) are available
+            # immediately rather than failing as "unknown tool".
+            self._check_specialist_activations(parsed_calls)
+
             # Execute the tool round (validate, approve, run)
             tool_results = await self._execute_tool_round(
                 parsed_calls,
@@ -925,10 +931,6 @@ class ClawboltAgent:
                     "Response truncated with errors, increasing max_tokens to %d",
                     max_tokens,
                 )
-
-            # Activate any specialist factories requested via list_capabilities.
-            # New tool schemas will be picked up at the top of the next round.
-            self._check_specialist_activations(parsed_calls)
 
             messages.extend(tool_results)
             await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))

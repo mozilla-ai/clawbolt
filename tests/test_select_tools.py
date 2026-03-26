@@ -352,3 +352,64 @@ class TestDynamicToolActivation:
         ]
         activated = agent._check_specialist_activations(calls)
         assert not activated
+
+    @pytest.mark.asyncio
+    async def test_specialist_tool_available_in_same_round_as_activation(self) -> None:
+        """Regression: LLM calls list_capabilities + specialist tool in the same round.
+
+        Previously, _check_specialist_activations ran AFTER _execute_tool_round,
+        so the specialist tool would fail as "unknown tool" even though
+        list_capabilities was called in the same batch. This caused the LLM
+        to conclude the integration was broken (e.g. "QuickBooks connection
+        dropped") when it was actually connected.
+        """
+        from backend.app.agent.core import ClawboltAgent
+        from backend.app.agent.llm_parsing import ParsedToolCall
+        from backend.app.agent.messages import ToolCallRequest
+
+        registry = _build_test_registry()
+        ctx = ToolContext(user=User(id="1"))
+        agent = ClawboltAgent(
+            user=User(id="1"),
+            tool_context=ctx,
+            registry=registry,
+        )
+        agent.register_tools(registry.create_core_tools(ctx))
+
+        # Simulate LLM calling list_capabilities AND a specialist tool in one round
+        parsed_calls = [
+            ToolCallRequest(
+                id="call_1",
+                name=ToolName.LIST_CAPABILITIES,
+                arguments={"category": "estimate"},
+            ),
+            ToolCallRequest(
+                id="call_2",
+                name="generate_estimate",
+                arguments={},
+            ),
+        ]
+        parsed_raw = [
+            ParsedToolCall(
+                id="call_1",
+                name=ToolName.LIST_CAPABILITIES,
+                arguments={"category": "estimate"},
+            ),
+            ParsedToolCall(
+                id="call_2",
+                name="generate_estimate",
+                arguments={},
+            ),
+        ]
+
+        # Pre-activate specialists (as the agent loop now does before execution)
+        agent._check_specialist_activations(parsed_calls)
+
+        # Execute the tool round -- generate_estimate should now succeed
+        results = await agent._execute_tool_round(parsed_calls, parsed_raw, [], [], [])
+
+        # The specialist tool should NOT be an error
+        estimate_result = next(r for r in results if r.tool_call_id == "call_2")
+        assert not estimate_result.is_error, (
+            f"Specialist tool failed despite activation: {estimate_result.content}"
+        )
