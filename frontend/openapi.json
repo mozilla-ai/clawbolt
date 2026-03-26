@@ -359,6 +359,23 @@
         }
       }
     },
+    "/api/webhooks/bluebubbles": {
+      "post": {
+        "summary": "Bluebubbles Inbound",
+        "description": "Receive inbound messages from BlueBubbles.",
+        "operationId": "bluebubbles_inbound_api_webhooks_bluebubbles_post",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/profile": {
       "get": {
         "summary": "Get Profile",
@@ -1086,6 +1103,44 @@
                 "schema": {
                   "$ref": "#/components/schemas/ToolConfigResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{full_path}": {
+      "get": {
+        "summary": " Spa Fallback",
+        "description": "Serve the SPA index.html for all non-API routes.",
+        "operationId": "_spa_fallback__full_path__get",
+        "parameters": [
+          {
+            "name": "full_path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Full Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },

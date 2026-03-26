@@ -226,6 +226,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/webhooks/bluebubbles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bluebubbles Inbound
+         * @description Receive inbound messages from BlueBubbles.
+         */
+        post: operations["bluebubbles_inbound_api_webhooks_bluebubbles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/profile": {
         parameters: {
             query?: never;
@@ -581,6 +601,26 @@ export interface paths {
          *     tools within a factory group.
          */
         put: operations["update_tool_config_api_user_tools_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/{full_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spa Fallback
+         * @description Serve the SPA index.html for all non-API routes.
+         */
+        get: operations["_spa_fallback__full_path__get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1371,6 +1411,26 @@ export interface operations {
             };
         };
     };
+    bluebubbles_inbound_api_webhooks_bluebubbles_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
     get_profile_api_user_profile_get: {
         parameters: {
             query?: never;
@@ -1961,6 +2021,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _spa_fallback__full_path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                full_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
