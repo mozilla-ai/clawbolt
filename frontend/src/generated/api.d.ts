@@ -465,7 +465,11 @@ export interface paths {
         get: operations["get_heartbeat_logs_api_user_heartbeat_logs_get"];
         put?: never;
         post?: never;
-        delete?: never;
+        /**
+         * Delete Heartbeat Logs
+         * @description Delete all heartbeat logs for the current user.
+         */
+        delete: operations["delete_heartbeat_logs_api_user_heartbeat_logs_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -691,6 +695,13 @@ export interface components {
         ChannelRouteUpdate: {
             /** Enabled */
             enabled: boolean;
+        };
+        /** DeleteHeartbeatLogsResponse */
+        DeleteHeartbeatLogsResponse: {
+            /** Status */
+            status: string;
+            /** Deleted */
+            deleted: number;
         };
         /** DeleteMessagesResponse */
         DeleteMessagesResponse: {
@@ -1778,6 +1789,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_heartbeat_logs_api_user_heartbeat_logs_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteHeartbeatLogsResponse"];
                 };
             };
         };

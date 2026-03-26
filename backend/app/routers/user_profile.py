@@ -17,6 +17,7 @@ from backend.app.schemas import (
     ChannelRouteListResponse,
     ChannelRouteResponse,
     ChannelRouteUpdate,
+    DeleteHeartbeatLogsResponse,
     HeartbeatLogItemResponse,
     HeartbeatLogListResponse,
     LLMUsageByPurpose,
@@ -429,6 +430,21 @@ async def get_heartbeat_logs(
             for log in logs
         ],
     )
+
+
+@router.delete("/user/heartbeat-logs", response_model=DeleteHeartbeatLogsResponse)
+async def delete_heartbeat_logs(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DeleteHeartbeatLogsResponse:
+    """Delete all heartbeat logs for the current user."""
+    deleted: int = (
+        db.query(HeartbeatLog)
+        .filter(HeartbeatLog.user_id == current_user.id)
+        .delete(synchronize_session="fetch")
+    )
+    db.commit()
+    return DeleteHeartbeatLogsResponse(status="deleted", deleted=deleted)
 
 
 # ---------------------------------------------------------------------------

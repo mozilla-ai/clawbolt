@@ -1,6 +1,7 @@
 """BlueBubbles channel: inbound webhook + outbound messaging (iMessage via self-hosted Mac bridge)."""
 
 import asyncio
+import hmac
 import logging
 
 import httpx
@@ -151,7 +152,9 @@ class BlueBubblesChannel(BaseChannel):
             )
             return
 
-        webhook_url = f"{tunnel_url}/api/webhooks/bluebubbles"
+        webhook_url = (
+            f"{tunnel_url}/api/webhooks/bluebubbles?password={settings.bluebubbles_password}"
+        )
 
         if not await wait_for_dns(tunnel_url):
             logger.warning(
@@ -244,7 +247,9 @@ class BlueBubblesChannel(BaseChannel):
             """Receive inbound messages from BlueBubbles."""
             # Validate password query param
             password = request.query_params.get("password", "")
-            if settings.bluebubbles_password and password != settings.bluebubbles_password:
+            if settings.bluebubbles_password and not hmac.compare_digest(
+                password, settings.bluebubbles_password
+            ):
                 logger.warning("Invalid BlueBubbles webhook password")
                 return JSONResponse(content={"ok": True})
 

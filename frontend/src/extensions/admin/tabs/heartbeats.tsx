@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
+  deleteHeartbeatLogs,
   getHeartbeatLogs,
   type HeartbeatLogItem,
 } from '../admin-api';
@@ -57,6 +58,7 @@ export default function HeartbeatsTab() {
   const [logs, setLogs] = useState<HeartbeatLogItem[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [clearing, setClearing] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(() => {
@@ -66,6 +68,15 @@ export default function HeartbeatsTab() {
       .then((res) => { setLogs(res.items); setTotal(res.total); })
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
+  }, []);
+
+  const handleClear = useCallback(() => {
+    if (!confirm('Delete all heartbeat history? This cannot be undone.')) return;
+    setClearing(true);
+    deleteHeartbeatLogs()
+      .then(() => { setLogs([]); setTotal(0); })
+      .catch((e: Error) => setError(e.message))
+      .finally(() => setClearing(false));
   }, []);
 
   useEffect(() => { load(); }, [load]);
@@ -91,9 +102,18 @@ export default function HeartbeatsTab() {
 
   return (
     <div>
-      <p className="text-xs text-muted-foreground mb-2">
-        {total} total heartbeat event{total !== 1 ? 's' : ''}
-      </p>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-xs text-muted-foreground">
+          {total} total heartbeat event{total !== 1 ? 's' : ''}
+        </p>
+        <button
+          className="text-xs text-danger hover:underline disabled:opacity-50"
+          onClick={handleClear}
+          disabled={clearing}
+        >
+          {clearing ? 'Clearing...' : 'Clear history'}
+        </button>
+      </div>
       <div className="space-y-2">
         {logs.map(log => (
           <HeartbeatEntry key={log.id} log={log} />

@@ -812,6 +812,23 @@
             }
           }
         }
+      },
+      "delete": {
+        "summary": "Delete Heartbeat Logs",
+        "description": "Delete all heartbeat logs for the current user.",
+        "operationId": "delete_heartbeat_logs_api_user_heartbeat_logs_delete",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteHeartbeatLogsResponse"
+                }
+              }
+            }
+          }
+        }
       }
     },
     "/api/user/llm-usage": {
@@ -1330,6 +1347,24 @@
           "enabled"
         ],
         "title": "ChannelRouteUpdate"
+      },
+      "DeleteHeartbeatLogsResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "deleted": {
+            "type": "integer",
+            "title": "Deleted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "deleted"
+        ],
+        "title": "DeleteHeartbeatLogsResponse"
       },
       "DeleteMessagesResponse": {
         "properties": {

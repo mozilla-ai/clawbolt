@@ -8,6 +8,7 @@ and publishes InboundMessages to the bus.
 from unittest.mock import AsyncMock, patch
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.channels.bluebubbles import BlueBubblesChannel
@@ -403,8 +404,6 @@ async def test_download_media_size_limit_exceeded() -> None:
     mock_http.get.return_value = mock_resp
     channel._client = mock_http
 
-    import pytest
-
     with (
         patch("backend.app.channels.bluebubbles.settings.max_media_size_bytes", 50),
         pytest.raises(ValueError, match="too large"),
@@ -619,5 +618,5 @@ async def test_start_registers_webhook_on_success() -> None:
 
     mock_register.assert_called_once_with(
         "https://my-mac.example.com",
-        "https://tunnel.example.com/api/webhooks/bluebubbles",
+        "https://tunnel.example.com/api/webhooks/bluebubbles?password=test-pw",
     )
