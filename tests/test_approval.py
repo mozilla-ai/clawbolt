@@ -581,8 +581,8 @@ class TestIngestionIntercept:
         assert not gate.has_pending(test_user.id)
 
     @pytest.mark.asyncio()
-    async def test_non_approval_text_during_pending_falls_through(self, test_user: User) -> None:
-        """Unrecognized text while pending falls through to normal processing."""
+    async def test_non_approval_text_sends_clarification(self, test_user: User) -> None:
+        """Unrecognized text while pending sends a clarification prompt."""
         gate = get_approval_gate()
 
         mock_publish = AsyncMock()
@@ -616,12 +616,9 @@ class TestIngestionIntercept:
                 return_value=test_user,
             ),
             patch(
-                "backend.app.agent.ingestion.handle_inbound_message",
+                "backend.app.agent.ingestion.classify_approval_response",
                 new_callable=AsyncMock,
-            ),
-            patch(
-                "backend.app.agent.ingestion.settings.message_batch_window_ms",
-                0,
+                return_value=None,
             ),
         ):
             await process_inbound_from_bus(inbound)
@@ -632,6 +629,53 @@ class TestIngestionIntercept:
         # Resolve the gate so the task completes
         gate.resolve(test_user.id, ApprovalDecision.DENIED)
         await approval_task
+
+    @pytest.mark.asyncio()
+    async def test_llm_classified_approval_resolves_gate(self, test_user: User) -> None:
+        """LLM-classified natural-language approval resolves the gate."""
+        gate = get_approval_gate()
+
+        mock_publish = AsyncMock()
+
+        async def _start_approval() -> ApprovalDecision:
+            return await gate.request_approval(
+                user_id=test_user.id,
+                tool_name="test_tool",
+                description="test",
+                publish_outbound=mock_publish,
+                channel="telegram",
+                chat_id="chat_1",
+                timeout=5.0,
+            )
+
+        approval_task = asyncio.create_task(_start_approval())
+        await asyncio.sleep(0.01)
+        assert gate.has_pending(test_user.id)
+
+        # "Yes to both" is not an exact match, but the LLM classifies it
+        inbound = InboundMessage(
+            channel="telegram",
+            sender_id=str(test_user.id),
+            text="Yes to both",
+        )
+
+        with (
+            patch(
+                "backend.app.agent.ingestion._get_or_create_user",
+                new_callable=AsyncMock,
+                return_value=test_user,
+            ),
+            patch(
+                "backend.app.agent.ingestion.classify_approval_response",
+                new_callable=AsyncMock,
+                return_value=ApprovalDecision.APPROVED,
+            ),
+        ):
+            await process_inbound_from_bus(inbound)
+
+        decision = await approval_task
+        assert decision == ApprovalDecision.APPROVED
+        assert not gate.has_pending(test_user.id)
 
 
 # ---------------------------------------------------------------------------

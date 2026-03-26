@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from backend.app.agent.approval import (
     _parse_approval_response,
+    classify_approval_response,
     get_approval_gate,
 )
 from backend.app.agent.concurrency import user_locks
@@ -428,8 +429,27 @@ async def process_inbound_from_bus(
     # -- Intercept approval responses before normal processing --
     gate = get_approval_gate()
     if gate.has_pending(user.id) and inbound.text:
+        # Fast path: exact keyword match
         decision = _parse_approval_response(inbound.text)
+
+        # Slow path: LLM classification for natural-language responses
+        # like "Yes to both", "go ahead", "sure thing", etc.
+        if decision is None:
+            logger.info(
+                "Approval pending for user %s but response %r not an exact match, "
+                "trying LLM classification",
+                user.id,
+                inbound.text[:100],
+            )
+            decision = await classify_approval_response(inbound.text)
+
         if decision is not None:
+            logger.info(
+                "Approval resolved for user %s: %s (from %r)",
+                user.id,
+                decision,
+                inbound.text[:100],
+            )
             gate.resolve(user.id, decision)
             # Persist the reply to the session so it appears in conversation history
             session, _is_new = await get_or_create_conversation(
@@ -458,6 +478,27 @@ async def process_inbound_from_bus(
                     ),
                 )
             return
+
+        # Neither exact match nor LLM could classify: send feedback so the
+        # user knows their response wasn't understood (instead of silently
+        # hanging until the approval timeout).
+        logger.warning(
+            "Approval pending for user %s but could not classify response %r; "
+            "sending clarification prompt",
+            user.id,
+            inbound.text[:100],
+        )
+        from backend.app.bus import OutboundMessage, message_bus
+
+        await message_bus.publish_outbound(
+            OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.sender_id,
+                content="I didn't catch that. Reply yes or no (always/never to remember your choice).",
+                request_id=inbound.request_id,
+            )
+        )
+        return
 
     session, _is_new = await get_or_create_conversation(
         user.id, external_session_id=inbound.session_id
