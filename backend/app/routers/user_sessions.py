@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
+from backend.app.agent.concurrency import user_locks
 from backend.app.agent.session_db import get_session_store
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import get_db
@@ -119,5 +120,6 @@ async def delete_conversation_history(
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
 
-    deleted = store.delete_messages(session_id)
+    async with user_locks.acquire(current_user.id):
+        deleted = store.delete_messages(session_id)
     return {"status": "deleted", "messages_deleted": deleted}
