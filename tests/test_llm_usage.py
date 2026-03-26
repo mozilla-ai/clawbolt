@@ -44,6 +44,8 @@ def _read_usage_entries(user_id: str) -> list[dict[str, object]]:
                 "completion_tokens": log.output_tokens,
                 "total_tokens": log.total_tokens,
                 "purpose": log.purpose,
+                "cache_creation_input_tokens": log.cache_creation_input_tokens,
+                "cache_read_input_tokens": log.cache_read_input_tokens,
             }
             for log in logs
         ]
@@ -141,3 +143,34 @@ async def test_agent_process_message_logs_usage(
     assert len(entries) == 1
     assert entries[0]["purpose"] == "agent_main"
     assert entries[0]["total_tokens"] == 420
+
+
+# ---------------------------------------------------------------------------
+# Cache token tracking tests
+# ---------------------------------------------------------------------------
+
+
+def test_log_llm_usage_cache_tokens_stored(test_user: User) -> None:
+    """log_llm_usage should persist cache token fields when present."""
+    response = _make_response_with_usage(prompt_tokens=500, completion_tokens=100)
+    response.usage.cache_creation_input_tokens = 200
+    response.usage.cache_read_input_tokens = 300
+
+    log_llm_usage(test_user.id, "test-model", response, "agent_main")
+
+    entries = _read_usage_entries(test_user.id)
+    assert len(entries) == 1
+    assert entries[0]["cache_creation_input_tokens"] == 200
+    assert entries[0]["cache_read_input_tokens"] == 300
+
+
+def test_log_llm_usage_cache_tokens_null_when_absent(test_user: User) -> None:
+    """Cache token fields should be NULL when not set on the response."""
+    response = _make_response_with_usage(prompt_tokens=100, completion_tokens=50)
+
+    log_llm_usage(test_user.id, "test-model", response, "agent_main")
+
+    entries = _read_usage_entries(test_user.id)
+    assert len(entries) == 1
+    assert entries[0]["cache_creation_input_tokens"] is None
+    assert entries[0]["cache_read_input_tokens"] is None

@@ -24,7 +24,7 @@ from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessa
 from backend.app.agent.session_db import get_session_store
 from backend.app.enums import MessageDirection
 from backend.app.models import User
-from tests.mocks.llm import make_text_response
+from tests.mocks.llm import extract_system_text, make_text_response
 
 
 @pytest.fixture()
@@ -187,7 +187,7 @@ async def test_compact_session_rewrites_memory(test_user: UserData) -> None:
     # Verify LLM was called with the system prompt
     mock_llm.assert_called_once()
     call_kwargs = mock_llm.call_args
-    assert call_kwargs.kwargs.get("system") == COMPACTION_SYSTEM_PROMPT
+    assert extract_system_text(call_kwargs.kwargs.get("system")) == COMPACTION_SYSTEM_PROMPT
     llm_messages = call_kwargs.kwargs["messages"]
     assert llm_messages[-1]["role"] == "user"
 
@@ -269,7 +269,7 @@ async def test_compact_session_user_profile_in_separate_xml_section(
     assert "Portland" not in memory_section
 
     # System prompt should reference XML structure
-    system_prompt = call_kwargs.kwargs.get("system", "")
+    system_prompt = extract_system_text(call_kwargs.kwargs.get("system"))
     assert "<user_profile>" in system_prompt
     assert "<current_memory>" in system_prompt
 

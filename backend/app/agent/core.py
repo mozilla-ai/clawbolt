@@ -63,7 +63,11 @@ from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
 from backend.app.models import User
-from backend.app.services.llm_service import reasoning_effort_to_thinking
+from backend.app.services.llm_service import (
+    apply_tool_caching,
+    prepare_system_with_caching,
+    reasoning_effort_to_thinking,
+)
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -291,7 +295,12 @@ class ClawboltAgent:
         """
         await self._send_typing_indicator()
         effective_max_tokens = max_tokens or settings.llm_max_tokens_agent
-        system, msg_dicts = messages_to_messages_api(messages)
+        system_str, msg_dicts = messages_to_messages_api(messages)
+        system: str | list[dict[str, Any]] | None = system_str
+        if system is not None:
+            system = prepare_system_with_caching(system)
+        if tool_schemas:
+            tool_schemas = apply_tool_caching(tool_schemas)
         tool_count = len(tool_schemas) if tool_schemas else 0
         thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
         logger.debug(
@@ -339,7 +348,12 @@ class ClawboltAgent:
                     len(messages),
                     len(trimmed),
                 )
-                system, trimmed_dicts = messages_to_messages_api(trimmed)
+                retry_system_str, trimmed_dicts = messages_to_messages_api(trimmed)
+                system = (
+                    prepare_system_with_caching(retry_system_str)
+                    if retry_system_str is not None
+                    else None
+                )
                 return cast(
                     MessageResponse,
                     await amessages(

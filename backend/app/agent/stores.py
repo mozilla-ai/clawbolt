@@ -362,6 +362,8 @@ class LLMUsageStore:
         prompt_tokens: int,
         completion_tokens: int,
         purpose: str,
+        cache_creation_input_tokens: int | None = None,
+        cache_read_input_tokens: int | None = None,
     ) -> None:
         """Insert a LLMUsageLog row.
 
@@ -379,6 +381,8 @@ class LLMUsageStore:
                 total_tokens=prompt_tokens + completion_tokens,
                 cost=0.0,
                 purpose=purpose,
+                cache_creation_input_tokens=cache_creation_input_tokens,
+                cache_read_input_tokens=cache_read_input_tokens,
             )
             db.add(entry)
             db.commit()

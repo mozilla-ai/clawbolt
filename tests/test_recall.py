@@ -9,7 +9,7 @@ from backend.app.agent.memory import build_memory_context
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import User
-from tests.mocks.llm import make_text_response
+from tests.mocks.llm import extract_system_text, make_text_response
 
 
 @pytest.fixture()
@@ -48,7 +48,7 @@ async def test_system_prompt_includes_recall_guidance(
     )
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["system"]
+    system_prompt = extract_system_text(call_args.kwargs["system"])
     assert "Recall Behavior" in system_prompt
     assert "don't make things up" in system_prompt
 

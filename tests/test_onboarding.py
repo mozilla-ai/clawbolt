@@ -19,7 +19,7 @@ from backend.app.agent.onboarding import (
 from backend.app.agent.router import handle_inbound_message
 from backend.app.config import settings
 from backend.app.models import User
-from tests.mocks.llm import make_text_response, make_tool_call_response
+from tests.mocks.llm import extract_system_text, make_text_response, make_tool_call_response
 
 
 def _ensure_session_on_disk(user: User, session: SessionState) -> None:
@@ -309,7 +309,7 @@ async def test_onboarding_uses_onboarding_prompt(
 
     assert response.reply_text == "Welcome to Clawbolt! What's your name?"
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["system"]
+    system_msg = extract_system_text(call_args.kwargs["system"])
     assert "new user" in system_msg
 
 
@@ -394,7 +394,7 @@ async def test_complete_profile_uses_normal_prompt(
 
     assert response.reply_text == "Let me help with that estimate!"
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_msg = call_args.kwargs["system"]
+    system_msg = extract_system_text(call_args.kwargs["system"])
     assert "new user" not in system_msg
 
 

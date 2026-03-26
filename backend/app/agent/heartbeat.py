@@ -41,7 +41,10 @@ from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.models import ChannelRoute, User
-from backend.app.services.llm_service import reasoning_effort_to_thinking
+from backend.app.services.llm_service import (
+    prepare_system_with_caching,
+    reasoning_effort_to_thinking,
+)
 from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
@@ -402,7 +405,7 @@ async def evaluate_heartbeat_need(
             model=model,
             provider=provider,
             api_base=settings.llm_api_base,
-            system=prompt,
+            system=prepare_system_with_caching(prompt),
             messages=[
                 {
                     "role": "user",

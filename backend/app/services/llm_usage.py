@@ -29,9 +29,21 @@ def log_llm_usage(
     completion_tokens = response.usage.output_tokens
     total_tokens = prompt_tokens + completion_tokens
 
+    cache_creation_input_tokens: int | None = getattr(
+        response.usage, "cache_creation_input_tokens", None
+    )
+    cache_read_input_tokens: int | None = getattr(response.usage, "cache_read_input_tokens", None)
+
     try:
         store = LLMUsageStore(user_id)
-        store.log(model, prompt_tokens, completion_tokens, purpose)
+        store.log(
+            model,
+            prompt_tokens,
+            completion_tokens,
+            purpose,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+        )
     except Exception:
         logger.exception("Failed to log LLM usage for user %s", user_id)
         return

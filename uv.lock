@@ -215,9 +215,10 @@ wheels = [
 
 [[package]]
 name = "any-llm-sdk"
-version = "1.10.0"
+version = "1.13.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
+    { name = "anthropic" },
     { name = "httpx" },
     { name = "openai" },
     { name = "openresponses-types" },
@@ -225,9 +226,9 @@ dependencies = [
     { name = "rich" },
     { name = "typing-extensions" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/40/a6/d993c437d77fda22bbbb2fb21ef557cbc8a4b8735ae3a4d83507f0b2e9a1/any_llm_sdk-1.10.0.tar.gz", hash = "sha256:0d20563bd2931e1a033b8ed7c63ad46cb0a4108f88cff02c98d54855b07545b9", size = 144117, upload-time = "2026-03-05T13:42:54.977Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/87/4b/dea4eeeb5e4e3e55fa6b37a7ec033a18a2527aabf565bd598071d6308fbd/any_llm_sdk-1.13.0.tar.gz", hash = "sha256:967c5f4dd099f5f6cc9673f2888d5550f6e821d25341d31133a05741c1ce903e", size = 153753, upload-time = "2026-03-23T10:27:29.843Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/ef/c8/969ed1ed31d0bb92278bd698c078fd87eb280c3e7e8acaa277441d0ed69a/any_llm_sdk-1.10.0-py3-none-any.whl", hash = "sha256:618be981849e844c6012282be715c8305e32b883d8f74dfd20b16f241c9e0e7f", size = 201669, upload-time = "2026-03-05T13:42:49.861Z" },
+    { url = "https://files.pythonhosted.org/packages/64/a1/0106667efdf870595981a0fc3e807675d1f8ded8dc8c20e936e6c42bcd95/any_llm_sdk-1.13.0-py3-none-any.whl", hash = "sha256:7e456a843cec249ae1cb3a498aa89df5baff8aa62d76a24718babb3b8a51e495", size = 216557, upload-time = "2026-03-23T10:27:28.306Z" },
 ]
 
 [package.optional-dependencies]
@@ -247,6 +248,9 @@ all = [
     { name = "ibm-watsonx-ai", marker = "python_full_version < '3.14'" },
     { name = "mistralai" },
     { name = "ollama" },
+    { name = "opentelemetry-exporter-otlp-proto-http" },
+    { name = "opentelemetry-sdk" },
+    { name = "prometheus-client" },
     { name = "psycopg2-binary" },
     { name = "pydantic-settings" },
     { name = "python-dotenv" },
@@ -611,7 +615,7 @@ dev = [
 [package.metadata]
 requires-dist = [
     { name = "alembic", specifier = ">=1.13" },
-    { name = "any-llm-sdk", extras = ["all"], specifier = ">=1.10" },
+    { name = "any-llm-sdk", extras = ["all"], specifier = ">=1.13" },
     { name = "cryptography", specifier = ">=42.0" },
     { name = "dropbox", specifier = ">=12.0" },
     { name = "fastapi", specifier = ">=0.115.0" },
@@ -2538,6 +2542,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/40/f1/6d86a29246dfd2e9b6237f0b5823717f60cad94d47ddc26afa916d21f525/pre_commit-4.5.1.tar.gz", hash = "sha256:eb545fcff725875197837263e977ea257a402056661f09dae08e4b149b030a61", size = 198232, upload-time = "2025-12-16T21:14:33.552Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/5d/19/fd3ef348460c80af7bb4669ea7926651d1f95c23ff2df18b9d24bab4f3fa/pre_commit-4.5.1-py2.py3-none-any.whl", hash = "sha256:3b3afd891e97337708c1674210f8eba659b52a38ea5f822ff142d10786221f77", size = 226437, upload-time = "2025-12-16T21:14:32.409Z" },
+]
+
+[[package]]
+name = "prometheus-client"
+version = "0.24.1"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/f0/58/a794d23feb6b00fc0c72787d7e87d872a6730dd9ed7c7b3e954637d8f280/prometheus_client-0.24.1.tar.gz", hash = "sha256:7e0ced7fbbd40f7b84962d5d2ab6f17ef88a72504dcf7c0b40737b43b2a461f9", size = 85616, upload-time = "2026-01-14T15:26:26.965Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/74/c3/24a2f845e3917201628ecaba4f18bab4d18a337834c1df2a159ee9d22a42/prometheus_client-0.24.1-py3-none-any.whl", hash = "sha256:150db128af71a5c2482b36e588fc8a6b95e498750da4b17065947c16070f4055", size = 64057, upload-time = "2026-01-14T15:26:24.42Z" },
 ]
 
 [[package]]

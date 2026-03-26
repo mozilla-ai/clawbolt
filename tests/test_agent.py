@@ -26,6 +26,7 @@ from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.trimming import trim_messages
 from backend.app.models import User
 from tests.mocks.llm import (
+    extract_system_text,
     make_empty_response,
     make_error_response,
     make_text_response,
@@ -103,7 +104,7 @@ async def test_agent_system_prompt_includes_soul(mock_amessages: object, test_us
     await agent.process_message("Hello")
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["system"]
+    system_prompt = extract_system_text(call_args.kwargs["system"])
     assert "AI assistant for solo tradespeople" in system_prompt
 
 
@@ -138,7 +139,7 @@ async def test_system_prompt_includes_tool_hints(mock_amessages: object, test_us
     await agent.process_message("Hello")
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["system"]
+    system_prompt = extract_system_text(call_args.kwargs["system"])
     assert "Tool Guidelines" in system_prompt
     assert "When you learn new info, save it." in system_prompt
     assert "Search memory for relevant information." in system_prompt
@@ -157,7 +158,7 @@ async def test_system_prompt_omits_tool_section_when_no_hints(
     await agent.process_message("Hello")
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["system"]
+    system_prompt = extract_system_text(call_args.kwargs["system"])
     assert "Tool Guidelines" not in system_prompt
 
 
@@ -193,7 +194,7 @@ async def test_system_prompt_skips_tools_without_hints(
     await agent.process_message("Hello")
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["system"]
+    system_prompt = extract_system_text(call_args.kwargs["system"])
     assert "This tool does something useful." in system_prompt
     assert "tool_without_hint" not in system_prompt
 
@@ -210,7 +211,7 @@ async def test_system_prompt_includes_mobile_formatting_rules(
     await agent.process_message("Hello")
 
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
-    system_prompt = call_args.kwargs["system"]
+    system_prompt = extract_system_text(call_args.kwargs["system"])
     assert "Never use markdown tables" in system_prompt
     assert "Never use bold markers" in system_prompt
 
@@ -441,14 +442,19 @@ async def test_agent_handles_malformed_tool_arguments(
     the agent handles the edge case where parse_tool_calls returns
     arguments=None (e.g. from a content block with missing input).
     """
-    from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
+    from any_llm.types.messages import MessageResponse, MessageUsage, ToolUseBlock
 
     # Build a response with a tool_use block that has None input
-    tool_response = MessageResponse(
+    # ToolUseBlock validates input as dict in 1.13+; use model_construct
+    # to bypass validation and simulate a malformed block.
+    block = ToolUseBlock.model_construct(
+        type="tool_use", id="call_bad", name="save_fact", input=None
+    )
+    tool_response = MessageResponse.model_construct(
         id="msg_mock",
-        content=[
-            MessageContentBlock(type="tool_use", id="call_bad", name="save_fact", input=None),
-        ],
+        role="assistant",
+        type="message",
+        content=[block],
         model="mock-model",
         stop_reason="tool_use",
         usage=MessageUsage(input_tokens=0, output_tokens=0),
@@ -744,7 +750,7 @@ async def test_agent_preserves_system_and_user_during_trimming(
     messages = call_args.kwargs["messages"]
 
     # System prompt is passed as 'system' kwarg
-    assert call_args.kwargs["system"] == "Custom system prompt"
+    assert extract_system_text(call_args.kwargs["system"]) == "Custom system prompt"
 
     # Latest user message is always last
     assert messages[-1]["role"] == "user"
@@ -1880,11 +1886,13 @@ async def test_valid_stop_reasons_not_treated_as_error(
 ) -> None:
     """Responses with valid stop_reasons should be processed normally."""
     for stop_reason in ("end_turn", "max_tokens", "stop_sequence"):
-        from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
+        from any_llm.types.messages import MessageResponse, MessageUsage, TextBlock
 
         mock_amessages.return_value = MessageResponse(  # type: ignore[union-attr]
             id="msg_mock",
-            content=[MessageContentBlock(type="text", text="Reply!")],
+            role="assistant",
+            type="message",
+            content=[TextBlock(type="text", text="Reply!")],
             model="mock-model",
             stop_reason=stop_reason,
             usage=MessageUsage(input_tokens=0, output_tokens=0),
