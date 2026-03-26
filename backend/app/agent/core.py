@@ -124,6 +124,7 @@ class ClawboltAgent:
         self._session_id = session_id
         self._excluded_tool_names = excluded_tool_names
         self._request_id = request_id
+        self._reactive_trim_dropped: list[AgentMessage] = []
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -157,6 +158,26 @@ class ClawboltAgent:
                 )
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", self._chat_id)
+
+    async def _persist_approval_prompt(self, prompt: str) -> None:
+        """Store the approval prompt as an outbound message in the session.
+
+        This ensures the prompt is visible in the web UI when viewing
+        session history, even if the conversation originated on a
+        different channel (e.g. iMessage or Telegram).
+        """
+        try:
+            from backend.app.agent.session_db import get_session_store
+            from backend.app.enums import MessageDirection
+
+            session_store = get_session_store(self.user.id)
+            await session_store.add_message_by_session_id(
+                session_id=self._session_id,
+                direction=MessageDirection.OUTBOUND,
+                body=prompt,
+            )
+        except Exception:
+            logger.warning("Failed to persist approval prompt for user %s", self.user.id)
 
     def _get_tool_permission(
         self,
@@ -330,16 +351,17 @@ class ClawboltAgent:
                 )
                 await asyncio.sleep(delay)
             except ContextLengthExceededError:
-                trimmed = trim_messages(
+                trim_result = trim_messages(
                     messages,
                     input_tokens=self._last_input_tokens or MAX_INPUT_TOKENS,
                 )
+                self._reactive_trim_dropped.extend(trim_result.dropped)
                 logger.warning(
                     "Context length exceeded, trimmed from %d to %d messages and retrying",
                     len(messages),
-                    len(trimmed),
+                    len(trim_result.messages),
                 )
-                system, trimmed_dicts = messages_to_messages_api(trimmed)
+                system, trimmed_dicts = messages_to_messages_api(trim_result.messages)
                 return cast(
                     MessageResponse,
                     await amessages(
@@ -539,6 +561,12 @@ class ClawboltAgent:
 
             plan_msg = format_plan_message("Here's what I need to do:", auto_steps, ask_steps)
 
+            # Persist the approval prompt to session history so it is
+            # visible in the web UI regardless of which channel
+            # originated the conversation.
+            if self._session_id:
+                await self._persist_approval_prompt(plan_msg)
+
             if self._publish_outbound is not None and self._chat_id is not None:
                 # Publish approval prompt as SSE event for webchat clients.
                 # The publish_outbound path works for Telegram but is a no-op
@@ -704,17 +732,19 @@ class ClawboltAgent:
         # Uses the block-based trimmer which preserves tool-call/result pairing
         # and injects a summary of dropped messages.
         original_count = len(messages)
-        messages = trim_messages(
+        trim_result = trim_messages(
             messages,
-            target_tokens=MAX_INPUT_TOKENS,
+            target_tokens=settings.context_trim_target_tokens,
             input_tokens=self._last_input_tokens or None,
         )
+        messages = trim_result.messages
+        all_dropped = list(trim_result.dropped)
         trimmed_count = original_count - len(messages)
         if trimmed_count > 0:
             logger.warning(
                 "Trimmed %d message(s) from conversation history (limit %d tokens)",
                 trimmed_count,
-                MAX_INPUT_TOKENS,
+                settings.context_trim_target_tokens,
             )
 
         llm_kwargs: dict[str, Any] = {}
@@ -764,6 +794,15 @@ class ClawboltAgent:
                     _round,
                     response.stop_reason,
                 )
+                # Compact any messages already dropped before early return
+                if self._reactive_trim_dropped:
+                    all_dropped.extend(self._reactive_trim_dropped)
+                    self._reactive_trim_dropped = []
+                if all_dropped:
+                    from backend.app.agent.context import trigger_compaction_for_dropped
+
+                    trigger_compaction_for_dropped(self.user.id, all_dropped)
+
                 total_duration = (time.monotonic() - agent_start_time) * 1000
                 await self._emit(
                     AgentEndEvent(
@@ -879,6 +918,17 @@ class ClawboltAgent:
             # Max rounds reached -- use last response content
             reply_text = get_response_text(response)
             logger.debug("Max tool rounds (%d) reached, using last response", MAX_TOOL_ROUNDS)
+
+        # Collect any messages dropped by reactive trimming (ContextLengthExceededError)
+        if self._reactive_trim_dropped:
+            all_dropped.extend(self._reactive_trim_dropped)
+            self._reactive_trim_dropped = []
+
+        # Trigger background compaction for all dropped messages
+        if all_dropped:
+            from backend.app.agent.context import trigger_compaction_for_dropped
+
+            trigger_compaction_for_dropped(self.user.id, all_dropped)
 
         total_duration = (time.monotonic() - agent_start_time) * 1000
         logger.debug(
