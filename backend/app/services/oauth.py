@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 import httpx
+import sqlalchemy as sa
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -262,6 +263,7 @@ class OAuthService:
             "extra_json": json.dumps(token.extra),
         }
         update_cols = {k: v for k, v in values.items() if k not in ("user_id", "integration")}
+        update_cols["updated_at"] = sa.func.now()
 
         stmt = (
             pg_insert(OAuthToken)

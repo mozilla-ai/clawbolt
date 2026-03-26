@@ -181,6 +181,49 @@ def test_save_token_upsert(oauth_svc: OAuthService, test_user: User) -> None:
     assert loaded.access_token == "second"
 
 
+def test_save_token_upsert_updates_timestamp(oauth_svc: OAuthService, test_user: User) -> None:
+    """Upserting a token should refresh the updated_at timestamp via sa.func.now()."""
+    from sqlalchemy import select, text
+
+    from backend.app.database import db_session
+    from backend.app.models import OAuthToken
+
+    token1 = OAuthTokenData(access_token="first")
+    oauth_svc.save_token(test_user.id, "quickbooks", token1)
+
+    # Backdate updated_at so the upsert's now() is guaranteed to be later.
+    with db_session() as db:
+        db.execute(
+            text(
+                "UPDATE oauth_tokens SET updated_at = updated_at - interval '1 hour'"
+                " WHERE user_id = :uid AND integration = :integ"
+            ),
+            {"uid": test_user.id, "integ": "quickbooks"},
+        )
+        db.commit()
+
+    with db_session() as db:
+        row = db.execute(
+            select(OAuthToken).where(
+                OAuthToken.user_id == test_user.id,
+                OAuthToken.integration == "quickbooks",
+            )
+        ).scalar_one()
+        backdated = row.updated_at
+
+    token2 = OAuthTokenData(access_token="second")
+    oauth_svc.save_token(test_user.id, "quickbooks", token2)
+
+    with db_session() as db:
+        row = db.execute(
+            select(OAuthToken).where(
+                OAuthToken.user_id == test_user.id,
+                OAuthToken.integration == "quickbooks",
+            )
+        ).scalar_one()
+        assert row.updated_at > backdated
+
+
 def test_load_nonexistent_token(oauth_svc: OAuthService) -> None:
     """Loading a non-existent token should return None."""
     assert oauth_svc.load_token("999", "quickbooks") is None
