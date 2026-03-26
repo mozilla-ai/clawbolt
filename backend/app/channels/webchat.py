@@ -180,6 +180,41 @@ class WebChatChannel(BaseChannel):
                 },
             )
 
+        @router.get("/user/chat/activity")
+        async def chat_activity(
+            user: User = Depends(get_current_user),
+        ) -> StreamingResponse:
+            """SSE endpoint: streams agent activity (thinking, tool use) for this user.
+
+            Delivers real-time status regardless of which channel (Telegram,
+            webchat, etc.) originated the message being processed. Multiple
+            browser tabs can subscribe concurrently.
+            """
+            user_id = str(user.id)
+            queue = message_bus.register_activity_queue(user_id)
+
+            async def event_stream() -> collections.abc.AsyncIterator[str]:
+                try:
+                    while True:
+                        try:
+                            event = await asyncio.wait_for(queue.get(), timeout=15.0)
+                            yield f"data: {json.dumps(event)}\n\n"
+                        except TimeoutError:
+                            # Send keepalive comment to detect disconnected clients
+                            yield ": keepalive\n\n"
+                finally:
+                    message_bus.remove_activity_queue(user_id, queue)
+
+            return StreamingResponse(
+                event_stream(),
+                media_type="text/event-stream",
+                headers={
+                    "Cache-Control": "no-cache",
+                    "Connection": "keep-alive",
+                    "X-Accel-Buffering": "no",
+                },
+            )
+
         return router
 
     def is_allowed(self, sender_id: str, username: str) -> bool:

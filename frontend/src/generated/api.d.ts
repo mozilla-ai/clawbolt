@@ -182,6 +182,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/chat/activity": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Chat Activity
+         * @description SSE endpoint: streams agent activity (thinking, tool use) for this user.
+         *
+         *     Delivers real-time status regardless of which channel (Telegram,
+         *     webchat, etc.) originated the message being processed. Multiple
+         *     browser tabs can subscribe concurrently.
+         */
+        get: operations["chat_activity_api_user_chat_activity_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/webhooks/linq": {
         parameters: {
             query?: never;
@@ -1273,6 +1297,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    chat_activity_api_user_chat_activity_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
         };
