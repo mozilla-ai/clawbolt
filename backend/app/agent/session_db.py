@@ -281,6 +281,64 @@ class SessionStore:
 
             return stored
 
+    async def add_message_by_session_id(
+        self,
+        session_id: str,
+        direction: str,
+        body: str,
+        external_message_id: str = "",
+        media_urls_json: str = "[]",
+        processed_context: str = "",
+        tool_interactions_json: str = "",
+        channel: str = "",
+    ) -> StoredMessage:
+        """Insert a message using only the session_id (no SessionState needed).
+
+        Useful when the caller does not have a live ``SessionState`` object,
+        e.g. persisting an approval prompt from the agent loop.
+        """
+        with db_session() as db:
+            cs = (
+                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
+            )
+            if cs is None:
+                raise ValueError(f"Session {session_id!r} not found for user {self.user_id!r}")
+
+            db.query(ChatSession).filter_by(id=cs.id).with_for_update().first()
+            max_seq: int = (
+                db.query(func.max(Message.seq)).filter_by(session_id=cs.id).scalar()
+            ) or 0
+            seq = max_seq + 1
+            now = datetime.datetime.now(datetime.UTC)
+
+            msg = Message(
+                session_id=cs.id,
+                seq=seq,
+                direction=direction,
+                body=body,
+                processed_context=processed_context,
+                tool_interactions_json=tool_interactions_json,
+                external_message_id=external_message_id,
+                media_urls_json=media_urls_json,
+                timestamp=now,
+            )
+            db.add(msg)
+            cs.last_message_at = now
+            if channel:
+                cs.channel = channel
+            db.commit()
+
+            return StoredMessage(
+                direction=direction,
+                body=body,
+                processed_context=processed_context,
+                tool_interactions_json=tool_interactions_json,
+                external_message_id=external_message_id,
+                media_urls_json=media_urls_json,
+                timestamp=now.isoformat(),
+                seq=seq,
+            )
+
     async def update_message(
         self,
         session: SessionState,
