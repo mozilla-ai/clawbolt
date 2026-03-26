@@ -6,6 +6,8 @@ trimming that preserves tool-call / tool-result pairing.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
+
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,
@@ -18,6 +20,17 @@ from backend.app.config import settings
 _SUMMARY_MAX_CHARS = 500
 
 CONTEXT_TRIM_TARGET_TOKENS = settings.context_trim_target_tokens
+
+_OVERHEAD_TOKEN_ESTIMATE = 10_000
+_CHARS_PER_TOKEN = 4
+
+
+@dataclass
+class TrimResult:
+    """Result of trimming conversation messages."""
+
+    messages: list[AgentMessage]
+    dropped: list[AgentMessage] = field(default_factory=list)
 
 
 def summarize_dropped_messages(dropped: list[AgentMessage]) -> str:
@@ -82,14 +95,14 @@ def trim_messages(
     messages: list[AgentMessage],
     target_tokens: int = CONTEXT_TRIM_TARGET_TOKENS,
     input_tokens: int | None = None,
-) -> list[AgentMessage]:
+) -> TrimResult:
     """Trim conversation messages to fit within a token budget.
 
-    Requires *input_tokens* (from ``response.usage.input_tokens``) to
-    make accurate trimming decisions using the API-reported token count.
-    When *input_tokens* is ``None`` (e.g. first call in a session),
-    returns messages unchanged and relies on the provider raising
-    ``ContextLengthExceededError`` to trigger reactive trimming.
+    Uses *input_tokens* (from ``response.usage.input_tokens``) to make
+    accurate trimming decisions using the API-reported token count. When
+    *input_tokens* is ``None`` (e.g. first call in a session), a
+    character-based heuristic (~4 chars/token + overhead) is used to
+    estimate whether trimming is needed.
 
     Keeps the system prompt (first message) and removes the oldest
     conversation messages until the content fits within *target_tokens*.
@@ -100,11 +113,21 @@ def trim_messages(
 
     Dropped messages are summarized and injected as a context note so
     the LLM retains awareness of what was discussed.
-    """
-    if input_tokens is None or len(messages) <= 2:
-        return messages
 
-    actual_input_tokens: int = input_tokens
+    Returns a ``TrimResult`` containing the (possibly trimmed) message
+    list and the list of dropped messages.
+    """
+    if len(messages) <= 2:
+        return TrimResult(messages=messages)
+
+    actual_input_tokens: int
+    if input_tokens is not None:
+        actual_input_tokens = input_tokens
+    else:
+        # Estimate tokens from character count for first-call-in-session
+        actual_input_tokens = (
+            _content_length(messages) // _CHARS_PER_TOKEN + _OVERHEAD_TOKEN_ESTIMATE
+        )
 
     def _tokens_for(msgs: list[AgentMessage]) -> int:
         """Scale the known input_tokens by the content-length ratio."""
@@ -112,7 +135,7 @@ def trim_messages(
         return int(actual_input_tokens * _content_length(msgs) / orig_len)
 
     if _tokens_for(messages) <= target_tokens:
-        return messages
+        return TrimResult(messages=messages)
 
     system = messages[0]
     body = list(messages[1:])
@@ -155,4 +178,4 @@ def trim_messages(
         result.append(UserMessage(content=f"[Summary of earlier conversation: {summary}]"))
     for blk in blocks:
         result.extend(blk)
-    return result
+    return TrimResult(messages=result, dropped=dropped)

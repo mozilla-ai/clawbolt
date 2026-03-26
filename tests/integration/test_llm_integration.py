@@ -29,6 +29,7 @@ async def test_agent_returns_nonempty_reply(
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
+        mock_settings.context_trim_target_tokens = 400_000
 
         agent = ClawboltAgent(user=integration_user)
         response = await agent.process_message(
@@ -50,6 +51,7 @@ async def test_agent_message_format_accepted(
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
+        mock_settings.context_trim_target_tokens = 400_000
 
         agent = ClawboltAgent(user=integration_user)
         history: list[AgentMessage] = [

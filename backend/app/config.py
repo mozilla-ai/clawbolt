@@ -72,12 +72,12 @@ class Settings(BaseSettings):
     approval_timeout_seconds: int = Field(default=120, ge=1)
     message_batch_window_ms: int = Field(default=1500, ge=100)
     max_tool_rounds: int = Field(default=10, ge=1)
-    max_input_tokens: int = Field(default=120_000, ge=1)
-    context_trim_target_tokens: int = Field(default=80_000, ge=1)
+    max_input_tokens: int = Field(default=600_000, ge=1)
+    context_trim_target_tokens: int = Field(default=400_000, ge=1)
     llm_max_retries: int = Field(default=3, ge=1)
 
     # Conversation & memory
-    conversation_history_limit: int = Field(default=20, ge=1)
+    conversation_history_limit: int = Field(default=500, ge=1)
     memory_recall_limit: int = Field(default=20, ge=1)
     compaction_enabled: bool = True
     compaction_model: str = ""  # empty = fall back to llm_model

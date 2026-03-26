@@ -67,16 +67,20 @@ async def test_load_history_roles(
 
 
 @pytest.mark.asyncio()
-async def test_load_history_limit(
+async def test_load_history_soft_limit(
     conversation: SessionState,
 ) -> None:
-    """History should be limited to N messages."""
+    """The soft safety-net limit should still cap loaded messages."""
     for i in range(10):
         conversation.messages.append(StoredMessage(direction="inbound", body=f"Msg {i}", seq=i + 1))
 
+    # With the soft limit at 5, only 5 most recent are loaded (minus current = 4)
     history = await load_conversation_history(conversation, limit=5)
-    # 5 loaded, minus 1 for current = 4
     assert len(history) == 4
+
+    # With the default 500 limit, all messages should load (minus current = 9)
+    history_all = await load_conversation_history(conversation, limit=500)
+    assert len(history_all) == 9
 
 
 @pytest.mark.asyncio()

@@ -73,6 +73,53 @@ async def _run_compaction_in_background(
         )
 
 
+def trigger_compaction_for_dropped(
+    user_id: str,
+    dropped_messages: list[AgentMessage],
+) -> None:
+    """Fire background compaction for messages that were trimmed from context.
+
+    Called from the agent loop (``process_message``) when ``trim_messages``
+    drops messages. The compaction task extracts durable facts from the
+    dropped messages and stores them in MEMORY.md.
+
+    Unlike the old count-based compaction in ``load_conversation_history``,
+    the dropped messages here are ``AgentMessage`` objects without DB sequence
+    numbers. We pass ``max_message_seq=None`` so ``compact_session`` extracts
+    facts without advancing the compaction watermark. Session-end consolidation
+    (``_consolidate_previous_session``) handles watermark tracking using real
+    DB sequence values.
+    """
+    if not dropped_messages or not settings.compaction_enabled:
+        return
+
+    # Use compact_session directly (no seq tracking needed).
+    # We don't need a session object since we're not updating compaction_seq.
+    async def _run_trim_compaction() -> None:
+        try:
+            saved, _ = await compact_session(user_id, dropped_messages, max_message_seq=None)
+            if saved:
+                logger.info(
+                    "Trim-based compaction extracted facts from %d dropped message(s) for user %s",
+                    len(dropped_messages),
+                    user_id,
+                )
+        except Exception:
+            logger.exception(
+                "Trim-based compaction failed for user %s",
+                user_id,
+            )
+
+    task = asyncio.create_task(_run_trim_compaction())
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    logger.info(
+        "Triggered trim-based compaction for user %s: %d dropped message(s)",
+        user_id,
+        len(dropped_messages),
+    )
+
+
 def _parse_tool_interactions(raw: str) -> list[StoredToolInteraction]:
     """Parse tool_interactions_json, returning validated models.
 
@@ -148,7 +195,6 @@ def _expand_outbound_with_tools(
 async def load_conversation_history(
     session: SessionState,
     limit: int = DEFAULT_HISTORY_LIMIT,
-    user_id: str | None = None,
 ) -> list[AgentMessage]:
     """Load recent messages as typed message objects for LLM context.
 
@@ -160,12 +206,9 @@ async def load_conversation_history(
     prior tool usage.  Messages without tool interaction data are loaded
     as flat ``AssistantMessage``.
 
-    When the session has more messages than *limit* and a *user_id*
-    is provided, the messages that are about to age out are passed through
-    session compaction to extract durable facts before they leave the context
-    window. Compaction runs as a background task to avoid blocking message
-    processing, and only processes messages not already compacted (tracked via
-    ``SessionState.last_compacted_seq``).
+    The *limit* parameter is a soft safety net that bounds memory usage
+    (default 500). Token-based trimming in the agent loop is the primary
+    guard against exceeding the LLM context window.
     """
     all_messages = session.messages
     total_count = len(all_messages)
@@ -175,40 +218,6 @@ async def load_conversation_history(
         messages = all_messages[-(limit):][:-1] if total_count > limit else all_messages[:-1]
     else:
         messages = []
-
-    # If messages were trimmed and we have a user_id, run compaction
-    if user_id is not None and total_count > limit:
-        trimmed_count = total_count - limit
-
-        # Get the oldest messages that have been trimmed from the context window
-        trimmed_msgs = all_messages[:trimmed_count]
-
-        # Filter out messages that have already been compacted
-        if session.last_compacted_seq > 0:
-            trimmed_msgs = [m for m in trimmed_msgs if m.seq > session.last_compacted_seq]
-
-        trimmed_agent_messages: list[AgentMessage] = []
-        for msg in trimmed_msgs:
-            content = msg.processed_context if msg.processed_context else msg.body
-            if msg.direction == MessageDirection.INBOUND:
-                trimmed_agent_messages.append(UserMessage(content=content))
-            else:
-                trimmed_agent_messages.append(AssistantMessage(content=content))
-
-        if trimmed_agent_messages and trimmed_msgs:
-            max_seq = max(m.seq for m in trimmed_msgs)
-            session_store = get_session_store(user_id)
-            task = asyncio.create_task(
-                _run_compaction_in_background(
-                    session_store,
-                    session,
-                    user_id,
-                    trimmed_agent_messages,
-                    max_seq,
-                )
-            )
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
 
     history: list[AgentMessage] = []
     tool_interaction_count = 0
