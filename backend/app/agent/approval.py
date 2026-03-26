@@ -23,7 +23,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from any_llm import acompletion
+from any_llm.types.completion import ChatCompletion
+from pydantic import BaseModel, Field
 
 from backend.app.config import settings
 
@@ -331,7 +335,14 @@ class ApprovalGate:
         try:
             await asyncio.wait_for(pending.event.wait(), timeout=timeout)
         except TimeoutError:
-            logger.info("Approval timed out for user %s, tool %s", user_id, tool_name)
+            logger.warning(
+                "Approval timed out after %.0fs for user %s, tool %s. "
+                "The user may have responded but the message was not recognized "
+                "as an approval response. Resolving as DENIED.",
+                timeout,
+                user_id,
+                tool_name,
+            )
             self._pending.pop(user_id, None)
             return ApprovalDecision.DENIED
 
@@ -358,7 +369,10 @@ class ApprovalGate:
 
 
 def _parse_approval_response(text: str) -> ApprovalDecision | None:
-    """Parse a user's text reply into an approval decision.
+    """Parse a user's text reply into an approval decision (fast path).
+
+    Handles exact single-word matches only. For natural-language responses
+    like "Yes to both" or "go ahead", use ``classify_approval_response()``.
 
     Returns None if the text is not a recognized approval response.
     """
@@ -372,6 +386,80 @@ def _parse_approval_response(text: str) -> ApprovalDecision | None:
         "never": ApprovalDecision.ALWAYS_DENY,
     }
     return mapping.get(normalized)
+
+
+async def classify_approval_response(text: str) -> ApprovalDecision | None:
+    """Classify a natural-language approval response using an LLM.
+
+    Called when ``_parse_approval_response()`` returns None but an approval
+    gate is pending. Uses structured output to resolve ambiguous responses
+    like "Yes to both", "go ahead", "sure thing", etc.
+
+    Returns None if the LLM call fails or the response is not approval-related.
+    """
+
+    class ApprovalClassification(BaseModel):
+        """Structured classification of a user's approval response."""
+
+        decision: Literal["approved", "denied", "always_allow", "always_deny", "unrelated"] = Field(
+            description=(
+                "Classify the user's message: "
+                "'approved' if they are saying yes/agreeing, "
+                "'denied' if they are saying no/refusing, "
+                "'always_allow' if they want to always allow (e.g. 'always', 'always yes'), "
+                "'always_deny' if they want to always deny (e.g. 'never', 'never allow'), "
+                "'unrelated' if the message is not an approval response at all"
+            )
+        )
+
+    model = settings.compaction_model or settings.llm_model
+    provider = settings.compaction_provider or settings.llm_provider
+
+    try:
+        response = cast(
+            ChatCompletion,
+            await acompletion(
+                model=model,
+                provider=provider,
+                api_base=settings.llm_api_base,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "The user was asked to approve or deny a tool action. "
+                            "They were told: "
+                            "'Reply yes or no (always/never to remember your choice)'. "
+                            "Classify their response."
+                        ),
+                    },
+                    {"role": "user", "content": text},
+                ],
+                response_format=ApprovalClassification,
+                max_tokens=50,
+                temperature=0,
+            ),
+        )
+    except Exception:
+        logger.warning("LLM approval classification failed for text: %r", text[:100], exc_info=True)
+        return None
+
+    parsed = response.choices[0].message.parsed  # type: ignore[union-attr]
+    if parsed is None:
+        logger.warning("LLM approval classification returned no parsed result")
+        return None
+
+    decision_map: dict[str, ApprovalDecision] = {
+        "approved": ApprovalDecision.APPROVED,
+        "denied": ApprovalDecision.DENIED,
+        "always_allow": ApprovalDecision.ALWAYS_ALLOW,
+        "always_deny": ApprovalDecision.ALWAYS_DENY,
+    }
+    result = decision_map.get(parsed.decision)
+    if result is not None:
+        logger.info("LLM classified approval response %r as %s", text[:100], result)
+    else:
+        logger.info("LLM classified response %r as unrelated to approval", text[:100])
+    return result
 
 
 def _format_approval_message(tool_name: str, description: str) -> str:
