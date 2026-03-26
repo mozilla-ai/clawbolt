@@ -337,6 +337,81 @@ async def test_send_typing_indicator_no_error_on_failure() -> None:
     await channel.send_typing_indicator("+15551234567")
 
 
+async def test_send_media_multipart_upload() -> None:
+    """send_media should download media then upload as multipart form data."""
+    channel = BlueBubblesChannel()
+    channel._chat_cache["+15551234567"] = "iMessage;-;+15551234567"
+
+    # Mock the BB server response for the upload
+    mock_http = _make_mock_http({"guid": "media-msg-001"})
+    channel._client = mock_http
+
+    # Mock the media download from the source URL
+    mock_dl_resp = AsyncMock()
+    mock_dl_resp.content = b"fake-image-bytes"
+    mock_dl_resp.headers = {"content-type": "image/jpeg"}
+    mock_dl_resp.raise_for_status = lambda: None
+
+    with patch("backend.app.channels.bluebubbles.httpx.AsyncClient") as mock_dl_cls:
+        mock_dl_client = AsyncMock()
+        mock_dl_client.__aenter__ = AsyncMock(return_value=mock_dl_client)
+        mock_dl_client.__aexit__ = AsyncMock(return_value=False)
+        mock_dl_client.get.return_value = mock_dl_resp
+        mock_dl_cls.return_value = mock_dl_client
+
+        result = await channel.send_media(
+            "+15551234567", "Check this", "https://example.com/photo.jpg"
+        )
+
+    assert result == "media-msg-001"
+    mock_http.post.assert_called_once()
+    call_args = mock_http.post.call_args
+    assert call_args[0][0] == "/api/v1/message/attachment"
+    assert call_args[1]["data"]["chatGuid"] == "iMessage;-;+15551234567"
+    assert call_args[1]["data"]["message"] == "Check this"
+
+
+async def test_send_message_multiple_media() -> None:
+    """send_message with multiple media URLs should send each one."""
+    channel = BlueBubblesChannel()
+    channel._chat_cache["+15551234567"] = "iMessage;-;+15551234567"
+
+    mock_http = _make_mock_http({"guid": "multi-msg-001"})
+    channel._client = mock_http
+
+    with patch.object(channel, "send_media", new_callable=AsyncMock) as mock_send_media:
+        mock_send_media.return_value = "multi-msg-001"
+        result = await channel.send_message(
+            "+15551234567", "Two pics", ["https://example.com/a.jpg", "https://example.com/b.jpg"]
+        )
+
+    assert result == "multi-msg-001"
+    assert mock_send_media.call_count == 2
+    mock_send_media.assert_any_call("+15551234567", "Two pics", "https://example.com/a.jpg")
+    mock_send_media.assert_any_call("+15551234567", "", "https://example.com/b.jpg")
+
+
+async def test_download_media_size_limit_exceeded() -> None:
+    """download_media should raise ValueError when file exceeds size limit."""
+    channel = BlueBubblesChannel()
+
+    mock_http = AsyncMock()
+    mock_resp = AsyncMock()
+    mock_resp.content = b"x" * 100
+    mock_resp.headers = {"content-type": "image/jpeg"}
+    mock_resp.raise_for_status = lambda: None
+    mock_http.get.return_value = mock_resp
+    channel._client = mock_http
+
+    import pytest
+
+    with (
+        patch("backend.app.channels.bluebubbles.settings.max_media_size_bytes", 50),
+        pytest.raises(ValueError, match="too large"),
+    ):
+        await channel.download_media("att-guid-too-large")
+
+
 async def test_download_media() -> None:
     """download_media should fetch content from the BlueBubbles API."""
     channel = BlueBubblesChannel()
