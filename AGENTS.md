@@ -85,6 +85,7 @@ Until this project has its first production release, you do not need to be conce
 - Conventional commit prefixes: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `ci:`, `chore:`
 - Every data endpoint uses `Depends(get_current_user)` with `user_id` scoping
 - Config via Pydantic `BaseSettings` with `extra="ignore"`
+- Prefer `isinstance` checks and direct typed attribute access over `getattr`, `hasattr`, or string-based type checks. Our objects are properly typed; using `getattr` with defaults masks real problems when types change. Only use `getattr`/`hasattr` when explicitly directed or at true dynamic boundaries (e.g. plugin APIs).
 - Never use em dashes in user-facing content, comments, or copy -- use periods, commas, colons, or pipes instead
 
 ## Testing

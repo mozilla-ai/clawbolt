@@ -1,7 +1,7 @@
 from unittest.mock import patch
 
 import pytest
-from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
+from any_llm.types.messages import MessageResponse, MessageUsage, TextBlock
 
 from backend.app.media.vision import analyze_image
 from tests.mocks.llm import make_vision_response
@@ -56,10 +56,13 @@ async def test_analyze_image_returns_empty_string_on_none_content(
     mock_amessages: object,
 ) -> None:
     """analyze_image should return '' when LLM content has no text, not None."""
-    # Build a response with no text blocks (empty content)
-    mock_amessages.return_value = MessageResponse(  # type: ignore[union-attr]
+    # TextBlock validates text as str in 1.13+; use model_construct to bypass validation.
+    block_none = TextBlock.model_construct(type="text", text=None)
+    mock_amessages.return_value = MessageResponse.model_construct(  # type: ignore[union-attr]
         id="msg_mock",
-        content=[MessageContentBlock(type="text", text=None)],
+        role="assistant",
+        type="message",
+        content=[block_none],
         model="mock-model",
         stop_reason="end_turn",
         usage=MessageUsage(input_tokens=0, output_tokens=0),

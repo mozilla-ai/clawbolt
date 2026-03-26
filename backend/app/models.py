@@ -341,6 +341,12 @@ class LLMUsageLog(Base):
     total_tokens: Mapped[int] = mapped_column(Integer, default=0)
     cost: Mapped[Decimal] = mapped_column(Numeric(12, 6), default=Decimal("0.000000"))
     purpose: Mapped[str] = mapped_column(String, default="")
+    cache_creation_input_tokens: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=None
+    )
+    cache_read_input_tokens: Mapped[int | None] = mapped_column(
+        Integer, nullable=True, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

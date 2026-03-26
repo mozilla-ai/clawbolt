@@ -7,7 +7,7 @@ import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
+from any_llm.types.messages import MessageResponse, MessageUsage, ToolUseBlock
 
 import backend.app.database as _db_module
 from backend.app.agent.dto import HeartbeatLogEntry
@@ -322,17 +322,17 @@ class TestParseToolCallResponse:
 
     def test_malformed_arguments(self) -> None:
         """Non-dict tool input should fall back to no_action."""
-        resp = MessageResponse(
+        # ToolUseBlock validates input as dict in 1.13+; use model_construct
+        # to bypass validation and simulate a malformed block.
+        block = ToolUseBlock.model_construct(
+            type="tool_use", id="call_bad", name="compose_message", input=None
+        )
+        resp = MessageResponse.model_construct(
             id="msg_mock",
-            content=[
-                MessageContentBlock(
-                    type="tool_use",
-                    id="call_bad",
-                    name="compose_message",
-                    input=None,
-                ),
-            ],
+            content=[block],
             model="mock-model",
+            role="assistant",
+            type="message",
             stop_reason="tool_use",
             usage=MessageUsage(input_tokens=0, output_tokens=0),
         )
@@ -342,17 +342,15 @@ class TestParseToolCallResponse:
 
     def test_none_arguments_does_not_crash(self) -> None:
         """None tool input should not raise TypeError."""
-        resp = MessageResponse(
+        block = ToolUseBlock.model_construct(
+            type="tool_use", id="call_none_args", name="compose_message", input=None
+        )
+        resp = MessageResponse.model_construct(
             id="msg_mock",
-            content=[
-                MessageContentBlock(
-                    type="tool_use",
-                    id="call_none_args",
-                    name="compose_message",
-                    input=None,
-                ),
-            ],
+            content=[block],
             model="mock-model",
+            role="assistant",
+            type="message",
             stop_reason="tool_use",
             usage=MessageUsage(input_tokens=0, output_tokens=0),
         )
@@ -365,7 +363,7 @@ class TestParseToolCallResponse:
         resp = MessageResponse(
             id="msg_mock",
             content=[
-                MessageContentBlock(
+                ToolUseBlock(
                     type="tool_use",
                     id="call_bad_priority",
                     name="compose_message",
@@ -378,6 +376,8 @@ class TestParseToolCallResponse:
                 ),
             ],
             model="mock-model",
+            role="assistant",
+            type="message",
             stop_reason="tool_use",
             usage=MessageUsage(input_tokens=0, output_tokens=0),
         )
@@ -390,7 +390,7 @@ class TestParseToolCallResponse:
         resp = MessageResponse(
             id="msg_mock",
             content=[
-                MessageContentBlock(
+                ToolUseBlock(
                     type="tool_use",
                     id="call_no_msg",
                     name="compose_message",
@@ -398,6 +398,8 @@ class TestParseToolCallResponse:
                 ),
             ],
             model="mock-model",
+            role="assistant",
+            type="message",
             stop_reason="tool_use",
             usage=MessageUsage(input_tokens=0, output_tokens=0),
         )
@@ -408,17 +410,16 @@ class TestParseToolCallResponse:
 
     def test_nameless_tool_use_falls_back(self) -> None:
         """tool_use block with no name should fall back to no_action."""
-        resp = MessageResponse(
+        # ToolUseBlock requires name in 1.13+; use model_construct to bypass validation
+        block = ToolUseBlock.model_construct(
+            type="tool_use", id="call_nofunc", name=None, input={"action": "send_message"}
+        )
+        resp = MessageResponse.model_construct(
             id="msg_mock",
-            content=[
-                MessageContentBlock(
-                    type="tool_use",
-                    id="call_nofunc",
-                    name=None,
-                    input={"action": "send_message"},
-                ),
-            ],
+            content=[block],
             model="mock-model",
+            role="assistant",
+            type="message",
             stop_reason="tool_use",
             usage=MessageUsage(input_tokens=0, output_tokens=0),
         )
@@ -494,17 +495,15 @@ class TestParseDecisionResponse:
         assert "unexpected tool" in decision.reasoning
 
     def test_malformed_arguments(self) -> None:
-        resp = MessageResponse(
+        block = ToolUseBlock.model_construct(
+            type="tool_use", id="call_bad", name="heartbeat_decision", input=None
+        )
+        resp = MessageResponse.model_construct(
             id="msg_mock",
-            content=[
-                MessageContentBlock(
-                    type="tool_use",
-                    id="call_bad",
-                    name="heartbeat_decision",
-                    input=None,
-                ),
-            ],
+            content=[block],
             model="mock-model",
+            role="assistant",
+            type="message",
             stop_reason="tool_use",
             usage=MessageUsage(input_tokens=0, output_tokens=0),
         )

@@ -2,18 +2,25 @@
 
 import json
 
-from any_llm.types.messages import MessageContentBlock, MessageResponse, MessageUsage
+from any_llm.types.messages import MessageResponse, MessageUsage, TextBlock, ToolUseBlock
 
 from backend.app.agent.llm_parsing import ParsedToolCall, get_response_text, parse_tool_calls
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 
-def _make_response(blocks: list[MessageContentBlock]) -> MessageResponse:
-    """Helper to build a MessageResponse from content blocks."""
-    return MessageResponse(
+def _make_response(blocks: list[TextBlock | ToolUseBlock]) -> MessageResponse:
+    """Helper to build a MessageResponse from content blocks.
+
+    Uses ``model_construct`` to bypass pydantic validation so tests can
+    pass arbitrary content block lists.
+    """
+    return MessageResponse.model_construct(
         id="msg_test",
         content=blocks,
         model="test-model",
+        role="assistant",
+        type="message",
+        stop_reason="end_turn",
         usage=MessageUsage(input_tokens=0, output_tokens=0),
     )
 
@@ -52,25 +59,12 @@ class TestParseToolCalls:
         result = parse_tool_calls(resp)
         assert result == []
 
-    def test_none_input_yields_none_arguments(self) -> None:
-        """A tool_use block with input=None should result in arguments=None."""
-        resp = _make_response(
-            [
-                MessageContentBlock(type="tool_use", id="call_none", name="some_tool", input=None),
-            ]
-        )
-        result = parse_tool_calls(resp)
-        assert len(result) == 1
-        assert result[0].arguments is None
-
     def test_text_blocks_are_skipped(self) -> None:
         """Text content blocks should not appear in tool call results."""
         resp = _make_response(
             [
-                MessageContentBlock(type="text", text="thinking..."),
-                MessageContentBlock(
-                    type="tool_use", id="call_0", name="save_fact", input={"key": "v"}
-                ),
+                TextBlock(type="text", text="thinking..."),
+                ToolUseBlock(type="tool_use", id="call_0", name="save_fact", input={"key": "v"}),
             ]
         )
         result = parse_tool_calls(resp)
@@ -82,28 +76,6 @@ class TestParseToolCalls:
         resp = _make_response([])
         result = parse_tool_calls(resp)
         assert result == []
-
-    def test_missing_id_defaults_to_empty_string(self) -> None:
-        """A tool_use block with no id should default to empty string."""
-        resp = _make_response(
-            [
-                MessageContentBlock(type="tool_use", name="some_tool", input={"a": 1}),
-            ]
-        )
-        result = parse_tool_calls(resp)
-        assert len(result) == 1
-        assert result[0].id == ""
-
-    def test_missing_name_defaults_to_empty_string(self) -> None:
-        """A tool_use block with no name should default to empty string."""
-        resp = _make_response(
-            [
-                MessageContentBlock(type="tool_use", id="call_0", input={"a": 1}),
-            ]
-        )
-        result = parse_tool_calls(resp)
-        assert len(result) == 1
-        assert result[0].name == ""
 
     def test_parsed_tool_call_is_frozen(self) -> None:
         """ParsedToolCall should be immutable."""
@@ -126,7 +98,7 @@ class TestGetResponseText:
         """Should return empty string when there are no text blocks."""
         resp = _make_response(
             [
-                MessageContentBlock(type="tool_use", id="call_0", name="some_tool", input={"a": 1}),
+                ToolUseBlock(type="tool_use", id="call_0", name="some_tool", input={"a": 1}),
             ]
         )
         assert get_response_text(resp) == ""
@@ -135,8 +107,8 @@ class TestGetResponseText:
         """Multiple text blocks should be concatenated."""
         resp = _make_response(
             [
-                MessageContentBlock(type="text", text="Hello "),
-                MessageContentBlock(type="text", text="world"),
+                TextBlock(type="text", text="Hello "),
+                TextBlock(type="text", text="world"),
             ]
         )
         assert get_response_text(resp) == "Hello world"
@@ -145,13 +117,3 @@ class TestGetResponseText:
         """Should return empty string when content list is empty."""
         resp = _make_response([])
         assert get_response_text(resp) == ""
-
-    def test_skips_none_text(self) -> None:
-        """Text blocks with None text should be skipped."""
-        resp = _make_response(
-            [
-                MessageContentBlock(type="text", text=None),
-                MessageContentBlock(type="text", text="Hello"),
-            ]
-        )
-        assert get_response_text(resp) == "Hello"

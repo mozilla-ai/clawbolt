@@ -1,4 +1,4 @@
-"""LLM service utilities: provider enumeration and model listing."""
+"""LLM service utilities: provider enumeration, model listing, and caching."""
 
 from __future__ import annotations
 
@@ -61,3 +61,31 @@ async def get_models(
     """Fetch available models for a provider."""
     raw = await alist_models(provider=provider, api_key=api_key, api_base=api_base)
     return [m.id if hasattr(m, "id") else str(m) for m in raw]
+
+
+# ---------------------------------------------------------------------------
+# Prompt caching utilities
+# ---------------------------------------------------------------------------
+
+
+def prepare_system_with_caching(system: str) -> list[dict[str, Any]]:
+    """Wrap a system prompt string as a content block with cache_control.
+
+    Returns the format expected by the Anthropic Messages API for prompt
+    caching. Providers that do not support caching silently ignore the
+    ``cache_control`` key.
+    """
+    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+
+
+def apply_tool_caching(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Add a cache_control marker to the last tool definition.
+
+    Anthropic caches everything up to and including the marked block, so
+    marking the last tool covers the entire tool list. Returns the list
+    unchanged when empty.
+    """
+    if not tools:
+        return tools
+    tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
+    return tools

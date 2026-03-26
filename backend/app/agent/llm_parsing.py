@@ -11,7 +11,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any
 
-from any_llm.types.messages import MessageResponse
+from any_llm.types.messages import MessageResponse, TextBlock, ToolUseBlock
 
 logger = logging.getLogger(__name__)
 
@@ -38,7 +38,7 @@ def parse_tool_calls(response: MessageResponse) -> list[ParsedToolCall]:
     """
     result: list[ParsedToolCall] = []
     for block in response.content:
-        if block.type != "tool_use":
+        if not isinstance(block, ToolUseBlock):
             continue
 
         block_id = block.id or ""
@@ -73,6 +73,6 @@ def get_response_text(response: MessageResponse) -> str:
     """
     parts: list[str] = []
     for block in response.content:
-        if block.type == "text" and block.text:
+        if isinstance(block, TextBlock) and block.text:
             parts.append(block.text)
     return "".join(parts)

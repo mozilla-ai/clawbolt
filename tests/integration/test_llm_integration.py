@@ -72,7 +72,7 @@ async def test_agent_message_format_accepted(
 async def test_amessages_direct_call() -> None:
     """Verify amessages() works directly with anthropic provider."""
     from any_llm import amessages
-    from any_llm.types.messages import MessageResponse
+    from any_llm.types.messages import MessageResponse, TextBlock
 
     raw = await amessages(
         model=_ANTHROPIC_MODEL,
@@ -86,6 +86,41 @@ async def test_amessages_direct_call() -> None:
     assert isinstance(raw, MessageResponse)
 
     assert raw.content
-    text_parts = [block.text for block in raw.content if block.type == "text"]
+    text_parts = [block.text for block in raw.content if isinstance(block, TextBlock)]
     assert text_parts
     assert text_parts[0]
+
+
+@pytest.mark.integration()
+@skip_without_anthropic_key
+async def test_prompt_caching_system_format_accepted() -> None:
+    """The Anthropic API should accept system prompts wrapped with cache_control.
+
+    Verifies that prepare_system_with_caching() produces a format that the
+    API accepts without error, and that cache metric fields are present on the
+    response usage object.
+    """
+    from any_llm import amessages
+    from any_llm.types.messages import MessageResponse
+
+    from backend.app.services.llm_service import prepare_system_with_caching
+
+    # Pad the system prompt to exceed the caching minimum token threshold.
+    padding = " ".join(f"word{i}" for i in range(1200))
+    system_text = f"You are a helpful assistant. Reply briefly. Context: {padding}"
+    system = prepare_system_with_caching(system_text)
+
+    # Call should succeed with the cache-marked system format
+    resp = await amessages(
+        model=_ANTHROPIC_MODEL,
+        provider="anthropic",
+        system=system,
+        messages=[{"role": "user", "content": "Say hello"}],
+        max_tokens=50,
+    )
+    assert isinstance(resp, MessageResponse)
+    assert resp.content
+
+    # Cache metric fields should be present (may be 0 if caching didn't activate)
+    assert hasattr(resp.usage, "cache_creation_input_tokens")
+    assert hasattr(resp.usage, "cache_read_input_tokens")
