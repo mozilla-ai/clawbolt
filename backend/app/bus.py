@@ -51,6 +51,9 @@ class MessageBus:
         self._event_queues: dict[str, asyncio.Queue[dict[str, Any]]] = {}
         self._cleanup_tasks: set[asyncio.Task[None]] = set()
         self._request_owners: dict[str, str] = {}
+        # User-level activity streams for the web dashboard.  Multiple
+        # browser tabs can subscribe concurrently for the same user.
+        self._activity_queues: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
@@ -133,6 +136,34 @@ class MessageBus:
         self._event_queues.pop(request_id, None)
         self._request_owners.pop(request_id, None)
 
+    # -- User-level activity streams for the web dashboard -----------------
+
+    def register_activity_queue(self, user_id: str) -> asyncio.Queue[dict[str, Any]]:
+        """Create a new activity queue for *user_id* and return it.
+
+        Each call creates a fresh queue so multiple browser tabs can
+        subscribe concurrently.
+        """
+        queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        self._activity_queues.setdefault(user_id, set()).add(queue)
+        return queue
+
+    def remove_activity_queue(self, user_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
+        """Remove a specific activity queue for *user_id*."""
+        queues = self._activity_queues.get(user_id)
+        if queues is not None:
+            queues.discard(queue)
+            if not queues:
+                del self._activity_queues[user_id]
+
+    async def publish_activity(self, user_id: str, event: dict[str, Any]) -> None:
+        """Push an activity event to all connected dashboard clients for *user_id*."""
+        queues = self._activity_queues.get(user_id)
+        if queues:
+            # Snapshot to avoid RuntimeError if a queue is removed during iteration
+            for queue in list(queues):
+                await queue.put(event)
+
     def get_response_future(self, request_id: str) -> asyncio.Future[OutboundMessage] | None:
         """Return the pending response future for *request_id*, or ``None``."""
         return self._response_futures.get(request_id)
@@ -161,6 +192,7 @@ class MessageBus:
         self._response_futures.clear()
         self._event_queues.clear()
         self._request_owners.clear()
+        self._activity_queues.clear()
 
     @property
     def inbound_size(self) -> int:

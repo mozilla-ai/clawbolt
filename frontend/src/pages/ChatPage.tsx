@@ -52,6 +52,8 @@ export default function ChatPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [currentTool, setCurrentTool] = useState<string | null>(null);
+  const [activityTool, setActivityTool] = useState<string | null>(null);
+  const [agentBusy, setAgentBusy] = useState(false);
   const [waitingForApproval, setWaitingForApproval] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
@@ -66,6 +68,27 @@ export default function ChatPage() {
     mountedRef.current = true;
     return () => { mountedRef.current = false; };
   }, []);
+
+  // Subscribe to user-level activity stream for real-time agent status
+  // from any channel (Telegram, iMessage, etc.)
+  useEffect(() => {
+    const controller = api.subscribeToActivity((event) => {
+      if (!mountedRef.current) return;
+      if (event.type === 'thinking') {
+        setAgentBusy(true);
+        setActivityTool(null);
+      } else if (event.type === 'tool_call') {
+        setAgentBusy(true);
+        setActivityTool(event.tool_name ?? null);
+      } else if (event.type === 'done') {
+        setAgentBusy(false);
+        setActivityTool(null);
+        // Refresh session data to pick up the new message
+        void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+      }
+    });
+    return () => controller.abort();
+  }, [queryClient]);
 
   // Fetch session history via React Query (poll every 3s when idle)
   const { data: sessionDetail, isPending: loadingHistoryPending, isError: historyError } = useSession(
@@ -473,6 +496,9 @@ export default function ChatPage() {
 
             {sending && !waitingForApproval && (
               <ToolUseIndicator toolName={currentTool ?? undefined} />
+            )}
+            {!sending && agentBusy && (
+              <ToolUseIndicator toolName={activityTool ?? undefined} />
             )}
           </div>
         )}

@@ -208,6 +208,60 @@ const api = {
     if (error) _throwApiError(error, 'Failed to disconnect OAuth');
   },
 
+  // Activity stream: real-time agent status from any channel
+  subscribeToActivity: (
+    onEvent: (event: { type: string; tool_name?: string; channel?: string }) => void,
+  ): AbortController => {
+    const controller = new AbortController();
+    const token = getAccessToken();
+
+    fetch('/api/user/chat/activity', {
+      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+      signal: controller.signal,
+    })
+      .then((res) => {
+        if (!res.ok || !res.body) return;
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const read = (): void => {
+          reader
+            .read()
+            .then(({ done, value }) => {
+              if (done) return;
+              buffer += decoder.decode(value, { stream: true });
+              const lines = buffer.split('\n');
+              buffer = lines.pop() || '';
+              for (const line of lines) {
+                if (line.startsWith('data: ')) {
+                  try {
+                    const payload = JSON.parse(line.slice(6)) as {
+                      type: string;
+                      tool_name?: string;
+                      channel?: string;
+                    };
+                    onEvent(payload);
+                  } catch {
+                    // skip malformed JSON
+                  }
+                }
+              }
+              read();
+            })
+            .catch(() => {
+              // Stream ended or aborted
+            });
+        };
+        read();
+      })
+      .catch(() => {
+        // Connection failed or aborted
+      });
+
+    return controller;
+  },
+
   // Chat (async: POST submits, SSE delivers reply -- stays manual)
   sendChatMessage: async (
     message: string,
