@@ -414,7 +414,7 @@ async def build_context_step(ctx: PipelineContext) -> PipelineContext:
 
 async def load_history_step(ctx: PipelineContext) -> PipelineContext:
     """Load conversation history and set up onboarding."""
-    ctx.conversation_history = await load_conversation_history(ctx.session, user_id=ctx.user.id)
+    ctx.conversation_history = await load_conversation_history(ctx.session)
     ctx.is_onboarding = is_onboarding_needed(ctx.user)
     onboarding_sub = OnboardingSubscriber(ctx.user, ctx.is_onboarding)
     ctx.event_subscribers.append(onboarding_sub)

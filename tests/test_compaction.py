@@ -414,177 +414,118 @@ async def test_compact_session_falls_back_to_llm_model(test_user: UserData) -> N
     assert call_kwargs.kwargs.get("provider") == "test-provider"
 
 
-# --- Integration: load_conversation_history with compaction ---
+# --- Integration: load_conversation_history no longer triggers compaction ---
+# Compaction is now triggered from process_message() when trim_messages() drops
+# messages, not from load_conversation_history(). The tests below verify the new
+# behavior. See test_agent.py for trim-triggered compaction tests.
 
 
 @pytest.mark.asyncio()
-async def test_load_history_triggers_compaction_when_full(
+async def test_load_history_returns_all_messages_under_limit(
     test_user: UserData,
     session: SessionState,
 ) -> None:
-    """When history exceeds limit, compaction should run on trimmed messages."""
+    """load_conversation_history should return all messages when under the soft limit."""
     _add_messages(session, 8)
 
-    llm_response_content = json.dumps(
-        {
-            "memory_update": "## Extracted\n- fact_from_compaction: extracted",
-            "summary": "",
-        }
-    )
-    mock_response = make_text_response(llm_response_content)
+    # No compaction should be triggered from load_history anymore
+    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+        history = await load_conversation_history(session, limit=500)
 
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        history = await load_conversation_history(session, limit=5, user_id=test_user.id)
-        await asyncio.sleep(0.1)
+    mock_llm.assert_not_called()
+    # 8 messages, minus 1 for current = 7
+    assert len(history) == 7
 
+
+@pytest.mark.asyncio()
+async def test_load_history_soft_limit_caps_messages(
+    test_user: UserData,
+    session: SessionState,
+) -> None:
+    """The soft limit should still cap how many messages are loaded into memory."""
+    _add_messages(session, 10)
+
+    history = await load_conversation_history(session, limit=5)
+    # 5 loaded, minus 1 for current = 4
     assert len(history) == 4
 
-    # Compacted memory should have been written
-    store = get_memory_store(test_user.id)
-    content = store.read_memory()
-    assert "fact_from_compaction" in content
-
 
 @pytest.mark.asyncio()
-async def test_load_history_updates_last_compacted_seq(
+async def test_load_history_no_compaction_regardless_of_count(
     test_user: UserData,
     session: SessionState,
 ) -> None:
-    """Compaction should update last_compacted_seq on the session."""
-    _add_messages(session, 8)
-
-    mock_response = make_text_response(
-        json.dumps({"memory_update": "## Facts\n- f: v", "summary": ""})
-    )
-
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
-        await load_conversation_history(session, limit=5, user_id=test_user.id)
-        await asyncio.sleep(0.1)
-
-    assert session.last_compacted_seq > 0
-
-
-@pytest.mark.asyncio()
-async def test_load_history_skips_already_compacted_messages(
-    test_user: UserData,
-    session: SessionState,
-) -> None:
-    """Messages already compacted should not be re-compacted."""
-    _add_messages(session, 8)
-    session.last_compacted_seq = 2
-
-    mock_response = make_text_response(
-        json.dumps({"memory_update": "## New\n- new_fact: from_remaining", "summary": ""})
-    )
-
-    with patch("backend.app.agent.compaction.amessages", return_value=mock_response) as mock_llm:
-        await load_conversation_history(session, limit=5, user_id=test_user.id)
-        await asyncio.sleep(0.1)
-
-    mock_llm.assert_called_once()
-    call_messages = mock_llm.call_args.kwargs.get("messages") or mock_llm.call_args[1].get(
-        "messages"
-    )
-    user_content = call_messages[0]["content"]
-    assert "Message 2" in user_content
-    assert "Message 0" not in user_content
-    assert "Message 1" not in user_content
-
-
-@pytest.mark.asyncio()
-async def test_load_history_no_compaction_when_all_already_compacted(
-    test_user: UserData,
-    session: SessionState,
-) -> None:
-    """When all trimmed messages are already compacted, no LLM call should happen."""
-    _add_messages(session, 8)
-    session.last_compacted_seq = 3
-
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
-        await load_conversation_history(session, limit=5, user_id=test_user.id)
-        await asyncio.sleep(0.1)
-
-    mock_llm.assert_not_called()
-
-
-@pytest.mark.asyncio()
-async def test_load_history_no_compaction_when_under_limit(
-    test_user: UserData,
-    session: SessionState,
-) -> None:
-    """When history is under limit, no compaction should occur."""
-    _add_messages(session, 3)
-
-    with patch("backend.app.agent.compaction.amessages") as mock_llm:
-        history = await load_conversation_history(session, limit=20, user_id=test_user.id)
-
-    mock_llm.assert_not_called()
-    assert len(history) == 2
-
-
-@pytest.mark.asyncio()
-async def test_load_history_no_compaction_without_user_id(
-    test_user: UserData,
-    session: SessionState,
-) -> None:
-    """Without user_id, compaction should not run even at limit."""
-    _add_messages(session, 8)
+    """load_conversation_history should never trigger compaction, even over limit."""
+    _add_messages(session, 100)
 
     with patch("backend.app.agent.compaction.amessages") as mock_llm:
         history = await load_conversation_history(session, limit=5)
 
+    # No compaction LLM call should happen from load_history
     mock_llm.assert_not_called()
     assert len(history) == 4
 
 
-@pytest.mark.asyncio()
-async def test_load_history_compaction_failure_does_not_break_history(
-    test_user: UserData,
-    session: SessionState,
-) -> None:
-    """Compaction failure should not prevent history from loading."""
-    _add_messages(session, 8)
+# --- trigger_compaction_for_dropped tests ---
 
-    with patch(
-        "backend.app.agent.compaction.amessages",
-        side_effect=Exception("LLM down"),
-    ):
-        history = await load_conversation_history(session, limit=5, user_id=test_user.id)
+
+@pytest.mark.asyncio()
+async def test_trigger_compaction_for_dropped_fires_background_task(
+    test_user: UserData,
+) -> None:
+    """trigger_compaction_for_dropped should fire a background compaction task."""
+    from backend.app.agent.context import trigger_compaction_for_dropped
+
+    dropped: list[AgentMessage] = [
+        UserMessage(content="Old message 1"),
+        AssistantMessage(content="Old reply 1"),
+    ]
+
+    mock_response = make_text_response(
+        json.dumps({"memory_update": "## Facts\n- fact: from_trim", "summary": ""})
+    )
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        trigger_compaction_for_dropped(test_user.id, dropped)
+        await asyncio.sleep(0.2)
+
+    store = get_memory_store(test_user.id)
+    content = store.read_memory()
+    assert "fact: from_trim" in content
+
+
+@pytest.mark.asyncio()
+async def test_trigger_compaction_for_dropped_skips_empty(
+    test_user: UserData,
+) -> None:
+    """trigger_compaction_for_dropped should do nothing with empty dropped list."""
+    from backend.app.agent.context import trigger_compaction_for_dropped
+
+    with patch("backend.app.agent.compaction.amessages") as mock_llm:
+        trigger_compaction_for_dropped(test_user.id, [])
         await asyncio.sleep(0.1)
 
-    assert len(history) == 4
+    mock_llm.assert_not_called()
 
 
 @pytest.mark.asyncio()
-async def test_compaction_runs_in_background_not_blocking(
+async def test_trigger_compaction_for_dropped_skips_when_disabled(
     test_user: UserData,
-    session: SessionState,
 ) -> None:
-    """Compaction should run as a background task, not blocking history loading."""
-    _add_messages(session, 8)
+    """trigger_compaction_for_dropped should skip when compaction is disabled."""
+    from backend.app.agent.context import trigger_compaction_for_dropped
 
-    compaction_started = asyncio.Event()
-    compaction_proceed = asyncio.Event()
+    dropped: list[AgentMessage] = [UserMessage(content="Old message")]
 
-    async def slow_compact(
-        user_id: str,
-        trimmed_messages: list[object],
-        max_message_seq: int | None = None,
-    ) -> tuple[str, int | None]:
-        compaction_started.set()
-        await compaction_proceed.wait()
-        return "", max_message_seq
+    with (
+        patch("backend.app.agent.context.settings") as mock_settings,
+        patch("backend.app.agent.compaction.amessages") as mock_llm,
+    ):
+        mock_settings.compaction_enabled = False
+        trigger_compaction_for_dropped(test_user.id, dropped)
+        await asyncio.sleep(0.1)
 
-    with patch("backend.app.agent.context.compact_session", side_effect=slow_compact):
-        history = await load_conversation_history(session, limit=5, user_id=test_user.id)
-
-        assert len(history) == 4
-
-        await asyncio.sleep(0.05)
-        assert compaction_started.is_set()
-
-        compaction_proceed.set()
-        await asyncio.sleep(0.05)
+    mock_llm.assert_not_called()
 
 
 # --- compact_session HISTORY.md tests ---
