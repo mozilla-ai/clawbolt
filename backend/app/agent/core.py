@@ -909,7 +909,15 @@ class ClawboltAgent:
             # BEFORE executing tools so specialist tools called in the same
             # round (e.g. qb_query alongside list_capabilities) are available
             # immediately rather than failing as "unknown tool".
+            #
+            # We temporarily hide newly activated factories from the shared
+            # _activated_specialists set so that the list_capabilities closure
+            # still returns the full SKILL.md instructions during execution
+            # (it skips instructions for categories already in the set).
+            pre_activated = set(self._activated_specialists)
             self._check_specialist_activations(parsed_calls)
+            newly_activated = self._activated_specialists - pre_activated
+            self._activated_specialists -= newly_activated
 
             # Execute the tool round (validate, approve, run)
             tool_results = await self._execute_tool_round(
@@ -920,6 +928,9 @@ class ClawboltAgent:
                 tool_call_records,
                 response_truncated=response_truncated,
             )
+
+            # Mark the specialists as fully activated for future rounds.
+            self._activated_specialists |= newly_activated
 
             # If the response was truncated and produced validation errors,
             # auto-increase max_tokens for the next round so the LLM has

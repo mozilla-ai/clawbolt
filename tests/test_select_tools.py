@@ -362,19 +362,34 @@ class TestDynamicToolActivation:
         list_capabilities was called in the same batch. This caused the LLM
         to conclude the integration was broken (e.g. "QuickBooks connection
         dropped") when it was actually connected.
+
+        The agent loop now pre-activates specialists before execution, while
+        temporarily hiding them from the shared _activated_specialists set so
+        list_capabilities still returns the full activation message with
+        SKILL.md instructions.
         """
         from backend.app.agent.core import ClawboltAgent
         from backend.app.agent.llm_parsing import ParsedToolCall
         from backend.app.agent.messages import ToolCallRequest
 
+        activated_set: set[str] = set()
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"))
         agent = ClawboltAgent(
             user=User(id="1"),
             tool_context=ctx,
             registry=registry,
+            activated_specialists=activated_set,
         )
-        agent.register_tools(registry.create_core_tools(ctx))
+
+        specialist_summaries = registry.get_available_specialist_summaries(ctx)
+        list_cap_tool = create_list_capabilities_tool(
+            specialist_summaries,
+            activated_specialists=activated_set,
+        )
+        core_tools = registry.create_core_tools(ctx)
+        core_tools.append(list_cap_tool)
+        agent.register_tools(core_tools)
 
         # Simulate LLM calling list_capabilities AND a specialist tool in one round
         parsed_calls = [
@@ -402,14 +417,30 @@ class TestDynamicToolActivation:
             ),
         ]
 
-        # Pre-activate specialists (as the agent loop now does before execution)
+        # Replicate the agent loop's activation pattern: pre-activate, then
+        # temporarily hide from the shared set during execution.
+        pre_activated = set(agent._activated_specialists)
         agent._check_specialist_activations(parsed_calls)
+        newly_activated = agent._activated_specialists - pre_activated
+        agent._activated_specialists -= newly_activated
 
-        # Execute the tool round -- generate_estimate should now succeed
+        # Execute the tool round
         results = await agent._execute_tool_round(parsed_calls, parsed_raw, [], [], [])
+
+        # Restore the activated set (as the agent loop does)
+        agent._activated_specialists |= newly_activated
 
         # The specialist tool should NOT be an error
         estimate_result = next(r for r in results if r.tool_call_id == "call_2")
         assert not estimate_result.is_error, (
             f"Specialist tool failed despite activation: {estimate_result.content}"
         )
+
+        # list_capabilities should return the full activation message (not
+        # the "already active" short-circuit) since the set was hidden
+        cap_result = next(r for r in results if r.tool_call_id == "call_1")
+        assert "activated" in cap_result.content.lower()
+        assert "already active" not in cap_result.content.lower()
+
+        # After restoration, the category is in the activated set
+        assert "estimate" in agent._activated_specialists
