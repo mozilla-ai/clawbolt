@@ -80,6 +80,7 @@ def create_list_capabilities_tool(
     specialist_summaries: dict[str, str],
     unauthenticated: dict[str, str] | None = None,
     disabled_sub_tools: dict[str, list[SubToolInfo]] | None = None,
+    activated_specialists: set[str] | None = None,
 ) -> Tool:
     """Create the ``list_capabilities`` meta-tool.
 
@@ -104,6 +105,7 @@ def create_list_capabilities_tool(
 
     _unauthenticated = unauthenticated or {}
     _disabled_subs = disabled_sub_tools or {}
+    _activated = activated_specialists
 
     async def list_capabilities(category: str | None = None) -> ToolResult:
         if category is None:
@@ -142,6 +144,11 @@ def create_list_capabilities_tool(
                 content=f'Unknown category "{category}". Available: {available}',
                 is_error=True,
                 error_kind=ToolErrorKind.NOT_FOUND,
+            )
+
+        if _activated is not None and category in _activated:
+            return ToolResult(
+                content=f'Category "{category}" is already active. Tools are available now.',
             )
 
         activation_msg = (

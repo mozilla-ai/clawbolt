@@ -113,6 +113,7 @@ class ClawboltAgent:
         session_id: str = "",
         excluded_tool_names: set[str] | None = None,
         request_id: str = "",
+        activated_specialists: set[str] | None = None,
     ) -> None:
         self.user = user
         self._channel = channel
@@ -123,7 +124,9 @@ class ClawboltAgent:
         self._subscribers: list[Callable[[AgentEvent], Awaitable[None]]] = []
         self._tool_context = tool_context
         self._registry = registry
-        self._activated_specialists: set[str] = set()
+        self._activated_specialists: set[str] = (
+            activated_specialists if activated_specialists is not None else set()
+        )
         self._last_input_tokens: int = 0
         self._session_id = session_id
         self._excluded_tool_names = excluded_tool_names

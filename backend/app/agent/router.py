@@ -246,6 +246,13 @@ async def run_agent(
     disabled_groups = await tool_config_store.get_disabled_tool_names()
     disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
 
+    # Shared mutable set so the list_capabilities tool closure and the
+    # agent loop both see the same activation state.  This prevents the
+    # tool from returning the full SKILL.md instructions a second time
+    # when the LLM redundantly calls list_capabilities for a category
+    # that was already activated in a prior round.
+    activated_specialists: set[str] = set()
+
     agent = ClawboltAgent(
         user=user,
         channel=channel,
@@ -256,6 +263,7 @@ async def run_agent(
         session_id=session_id,
         excluded_tool_names=disabled_sub_tools or None,
         request_id=request_id,
+        activated_specialists=activated_specialists,
     )
 
     # Start with core tools only; specialist tools are discovered on demand
@@ -281,6 +289,7 @@ async def run_agent(
                 specialist_summaries,
                 unauthenticated=unauthenticated,
                 disabled_sub_tools=disabled_specialist_subs or None,
+                activated_specialists=activated_specialists,
             )
         )
     agent.register_tools(tools)
