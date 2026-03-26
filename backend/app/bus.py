@@ -160,7 +160,8 @@ class MessageBus:
         """Push an activity event to all connected dashboard clients for *user_id*."""
         queues = self._activity_queues.get(user_id)
         if queues:
-            for queue in queues:
+            # Snapshot to avoid RuntimeError if a queue is removed during iteration
+            for queue in list(queues):
                 await queue.put(event)
 
     def get_response_future(self, request_id: str) -> asyncio.Future[OutboundMessage] | None:
