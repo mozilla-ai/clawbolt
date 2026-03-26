@@ -1,4 +1,4 @@
-"""Tests for GET /api/user/heartbeat-logs endpoint."""
+"""Tests for /api/user/heartbeat-logs endpoints (GET and DELETE)."""
 
 import uuid
 from datetime import UTC, datetime
@@ -137,3 +137,53 @@ def test_heartbeat_logs_enriched_fields(client: TestClient, test_user: User) -> 
     assert send_item["channel"] == "telegram"
     assert send_item["reasoning"] == "User has a pending task"
     assert send_item["tasks"] == "Check invoice status"
+
+
+# ---------------------------------------------------------------------------
+# DELETE /api/user/heartbeat-logs
+# ---------------------------------------------------------------------------
+
+
+def test_delete_heartbeat_logs(client: TestClient, test_user: User) -> None:
+    """Deletes all heartbeat logs for the current user and returns count."""
+    _create_heartbeat_log(test_user.id, message_text="msg1")
+    _create_heartbeat_log(test_user.id, message_text="msg2")
+    _create_heartbeat_log(test_user.id, action_type="skip")
+
+    resp = client.delete("/api/user/heartbeat-logs")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "deleted"
+    assert data["deleted"] == 3
+
+    # Verify logs are gone
+    get_resp = client.get("/api/user/heartbeat-logs")
+    assert get_resp.json()["total"] == 0
+
+
+def test_delete_heartbeat_logs_empty(client: TestClient) -> None:
+    """Returns 0 when there are no logs to delete."""
+    resp = client.delete("/api/user/heartbeat-logs")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "deleted"
+    assert data["deleted"] == 0
+
+
+def test_delete_heartbeat_logs_cross_user_isolation(client: TestClient, test_user: User) -> None:
+    """Only deletes logs belonging to the authenticated user."""
+    other_id = _create_other_user()
+    _create_heartbeat_log(test_user.id, message_text="mine")
+    _create_heartbeat_log(other_id, message_text="theirs")
+
+    resp = client.delete("/api/user/heartbeat-logs")
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == 1
+
+    # Other user's logs should still exist
+    db = _db_module.SessionLocal()
+    try:
+        remaining = db.query(HeartbeatLog).filter(HeartbeatLog.user_id == other_id).count()
+        assert remaining == 1
+    finally:
+        db.close()

@@ -247,6 +247,11 @@ class HeartbeatLogListResponse(BaseModel):
     items: list[HeartbeatLogItemResponse]
 
 
+class DeleteHeartbeatLogsResponse(BaseModel):
+    status: str
+    deleted: int
+
+
 # ---------------------------------------------------------------------------
 # Session list (admin)
 # ---------------------------------------------------------------------------

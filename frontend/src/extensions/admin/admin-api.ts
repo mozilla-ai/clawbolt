@@ -55,6 +55,12 @@ export async function getHeartbeatLogs(limit: number = 50): Promise<HeartbeatLog
   return data as HeartbeatLogList;
 }
 
+export async function deleteHeartbeatLogs(): Promise<{ status: string; deleted: number }> {
+  const { data, error } = await client.DELETE('/api/user/heartbeat-logs' as never);
+  if (error) throwApiError(error, 'Failed to delete heartbeat logs');
+  return data as { status: string; deleted: number };
+}
+
 export async function getLLMUsage(days: number = 30): Promise<LLMUsageSummary> {
   const { data, error } = await client.GET(
     `/api/user/llm-usage?days=${days}` as never,
