@@ -3,7 +3,7 @@
 import logging
 
 import pytest
-from pydantic import ValidationError
+from pydantic import SecretStr, ValidationError
 
 from backend.app.config import Settings, log_config_warnings
 
@@ -83,8 +83,18 @@ class TestLogConfigWarnings:
     """log_config_warnings emits warnings for unusual but valid values."""
 
     def test_no_warnings_with_defaults(self) -> None:
-        s = Settings()
+        s = Settings(encryption_key=SecretStr("a-secure-random-key-at-least-32-chars"))
         assert log_config_warnings(s) == []
+
+    def test_warns_missing_encryption_key(self) -> None:
+        s = Settings(encryption_key=SecretStr(""))
+        warnings = log_config_warnings(s)
+        assert any("encryption_key" in w for w in warnings)
+
+    def test_warns_short_encryption_key(self) -> None:
+        s = Settings(encryption_key=SecretStr("short"))
+        warnings = log_config_warnings(s)
+        assert any("encryption_key" in w for w in warnings)
 
     def test_warns_high_max_tool_rounds(self) -> None:
         s = Settings(max_tool_rounds=100)

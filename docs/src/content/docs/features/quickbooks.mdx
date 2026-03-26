@@ -115,7 +115,7 @@ Clawbolt: I created a draft estimate for Johnson in QuickBooks:
 
 - **Access tokens** expire after 1 hour. Clawbolt automatically refreshes them using the refresh token when it gets a 401 response.
 - **Refresh tokens** expire after 101 days. Each time a token is refreshed, Intuit issues a new refresh token and invalidates the old one.
-- **Known limitation**: refreshed tokens are stored in memory only. If Clawbolt restarts, the original `.env` tokens are used. For long-running use, you may need to periodically update the tokens in your `.env` from the OAuth playground.
+- Refreshed tokens are automatically persisted to the database (`oauth_tokens` table) and survive restarts. When `ENCRYPTION_KEY` is configured, tokens are encrypted at rest.
 
 ## Troubleshooting
 
