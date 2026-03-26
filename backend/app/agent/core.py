@@ -653,6 +653,7 @@ class ClawboltAgent:
             tool_name = tc_req.name
             tool_tags = self._get_tool_tags(tool_name)
 
+            await self._send_typing_indicator()
             await self._emit(ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args))
             tool_start = time.monotonic()
             result_str = ""

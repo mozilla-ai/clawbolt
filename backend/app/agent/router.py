@@ -17,7 +17,12 @@ from any_llm import AuthenticationError, ContentFilterError
 
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, ClawboltAgent
-from backend.app.agent.events import AgentEvent, ToolExecutionStartEvent
+from backend.app.agent.events import (
+    AgentEndEvent,
+    AgentEvent,
+    ToolExecutionStartEvent,
+    TurnStartEvent,
+)
 from backend.app.agent.file_store import (
     SessionState,
     StoredMessage,
@@ -580,7 +585,7 @@ def build_pipeline(
 def _create_sse_event_forwarder(
     request_id: str,
 ) -> Callable[[AgentEvent], Awaitable[None]]:
-    """Create an event subscriber that forwards tool events to the SSE stream."""
+    """Create an event subscriber that forwards tool events to the per-request SSE stream."""
 
     async def _forward(event: AgentEvent) -> None:
         if isinstance(event, ToolExecutionStartEvent):
@@ -590,6 +595,32 @@ def _create_sse_event_forwarder(
                 request_id,
                 {"type": "tool_call", "tool_name": event.tool_name},
             )
+
+    return _forward
+
+
+def _create_activity_forwarder(
+    user_id: str,
+    channel: str,
+) -> Callable[[AgentEvent], Awaitable[None]]:
+    """Create an event subscriber that forwards agent events to the user activity stream.
+
+    Publishes to all connected dashboard clients for this user, regardless
+    of which channel (Telegram, webchat, etc.) originated the message.
+    """
+
+    async def _forward(event: AgentEvent) -> None:
+        from backend.app.bus import message_bus
+
+        if isinstance(event, TurnStartEvent):
+            await message_bus.publish_activity(user_id, {"type": "thinking", "channel": channel})
+        elif isinstance(event, ToolExecutionStartEvent):
+            await message_bus.publish_activity(
+                user_id,
+                {"type": "tool_call", "tool_name": event.tool_name, "channel": channel},
+            )
+        elif isinstance(event, AgentEndEvent):
+            await message_bus.publish_activity(user_id, {"type": "done", "channel": channel})
 
     return _forward
 
@@ -647,5 +678,7 @@ async def handle_inbound_message(
     # Stream tool execution events to the web chat SSE endpoint
     if request_id:
         ctx.event_subscribers.append(_create_sse_event_forwarder(request_id))
+    # Stream agent activity to all connected dashboard clients
+    ctx.event_subscribers.append(_create_activity_forwarder(str(user.id), channel))
     ctx = await run_pipeline(ctx, pipeline or get_active_pipeline())
     return ctx.response or AgentResponse(reply_text="")
