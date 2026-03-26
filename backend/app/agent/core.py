@@ -166,14 +166,12 @@ class ClawboltAgent:
         different channel (e.g. iMessage or Telegram).
         """
         try:
-            from backend.app.agent.dto import SessionState
             from backend.app.agent.session_db import get_session_store
             from backend.app.enums import MessageDirection
 
             session_store = get_session_store(self.user.id)
-            session = SessionState(session_id=self._session_id, user_id=self.user.id)
-            await session_store.add_message(
-                session=session,
+            await session_store.add_message_by_session_id(
+                session_id=self._session_id,
                 direction=MessageDirection.OUTBOUND,
                 body=prompt,
             )
