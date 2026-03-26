@@ -181,6 +181,29 @@ class TestListCapabilitiesTool:
         assert "heartbeat" in tool.usage_hint
         assert "estimate" in tool.usage_hint
 
+    @pytest.mark.asyncio
+    async def test_already_activated_category_returns_short_message(self) -> None:
+        """Calling list_capabilities for an already-activated category returns a
+        short 'already active' message instead of the full SKILL.md instructions."""
+        summaries = {"estimate": "Generate estimates"}
+        activated: set[str] = set()
+        tool = create_list_capabilities_tool(summaries, activated_specialists=activated)
+
+        # First call: should return the full activation message
+        result = await tool.function(category="estimate")
+        assert "activated" in result.content.lower()
+        assert "tools are available" in result.content.lower()
+
+        # Mark as activated (normally done by the agent loop)
+        activated.add("estimate")
+
+        # Second call: should return a short message, not the full instructions
+        result2 = await tool.function(category="estimate")
+        assert "already active" in result2.content.lower()
+        assert not result2.is_error
+        # Should NOT contain the full activation message again
+        assert len(result2.content) < len(result.content)
+
 
 class TestDefaultRegistryCoreSpecialistSplit:
     """The default registry correctly classifies built-in factories."""
