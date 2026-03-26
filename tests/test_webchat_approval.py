@@ -2,12 +2,13 @@
 
 Verifies that:
 - The approval prompt is published as an SSE event when request_id is set.
-- The /api/user/chat/approve endpoint resolves the approval gate.
+- Webchat approval responses via the bus resolve the gate and close SSE cleanly.
 - The SSE event stream delivers approval_request events to the frontend.
 
-Root cause: approval prompts were sent via publish_outbound -> channel.send_text(),
-but WebChatChannel.send_text() is a no-op. The prompt was silently dropped and
-the agent hung for approval_timeout_seconds before auto-denying.
+Webchat approval is entirely message-based: the approval prompt appears as
+a regular assistant message and the user types "yes"/"no" as a normal chat
+message. The ingestion pipeline intercepts approval responses and resolves
+the gate, just like Telegram.
 """
 
 import asyncio
@@ -27,6 +28,7 @@ from backend.app.agent.approval import (
     get_approval_gate,
 )
 from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage, message_bus
 from backend.app.main import app
@@ -173,13 +175,13 @@ class TestWebchatApprovalSSE:
 
 
 # ---------------------------------------------------------------------------
-# Endpoint: POST /api/user/chat/approve
+# Message-based approval via bus (replaces the old /approve endpoint)
 # ---------------------------------------------------------------------------
 
 
 @pytest.fixture()
 async def approval_user() -> User:
-    """Create a user for approval endpoint tests."""
+    """Create a user for approval tests."""
     db = _db_module.SessionLocal()
     try:
         user = User(user_id="approval-test-user")
@@ -207,89 +209,112 @@ def approval_client(approval_user: User) -> Generator[TestClient]:
     app.dependency_overrides.clear()
 
 
-class TestApproveEndpoint:
-    """Tests for POST /api/user/chat/approve."""
+class TestMessageBasedApproval:
+    """Approval responses arrive as regular chat messages via the bus."""
 
-    def test_approve_resolves_pending_gate(
-        self,
-        approval_client: TestClient,
-        approval_user: User,
-    ) -> None:
-        """Valid approval decision resolves the pending gate."""
+    @pytest.mark.asyncio()
+    async def test_approval_via_bus_resolves_gate(self, test_user: User) -> None:
+        """A 'yes' message through the bus resolves a pending approval gate."""
         gate = get_approval_gate()
 
-        # Simulate a pending approval in a background thread
-        pending_resolved = threading.Event()
-
-        async def _wait_for_approval() -> ApprovalDecision:
-            mock_publish = AsyncMock()
-            return await gate.request_approval(
-                user_id=str(approval_user.id),
-                tool_name="qb_query",
-                description="Query QuickBooks",
+        # Simulate a pending approval
+        mock_publish = AsyncMock()
+        approval_task = asyncio.create_task(
+            gate.request_approval(
+                user_id=test_user.id,
+                tool_name="writer",
+                description="Write hello",
                 publish_outbound=mock_publish,
                 channel="webchat",
-                chat_id=str(approval_user.id),
+                chat_id=str(test_user.id),
                 timeout=5.0,
             )
-
-        decision_holder: list[ApprovalDecision] = []
-
-        def _run_gate() -> None:
-            loop = asyncio.new_event_loop()
-            result = loop.run_until_complete(_wait_for_approval())
-            decision_holder.append(result)
-            pending_resolved.set()
-            loop.close()
-
-        t = threading.Thread(target=_run_gate)
-        t.start()
-
-        import time
+        )
 
         # Wait for the gate to be pending
-        for _ in range(50):
-            if gate.has_pending(str(approval_user.id)):
+        for _ in range(100):
+            if gate.has_pending(test_user.id):
                 break
-            time.sleep(0.05)
-        assert gate.has_pending(str(approval_user.id))
+            await asyncio.sleep(0.01)
+        assert gate.has_pending(test_user.id)
 
-        # Send approval via the new endpoint
-        resp = approval_client.post(
-            "/api/user/chat/approve",
-            json={"decision": "yes"},
+        # Send "yes" as a regular inbound message (like the user typing it)
+        inbound = InboundMessage(
+            channel="webchat",
+            sender_id=str(test_user.id),
+            text="yes",
+            request_id="approval-reply-req",
         )
-        assert resp.status_code == 200
-        assert resp.json()["status"] == "ok"
 
-        pending_resolved.wait(timeout=5)
-        t.join(timeout=5)
-        assert len(decision_holder) == 1
-        assert decision_holder[0] == ApprovalDecision.APPROVED
+        # Register a response future so the SSE stream has something to resolve
+        message_bus.register_response_future("approval-reply-req")
 
-    def test_approve_invalid_decision(
+        with patch(
+            "backend.app.agent.ingestion._get_or_create_user",
+            return_value=test_user,
+        ):
+            await process_inbound_from_bus(inbound)
+
+        decision = await asyncio.wait_for(approval_task, timeout=2.0)
+        assert decision == ApprovalDecision.APPROVED
+
+    @pytest.mark.asyncio()
+    async def test_approval_via_bus_resolves_response_future(self, test_user: User) -> None:
+        """When an approval response has a request_id, the response future is resolved."""
+        gate = get_approval_gate()
+
+        mock_publish = AsyncMock()
+        approval_task = asyncio.create_task(
+            gate.request_approval(
+                user_id=test_user.id,
+                tool_name="writer",
+                description="Write hello",
+                publish_outbound=mock_publish,
+                channel="webchat",
+                chat_id=str(test_user.id),
+                timeout=5.0,
+            )
+        )
+
+        for _ in range(100):
+            if gate.has_pending(test_user.id):
+                break
+            await asyncio.sleep(0.01)
+
+        request_id = "approval-future-req"
+        fut = message_bus.register_response_future(request_id)
+
+        inbound = InboundMessage(
+            channel="webchat",
+            sender_id=str(test_user.id),
+            text="yes",
+            request_id=request_id,
+        )
+        with patch(
+            "backend.app.agent.ingestion._get_or_create_user",
+            return_value=test_user,
+        ):
+            await process_inbound_from_bus(inbound)
+
+        # The response future should be resolved with empty content
+        assert fut.done()
+        outbound = fut.result()
+        assert outbound.content == ""
+
+        await asyncio.wait_for(approval_task, timeout=2.0)
+
+    def test_approve_endpoint_removed(
         self,
         approval_client: TestClient,
         approval_user: User,
     ) -> None:
-        """Invalid decision string returns 422."""
-        resp = approval_client.post(
-            "/api/user/chat/approve",
-            json={"decision": "maybe"},
-        )
-        assert resp.status_code == 422
-
-    def test_approve_no_pending(
-        self,
-        approval_client: TestClient,
-        approval_user: User,
-    ) -> None:
-        """Approval with no pending gate returns 404."""
+        """The /api/user/chat/approve endpoint no longer exists."""
         resp = approval_client.post(
             "/api/user/chat/approve",
             json={"decision": "yes"},
         )
-        assert resp.status_code == 404
+        # Endpoint removed: should return 404 or 405
+        assert resp.status_code in (404, 405)
 
 
 # ---------------------------------------------------------------------------

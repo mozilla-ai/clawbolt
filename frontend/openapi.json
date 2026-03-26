@@ -322,52 +322,6 @@
         }
       }
     },
-    "/api/user/chat/approve": {
-      "post": {
-        "tags": [
-          "webchat"
-        ],
-        "summary": "Approve Tool",
-        "description": "Resolve a pending tool approval from the web chat UI.",
-        "operationId": "approve_tool_api_user_chat_approve_post",
-        "requestBody": {
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/_ApprovalRequest"
-              }
-            }
-          },
-          "required": true
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object",
-                  "title": "Response Approve Tool Api User Chat Approve Post"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/webhooks/linq": {
       "post": {
         "summary": "Linq Inbound",
@@ -2363,19 +2317,6 @@
           "type"
         ],
         "title": "ValidationError"
-      },
-      "_ApprovalRequest": {
-        "properties": {
-          "decision": {
-            "type": "string",
-            "title": "Decision"
-          }
-        },
-        "type": "object",
-        "required": [
-          "decision"
-        ],
-        "title": "_ApprovalRequest"
       },
       "_ChatAccepted": {
         "properties": {

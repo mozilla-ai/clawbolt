@@ -444,6 +444,19 @@ async def process_inbound_from_bus(
                 media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
                 channel=inbound.channel,
             )
+            # For webchat: resolve the response future so the SSE stream for
+            # this approval message closes cleanly with an empty reply.
+            if inbound.request_id:
+                from backend.app.bus import OutboundMessage, message_bus
+
+                message_bus.resolve_response(
+                    inbound.request_id,
+                    OutboundMessage(
+                        channel=inbound.channel,
+                        chat_id=inbound.sender_id,
+                        content="",
+                    ),
+                )
             return
 
     session, _is_new = await get_or_create_conversation(
