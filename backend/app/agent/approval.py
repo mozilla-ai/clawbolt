@@ -23,7 +23,11 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from any_llm import acompletion
+from any_llm.types.completion import ChatCompletion
+from pydantic import BaseModel, Field
 
 from backend.app.config import settings
 
@@ -393,13 +397,6 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
 
     Returns None if the LLM call fails or the response is not approval-related.
     """
-    from typing import Literal, cast
-
-    from any_llm import acompletion
-    from any_llm.types.completion import ChatCompletion
-    from pydantic import BaseModel, Field
-
-    from backend.app.config import settings
 
     class ApprovalClassification(BaseModel):
         """Structured classification of a user's approval response."""

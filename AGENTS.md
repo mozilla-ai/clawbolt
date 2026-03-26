@@ -86,6 +86,7 @@ Until this project has its first production release, you do not need to be conce
 - Every data endpoint uses `Depends(get_current_user)` with `user_id` scoping
 - Config via Pydantic `BaseSettings` with `extra="ignore"`
 - Never use em dashes in user-facing content, comments, or copy -- use periods, commas, colons, or pipes instead
+- All imports at the top of the file. No inline or deferred imports inside functions. The only exception is `TYPE_CHECKING` guarded imports.
 
 ## Testing
 
