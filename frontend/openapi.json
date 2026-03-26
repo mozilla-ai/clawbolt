@@ -322,6 +322,26 @@
         }
       }
     },
+    "/api/user/chat/activity": {
+      "get": {
+        "tags": [
+          "webchat"
+        ],
+        "summary": "Chat Activity",
+        "description": "SSE endpoint: streams agent activity (thinking, tool use) for this user.\n\nDelivers real-time status regardless of which channel (Telegram,\nwebchat, etc.) originated the message being processed. Multiple\nbrowser tabs can subscribe concurrently.",
+        "operationId": "chat_activity_api_user_chat_activity_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/webhooks/linq": {
       "post": {
         "summary": "Linq Inbound",
