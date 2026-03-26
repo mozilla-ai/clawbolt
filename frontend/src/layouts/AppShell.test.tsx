@@ -97,4 +97,14 @@ describe('AppShell', () => {
       expect(screen.getByText(/unable to load your profile/i)).toBeInTheDocument();
     });
   });
+
+  it('renders default sidebar footer when renderSidebarFooter stub returns null', async () => {
+    renderWithRouter(<AppShell />, { route: '/app' });
+
+    await waitFor(() => {
+      expect(screen.getByText('Get Started')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Report issue')).toBeInTheDocument();
+    expect(screen.getByText('Feature request')).toBeInTheDocument();
+  });
 });
