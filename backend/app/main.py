@@ -222,7 +222,7 @@ if _FRONTEND_DIST.is_dir():
     # Serve static assets (JS, CSS, images)
     app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
 
-    @app.get("/{full_path:path}", include_in_schema=False)
+    @app.get("/{full_path:path}")
     async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
         """Serve the SPA index.html for all non-API routes."""
         file_path = _FRONTEND_DIST / full_path
