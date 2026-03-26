@@ -47,9 +47,11 @@ def log_llm_usage(
         return
 
     logger.info(
-        "LLM usage logged: user=%s model=%s purpose=%s tokens=%d",
+        "LLM usage logged: user=%s model=%s purpose=%s tokens=%d cache_create=%s cache_read=%s",
         user_id,
         model,
         purpose,
         total_tokens,
+        cache_creation_input_tokens,
+        cache_read_input_tokens,
     )

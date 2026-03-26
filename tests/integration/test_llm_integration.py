@@ -89,3 +89,45 @@ async def test_amessages_direct_call() -> None:
     text_parts = [block.text for block in raw.content if isinstance(block, TextBlock)]
     assert text_parts
     assert text_parts[0]
+
+
+@pytest.mark.integration()
+@skip_without_anthropic_key
+async def test_prompt_caching_produces_cache_hits() -> None:
+    """Two calls with the same cached system prompt should produce a cache hit.
+
+    Anthropic requires the system prompt to be >= 1024 tokens for caching to
+    activate, so we pad the prompt to ensure it crosses that threshold.
+    """
+    from any_llm import amessages
+    from any_llm.types.messages import MessageResponse
+
+    from backend.app.services.llm_service import prepare_system_with_caching
+
+    # Pad the system prompt to exceed 1024 tokens (Anthropic minimum for caching).
+    # Each word is roughly one token; 1200 words gives comfortable margin.
+    padding = " ".join(f"word{i}" for i in range(1200))
+    system_text = f"You are a helpful assistant. Reply briefly. Context: {padding}"
+    system = prepare_system_with_caching(system_text)
+
+    # First call: should create a cache entry
+    resp1 = await amessages(
+        model=_ANTHROPIC_MODEL,
+        provider="anthropic",
+        system=system,
+        messages=[{"role": "user", "content": "Say hello"}],
+        max_tokens=50,
+    )
+    assert isinstance(resp1, MessageResponse)
+    assert resp1.usage.cache_creation_input_tokens and resp1.usage.cache_creation_input_tokens > 0
+
+    # Second call: same system prompt should hit the cache
+    resp2 = await amessages(
+        model=_ANTHROPIC_MODEL,
+        provider="anthropic",
+        system=system,
+        messages=[{"role": "user", "content": "Say goodbye"}],
+        max_tokens=50,
+    )
+    assert isinstance(resp2, MessageResponse)
+    assert resp2.usage.cache_read_input_tokens and resp2.usage.cache_read_input_tokens > 0
