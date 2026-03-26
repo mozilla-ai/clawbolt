@@ -266,6 +266,11 @@ class SessionListResponse(BaseModel):
     items: list[SessionListItem]
 
 
+class DeleteMessagesResponse(BaseModel):
+    status: str
+    messages_deleted: int
+
+
 # ---------------------------------------------------------------------------
 # LLM usage summary (admin)
 # ---------------------------------------------------------------------------

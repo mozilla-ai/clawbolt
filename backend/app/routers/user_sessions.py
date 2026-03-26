@@ -13,6 +13,7 @@ from backend.app.auth.dependencies import get_current_user
 from backend.app.database import get_db
 from backend.app.models import ChatSession, Message, User
 from backend.app.schemas import (
+    DeleteMessagesResponse,
     SessionDetailResponse,
     SessionListItem,
     SessionListResponse,
@@ -105,21 +106,23 @@ async def get_session(
     )
 
 
-@router.delete("/user/sessions/{session_id}/messages")
+@router.delete(
+    "/user/sessions/{session_id}/messages",
+    response_model=DeleteMessagesResponse,
+)
 async def delete_conversation_history(
     session_id: str,
     current_user: User = Depends(get_current_user),
-) -> dict[str, str | int]:
+) -> DeleteMessagesResponse:
     """Delete all messages from a session, preserving memory and the session itself.
 
     Resets the compaction pointer and system prompt so the conversation
     continues with a clean slate while retaining compacted memory.
     """
     store = get_session_store(current_user.id)
-    session = store.load_session(session_id)
-    if session is None:
-        raise HTTPException(status_code=404, detail="Session not found")
-
     async with user_locks.acquire(current_user.id):
+        session = store.load_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
         deleted = store.delete_messages(session_id)
-    return {"status": "deleted", "messages_deleted": deleted}
+    return DeleteMessagesResponse(status="deleted", messages_deleted=deleted)

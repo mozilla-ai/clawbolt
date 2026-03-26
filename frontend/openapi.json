@@ -972,18 +972,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "type": "object",
-                  "additionalProperties": {
-                    "anyOf": [
-                      {
-                        "type": "string"
-                      },
-                      {
-                        "type": "integer"
-                      }
-                    ]
-                  },
-                  "title": "Response Delete Conversation History Api User Sessions  Session Id  Messages Delete"
+                  "$ref": "#/components/schemas/DeleteMessagesResponse"
                 }
               }
             }
@@ -1097,44 +1086,6 @@
                 "schema": {
                   "$ref": "#/components/schemas/ToolConfigResponse"
                 }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/{full_path}": {
-      "get": {
-        "summary": " Spa Fallback",
-        "description": "Serve the SPA index.html for all non-API routes.",
-        "operationId": "_spa_fallback__full_path__get",
-        "parameters": [
-          {
-            "name": "full_path",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Full Path"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {}
               }
             }
           },
@@ -1362,6 +1313,24 @@
           "enabled"
         ],
         "title": "ChannelRouteUpdate"
+      },
+      "DeleteMessagesResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "messages_deleted": {
+            "type": "integer",
+            "title": "Messages Deleted"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "messages_deleted"
+        ],
+        "title": "DeleteMessagesResponse"
       },
       "HTTPValidationError": {
         "properties": {
