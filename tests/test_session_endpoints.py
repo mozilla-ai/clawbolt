@@ -204,3 +204,57 @@ def test_delete_conversation_history_empty_session(client: TestClient, test_user
     assert resp.status_code == 200
     data = resp.json()
     assert data["messages_deleted"] == 0
+
+
+def test_delete_conversation_history_cross_user_isolation(
+    client: TestClient, test_user: User
+) -> None:
+    """A user cannot delete another user's conversation history."""
+    # Create a session owned by a different user
+    other_user_id = "other-user-for-isolation-test"
+    db = _db_module.SessionLocal()
+    try:
+        other_user = User(
+            id=other_user_id,
+            user_id="other-user",
+            phone="+15559999999",
+            channel_identifier="999999",
+        )
+        db.add(other_user)
+        db.flush()
+        cs = ChatSession(
+            session_id="other_session",
+            user_id=other_user_id,
+            is_active=True,
+            channel="",
+            last_compacted_seq=0,
+            created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
+            last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
+        )
+        db.add(cs)
+        db.flush()
+        msg = Message(
+            session_id=cs.id,
+            seq=1,
+            direction="inbound",
+            body="secret",
+            timestamp=datetime(2025, 1, 15, 10, 1, 0, tzinfo=UTC),
+        )
+        db.add(msg)
+        db.commit()
+    finally:
+        db.close()
+
+    # Authenticated as test_user, try to delete other user's session
+    resp = client.delete("/api/user/sessions/other_session/messages")
+    assert resp.status_code == 404
+
+    # Verify the other user's message is still intact
+    db = _db_module.SessionLocal()
+    try:
+        cs = db.query(ChatSession).filter_by(session_id="other_session").first()
+        assert cs is not None
+        count = db.query(Message).filter_by(session_id=cs.id).count()
+        assert count == 1
+    finally:
+        db.close()

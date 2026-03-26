@@ -55,6 +55,7 @@ export default function ChatPage() {
   const [activityTool, setActivityTool] = useState<string | null>(null);
   const [agentBusy, setAgentBusy] = useState(false);
   const [waitingForApproval, setWaitingForApproval] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -317,13 +318,15 @@ export default function ChatPage() {
             <Button
               variant="ghost"
               size="sm"
+              disabled={isDeleting || sending}
               className="text-muted-foreground hover:text-danger shrink-0"
               onClick={async () => {
-                if (!activeSessionId) return;
+                if (!activeSessionId || isDeleting) return;
                 const ok = window.confirm(
                   'Delete all conversation messages? Your memory and personality will be kept.',
                 );
                 if (!ok) return;
+                setIsDeleting(true);
                 try {
                   await api.deleteConversationHistory(activeSessionId);
                   setMessages([]);
@@ -335,6 +338,8 @@ export default function ChatPage() {
                 } catch (err: unknown) {
                   const msg = err instanceof Error ? err.message : 'Failed to delete history';
                   toast.error(msg);
+                } finally {
+                  setIsDeleting(false);
                 }
               }}
             >

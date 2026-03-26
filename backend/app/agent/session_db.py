@@ -412,7 +412,13 @@ class SessionStore:
             )
             if cs is None:
                 return 0
-            count: int = db.query(Message).filter_by(session_id=cs.id).delete()
+            count: int = (
+                db.query(Message)
+                .filter_by(session_id=cs.id)
+                .delete(
+                    synchronize_session="fetch",
+                )
+            )
             cs.last_compacted_seq = 0
             cs.initial_system_prompt = ""
             db.commit()
