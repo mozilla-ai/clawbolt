@@ -630,7 +630,8 @@ def test_trim_messages_preserves_tool_call_result_pairs() -> None:
 
     # Use a small budget that forces trimming. Simulate prior API response
     # reporting 2625 input tokens for this conversation.
-    trimmed = trim_messages(messages, target_tokens=1000, input_tokens=2625)
+    result = trim_messages(messages, target_tokens=1000, input_tokens=2625)
+    trimmed = result.messages
 
     # The trimmed result should never contain tool_result without assistant_tc
     has_tool_msg = any(isinstance(m, ToolResultMessage) for m in trimmed)
@@ -694,8 +695,8 @@ async def test_agent_trims_history_when_exceeding_token_limit(
     ]
 
     agent = ClawboltAgent(user=test_user)
-    # Simulate a prior LLM response so the pre-call trimmer has token data.
-    agent._last_input_tokens = 600_000
+    # Simulate a prior LLM response reporting token usage well above MAX_INPUT_TOKENS (600K).
+    agent._last_input_tokens = 1_200_000
     response = await agent.process_message("Current message", conversation_history=long_history)
 
     assert response.reply_text == "Trimmed reply!"
@@ -777,15 +778,17 @@ async def test_agent_raises_authentication_error(
     assert mock_amessages.call_count == 1
 
 
-def test_trim_messages_skips_without_input_tokens() -> None:
-    """Without input_tokens, _trim_messages returns messages unchanged."""
+def test_trim_messages_uses_estimation_without_input_tokens() -> None:
+    """Without input_tokens, trim_messages uses char-based estimation and trims if needed."""
     big_content = "x" * 4000
     messages: list[AgentMessage] = [
         SystemMessage(content="System prompt"),
         *[UserMessage(content=big_content) for _ in range(50)],
     ]
-    trimmed = trim_messages(messages, target_tokens=100)
-    assert trimmed is messages
+    # With huge content and a small target, the char estimate should trigger trimming
+    result = trim_messages(messages, target_tokens=100)
+    assert len(result.messages) < len(messages)
+    assert len(result.dropped) > 0
 
 
 def test_trim_messages_preserves_short_conversation() -> None:
@@ -796,8 +799,9 @@ def test_trim_messages_preserves_short_conversation() -> None:
         AssistantMessage(content="Hi there!"),
     ]
     # With a small input_tokens count that fits the budget, no trimming occurs.
-    trimmed = trim_messages(messages, input_tokens=50)
-    assert trimmed == messages
+    result = trim_messages(messages, input_tokens=50)
+    assert result.messages == messages
+    assert result.dropped == []
 
 
 def test_trim_messages_keeps_system_and_recent() -> None:
@@ -813,12 +817,14 @@ def test_trim_messages_keeps_system_and_recent() -> None:
         ],
     ]
     # Simulate a prior API response reporting 20_000 input tokens.
-    trimmed = trim_messages(messages, target_tokens=5000, input_tokens=20_000)
-    assert isinstance(trimmed[0], SystemMessage)
+    result = trim_messages(messages, target_tokens=5000, input_tokens=20_000)
+    assert isinstance(result.messages[0], SystemMessage)
     # Should have been trimmed significantly
-    assert len(trimmed) < len(messages)
+    assert len(result.messages) < len(messages)
     # Last message should be the most recent one
-    assert trimmed[-1] == messages[-1]
+    assert result.messages[-1] == messages[-1]
+    # Dropped messages should be non-empty
+    assert len(result.dropped) > 0
 
 
 @pytest.mark.asyncio()
@@ -868,8 +874,8 @@ async def test_agent_logs_warning_when_trimming(
     ]
 
     agent = ClawboltAgent(user=test_user)
-    # Simulate a prior LLM response so the pre-call trimmer has token data.
-    agent._last_input_tokens = 600_000
+    # Simulate a prior LLM response reporting token usage well above MAX_INPUT_TOKENS (600K).
+    agent._last_input_tokens = 1_200_000
 
     with caplog.at_level("WARNING", logger="backend.app.agent.core"):
         await agent.process_message(
@@ -937,12 +943,14 @@ def test_trim_messages_injects_summary_when_trimming() -> None:
             for i in range(20)
         ],
     ]
-    trimmed = trim_messages(messages, target_tokens=5000, input_tokens=20_000)
-    assert isinstance(trimmed[0], SystemMessage)
+    result = trim_messages(messages, target_tokens=5000, input_tokens=20_000)
+    assert isinstance(result.messages[0], SystemMessage)
     # Second message should be the summary
-    assert isinstance(trimmed[1], UserMessage)
-    assert "[Summary of earlier conversation:" in trimmed[1].content
-    assert "earlier message(s)" in trimmed[1].content
+    assert isinstance(result.messages[1], UserMessage)
+    assert "[Summary of earlier conversation:" in result.messages[1].content
+    assert "earlier message(s)" in result.messages[1].content
+    # Dropped list should match
+    assert len(result.dropped) > 0
 
 
 def test_trim_messages_no_summary_when_not_trimmed() -> None:
@@ -952,10 +960,11 @@ def test_trim_messages_no_summary_when_not_trimmed() -> None:
         UserMessage(content="Hello"),
         AssistantMessage(content="Hi there!"),
     ]
-    trimmed = trim_messages(messages, input_tokens=50)
-    assert trimmed == messages
+    result = trim_messages(messages, input_tokens=50)
+    assert result.messages == messages
+    assert result.dropped == []
     # No summary message should be present
-    for msg in trimmed:
+    for msg in result.messages:
         if isinstance(msg, UserMessage):
             assert "[Summary of earlier conversation:" not in msg.content
 
@@ -978,8 +987,8 @@ async def test_process_message_injects_summary_when_trimming(
     ]
 
     agent = ClawboltAgent(user=test_user)
-    # Simulate a prior LLM response so the pre-call trimmer has token data.
-    agent._last_input_tokens = 600_000
+    # Simulate a prior LLM response reporting token usage well above MAX_INPUT_TOKENS (600K).
+    agent._last_input_tokens = 1_200_000
 
     await agent.process_message(
         "Current message",

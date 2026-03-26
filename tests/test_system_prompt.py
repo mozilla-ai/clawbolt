@@ -337,8 +337,8 @@ class TestAgentSystemPromptExcludesTime:
 
 class TestBuildTimeUserContext:
     @patch("backend.app.agent.system_prompt.datetime")
-    def test_includes_time_and_timezone(self, mock_dt: MagicMock) -> None:
-        """Should produce a bracketed time string with IANA timezone."""
+    def test_includes_time_without_timezone_label(self, mock_dt: MagicMock) -> None:
+        """Should produce a bracketed time string without timezone abbreviation."""
         mock_dt.UTC = datetime.UTC
         mock_dt.datetime.now.return_value = datetime.datetime(
             2025, 6, 15, 17, 30, tzinfo=datetime.UTC
@@ -346,14 +346,11 @@ class TestBuildTimeUserContext:
         user = MagicMock()
         user.timezone = "America/New_York"
         result = build_time_user_context(user)
-        assert result.startswith("[Current time:")
-        assert "01:30 PM" in result
-        assert "(America/New_York)" in result
-        assert result.endswith("]")
+        assert result == "[Current time: Sunday, 2025-06-15 01:30 PM]"
 
     @patch("backend.app.agent.system_prompt.datetime")
     def test_utc_fallback_when_no_timezone(self, mock_dt: MagicMock) -> None:
-        """Should fall back to UTC and prompt for timezone."""
+        """Should fall back to UTC and prompt for timezone discovery."""
         mock_dt.UTC = datetime.UTC
         mock_dt.datetime.now.return_value = datetime.datetime(
             2025, 6, 15, 17, 30, tzinfo=datetime.UTC
@@ -362,8 +359,9 @@ class TestBuildTimeUserContext:
         user.timezone = ""
         result = build_time_user_context(user)
         assert "[Current time:" in result
-        assert "UTC" in result
-        assert "No timezone has been set" in result
+        assert "No timezone has been configured yet" in result
+        assert "EDT" not in result
+        assert "UTC" not in result
 
 
 class TestCrossSessionContext:
