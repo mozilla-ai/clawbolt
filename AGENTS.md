@@ -40,7 +40,7 @@ uv run ty check --python .venv backend/ tests/ alembic/
 
 ## Storage
 
-All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The database has 11 tables:
+All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). The database has 12 tables:
 
 | Table | Purpose |
 |---|---|
@@ -55,6 +55,7 @@ All structured data is stored in PostgreSQL (configurable via `DATABASE_URL`). T
 | `llm_usage_logs` | Token usage tracking |
 | `tool_configs` | Per-user tool configuration |
 | `calendar_configs` | Per-user calendar integration settings |
+| `oauth_tokens` | Encrypted OAuth tokens for integrations (Google Calendar, QuickBooks) |
 
 Key store modules:
 - `backend/app/agent/user_db.py` -- `UserStore` (singleton via `get_user_store()`)

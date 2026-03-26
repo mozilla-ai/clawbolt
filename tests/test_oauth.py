@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 from fastapi.testclient import TestClient
+from pydantic import SecretStr
 
 import backend.app.database as _db_module
 from backend.app.auth.dependencies import get_current_user
@@ -241,7 +242,7 @@ def test_multiple_integrations_per_user(oauth_svc: OAuthService, test_user: User
 
 def test_encrypted_token_round_trip(oauth_svc: OAuthService, test_user: User) -> None:
     """Tokens should survive save/load with encryption enabled."""
-    with patch.object(settings, "encryption_key", "test-key-at-least-16-chars!!"):
+    with patch.object(settings, "encryption_key", SecretStr("test-key-at-least-16-chars!!")):
         token = OAuthTokenData(
             access_token="secret-access",
             refresh_token="secret-refresh",

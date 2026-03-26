@@ -41,7 +41,7 @@ class EncryptedString(TypeDecorator):
     _warned_no_key = False
 
     def _get_fernet(self):  # noqa: ANN202
-        key = settings.encryption_key
+        key = settings.encryption_key.get_secret_value()
         if not key:
             if not EncryptedString._warned_no_key:
                 _logger.warning("encryption_key not set; OAuth tokens stored unencrypted")
@@ -79,6 +79,11 @@ class EncryptedString(TypeDecorator):
             return fernet.decrypt(value.encode()).decode()
         except Exception:
             # Value may be plaintext (stored before encryption was enabled).
+            # Log so operators can distinguish misconfigured keys from migration.
+            _logger.warning(
+                "Fernet decryption failed; returning value as-is"
+                " (expected during migration from plaintext)"
+            )
             return value
 
 

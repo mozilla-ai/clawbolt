@@ -18,6 +18,7 @@ from typing import Any
 
 import httpx
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.config import settings
 from backend.app.database import db_session
@@ -246,28 +247,33 @@ class OAuthService:
         integration: str,
         token: OAuthTokenData,
     ) -> None:
-        """Persist token data to the oauth_tokens table (upsert)."""
+        """Persist token data to the oauth_tokens table (atomic upsert)."""
         from backend.app.models import OAuthToken
 
+        values = {
+            "user_id": user_id,
+            "integration": integration,
+            "access_token": token.access_token,
+            "refresh_token": token.refresh_token,
+            "token_type": token.token_type,
+            "expires_at": token.expires_at,
+            "scopes_json": json.dumps(token.scopes),
+            "realm_id": token.realm_id,
+            "extra_json": json.dumps(token.extra),
+        }
+        update_cols = {k: v for k, v in values.items() if k not in ("user_id", "integration")}
+
+        stmt = (
+            pg_insert(OAuthToken)
+            .values(**values)
+            .on_conflict_do_update(
+                constraint="uq_oauth_token_user_integration",
+                set_=update_cols,
+            )
+        )
+
         with db_session() as db:
-            row = db.execute(
-                select(OAuthToken).where(
-                    OAuthToken.user_id == user_id,
-                    OAuthToken.integration == integration,
-                )
-            ).scalar_one_or_none()
-
-            if row is None:
-                row = OAuthToken(user_id=user_id, integration=integration)
-                db.add(row)
-
-            row.access_token = token.access_token
-            row.refresh_token = token.refresh_token
-            row.token_type = token.token_type
-            row.expires_at = token.expires_at
-            row.scopes_json = json.dumps(token.scopes)
-            row.realm_id = token.realm_id
-            row.extra_json = json.dumps(token.extra)
+            db.execute(stmt)
             db.commit()
 
     def load_token(

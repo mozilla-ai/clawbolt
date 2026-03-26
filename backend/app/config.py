@@ -7,7 +7,7 @@ import os
 from pathlib import Path
 from typing import Any
 
-from pydantic import Field, ValidationError
+from pydantic import Field, SecretStr, ValidationError
 from pydantic_settings import BaseSettings
 
 logger = logging.getLogger(__name__)
@@ -112,7 +112,7 @@ class Settings(BaseSettings):
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks
 
     # Encryption (used for OAuth tokens at rest; generate with: python -c "import secrets; print(secrets.token_urlsafe(32))")
-    encryption_key: str = ""
+    encryption_key: SecretStr = SecretStr("")
 
     # HTTP timeouts
     http_timeout_seconds: float = Field(default=30.0, gt=0)
@@ -277,15 +277,16 @@ def log_config_warnings(s: Settings | None = None) -> list[str]:
             " trimming will never trigger"
         )
 
-    if not s.encryption_key:
+    enc_key = s.encryption_key.get_secret_value()
+    if not enc_key:
         warnings.append(
             "encryption_key is not set; OAuth tokens will be stored unencrypted."
             " Set ENCRYPTION_KEY to a random value"
             ' (python -c "import secrets; print(secrets.token_urlsafe(32))")'
         )
-    elif len(s.encryption_key) < 16:
+    elif len(enc_key) < 16:
         warnings.append(
-            f"encryption_key is only {len(s.encryption_key)} characters;"
+            f"encryption_key is only {len(enc_key)} characters;"
             " use at least 32 characters of random data for production"
         )
 
