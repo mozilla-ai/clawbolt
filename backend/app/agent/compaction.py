@@ -21,6 +21,7 @@ from backend.app.agent.llm_parsing import get_response_text
 from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.prompts import load_prompt
+from backend.app.agent.stores import HeartbeatStore
 from backend.app.config import settings
 from backend.app.services.llm_service import reasoning_effort_to_thinking
 
@@ -87,8 +88,9 @@ async def compact_session(
 ) -> tuple[str, int | None]:
     """Consolidate messages into an updated MEMORY.md via LLM rewrite.
 
-    Passes the current MEMORY.md, USER.md, and the conversation to the LLM,
-    which returns a full rewritten MEMORY.md incorporating any new facts.
+    Passes the current MEMORY.md, USER.md, SOUL.md, HEARTBEAT.md, and the
+    conversation to the LLM, which returns a full rewritten MEMORY.md
+    incorporating any new facts.
 
     Args:
         user_id: The user whose session is being compacted.
@@ -115,9 +117,6 @@ async def compact_session(
     current_memory = memory_store.read_memory()
     current_user_profile = memory_store.read_user()
     current_soul = memory_store.read_soul()
-
-    from backend.app.agent.stores import HeartbeatStore
-
     heartbeat_store = HeartbeatStore(user_id)
     current_heartbeat = heartbeat_store.read_heartbeat_md()
 
