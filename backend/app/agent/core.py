@@ -158,6 +158,28 @@ class ClawboltAgent:
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", self._chat_id)
 
+    async def _persist_approval_prompt(self, prompt: str) -> None:
+        """Store the approval prompt as an outbound message in the session.
+
+        This ensures the prompt is visible in the web UI when viewing
+        session history, even if the conversation originated on a
+        different channel (e.g. iMessage or Telegram).
+        """
+        try:
+            from backend.app.agent.dto import SessionState
+            from backend.app.agent.session_db import get_session_store
+            from backend.app.enums import MessageDirection
+
+            session_store = get_session_store(self.user.id)
+            session = SessionState(session_id=self._session_id, user_id=self.user.id)
+            await session_store.add_message(
+                session=session,
+                direction=MessageDirection.OUTBOUND,
+                body=prompt,
+            )
+        except Exception:
+            logger.warning("Failed to persist approval prompt for user %s", self.user.id)
+
     def _get_tool_permission(
         self,
         tool_obj: Tool,
@@ -538,6 +560,12 @@ class ClawboltAgent:
             ]
 
             plan_msg = format_plan_message("Here's what I need to do:", auto_steps, ask_steps)
+
+            # Persist the approval prompt to session history so it is
+            # visible in the web UI regardless of which channel
+            # originated the conversation.
+            if self._session_id:
+                await self._persist_approval_prompt(plan_msg)
 
             if self._publish_outbound is not None and self._chat_id is not None:
                 # Publish approval prompt as SSE event for webchat clients.

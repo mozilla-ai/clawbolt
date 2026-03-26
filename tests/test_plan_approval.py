@@ -16,9 +16,11 @@ from backend.app.agent.approval import (
     get_approval_store,
 )
 from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.session_db import get_session_store
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage
 from backend.app.models import User
+from tests.conftest import create_test_session
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
 # ---------------------------------------------------------------------------
@@ -546,4 +548,58 @@ class TestBatchApproval:
         assert (
             store.check_permission(test_user.id, "fetcher", resource="customers")
             == PermissionLevel.ASK
+        )
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
+    async def test_approval_prompt_persisted_to_session(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """Approval prompt is stored in session history so it appears in the web UI.
+
+        Regression test for #840: tool approval sent to iMessage channel
+        did not show up in the web UI because the prompt was never
+        persisted to the session message history.
+        """
+        mock_publish = AsyncMock()
+        session_id = "test-approval-persist"
+        create_test_session(test_user.id, session_id=session_id, channel="linq")
+
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [
+                    {"name": "reader", "arguments": {"text": "config"}},
+                    {"name": "writer", "arguments": {"text": "data"}},
+                ]
+            ),
+            make_text_response("Done!"),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _approve_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="linq",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+            session_id=session_id,
+        )
+        agent.register_tools([_auto_tool(), _ask_tool()])
+
+        task = asyncio.create_task(_approve_soon())
+        await agent.process_message("read then write")
+        await task
+
+        # The approval prompt should be stored in session history
+        store = get_session_store(test_user.id)
+        session = store.load_session(session_id)
+        assert session is not None
+        outbound_msgs = [m for m in session.messages if m.direction == "outbound"]
+        assert any("needs OK" in m.body for m in outbound_msgs), (
+            "Approval prompt not found in session history"
         )
