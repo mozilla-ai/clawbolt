@@ -950,6 +950,57 @@
         }
       }
     },
+    "/api/user/sessions/{session_id}/messages": {
+      "delete": {
+        "summary": "Delete Conversation History",
+        "description": "Delete all messages from a session, preserving memory and the session itself.\n\nResets the compaction pointer and system prompt so the conversation\ncontinues with a clean slate while retaining compacted memory.",
+        "operationId": "delete_conversation_history_api_user_sessions__session_id__messages_delete",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "additionalProperties": {
+                    "anyOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "integer"
+                      }
+                    ]
+                  },
+                  "title": "Response Delete Conversation History Api User Sessions  Session Id  Messages Delete"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/memory": {
       "get": {
         "summary": "Get Memory",
@@ -1046,6 +1097,44 @@
                 "schema": {
                   "$ref": "#/components/schemas/ToolConfigResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{full_path}": {
+      "get": {
+        "summary": " Spa Fallback",
+        "description": "Serve the SPA index.html for all non-API routes.",
+        "operationId": "_spa_fallback__full_path__get",
+        "parameters": [
+          {
+            "name": "full_path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Full Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },

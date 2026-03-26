@@ -511,6 +511,29 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/sessions/{session_id}/messages": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Conversation History
+         * @description Delete all messages from a session, preserving memory and the session itself.
+         *
+         *     Resets the compaction pointer and system prompt so the conversation
+         *     continues with a clean slate while retaining compacted memory.
+         */
+        delete: operations["delete_conversation_history_api_user_sessions__session_id__messages_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/memory": {
         parameters: {
             query?: never;
@@ -558,6 +581,26 @@ export interface paths {
          *     tools within a factory group.
          */
         put: operations["update_tool_config_api_user_tools_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/{full_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spa Fallback
+         * @description Serve the SPA index.html for all non-API routes.
+         */
+        get: operations["_spa_fallback__full_path__get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -1807,6 +1850,39 @@ export interface operations {
             };
         };
     };
+    delete_conversation_history_api_user_sessions__session_id__messages_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: string | number;
+                    };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     get_memory_api_user_memory_get: {
         parameters: {
             query?: never;
@@ -1900,6 +1976,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _spa_fallback__full_path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                full_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

@@ -400,6 +400,24 @@ class SessionStore:
                 db.commit()
             session.last_compacted_seq = seq
 
+    def delete_messages(self, session_id: str) -> int:
+        """Delete all messages from a session and reset its compaction pointer.
+
+        Returns the number of messages deleted. The session row itself is
+        preserved so the conversation can continue with an empty history.
+        """
+        with db_session() as db:
+            cs = (
+                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
+            )
+            if cs is None:
+                return 0
+            count: int = db.query(Message).filter_by(session_id=cs.id).delete()
+            cs.last_compacted_seq = 0
+            cs.initial_system_prompt = ""
+            db.commit()
+            return count
+
     def _get_last_timestamp(self, direction: str) -> datetime.datetime | None:
         """Get the most recent message timestamp in the given direction."""
         db = SessionLocal()

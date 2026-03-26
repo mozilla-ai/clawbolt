@@ -102,3 +102,22 @@ async def get_session(
         last_compacted_seq=session.last_compacted_seq,
         messages=messages,
     )
+
+
+@router.delete("/user/sessions/{session_id}/messages")
+async def delete_conversation_history(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+) -> dict[str, str | int]:
+    """Delete all messages from a session, preserving memory and the session itself.
+
+    Resets the compaction pointer and system prompt so the conversation
+    continues with a clean slate while retaining compacted memory.
+    """
+    store = get_session_store(current_user.id)
+    session = store.load_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    deleted = store.delete_messages(session_id)
+    return {"status": "deleted", "messages_deleted": deleted}
