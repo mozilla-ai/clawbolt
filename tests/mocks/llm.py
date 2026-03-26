@@ -1,13 +1,7 @@
 from typing import Any
 from unittest.mock import MagicMock
 
-from any_llm.types.messages import (
-    MessageContentBlock,
-    MessageResponse,
-    MessageUsage,
-    TextBlock,
-    ToolUseBlock,
-)
+from any_llm.types.messages import MessageResponse, MessageUsage, TextBlock, ToolUseBlock
 
 
 def extract_system_text(system: str | list[dict[str, Any]] | None) -> str:
@@ -47,7 +41,7 @@ def make_tool_call_response(
     """
     import json
 
-    blocks: list[MessageContentBlock] = []
+    blocks: list[Any] = []
 
     if content:
         blocks.append(TextBlock(type="text", text=content))
@@ -111,7 +105,7 @@ def make_error_response(
     Uses MagicMock because MessageResponse in any-llm 1.13+ validates
     stop_reason as a literal enum and rejects arbitrary values like "error".
     """
-    blocks: list[MessageContentBlock] = []
+    blocks: list[Any] = []
     if content:
         blocks.append(TextBlock(type="text", text=content))
     mock = MagicMock(spec=MessageResponse)

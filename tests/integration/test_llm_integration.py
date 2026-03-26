@@ -72,7 +72,7 @@ async def test_agent_message_format_accepted(
 async def test_amessages_direct_call() -> None:
     """Verify amessages() works directly with anthropic provider."""
     from any_llm import amessages
-    from any_llm.types.messages import MessageResponse
+    from any_llm.types.messages import MessageResponse, TextBlock
 
     raw = await amessages(
         model=_ANTHROPIC_MODEL,
@@ -86,6 +86,6 @@ async def test_amessages_direct_call() -> None:
     assert isinstance(raw, MessageResponse)
 
     assert raw.content
-    text_parts = [block.text for block in raw.content if block.type == "text"]
+    text_parts = [block.text for block in raw.content if isinstance(block, TextBlock)]
     assert text_parts
     assert text_parts[0]

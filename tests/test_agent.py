@@ -2032,7 +2032,7 @@ async def test_truncated_tool_call_sends_truncation_hint(
     # Round 0: LLM response truncated, only entity_type (missing data)
     # Round 1: LLM self-corrects with complete args
     # Round 2: LLM produces final text
-    mock_amessages.side_effect = [  # type: ignore[union-attr]
+    mock_amessages.side_effect = [
         make_truncated_tool_call_response(
             [{"name": "qb_create", "arguments": {"entity_type": "Customer"}}]
         ),
@@ -2090,7 +2090,7 @@ async def test_truncated_response_increases_max_tokens(
         params_model=CreateParams,
     )
 
-    mock_amessages.side_effect = [  # type: ignore[union-attr]
+    mock_amessages.side_effect = [
         make_truncated_tool_call_response(
             [{"name": "qb_create", "arguments": {"entity_type": "Invoice"}}]
         ),
