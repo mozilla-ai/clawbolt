@@ -2304,3 +2304,106 @@ class TestRecentMessagesIncludeTimestamps:
         recent_text = mock_build_prompt.call_args.args[1]
         # Falls back to label-only format without a timestamp
         assert "[User] Hello!" in recent_text
+
+
+# ---------------------------------------------------------------------------
+# Regression: editing heartbeat text must not replay removed checks (#858)
+# ---------------------------------------------------------------------------
+
+
+class TestHeartbeatPromptAlwaysIncludesSection:
+    """Regression for #858: when heartbeat text is empty (all checks removed),
+    the prompt must still include the heartbeat section so the LLM knows
+    there are no items to act on, rather than silently omitting it while
+    old task descriptions remain visible in the history section."""
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.system_prompt.build_memory_section", new_callable=AsyncMock)
+    async def test_empty_heartbeat_text_produces_placeholder(
+        self,
+        mock_memory: AsyncMock,
+        user: User,
+    ) -> None:
+        """build_heartbeat_system_prompt includes a placeholder when heartbeat_md is empty."""
+        from backend.app.agent.system_prompt import build_heartbeat_system_prompt
+
+        mock_memory.return_value = ""
+
+        prompt = await build_heartbeat_system_prompt(
+            user,
+            recent_messages="(no recent messages)",
+            heartbeat_md="",
+            heartbeat_history=(
+                '- Monday, 2026-03-23 09:00 AM (4 days ago) | tasks: "Check weather"'
+            ),
+        )
+
+        # The heartbeat section must appear even when empty
+        assert "no heartbeat items configured" in prompt
+        # The history section must be annotated as timing reference only
+        assert "timing reference only" in prompt
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.system_prompt.build_memory_section", new_callable=AsyncMock)
+    async def test_nonempty_heartbeat_text_included_verbatim(
+        self,
+        mock_memory: AsyncMock,
+        user: User,
+    ) -> None:
+        """build_heartbeat_system_prompt includes the actual text when provided."""
+        from backend.app.agent.system_prompt import build_heartbeat_system_prompt
+
+        mock_memory.return_value = ""
+
+        prompt = await build_heartbeat_system_prompt(
+            user,
+            recent_messages="(no recent messages)",
+            heartbeat_md="- Check weather for outdoor jobs",
+        )
+
+        assert "Check weather for outdoor jobs" in prompt
+        # The heartbeat section must contain the actual text, not the placeholder.
+        # (The placeholder phrase also appears in the rules section as a reference,
+        # so we check the section between the heartbeat header and the next header.)
+        hb_start = prompt.index("User's heartbeat")
+        hb_end = prompt.index("##", hb_start + 1)
+        heartbeat_section = prompt[hb_start:hb_end]
+        assert "no heartbeat items configured" not in heartbeat_section
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.system_prompt.build_memory_section", new_callable=AsyncMock)
+    async def test_history_section_header_includes_timing_disclaimer(
+        self,
+        mock_memory: AsyncMock,
+        user: User,
+    ) -> None:
+        """History section header must say 'timing reference only' to prevent re-running old tasks."""
+        from backend.app.agent.system_prompt import build_heartbeat_system_prompt
+
+        mock_memory.return_value = ""
+
+        prompt = await build_heartbeat_system_prompt(
+            user,
+            recent_messages="(no recent messages)",
+            heartbeat_md="- Active check",
+            heartbeat_history=(
+                '- Monday, 2026-03-23 09:00 AM (4 days ago) | tasks: "Old removed task"'
+            ),
+        )
+
+        assert "timing reference only" in prompt
+        assert "not tasks to re-run" in prompt
+
+
+class TestHeartbeatRulesGuardRemovedItems:
+    """Regression for #858: heartbeat_rules.md must instruct the LLM to only
+    act on items in the current heartbeat text."""
+
+    def test_rules_mention_current_heartbeat_only(self) -> None:
+        """The rules prompt must explicitly say to only act on current items."""
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules")
+        assert "Only act on items" in rules
+        assert "current" in rules.lower()
+        assert "history" in rules.lower()
