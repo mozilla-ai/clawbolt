@@ -1,76 +1,137 @@
 import { useState, useEffect } from 'react';
+import { useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
 import Field from '@/components/ui/field';
 import Select from '@/components/ui/select';
-import Switch from '@/components/ui/switch';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useChannelConfig, useUpdateChannelConfig, useChannelRoutes, useToggleChannelRoute } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAccessToken } from '@/lib/api-client';
 import type { ChannelRouteResponse } from '@/types';
+import type { AppShellContext } from '@/layouts/AppShell';
+
+// Messaging channel definitions (webchat excluded, it is always available)
+const MESSAGING_CHANNELS = [
+  { key: 'telegram', label: 'Telegram' },
+  { key: 'linq', label: 'Text Messaging (iMessage / RCS / SMS)' },
+  { key: 'bluebubbles', label: 'BlueBubbles (iMessage)' },
+] as const;
+
+type ChannelKey = (typeof MESSAGING_CHANNELS)[number]['key'];
 
 export default function ChannelsPage() {
   const { isPremium } = useAuth();
-
-  return (
-    <div>
-      <h2 className="text-xl font-semibold font-display mb-6">Channels</h2>
-      <div className="grid gap-6 lg:grid-cols-2">
-        <TelegramSection />
-        {isPremium ? <PremiumTextMessagingSection /> : <TextMessagingSection />}
-        <BlueBubblesSection />
-      </div>
-    </div>
-  );
-}
-
-// --- Channel route toggle ---
-
-function ChannelToggle({ channel, isConfigured }: { channel: string; isConfigured: boolean }) {
+  const { profile } = useOutletContext<AppShellContext>();
   const { data: routesData } = useChannelRoutes();
   const toggleMutation = useToggleChannelRoute();
 
-  // If channel isn't configured at server level, don't show toggle
-  if (!isConfigured) return null;
-
-  const route: ChannelRouteResponse | undefined = routesData?.routes.find(
-    (r) => r.channel === channel,
+  // Determine which channel is currently active:
+  // 1. Find the enabled route (should be at most one after enforcement)
+  // 2. Fall back to preferred_channel from profile
+  // 3. Fall back to null (no selection)
+  const enabledRoute = routesData?.routes.find(
+    (r: ChannelRouteResponse) => r.enabled && r.channel !== 'webchat',
   );
+  const preferredChannel = profile?.preferred_channel;
+  const defaultChannel =
+    enabledRoute?.channel ??
+    (preferredChannel && preferredChannel !== 'webchat' ? preferredChannel : null);
 
-  // No route = default enabled (backend default). Toggle still works:
-  // PATCH will create a placeholder route.
-  const isEnabled = route?.enabled ?? true;
+  const [selectedChannel, setSelectedChannel] = useState<ChannelKey | null>(null);
+
+  // Sync selected channel with backend state
+  useEffect(() => {
+    if (defaultChannel && MESSAGING_CHANNELS.some((c) => c.key === defaultChannel)) {
+      setSelectedChannel(defaultChannel as ChannelKey);
+    }
+  }, [defaultChannel]);
+
+  const handleSelectChannel = (channel: ChannelKey) => {
+    setSelectedChannel(channel);
+    toggleMutation.mutate(
+      { channel, enabled: true },
+      {
+        onSuccess: () => toast.success(`Switched to ${MESSAGING_CHANNELS.find((c) => c.key === channel)?.label}`),
+        onError: (e) => toast.error(e.message),
+      },
+    );
+  };
+
+  const getRouteStatus = (channel: string): 'connected' | 'not-configured' | 'configured' => {
+    const route = routesData?.routes.find((r: ChannelRouteResponse) => r.channel === channel);
+    if (route) return 'connected';
+    return 'not-configured';
+  };
 
   return (
-    <Switch
-      checked={isEnabled}
-      onChange={(checked) => {
-        toggleMutation.mutate(
-          { channel, enabled: checked },
-          {
-            onSuccess: () => toast.success(`${channel} ${checked ? 'enabled' : 'paused'}`),
-            onError: (e) => toast.error(e.message),
-          },
-        );
-      }}
-      disabled={toggleMutation.isPending}
-    >
-      <span className="text-xs">{isEnabled ? 'Enabled' : 'Paused'}</span>
-    </Switch>
+    <div className="max-w-2xl">
+      <h2 className="text-xl font-semibold font-display mb-6">Channels</h2>
+
+      {/* Channel selector */}
+      <Card>
+        <h3 className="text-sm font-medium mb-4">Select your messaging channel</h3>
+        <div className="grid gap-2" role="radiogroup" aria-label="Messaging channel">
+          {MESSAGING_CHANNELS.map(({ key, label }) => {
+            const isSelected = selectedChannel === key;
+            const status = getRouteStatus(key);
+            return (
+              <label
+                key={key}
+                className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                  isSelected
+                    ? 'border-primary bg-primary-light'
+                    : 'border-border hover:border-primary/40'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="messaging-channel"
+                  value={key}
+                  checked={isSelected}
+                  onChange={() => handleSelectChannel(key)}
+                  disabled={toggleMutation.isPending}
+                  className="accent-primary w-4 h-4 shrink-0"
+                />
+                <span className="flex-1 text-sm font-medium">{label}</span>
+                {status === 'connected' && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success">
+                    Connected
+                  </span>
+                )}
+                {status === 'not-configured' && (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
+                    Not configured
+                  </span>
+                )}
+              </label>
+            );
+          })}
+        </div>
+        <p className="text-xs text-muted-foreground mt-4">
+          Web Chat is always available via the dashboard.
+        </p>
+      </Card>
+
+      {/* Channel configuration (shown for selected channel) */}
+      {selectedChannel && (
+        <div className="mt-6">
+          {selectedChannel === 'telegram' && (
+            <TelegramSection isPremium={isPremium} />
+          )}
+          {selectedChannel === 'linq' && (
+            isPremium ? <PremiumTextMessagingSection /> : <TextMessagingSection />
+          )}
+          {selectedChannel === 'bluebubbles' && (
+            <BlueBubblesSection />
+          )}
+        </div>
+      )}
+    </div>
   );
-}
-
-// --- Channel disabled state hook ---
-
-function useIsChannelDisabled(channel: string): boolean {
-  const { data: routesData } = useChannelRoutes();
-  const route = routesData?.routes.find((r) => r.channel === channel);
-  if (!route) return false;
-  return !route.enabled;
 }
 
 // --- Premium linking helpers ---
@@ -140,7 +201,14 @@ async function setLinqLink(phoneNumber: string): Promise<LinqLinkData> {
   return res.json() as Promise<LinqLinkData>;
 }
 
-// --- Premium Telegram section ---
+// --- Telegram section ---
+
+function TelegramSection({ isPremium }: { isPremium: boolean }) {
+  if (isPremium) {
+    return <PremiumTelegramSection />;
+  }
+  return <OssTelegramSection />;
+}
 
 function PremiumTelegramSection() {
   const { data: channelConfig } = useChannelConfig();
@@ -148,7 +216,6 @@ function PremiumTelegramSection() {
   const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const isChannelDisabled = useIsChannelDisabled('telegram');
 
   const isConfigured = channelConfig?.telegram_bot_token_set ?? false;
 
@@ -200,10 +267,7 @@ function PremiumTelegramSection() {
 
       <Card>
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-medium">Telegram</h3>
-            <ChannelToggle channel="telegram" isConfigured={isConfigured} />
-          </div>
+          <h3 className="text-sm font-medium">Telegram Configuration</h3>
           {!isConfigured && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
               Not configured
@@ -215,14 +279,14 @@ function PremiumTelegramSection() {
             A Telegram bot token must be configured by an administrator to enable this channel.
           </p>
         )}
-        <div className={`grid gap-4${!isConfigured || isChannelDisabled ? ' opacity-50 pointer-events-none' : ''}`}>
+        <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
           <TelegramUserIdField
             value={displayedId}
             onChange={(v) => setTelegramUserId(v)}
-            disabled={!isConfigured || isChannelDisabled}
+            disabled={!isConfigured}
           />
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null || isChannelDisabled} isLoading={saving}>
+            <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null} isLoading={saving}>
               Save
             </Button>
           </div>
@@ -232,13 +296,10 @@ function PremiumTelegramSection() {
   );
 }
 
-// --- OSS Telegram section ---
-
 function OssTelegramSection() {
   const { data: config } = useChannelConfig();
   const updateMutation = useUpdateChannelConfig();
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
-  const isChannelDisabled = useIsChannelDisabled('telegram');
 
   const displayedId = telegramUserId ?? config?.telegram_allowed_chat_id ?? '';
   const isConfigured = config?.telegram_bot_token_set ?? false;
@@ -261,10 +322,7 @@ function OssTelegramSection() {
     <div className="grid gap-6">
       <Card>
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-medium">Telegram</h3>
-            <ChannelToggle channel="telegram" isConfigured={isConfigured} />
-          </div>
+          <h3 className="text-sm font-medium">Telegram Configuration</h3>
           <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
             {isConfigured ? 'Connected' : 'Not configured'}
           </span>
@@ -275,14 +333,14 @@ function OssTelegramSection() {
             or in <a href="/app/settings/telegram" className="underline">Settings &gt; Telegram</a> to enable.
           </p>
         )}
-        <div className={`grid gap-4${!isConfigured || isChannelDisabled ? ' opacity-50 pointer-events-none' : ''}`}>
+        <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
           <TelegramUserIdField
             value={displayedId}
             onChange={(v) => setTelegramUserId(v)}
-            disabled={!isConfigured || isChannelDisabled}
+            disabled={!isConfigured}
           />
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined || isChannelDisabled} isLoading={updateMutation.isPending}>
+            <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
               Save
             </Button>
           </div>
@@ -337,15 +395,6 @@ function TelegramUserIdField({
   );
 }
 
-function TelegramSection() {
-  const { isPremium } = useAuth();
-
-  if (isPremium) {
-    return <PremiumTelegramSection />;
-  }
-  return <OssTelegramSection />;
-}
-
 // --- Premium Linq section ---
 
 function PremiumTextMessagingSection() {
@@ -353,7 +402,6 @@ function PremiumTextMessagingSection() {
   const [linkData, setLinkData] = useState<LinqLinkData | null>(null);
   const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
-  const isChannelDisabled = useIsChannelDisabled('linq');
   const isConfigured = channelConfig?.linq_api_token_set ?? false;
 
   useEffect(() => {
@@ -386,31 +434,28 @@ function PremiumTextMessagingSection() {
       {fromNumber && <TextAssistantCard fromNumber={fromNumber} />}
       <Card>
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-medium">Text Messaging (iMessage / RCS / SMS)</h3>
-            <ChannelToggle channel="linq" isConfigured={isConfigured} />
-          </div>
+          <h3 className="text-sm font-medium">Text Messaging Configuration</h3>
           {!isConfigured && (
             <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
               Not configured
             </span>
           )}
         </div>
-        <div className={`grid gap-4${!isConfigured || isChannelDisabled ? ' opacity-50 pointer-events-none' : ''}`}>
+        <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
           <Field label="Your Phone Number">
             <Input
               value={displayedNumber}
               onChange={(e) => setPhoneNumber(e.target.value)}
               placeholder="e.g. +15551234567"
               inputMode="tel"
-              disabled={!isConfigured || isChannelDisabled}
+              disabled={!isConfigured}
             />
             <p className="text-xs text-muted-foreground mt-1">
               E.164 format phone number. This is the number you'll text from.
             </p>
           </Field>
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null || isChannelDisabled} isLoading={saving}>
+            <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null} isLoading={saving}>
               Save
             </Button>
           </div>
@@ -429,7 +474,6 @@ function TextMessagingSection() {
   const updateMutation = useUpdateChannelConfig();
   const [allowedNumber, setAllowedNumber] = useState<string | null>(null);
   const [preferredService, setPreferredService] = useState<string | null>(null);
-  const isChannelDisabled = useIsChannelDisabled('linq');
 
   const displayedNumber = allowedNumber ?? config?.linq_allowed_numbers ?? '';
   const displayedService = preferredService ?? config?.linq_preferred_service ?? 'iMessage';
@@ -466,10 +510,7 @@ function TextMessagingSection() {
       )}
       <Card>
         <div className="flex items-center justify-between mb-3">
-          <div className="flex items-center gap-3">
-            <h3 className="text-sm font-medium">Text Messaging (iMessage / RCS / SMS)</h3>
-            <ChannelToggle channel="linq" isConfigured={isConfigured} />
-          </div>
+          <h3 className="text-sm font-medium">Text Messaging Configuration</h3>
           <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
             {isConfigured ? 'Connected' : 'Not configured'}
           </span>
@@ -480,14 +521,14 @@ function TextMessagingSection() {
             Set <code className="font-mono text-[11px]">LINQ_API_TOKEN</code> in your environment to enable.
           </p>
         )}
-        <div className={`grid gap-4${!isConfigured || isChannelDisabled ? ' opacity-50 pointer-events-none' : ''}`}>
+        <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
           <Field label="Allowed Phone Number">
             <Input
               value={displayedNumber}
               onChange={(e) => setAllowedNumber(e.target.value)}
               placeholder="e.g. +15551234567"
               inputMode="tel"
-              disabled={!isConfigured || isChannelDisabled}
+              disabled={!isConfigured}
             />
             <p className="text-xs text-muted-foreground mt-1">
               E.164 phone number, or * to allow all. Empty = deny all.
@@ -498,7 +539,7 @@ function TextMessagingSection() {
               value={displayedService}
               onChange={(e) => setPreferredService(e.target.value)}
               aria-label="Preferred messaging service"
-              disabled={!isConfigured || isChannelDisabled}
+              disabled={!isConfigured}
             >
               {LINQ_SERVICES.map((svc) => (
                 <option key={svc} value={svc}>{svc}</option>
@@ -506,7 +547,7 @@ function TextMessagingSection() {
             </Select>
           </Field>
           <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined || isChannelDisabled} isLoading={updateMutation.isPending}>
+            <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
               Save
             </Button>
           </div>
@@ -516,13 +557,12 @@ function TextMessagingSection() {
   );
 }
 
-// --- BlueBubbles (iMessage via self-hosted Mac bridge) section ---
+// --- BlueBubbles section ---
 
 function BlueBubblesSection() {
   const { data: config } = useChannelConfig();
   const updateMutation = useUpdateChannelConfig();
   const [allowedNumbers, setAllowedNumbers] = useState<string | null>(null);
-  const isChannelDisabled = useIsChannelDisabled('bluebubbles');
 
   const displayedNumbers = allowedNumbers ?? config?.bluebubbles_allowed_numbers ?? '';
   const isConfigured = config?.bluebubbles_configured ?? false;
@@ -548,10 +588,7 @@ function BlueBubblesSection() {
   return (
     <Card>
       <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-3">
-          <h3 className="text-sm font-medium">BlueBubbles (iMessage)</h3>
-          <ChannelToggle channel="bluebubbles" isConfigured={isConfigured} />
-        </div>
+        <h3 className="text-sm font-medium">BlueBubbles Configuration</h3>
         <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
           {isConfigured ? 'Connected' : 'Not configured'}
         </span>
@@ -563,20 +600,20 @@ function BlueBubblesSection() {
           <code className="font-mono text-[11px]">BLUEBUBBLES_PASSWORD</code> in your environment to enable.
         </p>
       )}
-      <div className={`grid gap-4${!isConfigured || isChannelDisabled ? ' opacity-50 pointer-events-none' : ''}`}>
+      <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
         <Field label="Allowed Sender">
           <Input
             value={displayedNumbers}
             onChange={(e) => setAllowedNumbers(e.target.value)}
             placeholder="e.g. +15551234567 or user@icloud.com"
-            disabled={!isConfigured || isChannelDisabled}
+            disabled={!isConfigured}
           />
           <p className="text-xs text-muted-foreground mt-1">
             E.164 phone number or iCloud email, or * to allow all. Empty = deny all.
           </p>
         </Field>
         <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined || isChannelDisabled} isLoading={updateMutation.isPending}>
+          <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
             Save
           </Button>
         </div>

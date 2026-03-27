@@ -6,10 +6,18 @@ import Input from '@/components/ui/input';
 import Field from '@/components/ui/field';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
-import { useUpdateProfile, useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
+import { useUpdateProfile, useChannelConfig, useUpdateChannelConfig, useToggleChannelRoute } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { getAccessToken } from '@/lib/api-client';
 import type { AppShellContext } from '@/layouts/AppShell';
+
+const CHANNEL_OPTIONS = [
+  { key: 'linq', label: 'Text Messaging', description: 'iMessage, RCS, or SMS from your phone' },
+  { key: 'telegram', label: 'Telegram', description: 'Message via the Telegram app' },
+  { key: 'bluebubbles', label: 'BlueBubbles', description: 'iMessage via self-hosted Mac bridge' },
+] as const;
+
+type ChannelKey = (typeof CHANNEL_OPTIONS)[number]['key'];
 
 async function setLinqLink(phoneNumber: string): Promise<void> {
   const token = getAccessToken();
@@ -33,12 +41,23 @@ export default function GetStartedPage() {
   const updateProfile = useUpdateProfile();
   const { data: channelConfig } = useChannelConfig();
   const updateChannelConfig = useUpdateChannelConfig();
+  const toggleChannelRoute = useToggleChannelRoute();
+  const [selectedChannel, setSelectedChannel] = useState<ChannelKey | null>(null);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneSaved, setPhoneSaved] = useState(false);
   const [savingPhone, setSavingPhone] = useState(false);
 
   const linqConfigured = channelConfig?.linq_api_token_set ?? false;
   const fromNumber = channelConfig?.linq_from_number ?? '';
+
+  const handleSelectChannel = (channel: ChannelKey) => {
+    setSelectedChannel(channel);
+    // Enable the selected channel route (backend auto-disables others)
+    toggleChannelRoute.mutate(
+      { channel, enabled: true },
+      { onError: (e) => toast.error(e.message) },
+    );
+  };
 
   const handleSavePhone = async () => {
     const trimmed = phoneNumber.trim();
@@ -48,7 +67,6 @@ export default function GetStartedPage() {
     }
 
     if (isPremium) {
-      // Premium: create a ChannelRoute via PUT /api/channels/linq
       setSavingPhone(true);
       try {
         await setLinqLink(trimmed);
@@ -63,7 +81,6 @@ export default function GetStartedPage() {
       return;
     }
 
-    // OSS: update the channel config allowlist
     updateChannelConfig.mutate(
       { linq_allowed_numbers: trimmed },
       {
@@ -95,13 +112,60 @@ export default function GetStartedPage() {
       <div className="mb-8">
         <h2 className="text-xl font-semibold font-display">Get Started</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Clawbolt is your AI assistant for the trades. Enter your phone number below
-          and you can start texting your assistant right away.
+          Clawbolt is your AI assistant for the trades. Choose how you want to message
+          your assistant and you'll be up and running in minutes.
         </p>
       </div>
 
       <div className="grid gap-4">
-        {/* Step 1: Enter phone number */}
+        {/* Step 1: Choose messaging channel */}
+        <Card>
+          <div className="flex items-start gap-4">
+            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
+              <ChannelIcon />
+            </div>
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-1">
+                <span className="text-xs font-medium text-muted-foreground">Step 1</span>
+              </div>
+              <h3 className="text-sm font-semibold font-display">Choose your messaging channel</h3>
+              <p className="text-sm text-muted-foreground mt-1">
+                Pick how you want to talk to Clawbolt. You can change this later.
+              </p>
+              <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Messaging channel">
+                {CHANNEL_OPTIONS.map(({ key, label, description }) => {
+                  const isSelected = selectedChannel === key;
+                  return (
+                    <label
+                      key={key}
+                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
+                        isSelected
+                          ? 'border-primary bg-primary-light'
+                          : 'border-border hover:border-primary/40'
+                      }`}
+                    >
+                      <input
+                        type="radio"
+                        name="onboarding-channel"
+                        value={key}
+                        checked={isSelected}
+                        onChange={() => handleSelectChannel(key)}
+                        disabled={toggleChannelRoute.isPending}
+                        className="accent-primary w-4 h-4 shrink-0"
+                      />
+                      <div className="flex-1">
+                        <span className="text-sm font-medium">{label}</span>
+                        <p className="text-xs text-muted-foreground">{description}</p>
+                      </div>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        </Card>
+
+        {/* Step 2: Channel-specific setup */}
         <Card>
           <div className="flex items-start gap-4">
             <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
@@ -109,48 +173,82 @@ export default function GetStartedPage() {
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-muted-foreground">Step 1</span>
+                <span className="text-xs font-medium text-muted-foreground">Step 2</span>
               </div>
-              <h3 className="text-sm font-semibold font-display">Enter your phone number</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                This is the number you will text Clawbolt from.
-              </p>
-              <div className="mt-3">
-                <Field label="Phone Number">
-                  <div className="flex gap-2">
-                    <div className="flex-1">
-                      <Input
-                        value={phoneNumber}
-                        onChange={(e) => setPhoneNumber(e.target.value)}
-                        placeholder="e.g. +15551234567"
-                        inputMode="tel"
-                        disabled={phoneSaved}
-                      />
-                    </div>
-                    {!phoneSaved ? (
-                      <Button
-                        onClick={handleSavePhone}
-                        disabled={savingPhone || updateChannelConfig.isPending || !phoneNumber.trim()}
-                        isLoading={savingPhone || updateChannelConfig.isPending}
-                      >
-                        Save
-                      </Button>
-                    ) : (
-                      <Button variant="ghost" onClick={() => setPhoneSaved(false)}>
-                        Edit
-                      </Button>
-                    )}
-                  </div>
-                  <p className="text-xs text-muted-foreground mt-1">
-                    Use E.164 format with country code (e.g. +1 for US).
+              {selectedChannel === 'linq' || !selectedChannel ? (
+                <>
+                  <h3 className="text-sm font-semibold font-display">Enter your phone number</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    This is the number you will text Clawbolt from.
                   </p>
-                </Field>
-              </div>
+                  <div className="mt-3">
+                    <Field label="Phone Number">
+                      <div className="flex gap-2">
+                        <div className="flex-1">
+                          <Input
+                            value={phoneNumber}
+                            onChange={(e) => setPhoneNumber(e.target.value)}
+                            placeholder="e.g. +15551234567"
+                            inputMode="tel"
+                            disabled={phoneSaved}
+                          />
+                        </div>
+                        {!phoneSaved ? (
+                          <Button
+                            onClick={handleSavePhone}
+                            disabled={savingPhone || updateChannelConfig.isPending || !phoneNumber.trim()}
+                            isLoading={savingPhone || updateChannelConfig.isPending}
+                          >
+                            Save
+                          </Button>
+                        ) : (
+                          <Button variant="ghost" onClick={() => setPhoneSaved(false)}>
+                            Edit
+                          </Button>
+                        )}
+                      </div>
+                      <p className="text-xs text-muted-foreground mt-1">
+                        Use E.164 format with country code (e.g. +1 for US).
+                      </p>
+                    </Field>
+                  </div>
+                </>
+              ) : selectedChannel === 'telegram' ? (
+                <>
+                  <h3 className="text-sm font-semibold font-display">Set up Telegram</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    You can configure your Telegram connection from the{' '}
+                    <button
+                      type="button"
+                      className="text-primary hover:underline font-medium"
+                      onClick={() => navigate('/app/channels')}
+                    >
+                      Channels page
+                    </button>
+                    {' '}after onboarding.
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h3 className="text-sm font-semibold font-display">Set up BlueBubbles</h3>
+                  <p className="text-sm text-muted-foreground mt-1">
+                    You can configure BlueBubbles from the{' '}
+                    <button
+                      type="button"
+                      className="text-primary hover:underline font-medium"
+                      onClick={() => navigate('/app/channels')}
+                    >
+                      Channels page
+                    </button>
+                    {' '}after onboarding.
+                  </p>
+                </>
+              )}
             </div>
           </div>
         </Card>
 
-        {/* Step 2: Text the number */}
+        {/* Step 3: Send a message */}
         <Card>
           <div className="flex items-start gap-4">
             <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
@@ -158,10 +256,10 @@ export default function GetStartedPage() {
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-muted-foreground">Step 2</span>
+                <span className="text-xs font-medium text-muted-foreground">Step 3</span>
               </div>
               <h3 className="text-sm font-semibold font-display">Send a message</h3>
-              {linqConfigured && fromNumber ? (
+              {linqConfigured && fromNumber && selectedChannel === 'linq' ? (
                 <div className="mt-2">
                   <TextAssistantCard
                     fromNumber={fromNumber}
@@ -171,30 +269,40 @@ export default function GetStartedPage() {
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-1">
-                  Text messaging is not configured yet. You can also{' '}
-                  <button
-                    type="button"
-                    className="text-primary hover:underline font-medium"
-                    onClick={() => navigate('/app/chat')}
-                  >
-                    chat from the web
-                  </button>
-                  {' '}or{' '}
-                  <button
-                    type="button"
-                    className="text-primary hover:underline font-medium"
-                    onClick={() => navigate('/app/channels')}
-                  >
-                    set up Telegram
-                  </button>
-                  .
+                  {selectedChannel === 'telegram'
+                    ? 'Open Telegram and send a message to your bot to get started.'
+                    : selectedChannel === 'bluebubbles'
+                      ? 'Send an iMessage to get started.'
+                      : linqConfigured && fromNumber
+                        ? 'Text your assistant to get started.'
+                        : (
+                            <>
+                              Text messaging is not configured yet. You can also{' '}
+                              <button
+                                type="button"
+                                className="text-primary hover:underline font-medium"
+                                onClick={() => navigate('/app/chat')}
+                              >
+                                chat from the web
+                              </button>
+                              {' '}or{' '}
+                              <button
+                                type="button"
+                                className="text-primary hover:underline font-medium"
+                                onClick={() => navigate('/app/channels')}
+                              >
+                                set up a channel
+                              </button>
+                              .
+                            </>
+                          )}
                 </p>
               )}
             </div>
           </div>
         </Card>
 
-        {/* Step 3: You're off to the races */}
+        {/* Step 4: You're off to the races */}
         <Card>
           <div className="flex items-start gap-4">
             <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
@@ -202,7 +310,7 @@ export default function GetStartedPage() {
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
-                <span className="text-xs font-medium text-muted-foreground">Step 3</span>
+                <span className="text-xs font-medium text-muted-foreground">Step 4</span>
               </div>
               <h3 className="text-sm font-semibold font-display">You're off to the races</h3>
               <p className="text-sm text-muted-foreground mt-1">
@@ -229,6 +337,14 @@ export default function GetStartedPage() {
 }
 
 // --- Step icons (inline SVG) ---
+
+function ChannelIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
+    </svg>
+  );
+}
 
 function PhoneIcon() {
   return (
