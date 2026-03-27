@@ -190,11 +190,25 @@ describe('GetStartedPage', () => {
   });
 
   it('calls toggleChannelRoute when selecting a channel', async () => {
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: true,
+      linq_from_number: '+15559876543',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
+
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    const telegramRadio = screen.getByDisplayValue('telegram');
-    await user.click(telegramRadio);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('telegram')).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByDisplayValue('telegram'));
 
     await waitFor(() => {
       expect(mockToggleChannelRoute).toHaveBeenCalledWith('telegram', true);
@@ -202,11 +216,25 @@ describe('GetStartedPage', () => {
   });
 
   it('shows Telegram setup message when telegram is selected', async () => {
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: true,
+      linq_from_number: '+15559876543',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
+
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    const telegramRadio = screen.getByDisplayValue('telegram');
-    await user.click(telegramRadio);
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('telegram')).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByDisplayValue('telegram'));
 
     await waitFor(() => {
       expect(screen.getByText('Set up Telegram')).toBeInTheDocument();

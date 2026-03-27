@@ -72,16 +72,11 @@ export default function ChannelsPage() {
     );
   };
 
-  const getRouteStatus = (channel: string): 'connected' | 'not-configured' => {
-    // A channel is "connected" when the server-side integration is configured
-    // AND the user has a route with a real identifier (not just a placeholder).
-    const route = routesData?.routes.find((r: ChannelRouteResponse) => r.channel === channel);
-    if (!route) return 'not-configured';
-    // Check server-side channel configuration
-    if (channel === 'telegram' && !channelConfig?.telegram_bot_token_set) return 'not-configured';
-    if (channel === 'linq' && !channelConfig?.linq_api_token_set) return 'not-configured';
-    if (channel === 'bluebubbles' && !channelConfig?.bluebubbles_configured) return 'not-configured';
-    return 'connected';
+  const isChannelConfigured = (channel: string): boolean => {
+    if (channel === 'telegram') return channelConfig?.telegram_bot_token_set ?? false;
+    if (channel === 'linq') return channelConfig?.linq_api_token_set ?? false;
+    if (channel === 'bluebubbles') return channelConfig?.bluebubbles_configured ?? false;
+    return false;
   };
 
   return (
@@ -93,17 +88,20 @@ export default function ChannelsPage() {
         <h3 className="text-sm font-medium mb-4">Select your messaging channel</h3>
         <div className="grid gap-2" role="radiogroup" aria-label="Messaging channel">
           {MESSAGING_CHANNELS.map(({ key, label }) => {
+            const configured = isChannelConfigured(key);
             const isSelected = selectedChannel === key;
             const isConfirmed = confirmedChannel === key;
+            const isDisabled = !configured && !isConfirmed;
             const isSwitching = toggleMutation.isPending && isSelected && !isConfirmed;
-            const status = getRouteStatus(key);
             return (
               <label
                 key={key}
-                className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                  isSelected
-                    ? 'border-primary bg-primary-light'
-                    : 'border-border hover:border-primary/40'
+                className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+                  isDisabled
+                    ? 'opacity-50 cursor-not-allowed'
+                    : isSelected
+                      ? 'border-primary bg-primary-light cursor-pointer'
+                      : 'border-border hover:border-primary/40 cursor-pointer'
                 }`}
               >
                 {isSwitching ? (
@@ -117,7 +115,7 @@ export default function ChannelsPage() {
                     value={key}
                     checked={isSelected}
                     onChange={() => handleSelectChannel(key)}
-                    disabled={toggleMutation.isPending}
+                    disabled={isDisabled || toggleMutation.isPending}
                     className="accent-primary w-4 h-4 shrink-0"
                   />
                 )}
@@ -127,7 +125,7 @@ export default function ChannelsPage() {
                     <CheckIcon />
                     Active
                   </span>
-                ) : status === 'connected' ? (
+                ) : configured ? (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success">
                     Connected
                   </span>

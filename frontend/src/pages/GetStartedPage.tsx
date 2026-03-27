@@ -36,6 +36,13 @@ export default function GetStartedPage() {
   const linqConfigured = channelConfig?.linq_api_token_set ?? false;
   const fromNumber = channelConfig?.linq_from_number ?? '';
 
+  const isChannelConfigured = (channel: string): boolean => {
+    if (channel === 'linq') return linqConfigured;
+    if (channel === 'telegram') return channelConfig?.telegram_bot_token_set ?? false;
+    if (channel === 'bluebubbles') return channelConfig?.bluebubbles_configured ?? false;
+    return false;
+  };
+
   const handleSelectChannel = (channel: ChannelKey) => {
     setSelectedChannel(channel);
     // Enable the selected channel route (backend auto-disables others)
@@ -126,16 +133,20 @@ export default function GetStartedPage() {
               </p>
               <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Messaging channel">
                 {CHANNEL_OPTIONS.map(({ key, label, description }) => {
+                  const configured = isChannelConfigured(key);
                   const isSelected = selectedChannel === key;
                   const isConfirmed = confirmedChannel === key;
+                  const isDisabled = !configured;
                   const isSwitching = toggleChannelRoute.isPending && isSelected && !isConfirmed;
                   return (
                     <label
                       key={key}
-                      className={`flex items-center gap-3 p-3 rounded-xl border cursor-pointer transition-colors ${
-                        isSelected
-                          ? 'border-primary bg-primary-light'
-                          : 'border-border hover:border-primary/40'
+                      className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+                        isDisabled
+                          ? 'opacity-50 cursor-not-allowed'
+                          : isSelected
+                            ? 'border-primary bg-primary-light cursor-pointer'
+                            : 'border-border hover:border-primary/40 cursor-pointer'
                       }`}
                     >
                       {isSwitching ? (
@@ -149,7 +160,7 @@ export default function GetStartedPage() {
                           value={key}
                           checked={isSelected}
                           onChange={() => handleSelectChannel(key)}
-                          disabled={toggleChannelRoute.isPending}
+                          disabled={isDisabled || toggleChannelRoute.isPending}
                           className="accent-primary w-4 h-4 shrink-0"
                         />
                       )}
