@@ -125,6 +125,8 @@ class BlueBubblesChannel(BaseChannel):
         self._client: httpx.AsyncClient | None = None
         # In-memory cache: sender_address -> chat_guid
         self._chat_cache: dict[str, str] = {}
+        # Set to True once the BlueBubbles server is confirmed reachable.
+        self.server_reachable: bool = False
 
     @property
     def _http(self) -> httpx.AsyncClient:
@@ -144,12 +146,37 @@ class BlueBubblesChannel(BaseChannel):
 
     # -- Lifecycle -------------------------------------------------------------
 
+    async def _check_server_reachable(self) -> bool:
+        """Ping the BlueBubbles server to verify connectivity."""
+        try:
+            async with httpx.AsyncClient() as client:
+                resp = await client.get(
+                    f"{settings.bluebubbles_server_url}/api/v1/server/info",
+                    params={"password": settings.bluebubbles_password},
+                    timeout=5,
+                )
+                return resp.status_code < 500
+        except httpx.ConnectError:
+            return False
+        except httpx.HTTPError:
+            return False
+
     async def start(self) -> None:
         """Discover tunnel URL and auto-register BlueBubbles webhook."""
         if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
             return
 
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
+
+        # Verify the server is actually reachable before advertising as configured.
+        self.server_reachable = await self._check_server_reachable()
+        if not self.server_reachable:
+            logger.warning(
+                "BlueBubbles server not reachable at %s",
+                settings.bluebubbles_server_url,
+            )
+            return
+
         tunnel_url = await discover_tunnel_url()
         if not tunnel_url:
             logger.debug(

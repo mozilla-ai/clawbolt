@@ -543,6 +543,7 @@ async def test_start_skips_without_tunnel() -> None:
         ),
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", "test-pw"),
         patch("backend.app.channels.bluebubbles.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(channel, "_check_server_reachable", new_callable=AsyncMock, return_value=True),
         patch(
             "backend.app.channels.bluebubbles.discover_tunnel_url",
             new_callable=AsyncMock,
@@ -555,6 +556,7 @@ async def test_start_skips_without_tunnel() -> None:
     ):
         await channel.start()
 
+    assert channel.server_reachable is True
     mock_register.assert_not_called()
 
 
@@ -568,6 +570,7 @@ async def test_start_skips_on_dns_failure() -> None:
         ),
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", "test-pw"),
         patch("backend.app.channels.bluebubbles.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(channel, "_check_server_reachable", new_callable=AsyncMock, return_value=True),
         patch(
             "backend.app.channels.bluebubbles.discover_tunnel_url",
             new_callable=AsyncMock,
@@ -598,6 +601,7 @@ async def test_start_registers_webhook_on_success() -> None:
         ),
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", "test-pw"),
         patch("backend.app.channels.bluebubbles.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(channel, "_check_server_reachable", new_callable=AsyncMock, return_value=True),
         patch(
             "backend.app.channels.bluebubbles.discover_tunnel_url",
             new_callable=AsyncMock,
@@ -616,7 +620,81 @@ async def test_start_registers_webhook_on_success() -> None:
     ):
         await channel.start()
 
+    assert channel.server_reachable is True
     mock_register.assert_called_once_with(
         "https://my-mac.example.com",
         "https://tunnel.example.com/api/webhooks/bluebubbles?password=test-pw",
     )
+
+
+async def test_start_marks_unreachable_when_server_down() -> None:
+    """start() should set server_reachable=False and skip registration when server is down."""
+    channel = BlueBubblesChannel()
+    with (
+        patch(
+            "backend.app.channels.bluebubbles.settings.bluebubbles_server_url",
+            "https://unreachable.example.com",
+        ),
+        patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", "test-pw"),
+        patch("backend.app.channels.bluebubbles.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(
+            channel, "_check_server_reachable", new_callable=AsyncMock, return_value=False
+        ),
+        patch(
+            "backend.app.channels.bluebubbles.register_bluebubbles_webhook",
+            new_callable=AsyncMock,
+        ) as mock_register,
+    ):
+        await channel.start()
+
+    assert channel.server_reachable is False
+    mock_register.assert_not_called()
+
+
+async def test_check_server_reachable_success() -> None:
+    """_check_server_reachable returns True when server responds."""
+    channel = BlueBubblesChannel()
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+
+    with (
+        patch(
+            "backend.app.channels.bluebubbles.settings.bluebubbles_server_url",
+            "https://my-mac.example.com",
+        ),
+        patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", "test-pw"),
+        patch("backend.app.channels.bluebubbles.httpx.AsyncClient") as mock_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get.return_value = mock_resp
+        mock_cls.return_value = mock_client
+
+        result = await channel._check_server_reachable()
+
+    assert result is True
+
+
+async def test_check_server_reachable_connect_error() -> None:
+    """_check_server_reachable returns False on connection failure."""
+    channel = BlueBubblesChannel()
+
+    with (
+        patch(
+            "backend.app.channels.bluebubbles.settings.bluebubbles_server_url",
+            "https://unreachable.example.com",
+        ),
+        patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", "test-pw"),
+        patch("backend.app.channels.bluebubbles.httpx.AsyncClient") as mock_cls,
+    ):
+        mock_client = AsyncMock()
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_client.get.side_effect = httpx.ConnectError("Name or service not known")
+        mock_cls.return_value = mock_client
+
+        result = await channel._check_server_reachable()
+
+    assert result is False
