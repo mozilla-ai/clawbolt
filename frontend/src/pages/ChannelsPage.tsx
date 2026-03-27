@@ -27,6 +27,7 @@ export default function ChannelsPage() {
   const { isPremium } = useAuth();
   const { profile } = useOutletContext<AppShellContext>();
   const { data: routesData } = useChannelRoutes();
+  const { data: channelConfig } = useChannelConfig();
   const toggleMutation = useToggleChannelRoute();
 
   // Determine which channel is currently active:
@@ -61,10 +62,16 @@ export default function ChannelsPage() {
     );
   };
 
-  const getRouteStatus = (channel: string): 'connected' | 'not-configured' | 'configured' => {
+  const getRouteStatus = (channel: string): 'connected' | 'not-configured' => {
+    // A channel is "connected" when the server-side integration is configured
+    // AND the user has a route with a real identifier (not just a placeholder).
     const route = routesData?.routes.find((r: ChannelRouteResponse) => r.channel === channel);
-    if (route) return 'connected';
-    return 'not-configured';
+    if (!route) return 'not-configured';
+    // Check server-side channel configuration
+    if (channel === 'telegram' && !channelConfig?.telegram_bot_token_set) return 'not-configured';
+    if (channel === 'linq' && !channelConfig?.linq_api_token_set) return 'not-configured';
+    if (channel === 'bluebubbles' && !channelConfig?.bluebubbles_configured) return 'not-configured';
+    return 'connected';
   };
 
   return (
