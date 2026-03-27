@@ -13,11 +13,13 @@ from sqlalchemy import text
 
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
+from backend.app.channels.bluebubbles import BlueBubblesChannel
 from backend.app.channels.linq import LinqChannel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.channels.webchat import WebChatChannel
 from backend.app.config import load_persistent_config, log_config_warnings, settings
-from backend.app.database import get_engine
+from backend.app.database import SessionLocal, get_engine
+from backend.app.models import ChannelRoute, User
 from backend.app.routers import (
     auth,
     health,
@@ -43,6 +45,36 @@ logger = logging.getLogger(__name__)
 register_channel(TelegramChannel(bot_token=settings.telegram_bot_token))
 register_channel(WebChatChannel())
 register_channel(LinqChannel())
+register_channel(BlueBubblesChannel())
+
+
+def _enforce_single_channel() -> None:
+    """One-time: disable non-preferred routes for existing multi-channel users.
+
+    After the single-channel refactor, each user should have at most one
+    enabled messaging channel.  This cleans up users who had multiple
+    channels enabled before the refactor.
+    """
+    db = SessionLocal()
+    try:
+        users = db.query(User).all()
+        fixed = 0
+        for user in users:
+            routes = db.query(ChannelRoute).filter_by(user_id=user.id).all()
+            enabled_messaging = [r for r in routes if r.enabled and r.channel != "webchat"]
+            if len(enabled_messaging) > 1:
+                for r in enabled_messaging:
+                    if r.channel != user.preferred_channel:
+                        r.enabled = False
+                fixed += 1
+        if fixed:
+            db.commit()
+            logger.info(
+                "Single-channel enforcement: fixed %d user(s) with multiple enabled channels",
+                fixed,
+            )
+    finally:
+        db.close()
 
 
 async def _verify_llm_settings() -> None:
@@ -145,6 +177,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     load_dotenv()
 
     _verify_database()
+    _enforce_single_channel()
     log_config_warnings()
     await _verify_llm_settings()
     heartbeat_scheduler.start()
@@ -167,6 +200,15 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         if not settings.linq_allowed_numbers:
             logger.warning(
                 "No Linq allowed numbers configured (LINQ_ALLOWED_NUMBERS). "
+                "All messages will be rejected. "
+                'Set to "*" to allow all, or provide an E.164 phone number.'
+            )
+
+    if settings.bluebubbles_server_url:
+        logger.info("BlueBubbles channel enabled (server: %s)", settings.bluebubbles_server_url)
+        if not settings.bluebubbles_allowed_numbers:
+            logger.warning(
+                "No BlueBubbles allowed numbers configured (BLUEBUBBLES_ALLOWED_NUMBERS). "
                 "All messages will be rejected. "
                 'Set to "*" to allow all, or provide an E.164 phone number.'
             )

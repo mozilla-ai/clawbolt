@@ -99,6 +99,8 @@ class ChannelConfigResponse(BaseModel):
     linq_from_number: str = ""
     linq_allowed_numbers: str = ""
     linq_preferred_service: str = "iMessage"
+    bluebubbles_configured: bool = False
+    bluebubbles_allowed_numbers: str = ""
 
 
 class ChannelConfigUpdate(BaseModel):
@@ -109,6 +111,9 @@ class ChannelConfigUpdate(BaseModel):
     linq_webhook_signing_secret: str | None = None
     linq_allowed_numbers: str | None = None
     linq_preferred_service: str | None = None
+    bluebubbles_server_url: str | None = None
+    bluebubbles_password: str | None = None
+    bluebubbles_allowed_numbers: str | None = None
 
 
 class ChannelRouteResponse(BaseModel):

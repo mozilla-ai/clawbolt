@@ -226,6 +226,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/webhooks/bluebubbles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Bluebubbles Inbound
+         * @description Receive inbound messages from BlueBubbles.
+         */
+        post: operations["bluebubbles_inbound_api_webhooks_bluebubbles_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/profile": {
         parameters: {
             query?: never;
@@ -310,6 +330,10 @@ export interface paths {
         /**
          * Update Channel Route
          * @description Toggle enabled status for a channel route.
+         *
+         *     Single-channel enforcement: when enabling a channel, all other
+         *     non-webchat routes for this user are automatically disabled so
+         *     exactly one messaging channel is active at a time.
          *
          *     If the user has no route for this channel yet (e.g. they configured
          *     credentials but haven't messaged through the channel), a placeholder
@@ -637,6 +661,16 @@ export interface components {
              * @default iMessage
              */
             linq_preferred_service: string;
+            /**
+             * Bluebubbles Configured
+             * @default false
+             */
+            bluebubbles_configured: boolean;
+            /**
+             * Bluebubbles Allowed Numbers
+             * @default
+             */
+            bluebubbles_allowed_numbers: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -654,6 +688,12 @@ export interface components {
             linq_allowed_numbers?: string | null;
             /** Linq Preferred Service */
             linq_preferred_service?: string | null;
+            /** Bluebubbles Server Url */
+            bluebubbles_server_url?: string | null;
+            /** Bluebubbles Password */
+            bluebubbles_password?: string | null;
+            /** Bluebubbles Allowed Numbers */
+            bluebubbles_allowed_numbers?: string | null;
         };
         /** ChannelRouteListResponse */
         ChannelRouteListResponse: {
@@ -1363,6 +1403,26 @@ export interface operations {
         };
     };
     linq_inbound_api_webhooks_linq_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    bluebubbles_inbound_api_webhooks_bluebubbles_post: {
         parameters: {
             query?: never;
             header?: never;

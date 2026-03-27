@@ -104,6 +104,11 @@ class Settings(BaseSettings):
     linq_allowed_numbers: str = ""  # E.164 phone number, "*", or empty
     linq_preferred_service: str = "iMessage"  # "iMessage", "SMS", or "RCS"
 
+    # BlueBubbles (self-hosted iMessage bridge)
+    bluebubbles_server_url: str = ""  # e.g. "https://my-mac.ngrok.io"
+    bluebubbles_password: str = ""  # server password (query param auth)
+    bluebubbles_allowed_numbers: str = ""  # E.164 phone, "*", or empty (deny all)
+
     # Google Calendar
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
@@ -156,6 +161,9 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "linq_webhook_signing_secret",
         "linq_allowed_numbers",
         "linq_preferred_service",
+        "bluebubbles_server_url",
+        "bluebubbles_password",
+        "bluebubbles_allowed_numbers",
         "llm_provider",
         "llm_model",
         "llm_api_base",

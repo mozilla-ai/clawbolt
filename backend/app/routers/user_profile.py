@@ -91,6 +91,22 @@ async def update_profile(
 # ---------------------------------------------------------------------------
 
 
+def _is_bluebubbles_configured() -> bool:
+    """Check if BlueBubbles is configured AND the server is reachable."""
+    if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
+        return False
+    try:
+        from backend.app.channels import get_channel
+        from backend.app.channels.bluebubbles import BlueBubblesChannel
+
+        ch = get_channel("bluebubbles")
+        if isinstance(ch, BlueBubblesChannel):
+            return ch.server_reachable
+    except KeyError:
+        pass
+    return False
+
+
 def _build_channel_config_response() -> ChannelConfigResponse:
     return ChannelConfigResponse(
         telegram_bot_token_set=bool(settings.telegram_bot_token),
@@ -99,6 +115,8 @@ def _build_channel_config_response() -> ChannelConfigResponse:
         linq_from_number=settings.linq_from_number,
         linq_allowed_numbers=settings.linq_allowed_numbers,
         linq_preferred_service=settings.linq_preferred_service,
+        bluebubbles_configured=_is_bluebubbles_configured(),
+        bluebubbles_allowed_numbers=settings.bluebubbles_allowed_numbers,
     )
 
 
@@ -198,24 +216,49 @@ async def update_channel_route(
 ) -> ChannelRouteResponse:
     """Toggle enabled status for a channel route.
 
+    Single-channel enforcement: when enabling a channel, all other
+    non-webchat routes for this user are automatically disabled so
+    exactly one messaging channel is active at a time.
+
     If the user has no route for this channel yet (e.g. they configured
     credentials but haven't messaged through the channel), a placeholder
     route is created so the enabled flag can be persisted.
     """
-    route = db.query(ChannelRoute).filter_by(user_id=current_user.id, channel=channel).first()
+    from backend.app.channels import get_channel
+
+    if channel == "webchat":
+        raise HTTPException(status_code=400, detail="Webchat is always enabled")
+    try:
+        get_channel(channel)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown channel: {channel}") from exc
+
+    # Re-query user in the current session to avoid detached instance issues
+    user = get_or_404(db, User, detail="User not found", id=current_user.id)
+
+    if body.enabled:
+        # Single-channel enforcement: disable all other non-webchat routes
+        db.query(ChannelRoute).filter(
+            ChannelRoute.user_id == user.id,
+            ChannelRoute.channel != channel,
+            ChannelRoute.channel != "webchat",
+        ).update({"enabled": False})
+
+    route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel).first()
     if route is None:
-        # Create a placeholder route so the toggle state is persisted.
-        # The channel_identifier will be updated when the user actually
-        # messages through this channel.
         route = ChannelRoute(
-            user_id=current_user.id,
+            user_id=user.id,
             channel=channel,
-            channel_identifier=current_user.channel_identifier or current_user.id,
+            channel_identifier=user.channel_identifier or user.id,
             enabled=body.enabled,
         )
         db.add(route)
     else:
         route.enabled = body.enabled
+
+    if body.enabled:
+        user.preferred_channel = channel
+
     db.commit()
     db.refresh(route)
     return ChannelRouteResponse(

@@ -64,6 +64,16 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 
 When `LINQ_API_TOKEN` is set, the Linq channel is active and users can text their assistant from their phone's native messaging app. Linq provides iMessage, RCS, and SMS access via [linqapp.com](https://linqapp.com).
 
+## BlueBubbles settings (self-hosted iMessage bridge)
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `BLUEBUBBLES_SERVER_URL` | | URL of your BlueBubbles server (e.g. `https://my-mac.ngrok.io`) |
+| `BLUEBUBBLES_PASSWORD` | | BlueBubbles server password (used as query param for API auth) |
+| `BLUEBUBBLES_ALLOWED_NUMBERS` | (empty) | E.164 phone number or email, `*` for all, or empty to deny all |
+
+When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the BlueBubbles channel is active. [BlueBubbles](https://github.com/BlueBubblesApp/bluebubbles-server) is a free, open-source iMessage bridge that runs on any Mac with iMessage signed in.
+
 ## Storage settings
 
 | Variable | Default | Description |

@@ -73,6 +73,9 @@ async def register_linq_webhook(webhook_url: str) -> bool:
 
             logger.info("Linq webhook registered: %s", webhook_url)
             return True
+    except httpx.ConnectError as exc:
+        logger.warning("Linq API not reachable: %s", exc)
+        return False
     except httpx.HTTPError:
         logger.exception("Failed to register Linq webhook")
         return False
