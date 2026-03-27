@@ -13,7 +13,6 @@ import backend.app.database as _db_module
 from backend.app.agent.dto import HeartbeatLogEntry
 from backend.app.agent.heartbeat import (
     _HISTORY_LOOKBACK_DAYS,
-    _NON_PUSHABLE_CHANNELS,
     COMPOSE_MESSAGE_TOOL,
     HEARTBEAT_DECISION_TOOL,
     ComposeMessageParams,
@@ -24,7 +23,6 @@ from backend.app.agent.heartbeat import (
     _format_heartbeat_history,
     _parse_decision_response,
     _parse_tool_call_response,
-    _pick_heartbeat_channel,
     evaluate_heartbeat_need,
     execute_heartbeat_tasks,
     get_daily_heartbeat_count,
@@ -1336,153 +1334,6 @@ class TestHeartbeatScheduler:
 
 
 # ---------------------------------------------------------------------------
-# _pick_heartbeat_channel
-# ---------------------------------------------------------------------------
-
-
-class TestPickHeartbeatChannel:
-    """Heartbeat should route to a pushable channel, never to webchat."""
-
-    def test_webchat_in_non_pushable(self) -> None:
-        """webchat must be listed as a non-pushable channel."""
-        assert "webchat" in _NON_PUSHABLE_CHANNELS
-
-    @patch("backend.app.agent.heartbeat.get_channel")
-    def test_preferred_channel_is_pushable(self, mock_get_channel: MagicMock) -> None:
-        """When preferred_channel is pushable, use it directly."""
-        user = User(id="1", preferred_channel="telegram")
-        mock_get_channel.return_value = MagicMock()
-
-        result = _pick_heartbeat_channel(user)
-
-        mock_get_channel.assert_called_once_with("telegram")
-        assert result == "telegram"
-
-    @patch("backend.app.agent.heartbeat.get_manager")
-    @patch("backend.app.agent.heartbeat.get_channel")
-    def test_webchat_preferred_falls_back_to_telegram(
-        self, mock_get_channel: MagicMock, mock_get_manager: MagicMock
-    ) -> None:
-        """When preferred_channel is webchat, fall back to the first pushable channel."""
-        user = User(id="1", preferred_channel="webchat")
-
-        mock_manager = MagicMock()
-        mock_manager.channels = {"telegram": MagicMock(), "webchat": MagicMock()}
-        mock_get_manager.return_value = mock_manager
-
-        result = _pick_heartbeat_channel(user)
-
-        mock_get_channel.assert_not_called()
-        assert result == "telegram"
-
-    @patch("backend.app.agent.heartbeat.get_manager")
-    @patch("backend.app.agent.heartbeat.get_channel")
-    def test_unregistered_preferred_falls_back(
-        self, mock_get_channel: MagicMock, mock_get_manager: MagicMock
-    ) -> None:
-        """When preferred_channel is not registered, fall back to first pushable."""
-        user = User(id="1", preferred_channel="sms")
-        mock_get_channel.side_effect = KeyError("sms not registered")
-
-        mock_manager = MagicMock()
-        mock_manager.channels = {"telegram": MagicMock()}
-        mock_get_manager.return_value = mock_manager
-
-        result = _pick_heartbeat_channel(user)
-
-        assert result == "telegram"
-
-    @patch("backend.app.agent.heartbeat.get_default_channel")
-    @patch("backend.app.agent.heartbeat.get_manager")
-    @patch("backend.app.agent.heartbeat.get_channel")
-    def test_no_pushable_channels_falls_back_to_default(
-        self,
-        mock_get_channel: MagicMock,
-        mock_get_manager: MagicMock,
-        mock_get_default: MagicMock,
-    ) -> None:
-        """When only non-pushable channels are registered, fall back to default."""
-        user = User(id="1", preferred_channel="webchat")
-        mock_default = MagicMock()
-        mock_default.name = "webchat"
-        mock_get_default.return_value = mock_default
-
-        mock_manager = MagicMock()
-        mock_manager.channels = {"webchat": MagicMock()}
-        mock_get_manager.return_value = mock_manager
-
-        result = _pick_heartbeat_channel(user)
-
-        mock_get_default.assert_called_once()
-        assert result == "webchat"
-
-    @patch("backend.app.agent.heartbeat.get_manager")
-    @patch("backend.app.agent.heartbeat.get_channel")
-    def test_webchat_skipped_even_when_first_registered(
-        self, mock_get_channel: MagicMock, mock_get_manager: MagicMock
-    ) -> None:
-        """webchat should be skipped even if it is the first registered channel."""
-        user = User(id="1", preferred_channel="webchat")
-
-        mock_manager = MagicMock()
-        mock_manager.channels = {"webchat": MagicMock(), "telegram": MagicMock()}
-        mock_get_manager.return_value = mock_manager
-
-        result = _pick_heartbeat_channel(user)
-
-        assert result == "telegram"
-
-    @pytest.mark.asyncio
-    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
-    @patch("backend.app.agent.heartbeat.settings")
-    async def test_tick_uses_pick_heartbeat_channel(
-        self,
-        mock_settings: MagicMock,
-        mock_pick_channel: MagicMock,
-        mock_run: AsyncMock,
-    ) -> None:
-        """tick() should use _pick_heartbeat_channel instead of get_channel."""
-        mock_settings.heartbeat_concurrency = 2
-        mock_settings.heartbeat_max_daily_messages = 5
-
-        mock_pick_channel.return_value = "telegram"
-
-        # Create a real user in the DB with a telegram route
-        db = _db_module.SessionLocal()
-        try:
-            user = User(
-                user_id="hb-pick-chan-001",
-                phone="+15559990000",
-                onboarding_complete=True,
-                preferred_channel="webchat",
-                channel_identifier="",
-            )
-            db.add(user)
-            db.flush()
-            db.add(
-                ChannelRoute(
-                    user_id=user.id,
-                    channel="telegram",
-                    channel_identifier="tg-pick",
-                )
-            )
-            db.commit()
-            db.refresh(user)
-            db.expunge(user)
-        finally:
-            db.close()
-
-        mock_run.return_value = None
-
-        scheduler = HeartbeatScheduler()
-        await scheduler.tick()
-
-        mock_pick_channel.assert_called_once()
-        mock_run.assert_awaited_once()
-
-
-# ---------------------------------------------------------------------------
 # parse_frequency_to_minutes
 # ---------------------------------------------------------------------------
 
@@ -1530,20 +1381,16 @@ class TestParseFrequencyToMinutes:
 class TestPerUserFrequencyScheduling:
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_user_skipped_when_interval_not_elapsed(
         self,
         mock_settings: MagicMock,
-        mock_pick_channel: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
         """A user whose interval has not elapsed should not be processed."""
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 5
         mock_settings.heartbeat_interval_minutes = 30
-
-        mock_pick_channel.return_value = "telegram"
 
         # Create a real user in the DB with a telegram route
         db = _db_module.SessionLocal()
@@ -1584,20 +1431,16 @@ class TestPerUserFrequencyScheduling:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_user_processed_when_interval_elapsed(
         self,
         mock_settings: MagicMock,
-        mock_pick_channel: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
         """A user whose interval has elapsed should be processed again."""
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 5
         mock_settings.heartbeat_interval_minutes = 30
-
-        mock_pick_channel.return_value = "telegram"
 
         # Create a real user in the DB with a telegram route
         db = _db_module.SessionLocal()
@@ -1645,20 +1488,16 @@ class TestPerUserFrequencyScheduling:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_invalid_frequency_falls_back_to_global(
         self,
         mock_settings: MagicMock,
-        mock_pick_channel: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
         """Invalid frequency should fall back to global heartbeat_interval_minutes."""
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 5
         mock_settings.heartbeat_interval_minutes = 30
-
-        mock_pick_channel.return_value = "telegram"
 
         # Create a real user in the DB with a telegram route
         db = _db_module.SessionLocal()
@@ -1777,12 +1616,10 @@ class TestTickChatIdLookup:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_uses_channel_specific_chat_id(
         self,
         mock_settings: MagicMock,
-        mock_pick_channel: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
         """When falling back to telegram, tick should use the telegram chat_id
@@ -1790,8 +1627,6 @@ class TestTickChatIdLookup:
 
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
-
-        mock_pick_channel.return_value = "telegram"
 
         # Create a real user with a ChannelRoute for telegram
         db = _db_module.SessionLocal()
@@ -1825,19 +1660,15 @@ class TestTickChatIdLookup:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_skips_user_without_channel_route(
         self,
         mock_settings: MagicMock,
-        mock_pick_channel: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
         """When no ChannelRoute exists for the target channel, skip the user."""
         mock_settings.heartbeat_concurrency = 2
         mock_settings.heartbeat_max_daily_messages = 5
-
-        mock_pick_channel.return_value = "telegram"
 
         # Create a real user with NO ChannelRoute for telegram
         db = _db_module.SessionLocal()
@@ -1874,19 +1705,15 @@ class TestPerUserMaxDaily:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_uses_per_user_max_daily(
         self,
         mock_settings: MagicMock,
-        mock_pick_channel: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
         """When user has heartbeat_max_daily > 0, tick passes it instead of global."""
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 5
-
-        mock_pick_channel.return_value = "telegram"
 
         db = _db_module.SessionLocal()
         try:
@@ -1923,19 +1750,15 @@ class TestPerUserMaxDaily:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
-    @patch("backend.app.agent.heartbeat._pick_heartbeat_channel")
     @patch("backend.app.agent.heartbeat.settings")
     async def test_tick_falls_back_to_global_when_zero(
         self,
         mock_settings: MagicMock,
-        mock_pick_channel: MagicMock,
         mock_run: AsyncMock,
     ) -> None:
         """When user has heartbeat_max_daily == 0, tick uses global setting."""
         mock_settings.heartbeat_concurrency = 5
         mock_settings.heartbeat_max_daily_messages = 7
-
-        mock_pick_channel.return_value = "telegram"
 
         db = _db_module.SessionLocal()
         try:

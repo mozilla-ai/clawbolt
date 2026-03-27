@@ -36,7 +36,7 @@ from backend.app.agent.system_prompt import (
     to_local_time,
 )
 from backend.app.agent.tools.names import ToolName
-from backend.app.channels import get_channel, get_default_channel, get_manager
+from backend.app.channels import get_channel
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
@@ -687,99 +687,53 @@ async def run_heartbeat_for_user(
 _NON_PUSHABLE_CHANNELS: frozenset[str] = frozenset({"webchat"})
 
 
-def _pick_heartbeat_channel(user: User) -> str:
-    """Select the best channel name for delivering a heartbeat message.
-
-    Prefers the user's ``preferred_channel`` when it can actually push
-    messages.  When the preferred channel is non-pushable (e.g. webchat),
-    falls back to the first registered pushable channel.  If no pushable
-    channel is available at all, returns the default channel's name as a
-    last resort (matching the previous behavior).
-    """
-    preferred = user.preferred_channel
-
-    # Happy path: preferred channel is pushable
-    if preferred not in _NON_PUSHABLE_CHANNELS:
-        try:
-            get_channel(preferred)
-            logger.debug(
-                "Heartbeat for user %s: using preferred channel %r",
-                user.id,
-                preferred,
-            )
-            return preferred
-        except KeyError:
-            logger.debug(
-                "Heartbeat for user %s: preferred channel %r not registered, searching fallbacks",
-                user.id,
-                preferred,
-            )
-
-    # Preferred channel is non-pushable or not registered: find the
-    # first registered channel that can deliver proactive messages.
-    manager = get_manager()
-    for name in manager.channels:
-        if name not in _NON_PUSHABLE_CHANNELS:
-            logger.debug(
-                "Heartbeat for user %s: preferred channel %r is non-pushable, falling back to %r",
-                user.id,
-                preferred,
-                name,
-            )
-            return name
-
-    # No pushable channels registered at all: fall back to default
-    logger.warning(
-        "Heartbeat for user %s: no pushable channels registered, using default channel",
-        user.id,
-    )
-    return get_default_channel().name
-
-
 def resolve_heartbeat_route(
     user: User,
     db: Session,
 ) -> tuple[str, ChannelRoute] | None:
-    """Pick the user's active messaging channel for heartbeat delivery.
+    """Pick the user's single active messaging channel for heartbeat delivery.
 
     Returns ``(channel_name, route)`` on success, or ``None`` when no
     pushable route can be found.
 
-    Single-channel model: the user's ``preferred_channel`` is the primary
-    target.  A single fallback tries any enabled pushable route for
-    migration safety (existing users whose preferred_channel may be stale).
+    Under single-channel enforcement each user has at most one enabled
+    non-webchat route. We query for it directly rather than guessing
+    from the preferred_channel field.
     """
-    channel_name = _pick_heartbeat_channel(user)
-    route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel_name).first()
-
-    if route is not None and route.enabled:
-        return channel_name, route
-
-    # Single fallback: try any enabled pushable route (migration safety)
-    routes = db.query(ChannelRoute).filter_by(user_id=user.id).all()
-    for r in routes:
-        if r.channel not in _NON_PUSHABLE_CHANNELS and r.enabled:
-            try:
-                get_channel(r.channel)
-            except KeyError:
-                continue
-            # Fix preferred_channel to match
-            user.preferred_channel = r.channel
-            db.commit()
-            logger.debug(
-                "Heartbeat for user %s: preferred %s unavailable, "
-                "fell back to %s and updated preferred_channel",
-                user.id,
-                channel_name,
-                r.channel,
-            )
-            return r.channel, r
-
-    logger.debug(
-        "Heartbeat skipped for user %s: no pushable route configured",
-        user.id,
+    route = (
+        db.query(ChannelRoute)
+        .filter(
+            ChannelRoute.user_id == user.id,
+            ChannelRoute.enabled.is_(True),
+            ChannelRoute.channel.notin_(list(_NON_PUSHABLE_CHANNELS)),
+        )
+        .first()
     )
-    return None
+
+    if route is None:
+        logger.debug(
+            "Heartbeat skipped for user %s: no pushable route configured",
+            user.id,
+        )
+        return None
+
+    # Verify the channel is actually registered in this process.
+    try:
+        get_channel(route.channel)
+    except KeyError:
+        logger.debug(
+            "Heartbeat skipped for user %s: channel %s not registered",
+            user.id,
+            route.channel,
+        )
+        return None
+
+    # Keep preferred_channel in sync if it drifted.
+    if user.preferred_channel != route.channel:
+        user.preferred_channel = route.channel
+        db.commit()
+
+    return route.channel, route
 
 
 # ---------------------------------------------------------------------------
