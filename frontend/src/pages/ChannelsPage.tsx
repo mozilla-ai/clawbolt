@@ -10,7 +10,7 @@ import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useChannelConfig, useUpdateChannelConfig, useChannelRoutes, useToggleChannelRoute } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAccessToken } from '@/lib/api-client';
+import api from '@/api';
 import type { ChannelRouteResponse } from '@/types';
 import type { AppShellContext } from '@/layouts/AppShell';
 
@@ -127,7 +127,7 @@ export default function ChannelsPage() {
       {selectedChannel && (
         <div className="mt-6">
           {selectedChannel === 'telegram' && (
-            <TelegramSection isPremium={isPremium} />
+            isPremium ? <PremiumTelegramSection /> : <OssTelegramSection />
           )}
           {selectedChannel === 'linq' && (
             isPremium ? <PremiumTextMessagingSection /> : <TextMessagingSection />
@@ -141,81 +141,12 @@ export default function ChannelsPage() {
   );
 }
 
-// --- Premium linking helpers ---
-
-interface TelegramLinkData {
-  telegram_user_id: string | null;
-  connected: boolean;
-}
-
-interface TelegramBotInfo {
-  bot_username: string;
-  bot_link: string;
-}
-
-interface LinqLinkData {
-  phone_number: string | null;
-  connected: boolean;
-  linq_from_number?: string;
-}
-
-function _authHeaders(): Record<string, string> {
-  const token = getAccessToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
-
-async function getTelegramLink(): Promise<TelegramLinkData> {
-  const res = await fetch('/api/channels/telegram', { headers: _authHeaders() });
-  if (!res.ok) throw new Error('Failed to fetch Telegram link');
-  return res.json() as Promise<TelegramLinkData>;
-}
-
-async function getTelegramBotInfo(): Promise<TelegramBotInfo | null> {
-  const res = await fetch('/api/channels/telegram/bot-info', { headers: _authHeaders() });
-  if (!res.ok) return null;
-  return res.json() as Promise<TelegramBotInfo>;
-}
-
-async function setTelegramLink(telegramUserId: string): Promise<TelegramLinkData> {
-  const res = await fetch('/api/channels/telegram', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-    body: JSON.stringify({ telegram_user_id: telegramUserId }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { detail?: string };
-    throw new Error(body.detail || `Failed to save: ${res.status}`);
-  }
-  return res.json() as Promise<TelegramLinkData>;
-}
-
-async function getLinqLink(): Promise<LinqLinkData> {
-  const res = await fetch('/api/channels/linq', { headers: _authHeaders() });
-  if (!res.ok) throw new Error('Failed to fetch Linq link');
-  return res.json() as Promise<LinqLinkData>;
-}
-
-async function setLinqLink(phoneNumber: string): Promise<LinqLinkData> {
-  const res = await fetch('/api/channels/linq', {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json', ..._authHeaders() },
-    body: JSON.stringify({ phone_number: phoneNumber }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { detail?: string };
-    throw new Error(body.detail || `Failed to save: ${res.status}`);
-  }
-  return res.json() as Promise<LinqLinkData>;
-}
+// Types for premium linking responses (inferred from api module)
+type TelegramLinkData = Awaited<ReturnType<typeof api.getTelegramLink>>;
+type TelegramBotInfo = NonNullable<Awaited<ReturnType<typeof api.getTelegramBotInfo>>>;
+type LinqLinkData = Awaited<ReturnType<typeof api.getLinqLink>>;
 
 // --- Telegram section ---
-
-function TelegramSection({ isPremium }: { isPremium: boolean }) {
-  if (isPremium) {
-    return <PremiumTelegramSection />;
-  }
-  return <OssTelegramSection />;
-}
 
 function PremiumTelegramSection() {
   const { data: channelConfig } = useChannelConfig();
@@ -227,8 +158,8 @@ function PremiumTelegramSection() {
   const isConfigured = channelConfig?.telegram_bot_token_set ?? false;
 
   useEffect(() => {
-    getTelegramLink().then(setLinkData).catch(() => {});
-    getTelegramBotInfo().then(setBotInfo).catch(() => {});
+    api.getTelegramLink().then(setLinkData).catch(() => {});
+    api.getTelegramBotInfo().then(setBotInfo).catch(() => {});
   }, []);
 
   const displayedId = telegramUserId ?? linkData?.telegram_user_id ?? '';
@@ -240,7 +171,7 @@ function PremiumTelegramSection() {
     }
     setSaving(true);
     try {
-      const result = await setTelegramLink(displayedId);
+      const result = await api.setTelegramLink(displayedId);
       setLinkData(result);
       setTelegramUserId(null);
       toast.success('Telegram settings updated');
@@ -412,7 +343,7 @@ function PremiumTextMessagingSection() {
   const isConfigured = channelConfig?.linq_api_token_set ?? false;
 
   useEffect(() => {
-    getLinqLink().then(setLinkData).catch(() => {});
+    api.getLinqLink().then(setLinkData).catch(() => {});
   }, []);
 
   const displayedNumber = phoneNumber ?? linkData?.phone_number ?? '';
@@ -425,7 +356,7 @@ function PremiumTextMessagingSection() {
     }
     setSaving(true);
     try {
-      const result = await setLinqLink(displayedNumber);
+      const result = await api.setLinqLink(displayedNumber);
       setLinkData(result);
       setPhoneNumber(null);
       toast.success('Text messaging settings updated');

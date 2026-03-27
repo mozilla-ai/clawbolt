@@ -8,6 +8,11 @@ const mockGetChannelConfig = vi.fn();
 const mockUpdateChannelConfig = vi.fn();
 const mockGetChannelRoutes = vi.fn();
 const mockToggleChannelRoute = vi.fn();
+const mockGetTelegramLink = vi.fn();
+const mockGetTelegramBotInfo = vi.fn();
+const mockSetTelegramLink = vi.fn();
+const mockGetLinqLink = vi.fn();
+const mockSetLinqLink = vi.fn();
 
 vi.mock('@/api', () => ({
   default: {
@@ -15,6 +20,11 @@ vi.mock('@/api', () => ({
     updateChannelConfig: (...args: unknown[]) => mockUpdateChannelConfig(...args),
     getChannelRoutes: (...args: unknown[]) => mockGetChannelRoutes(...args),
     toggleChannelRoute: (...args: unknown[]) => mockToggleChannelRoute(...args),
+    getTelegramLink: (...args: unknown[]) => mockGetTelegramLink(...args),
+    getTelegramBotInfo: (...args: unknown[]) => mockGetTelegramBotInfo(...args),
+    setTelegramLink: (...args: unknown[]) => mockSetTelegramLink(...args),
+    getLinqLink: (...args: unknown[]) => mockGetLinqLink(...args),
+    setLinqLink: (...args: unknown[]) => mockSetLinqLink(...args),
   },
 }));
 
@@ -46,10 +56,6 @@ vi.mock('@/contexts/AuthContext', () => ({
   }),
 }));
 
-vi.mock('@/lib/api-client', () => ({
-  getAccessToken: () => 'test-token',
-}));
-
 beforeEach(() => {
   vi.clearAllMocks();
   mockProfile.channel_identifier = '';
@@ -67,7 +73,11 @@ beforeEach(() => {
   });
   mockGetChannelRoutes.mockResolvedValue({ routes: [] });
   mockToggleChannelRoute.mockResolvedValue({ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' });
-  vi.stubGlobal('fetch', vi.fn());
+  mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+  mockGetTelegramBotInfo.mockResolvedValue(null);
+  mockSetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+  mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
+  mockSetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
 });
 
 describe('ChannelsPage - Radio Selector', () => {
@@ -121,20 +131,7 @@ describe('ChannelsPage - Radio Selector', () => {
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
       ],
     });
-
-    const mockFetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes('bot-info')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ bot_username: 'test_bot', bot_link: 'https://t.me/test_bot' }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ telegram_user_id: null, connected: false }),
-      });
-    });
-    vi.stubGlobal('fetch', mockFetch);
+    mockGetTelegramBotInfo.mockResolvedValue({ bot_username: 'test_bot', bot_link: 'https://t.me/test_bot' });
 
     renderWithRouter(<ChannelsPage />);
 
@@ -192,20 +189,7 @@ describe('ChannelsPage - PremiumTelegramSection via radio', () => {
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
       ],
     });
-
-    const mockFetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes('bot-info')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ bot_username: 'my_cool_bot', bot_link: 'https://t.me/my_cool_bot' }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ telegram_user_id: null, connected: false }),
-      });
-    });
-    vi.stubGlobal('fetch', mockFetch);
+    mockGetTelegramBotInfo.mockResolvedValue({ bot_username: 'my_cool_bot', bot_link: 'https://t.me/my_cool_bot' });
 
     renderWithRouter(<ChannelsPage />);
 
@@ -231,17 +215,8 @@ describe('ChannelsPage - PremiumTelegramSection via radio', () => {
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
       ],
     });
-
-    const mockFetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes('bot-info')) {
-        return Promise.resolve({ ok: false, status: 404 });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ telegram_user_id: null, connected: false }),
-      });
-    });
-    vi.stubGlobal('fetch', mockFetch);
+    // bot-info returns null (not found), link returns default
+    mockGetTelegramBotInfo.mockResolvedValue(null);
 
     renderWithRouter(<ChannelsPage />);
 
@@ -270,17 +245,7 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
       ],
     });
-
-    const mockFetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes('bot-info')) {
-        return Promise.resolve({ ok: false, status: 404 });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ telegram_user_id: null, connected: false }),
-      });
-    });
-    vi.stubGlobal('fetch', mockFetch);
+    mockGetTelegramBotInfo.mockResolvedValue(null);
 
     renderWithRouter(<ChannelsPage />);
 
@@ -300,20 +265,7 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
       ],
     });
-
-    const mockFetch = vi.fn().mockImplementation((url: string) => {
-      if (url.includes('bot-info')) {
-        return Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ bot_username: 'test_bot', bot_link: 'https://t.me/test_bot' }),
-        });
-      }
-      return Promise.resolve({
-        ok: true,
-        json: () => Promise.resolve({ telegram_user_id: null, connected: false }),
-      });
-    });
-    vi.stubGlobal('fetch', mockFetch);
+    mockGetTelegramBotInfo.mockResolvedValue({ bot_username: 'test_bot', bot_link: 'https://t.me/test_bot' });
 
     renderWithRouter(<ChannelsPage />);
 
@@ -341,6 +293,7 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
       ],
     });
+    mockGetTelegramBotInfo.mockResolvedValue(null);
 
     renderWithRouter(<ChannelsPage />);
 

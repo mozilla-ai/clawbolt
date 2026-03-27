@@ -215,6 +215,48 @@ const api = {
     if (error) _throwApiError(error, 'Failed to disconnect OAuth');
   },
 
+  // Premium channel linking (raw fetch -- these endpoints are premium-only,
+  // not in the OSS OpenAPI spec)
+  getTelegramLink: async () => {
+    const res = await fetch('/api/channels/telegram', { headers: _getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch Telegram link');
+    return res.json() as Promise<{ telegram_user_id: string | null; connected: boolean }>;
+  },
+  getTelegramBotInfo: async () => {
+    const res = await fetch('/api/channels/telegram/bot-info', { headers: _getAuthHeaders() });
+    if (!res.ok) return null;
+    return res.json() as Promise<{ bot_username: string; bot_link: string }>;
+  },
+  setTelegramLink: async (telegramUserId: string) => {
+    const res = await fetch('/api/channels/telegram', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._getAuthHeaders() },
+      body: JSON.stringify({ telegram_user_id: telegramUserId }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(body.detail || `Failed to save: ${res.status}`);
+    }
+    return res.json() as Promise<{ telegram_user_id: string | null; connected: boolean }>;
+  },
+  getLinqLink: async () => {
+    const res = await fetch('/api/channels/linq', { headers: _getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch Linq link');
+    return res.json() as Promise<{ phone_number: string | null; connected: boolean; linq_from_number?: string }>;
+  },
+  setLinqLink: async (phoneNumber: string) => {
+    const res = await fetch('/api/channels/linq', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._getAuthHeaders() },
+      body: JSON.stringify({ phone_number: phoneNumber }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(body.detail || `Failed to save: ${res.status}`);
+    }
+    return res.json() as Promise<{ phone_number: string | null; connected: boolean; linq_from_number?: string }>;
+  },
+
   // Activity stream: real-time agent status from any channel
   subscribeToActivity: (
     onEvent: (event: { type: string; tool_name?: string; channel?: string }) => void,

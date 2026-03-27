@@ -34,15 +34,8 @@ vi.mock('@/contexts/AuthContext', () => ({
   }),
 }));
 
-vi.mock('@/lib/api-client', () => ({
-  getAccessToken: () => 'test-token',
-  default: {
-    GET: vi.fn(),
-    PUT: vi.fn(),
-  },
-}));
-
 const mockUpdateProfile = vi.fn().mockResolvedValue({ onboarding_complete: true });
+const mockSetLinqLink = vi.fn().mockResolvedValue({ phone_number: '+15551234567', connected: true });
 const mockUpdateChannelConfig = vi.fn().mockResolvedValue({
   telegram_bot_token_set: false,
   telegram_allowed_chat_id: '',
@@ -76,6 +69,7 @@ vi.mock('@/api', () => ({
     updateChannelConfig: (...args: unknown[]) => mockUpdateChannelConfig(...args),
     getChannelRoutes: (...args: unknown[]) => mockGetChannelRoutes(...args),
     toggleChannelRoute: (...args: unknown[]) => mockToggleChannelRoute(...args),
+    setLinqLink: (...args: unknown[]) => mockSetLinqLink(...args),
   },
 }));
 
@@ -160,12 +154,6 @@ describe('GetStartedPage', () => {
   it('saves phone number via premium channel route when isPremium is true', async () => {
     mockIsPremium = true;
 
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: () => Promise.resolve({ phone_number: '+15551234567', connected: true }),
-    });
-    vi.stubGlobal('fetch', mockFetch);
-
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
@@ -174,21 +162,11 @@ describe('GetStartedPage', () => {
     await user.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
-      const calls = mockFetch.mock.calls.filter(
-        (args: unknown[]) =>
-          args[0] === '/api/channels/linq' &&
-          (args[1] as RequestInit | undefined)?.method === 'PUT',
-      );
-      expect(calls).toHaveLength(1);
-      const body = (calls[0]![1] as RequestInit).body as string;
-      expect(JSON.parse(body)).toEqual({
-        phone_number: '+15551234567',
-      });
+      expect(mockSetLinqLink).toHaveBeenCalledWith('+15551234567');
     });
 
     expect(mockUpdateChannelConfig).not.toHaveBeenCalled();
 
-    vi.unstubAllGlobals();
     mockIsPremium = false;
   });
 

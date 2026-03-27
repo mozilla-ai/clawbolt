@@ -8,7 +8,7 @@ import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
 import { useUpdateProfile, useChannelConfig, useUpdateChannelConfig, useToggleChannelRoute } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
-import { getAccessToken } from '@/lib/api-client';
+import api from '@/api';
 import type { AppShellContext } from '@/layouts/AppShell';
 
 const CHANNEL_OPTIONS = [
@@ -18,21 +18,6 @@ const CHANNEL_OPTIONS = [
 ] as const;
 
 type ChannelKey = (typeof CHANNEL_OPTIONS)[number]['key'];
-
-async function setLinqLink(phoneNumber: string): Promise<void> {
-  const token = getAccessToken();
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-  if (token) headers['Authorization'] = `Bearer ${token}`;
-  const res = await fetch('/api/channels/linq', {
-    method: 'PUT',
-    headers,
-    body: JSON.stringify({ phone_number: phoneNumber }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => ({})) as { detail?: string };
-    throw new Error(body.detail || `Failed to save: ${res.status}`);
-  }
-}
 
 export default function GetStartedPage() {
   const { reloadProfile } = useOutletContext<AppShellContext>();
@@ -69,7 +54,7 @@ export default function GetStartedPage() {
     if (isPremium) {
       setSavingPhone(true);
       try {
-        await setLinqLink(trimmed);
+        await api.setLinqLink(trimmed);
         updateProfile.mutate({ phone: trimmed });
         setPhoneSaved(true);
         toast.success('Phone number saved');
@@ -213,36 +198,11 @@ export default function GetStartedPage() {
                     </Field>
                   </div>
                 </>
-              ) : selectedChannel === 'telegram' ? (
-                <>
-                  <h3 className="text-sm font-semibold font-display">Set up Telegram</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    You can configure your Telegram connection from the{' '}
-                    <button
-                      type="button"
-                      className="text-primary hover:underline font-medium"
-                      onClick={() => navigate('/app/channels')}
-                    >
-                      Channels page
-                    </button>
-                    {' '}after onboarding.
-                  </p>
-                </>
               ) : (
-                <>
-                  <h3 className="text-sm font-semibold font-display">Set up BlueBubbles</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    You can configure BlueBubbles from the{' '}
-                    <button
-                      type="button"
-                      className="text-primary hover:underline font-medium"
-                      onClick={() => navigate('/app/channels')}
-                    >
-                      Channels page
-                    </button>
-                    {' '}after onboarding.
-                  </p>
-                </>
+                <ChannelSetupDeferred
+                  channelName={selectedChannel === 'telegram' ? 'Telegram' : 'BlueBubbles'}
+                  onNavigate={() => navigate('/app/channels')}
+                />
               )}
             </div>
           </div>
@@ -333,6 +293,21 @@ export default function GetStartedPage() {
         </Button>
       </div>
     </div>
+  );
+}
+
+function ChannelSetupDeferred({ channelName, onNavigate }: { channelName: string; onNavigate: () => void }) {
+  return (
+    <>
+      <h3 className="text-sm font-semibold font-display">Set up {channelName}</h3>
+      <p className="text-sm text-muted-foreground mt-1">
+        You can configure {channelName} from the{' '}
+        <button type="button" className="text-primary hover:underline font-medium" onClick={onNavigate}>
+          Channels page
+        </button>
+        {' '}after onboarding.
+      </p>
+    </>
   );
 }
 
