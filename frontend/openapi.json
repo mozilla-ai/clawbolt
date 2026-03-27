@@ -510,7 +510,7 @@
     "/api/user/channels/routes/{channel}": {
       "patch": {
         "summary": "Update Channel Route",
-        "description": "Toggle enabled status for a channel route.\n\nIf the user has no route for this channel yet (e.g. they configured\ncredentials but haven't messaged through the channel), a placeholder\nroute is created so the enabled flag can be persisted.",
+        "description": "Toggle enabled status for a channel route.\n\nSingle-channel enforcement: when enabling a channel, all other\nnon-webchat routes for this user are automatically disabled so\nexactly one messaging channel is active at a time.\n\nIf the user has no route for this channel yet (e.g. they configured\ncredentials but haven't messaged through the channel), a placeholder\nroute is created so the enabled flag can be persisted.",
         "operationId": "update_channel_route_api_user_channels_routes__channel__patch",
         "parameters": [
           {
@@ -1120,6 +1120,44 @@
                 "schema": {
                   "$ref": "#/components/schemas/ToolConfigResponse"
                 }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{full_path}": {
+      "get": {
+        "summary": " Spa Fallback",
+        "description": "Serve the SPA index.html for all non-API routes.",
+        "operationId": "_spa_fallback__full_path__get",
+        "parameters": [
+          {
+            "name": "full_path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Full Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
               }
             }
           },

@@ -331,6 +331,10 @@ export interface paths {
          * Update Channel Route
          * @description Toggle enabled status for a channel route.
          *
+         *     Single-channel enforcement: when enabling a channel, all other
+         *     non-webchat routes for this user are automatically disabled so
+         *     exactly one messaging channel is active at a time.
+         *
          *     If the user has no route for this channel yet (e.g. they configured
          *     credentials but haven't messaged through the channel), a placeholder
          *     route is created so the enabled flag can be persisted.
@@ -605,6 +609,26 @@ export interface paths {
          *     tools within a factory group.
          */
         put: operations["update_tool_config_api_user_tools_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/{full_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spa Fallback
+         * @description Serve the SPA index.html for all non-API routes.
+         */
+        get: operations["_spa_fallback__full_path__get"];
+        put?: never;
         post?: never;
         delete?: never;
         options?: never;
@@ -2048,6 +2072,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _spa_fallback__full_path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                full_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
