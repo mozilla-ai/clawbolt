@@ -255,11 +255,16 @@ async def build_heartbeat_system_prompt(
         recent_messages or "(no recent messages)",
     )
 
-    if heartbeat_md:
-        builder.add_section("User's heartbeat (HEARTBEAT.md)", heartbeat_md)
+    builder.add_section(
+        "User's heartbeat (HEARTBEAT.md)",
+        heartbeat_md or "(no heartbeat items configured)",
+    )
 
     if heartbeat_history:
-        builder.add_section("Recent heartbeat activity", heartbeat_history)
+        builder.add_section(
+            "Recent heartbeat activity (timing reference only, not tasks to re-run)",
+            heartbeat_history,
+        )
 
     builder.add_section("Rules", load_prompt("heartbeat_rules"))
 
