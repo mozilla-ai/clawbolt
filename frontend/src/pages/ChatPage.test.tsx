@@ -10,6 +10,7 @@ vi.mock('@/api', () => ({
     getSession: vi.fn(),
     sendChatMessage: vi.fn(),
     listSessions: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+    subscribeToActivity: vi.fn().mockReturnValue(new AbortController()),
   },
 }));
 
