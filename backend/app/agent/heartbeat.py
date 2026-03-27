@@ -740,46 +740,37 @@ def resolve_heartbeat_route(
     user: User,
     db: Session,
 ) -> tuple[str, ChannelRoute] | None:
-    """Pick the best channel for *user* and find a matching route.
+    """Pick the user's active messaging channel for heartbeat delivery.
 
     Returns ``(channel_name, route)`` on success, or ``None`` when no
-    pushable route can be found.  The caller supplies an open DB session;
-    this function performs read-only queries.
+    pushable route can be found.
 
-    Resolution order:
-
-    1. The channel selected by ``_pick_heartbeat_channel`` (preferred or
-       first registered pushable channel).
-    2. If no route exists for that channel, iterate all of the user's
-       routes and return the first one whose channel is pushable and
-       registered.
+    Single-channel model: the user's ``preferred_channel`` is the primary
+    target.  A single fallback tries any enabled pushable route for
+    migration safety (existing users whose preferred_channel may be stale).
     """
     channel_name = _pick_heartbeat_channel(user)
-
     route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel_name).first()
 
     if route is not None and route.enabled:
         return channel_name, route
 
-    # Fallback: try any other pushable channel route the user has.
+    # Single fallback: try any enabled pushable route (migration safety)
     routes = db.query(ChannelRoute).filter_by(user_id=user.id).all()
-    route_channels = [r.channel for r in routes]
-    logger.debug(
-        "Heartbeat for user %s: no %s route, searching %d route(s): %s",
-        user.id,
-        channel_name,
-        len(routes),
-        route_channels,
-    )
     for r in routes:
         if r.channel not in _NON_PUSHABLE_CHANNELS and r.enabled:
             try:
                 get_channel(r.channel)
             except KeyError:
                 continue
+            # Fix preferred_channel to match
+            user.preferred_channel = r.channel
+            db.commit()
             logger.debug(
-                "Heartbeat for user %s: fell back to %s route",
+                "Heartbeat for user %s: preferred %s unavailable, "
+                "fell back to %s and updated preferred_channel",
                 user.id,
+                channel_name,
                 r.channel,
             )
             return r.channel, r

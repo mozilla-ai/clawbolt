@@ -42,7 +42,7 @@ function createWrapper() {
 
 describe('useProfile', () => {
   it('fetches and returns profile data', async () => {
-    const mockProfile = { user_text: 'hello', soul_text: 'soul' };
+    const mockProfile = { user_text: 'hello', soul_text: 'soul', timezone: 'America/New_York' };
     vi.mocked(api.getProfile).mockResolvedValue(mockProfile as never);
 
     const { result } = renderHook(() => useProfile(), { wrapper: createWrapper() });

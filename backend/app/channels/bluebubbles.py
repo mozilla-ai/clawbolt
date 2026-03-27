@@ -105,6 +105,9 @@ async def register_bluebubbles_webhook(server_url: str, webhook_url: str) -> boo
             safe_url = webhook_url.split("?")[0]
             logger.info("BlueBubbles webhook registered: %s", safe_url)
             return True
+    except httpx.ConnectError as exc:
+        logger.warning("BlueBubbles server not reachable at %s: %s", server_url, exc)
+        return False
     except httpx.HTTPError:
         logger.exception("Failed to register BlueBubbles webhook")
         return False

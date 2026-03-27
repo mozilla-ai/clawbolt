@@ -141,7 +141,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 # proactive messages are delivered to the right place.
                 # Skip update if the route is disabled so we don't switch
                 # the preferred channel to a disabled one.
-                if user.preferred_channel != channel and route.enabled:
+                if user.preferred_channel != channel and route.enabled and channel != "webchat":
                     user.preferred_channel = channel
                     db.commit()
                     db.refresh(user)
