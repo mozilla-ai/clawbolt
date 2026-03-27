@@ -91,6 +91,22 @@ async def update_profile(
 # ---------------------------------------------------------------------------
 
 
+def _is_bluebubbles_configured() -> bool:
+    """Check if BlueBubbles is configured AND the server is reachable."""
+    if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
+        return False
+    try:
+        from backend.app.channels import get_channel
+        from backend.app.channels.bluebubbles import BlueBubblesChannel
+
+        ch = get_channel("bluebubbles")
+        if isinstance(ch, BlueBubblesChannel):
+            return ch.server_reachable
+    except KeyError:
+        pass
+    return False
+
+
 def _build_channel_config_response() -> ChannelConfigResponse:
     return ChannelConfigResponse(
         telegram_bot_token_set=bool(settings.telegram_bot_token),
@@ -99,9 +115,7 @@ def _build_channel_config_response() -> ChannelConfigResponse:
         linq_from_number=settings.linq_from_number,
         linq_allowed_numbers=settings.linq_allowed_numbers,
         linq_preferred_service=settings.linq_preferred_service,
-        bluebubbles_configured=bool(
-            settings.bluebubbles_server_url and settings.bluebubbles_password
-        ),
+        bluebubbles_configured=_is_bluebubbles_configured(),
         bluebubbles_allowed_numbers=settings.bluebubbles_allowed_numbers,
     )
 
