@@ -140,7 +140,8 @@ describe('ChannelsPage - Radio Selector', () => {
     });
   });
 
-  it('shows Connected badge for channels with routes', async () => {
+  it('shows Active badge for the enabled channel', async () => {
+    mockProfile.preferred_channel = 'telegram';
     mockGetChannelRoutes.mockResolvedValue({
       routes: [
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
@@ -150,7 +151,7 @@ describe('ChannelsPage - Radio Selector', () => {
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Connected')).toBeInTheDocument();
+      expect(screen.getByText('Active')).toBeInTheDocument();
     });
   });
 

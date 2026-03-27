@@ -43,11 +43,14 @@ export default function ChannelsPage() {
     (preferredChannel && preferredChannel !== 'webchat' ? preferredChannel : null);
 
   const [selectedChannel, setSelectedChannel] = useState<ChannelKey | null>(null);
+  // Track which channel was just confirmed so we can show the Active badge
+  const [confirmedChannel, setConfirmedChannel] = useState<ChannelKey | null>(null);
 
   // Sync selected channel with backend state
   useEffect(() => {
     if (defaultChannel && MESSAGING_CHANNELS.some((c) => c.key === defaultChannel)) {
       setSelectedChannel(defaultChannel as ChannelKey);
+      setConfirmedChannel(defaultChannel as ChannelKey);
     }
   }, [defaultChannel]);
 
@@ -56,8 +59,15 @@ export default function ChannelsPage() {
     toggleMutation.mutate(
       { channel, enabled: true },
       {
-        onSuccess: () => toast.success(`Switched to ${MESSAGING_CHANNELS.find((c) => c.key === channel)?.label}`),
-        onError: (e) => toast.error(e.message),
+        onSuccess: () => {
+          setConfirmedChannel(channel);
+          toast.success(`Switched to ${MESSAGING_CHANNELS.find((c) => c.key === channel)?.label}`);
+        },
+        onError: (e) => {
+          // Revert optimistic selection on failure
+          setSelectedChannel(confirmedChannel);
+          toast.error(e.message);
+        },
       },
     );
   };
@@ -84,6 +94,8 @@ export default function ChannelsPage() {
         <div className="grid gap-2" role="radiogroup" aria-label="Messaging channel">
           {MESSAGING_CHANNELS.map(({ key, label }) => {
             const isSelected = selectedChannel === key;
+            const isConfirmed = confirmedChannel === key;
+            const isSwitching = toggleMutation.isPending && isSelected && !isConfirmed;
             const status = getRouteStatus(key);
             return (
               <label
@@ -94,22 +106,32 @@ export default function ChannelsPage() {
                     : 'border-border hover:border-primary/40'
                 }`}
               >
-                <input
-                  type="radio"
-                  name="messaging-channel"
-                  value={key}
-                  checked={isSelected}
-                  onChange={() => handleSelectChannel(key)}
-                  disabled={toggleMutation.isPending}
-                  className="accent-primary w-4 h-4 shrink-0"
-                />
+                {isSwitching ? (
+                  <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+                    <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                  </span>
+                ) : (
+                  <input
+                    type="radio"
+                    name="messaging-channel"
+                    value={key}
+                    checked={isSelected}
+                    onChange={() => handleSelectChannel(key)}
+                    disabled={toggleMutation.isPending}
+                    className="accent-primary w-4 h-4 shrink-0"
+                  />
+                )}
                 <span className="flex-1 text-sm font-medium">{label}</span>
-                {status === 'connected' && (
+                {isConfirmed ? (
+                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary-light text-primary font-medium flex items-center gap-1">
+                    <CheckIcon />
+                    Active
+                  </span>
+                ) : status === 'connected' ? (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success">
                     Connected
                   </span>
-                )}
-                {status === 'not-configured' && (
+                ) : (
                   <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
                     Not configured
                   </span>
@@ -285,6 +307,14 @@ function OssTelegramSection() {
         </div>
       </Card>
     </div>
+  );
+}
+
+function CheckIcon() {
+  return (
+    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+    </svg>
   );
 }
 

@@ -28,6 +28,7 @@ export default function GetStartedPage() {
   const updateChannelConfig = useUpdateChannelConfig();
   const toggleChannelRoute = useToggleChannelRoute();
   const [selectedChannel, setSelectedChannel] = useState<ChannelKey | null>(null);
+  const [confirmedChannel, setConfirmedChannel] = useState<ChannelKey | null>(null);
   const [phoneNumber, setPhoneNumber] = useState('');
   const [phoneSaved, setPhoneSaved] = useState(false);
   const [savingPhone, setSavingPhone] = useState(false);
@@ -40,7 +41,13 @@ export default function GetStartedPage() {
     // Enable the selected channel route (backend auto-disables others)
     toggleChannelRoute.mutate(
       { channel, enabled: true },
-      { onError: (e) => toast.error(e.message) },
+      {
+        onSuccess: () => setConfirmedChannel(channel),
+        onError: (e) => {
+          setSelectedChannel(confirmedChannel);
+          toast.error(e.message);
+        },
+      },
     );
   };
 
@@ -120,6 +127,8 @@ export default function GetStartedPage() {
               <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Messaging channel">
                 {CHANNEL_OPTIONS.map(({ key, label, description }) => {
                   const isSelected = selectedChannel === key;
+                  const isConfirmed = confirmedChannel === key;
+                  const isSwitching = toggleChannelRoute.isPending && isSelected && !isConfirmed;
                   return (
                     <label
                       key={key}
@@ -129,19 +138,32 @@ export default function GetStartedPage() {
                           : 'border-border hover:border-primary/40'
                       }`}
                     >
-                      <input
-                        type="radio"
-                        name="onboarding-channel"
-                        value={key}
-                        checked={isSelected}
-                        onChange={() => handleSelectChannel(key)}
-                        disabled={toggleChannelRoute.isPending}
-                        className="accent-primary w-4 h-4 shrink-0"
-                      />
+                      {isSwitching ? (
+                        <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+                          <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+                        </span>
+                      ) : (
+                        <input
+                          type="radio"
+                          name="onboarding-channel"
+                          value={key}
+                          checked={isSelected}
+                          onChange={() => handleSelectChannel(key)}
+                          disabled={toggleChannelRoute.isPending}
+                          className="accent-primary w-4 h-4 shrink-0"
+                        />
+                      )}
                       <div className="flex-1">
                         <span className="text-sm font-medium">{label}</span>
                         <p className="text-xs text-muted-foreground">{description}</p>
                       </div>
+                      {isConfirmed && (
+                        <span className="text-xs text-success flex items-center gap-1">
+                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+                          </svg>
+                        </span>
+                      )}
                     </label>
                   );
                 })}
