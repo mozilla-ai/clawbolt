@@ -177,11 +177,7 @@ def test_heartbeat_resolve_skips_disabled(test_user: User) -> None:
     finally:
         db.close()
 
-    with (
-        patch("backend.app.agent.heartbeat.get_channel"),
-        patch("backend.app.agent.heartbeat.get_manager") as mock_mgr,
-    ):
-        mock_mgr.return_value.channels = {"telegram": None, "linq": None}
+    with patch("backend.app.agent.heartbeat.get_channel"):
         db = _db_module.SessionLocal()
         try:
             result = resolve_heartbeat_route(user, db)
@@ -210,15 +206,10 @@ def test_heartbeat_resolve_none_when_all_disabled(test_user: User) -> None:
     finally:
         db.close()
 
-    with (
-        patch("backend.app.agent.heartbeat.get_channel"),
-        patch("backend.app.agent.heartbeat.get_manager") as mock_mgr,
-    ):
-        mock_mgr.return_value.channels = {"telegram": None, "linq": None}
-        db = _db_module.SessionLocal()
-        try:
-            result = resolve_heartbeat_route(user, db)
-        finally:
-            db.close()
+    db = _db_module.SessionLocal()
+    try:
+        result = resolve_heartbeat_route(user, db)
+    finally:
+        db.close()
 
     assert result is None
