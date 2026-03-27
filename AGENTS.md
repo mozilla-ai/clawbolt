@@ -123,7 +123,7 @@ cd frontend && npm run deadcode                    # no dead JS/TS code (knip)
 
 ### Frontend generated types
 
-When backend schemas change (`backend/app/schemas.py`, route signatures, or response models), you **must** regenerate the frontend OpenAPI types. Never hand-edit `frontend/src/generated/api.d.ts`. CI will fail if the committed file doesn't match what the generator produces.
+When backend schemas change (`backend/app/schemas.py`, route signatures, response models, or endpoint docstrings), you **must** regenerate the frontend OpenAPI types. Never hand-edit `frontend/src/generated/api.d.ts`. CI will fail if the committed file doesn't match what the generator produces.
 
 ```bash
 uv run python scripts/export_openapi.py           # export openapi.json from backend
