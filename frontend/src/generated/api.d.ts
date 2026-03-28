@@ -671,6 +671,11 @@ export interface components {
              * @default
              */
             bluebubbles_allowed_numbers: string;
+            /**
+             * Bluebubbles Imessage Address
+             * @default
+             */
+            bluebubbles_imessage_address: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -694,6 +699,8 @@ export interface components {
             bluebubbles_password?: string | null;
             /** Bluebubbles Allowed Numbers */
             bluebubbles_allowed_numbers?: string | null;
+            /** Bluebubbles Imessage Address */
+            bluebubbles_imessage_address?: string | null;
         };
         /** ChannelRouteListResponse */
         ChannelRouteListResponse: {

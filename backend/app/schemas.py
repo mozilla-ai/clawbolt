@@ -101,6 +101,7 @@ class ChannelConfigResponse(BaseModel):
     linq_preferred_service: str = "iMessage"
     bluebubbles_configured: bool = False
     bluebubbles_allowed_numbers: str = ""
+    bluebubbles_imessage_address: str = ""
 
 
 class ChannelConfigUpdate(BaseModel):
@@ -114,6 +115,7 @@ class ChannelConfigUpdate(BaseModel):
     bluebubbles_server_url: str | None = None
     bluebubbles_password: str | None = None
     bluebubbles_allowed_numbers: str | None = None
+    bluebubbles_imessage_address: str | None = None
 
 
 class ChannelRouteResponse(BaseModel):

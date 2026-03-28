@@ -289,6 +289,59 @@ class TestIngestionNoAutoDisable:
             db.close()
 
 
+class TestStaleRouteCleanup:
+    """Stale route cleanup on inbound message."""
+
+    async def test_stale_route_removed_on_inbound(self) -> None:
+        """When a user sends from a new identifier, stale routes for that
+        channel should be deleted so outbound dispatching uses the current
+        address.  Regression test for BlueBubbles UUID-handle bug.
+        """
+        user_id = _create_user_with_routes(
+            [
+                ("bluebubbles", "old-uuid-handle", True),
+            ],
+            preferred_channel="bluebubbles",
+        )
+
+        # Simulate an inbound from the real phone number on the same channel.
+        resolved = await _get_or_create_user("bluebubbles", "+15551234567")
+        assert resolved.id == user_id
+
+        db = _db_module.SessionLocal()
+        try:
+            routes = db.query(ChannelRoute).filter_by(user_id=user_id, channel="bluebubbles").all()
+            identifiers = {r.channel_identifier for r in routes}
+            # The stale UUID route should be gone; only the real number remains.
+            assert identifiers == {"+15551234567"}
+
+            user = db.query(User).filter_by(id=user_id).first()
+            assert user is not None
+            assert user.channel_identifier == "+15551234567"
+        finally:
+            db.close()
+
+    async def test_stale_route_cleanup_preserves_other_channels(self) -> None:
+        """Stale route cleanup must not touch routes for other channels."""
+        user_id = _create_user_with_routes(
+            [
+                ("bluebubbles", "old-uuid-handle", True),
+                ("telegram", "tg-12345", True),
+            ],
+            preferred_channel="telegram",
+        )
+
+        await _get_or_create_user("bluebubbles", "+15551234567")
+
+        db = _db_module.SessionLocal()
+        try:
+            tg_route = db.query(ChannelRoute).filter_by(user_id=user_id, channel="telegram").first()
+            assert tg_route is not None
+            assert tg_route.channel_identifier == "tg-12345"
+        finally:
+            db.close()
+
+
 class TestHeartbeatRouting:
     """Heartbeat uses preferred channel with single fallback."""
 

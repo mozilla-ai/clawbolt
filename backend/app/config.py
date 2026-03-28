@@ -108,6 +108,8 @@ class Settings(BaseSettings):
     bluebubbles_server_url: str = ""  # e.g. "https://my-mac.ngrok.io"
     bluebubbles_password: str = ""  # server password (query param auth)
     bluebubbles_allowed_numbers: str = ""  # E.164 phone, "*", or empty (deny all)
+    bluebubbles_send_method: str = "apple-script"  # "apple-script" or "private-api"
+    bluebubbles_imessage_address: str = ""  # iCloud email or phone to display in the UI
 
     # Google Calendar
     google_calendar_client_id: str = ""
@@ -164,6 +166,8 @@ PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
         "bluebubbles_server_url",
         "bluebubbles_password",
         "bluebubbles_allowed_numbers",
+        "bluebubbles_send_method",
+        "bluebubbles_imessage_address",
         "llm_provider",
         "llm_model",
         "llm_api_base",

@@ -35,6 +35,8 @@ export default function GetStartedPage() {
 
   const linqConfigured = channelConfig?.linq_api_token_set ?? false;
   const fromNumber = channelConfig?.linq_from_number ?? '';
+  const bbAddress = channelConfig?.bluebubbles_imessage_address ?? '';
+  const bbConfigured = channelConfig?.bluebubbles_configured ?? false;
 
   const isChannelConfigured = (channel: string): boolean => {
     if (channel === 'linq') return linqConfigured;
@@ -257,6 +259,14 @@ export default function GetStartedPage() {
                   <TextAssistantCard
                     fromNumber={fromNumber}
                     subtitle="Just say hello to get started."
+                    qrSize={80}
+                  />
+                </div>
+              ) : bbConfigured && bbAddress && selectedChannel === 'bluebubbles' ? (
+                <div className="mt-2">
+                  <TextAssistantCard
+                    fromNumber={bbAddress}
+                    subtitle="Send an iMessage to this address to get started."
                     qrSize={80}
                   />
                 </div>

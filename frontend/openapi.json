@@ -1209,6 +1209,11 @@
             "type": "string",
             "title": "Bluebubbles Allowed Numbers",
             "default": ""
+          },
+          "bluebubbles_imessage_address": {
+            "type": "string",
+            "title": "Bluebubbles Imessage Address",
+            "default": ""
           }
         },
         "type": "object",
@@ -1329,6 +1334,17 @@
               }
             ],
             "title": "Bluebubbles Allowed Numbers"
+          },
+          "bluebubbles_imessage_address": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Bluebubbles Imessage Address"
           }
         },
         "type": "object",

@@ -117,6 +117,7 @@ def _build_channel_config_response() -> ChannelConfigResponse:
         linq_preferred_service=settings.linq_preferred_service,
         bluebubbles_configured=_is_bluebubbles_configured(),
         bluebubbles_allowed_numbers=settings.bluebubbles_allowed_numbers,
+        bluebubbles_imessage_address=settings.bluebubbles_imessage_address,
     )
 
 

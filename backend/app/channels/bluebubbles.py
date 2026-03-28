@@ -3,6 +3,7 @@
 import asyncio
 import hmac
 import logging
+import uuid
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -321,8 +322,8 @@ class BlueBubblesChannel(BaseChannel):
                 return JSONResponse(content={"ok": True})
 
             # Cache the chat_guid for outbound use
-            if data and data.chats and data.chats[0].guid and data.handle:
-                channel._chat_cache[data.handle.address] = data.chats[0].guid
+            if data and data.chats and data.chats[0].guid:
+                channel._chat_cache[inbound.sender_id] = data.chats[0].guid
 
             # Idempotency: skip duplicate messages
             if inbound.external_message_id:
@@ -335,6 +336,15 @@ class BlueBubblesChannel(BaseChannel):
                     return JSONResponse(content={"ok": True})
                 await idempotency.mark_seen(inbound.external_message_id)
 
+            logger.info(
+                "BlueBubbles inbound accepted: sender=%s extId=%s",
+                inbound.sender_id,
+                inbound.external_message_id,
+            )
+            logger.debug(
+                "BlueBubbles inbound text preview: %r",
+                inbound.text[:80] if inbound.text else "",
+            )
             await message_bus.publish_inbound(inbound)
             return JSONResponse(content={"ok": True})
 
@@ -352,9 +362,22 @@ class BlueBubblesChannel(BaseChannel):
     async def send_text(self, to: str, body: str) -> str:
         """Send a text message via BlueBubbles API."""
         chat_guid = self._get_chat_guid(to)
+        payload = {
+            "chatGuid": chat_guid,
+            "message": body,
+            "tempGuid": f"temp-{uuid.uuid4()}",
+            "method": settings.bluebubbles_send_method,
+        }
+        logger.info(
+            "BlueBubbles send_text: to=%s chatGuid=%s method=%s bodyLen=%d",
+            to,
+            chat_guid,
+            settings.bluebubbles_send_method,
+            len(body),
+        )
         resp = await self._http.post(
             "/api/v1/message/text",
-            json={"chatGuid": chat_guid, "message": body},
+            json=payload,
             params={"password": settings.bluebubbles_password},
         )
         if resp.status_code >= 400:
@@ -380,7 +403,11 @@ class BlueBubblesChannel(BaseChannel):
         filename = generate_filename(content_type.split(";")[0])
 
         files = {"attachment": (filename, media_content, content_type)}
-        data_fields = {"chatGuid": chat_guid}
+        data_fields = {
+            "chatGuid": chat_guid,
+            "tempGuid": f"temp-{uuid.uuid4()}",
+            "method": settings.bluebubbles_send_method,
+        }
         if body:
             data_fields["message"] = body
 
@@ -407,7 +434,13 @@ class BlueBubblesChannel(BaseChannel):
         return result
 
     async def send_typing_indicator(self, to: str) -> None:
-        """Send a typing indicator via BlueBubbles API (best-effort)."""
+        """Send a typing indicator via BlueBubbles API (best-effort).
+
+        Requires the BlueBubbles Private API to be enabled on the server.
+        Silently skipped when using apple-script send method.
+        """
+        if settings.bluebubbles_send_method != "private-api":
+            return
         chat_guid = self._get_chat_guid(to)
         try:
             await self._http.post(
