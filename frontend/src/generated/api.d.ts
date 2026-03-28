@@ -616,6 +616,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/{full_path}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Spa Fallback
+         * @description Serve the SPA index.html for all non-API routes.
+         */
+        get: operations["_spa_fallback__full_path__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -671,6 +691,11 @@ export interface components {
              * @default
              */
             bluebubbles_allowed_numbers: string;
+            /**
+             * Bluebubbles Imessage Address
+             * @default
+             */
+            bluebubbles_imessage_address: string;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {
@@ -694,6 +719,8 @@ export interface components {
             bluebubbles_password?: string | null;
             /** Bluebubbles Allowed Numbers */
             bluebubbles_allowed_numbers?: string | null;
+            /** Bluebubbles Imessage Address */
+            bluebubbles_imessage_address?: string | null;
         };
         /** ChannelRouteListResponse */
         ChannelRouteListResponse: {
@@ -2052,6 +2079,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ToolConfigResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    _spa_fallback__full_path__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                full_path: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
