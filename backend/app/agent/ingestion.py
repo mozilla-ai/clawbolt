@@ -147,20 +147,17 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 # different identifier (e.g. a UUID handle that was replaced
                 # by a real phone number).  This ensures the outbound
                 # dispatcher always picks up the current address.
-                stale = (
+                deleted = (
                     db.query(ChannelRoute)
                     .filter_by(user_id=user.id, channel=channel)
                     .filter(ChannelRoute.channel_identifier != sender_id)
-                    .count()
+                    .delete()
                 )
-                if stale:
-                    db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel).filter(
-                        ChannelRoute.channel_identifier != sender_id
-                    ).delete()
+                if deleted:
                     user.channel_identifier = sender_id
                     logger.info(
                         "Cleaned up %d stale %s route(s) for user %s",
-                        stale,
+                        deleted,
                         channel,
                         user.id,
                     )

@@ -337,10 +337,13 @@ class BlueBubblesChannel(BaseChannel):
                 await idempotency.mark_seen(inbound.external_message_id)
 
             logger.info(
-                "BlueBubbles inbound accepted: sender=%s text=%r extId=%s",
+                "BlueBubbles inbound accepted: sender=%s extId=%s",
                 inbound.sender_id,
-                inbound.text[:80] if inbound.text else "",
                 inbound.external_message_id,
+            )
+            logger.debug(
+                "BlueBubbles inbound text preview: %r",
+                inbound.text[:80] if inbound.text else "",
             )
             await message_bus.publish_inbound(inbound)
             return JSONResponse(content={"ok": True})
