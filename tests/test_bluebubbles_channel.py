@@ -311,19 +311,74 @@ async def test_send_text_constructs_chat_guid() -> None:
     assert body["chatGuid"] == "iMessage;-;+15559876543"
 
 
-async def test_send_typing_indicator() -> None:
-    """send_typing_indicator should POST to the typing endpoint."""
+async def test_send_text_includes_temp_guid() -> None:
+    """send_text must include tempGuid (required by BlueBubbles AppleScript sending)."""
+    channel = BlueBubblesChannel()
+
+    mock_http = _make_mock_http({"guid": "msg-001"})
+    channel._client = mock_http
+
+    await channel.send_text("+15551234567", "Hi")
+
+    body = mock_http.post.call_args[1]["json"]
+    assert "tempGuid" in body
+    assert body["tempGuid"].startswith("temp-")
+
+
+async def test_send_media_includes_temp_guid() -> None:
+    """send_media must include tempGuid (required by BlueBubbles AppleScript sending)."""
+    channel = BlueBubblesChannel()
+    channel._chat_cache["+15551234567"] = "iMessage;-;+15551234567"
+
+    mock_http = _make_mock_http({"guid": "media-001"})
+    channel._client = mock_http
+
+    mock_dl_resp = AsyncMock()
+    mock_dl_resp.content = b"fake-image"
+    mock_dl_resp.headers = {"content-type": "image/jpeg"}
+    mock_dl_resp.raise_for_status = lambda: None
+
+    with patch("backend.app.channels.bluebubbles.httpx.AsyncClient") as mock_dl_cls:
+        mock_dl_client = AsyncMock()
+        mock_dl_client.__aenter__ = AsyncMock(return_value=mock_dl_client)
+        mock_dl_client.__aexit__ = AsyncMock(return_value=False)
+        mock_dl_client.get.return_value = mock_dl_resp
+        mock_dl_cls.return_value = mock_dl_client
+
+        await channel.send_media("+15551234567", "Photo", "https://example.com/pic.jpg")
+
+    data = mock_http.post.call_args[1]["data"]
+    assert "tempGuid" in data
+    assert data["tempGuid"].startswith("temp-")
+
+
+async def test_send_typing_indicator_private_api() -> None:
+    """send_typing_indicator should POST when using private-api method."""
     channel = BlueBubblesChannel()
     channel._chat_cache["+15551234567"] = "iMessage;-;+15551234567"
 
     mock_http = _make_mock_http({})
     channel._client = mock_http
 
-    await channel.send_typing_indicator("+15551234567")
+    with patch("backend.app.channels.bluebubbles.settings.bluebubbles_send_method", "private-api"):
+        await channel.send_typing_indicator("+15551234567")
 
     mock_http.post.assert_called_once()
     call_args = mock_http.post.call_args
     assert call_args[0][0] == "/api/v1/chat/iMessage;-;+15551234567/typing"
+
+
+async def test_send_typing_indicator_skipped_for_apple_script() -> None:
+    """send_typing_indicator should be a no-op when using apple-script method."""
+    channel = BlueBubblesChannel()
+
+    mock_http = _make_mock_http({})
+    channel._client = mock_http
+
+    with patch("backend.app.channels.bluebubbles.settings.bluebubbles_send_method", "apple-script"):
+        await channel.send_typing_indicator("+15551234567")
+
+    mock_http.post.assert_not_called()
 
 
 async def test_send_typing_indicator_no_error_on_failure() -> None:
@@ -334,8 +389,9 @@ async def test_send_typing_indicator_no_error_on_failure() -> None:
     mock_http.post.side_effect = Exception("Connection refused")
     channel._client = mock_http
 
-    # Should not raise
-    await channel.send_typing_indicator("+15551234567")
+    with patch("backend.app.channels.bluebubbles.settings.bluebubbles_send_method", "private-api"):
+        # Should not raise
+        await channel.send_typing_indicator("+15551234567")
 
 
 async def test_send_media_multipart_upload() -> None:

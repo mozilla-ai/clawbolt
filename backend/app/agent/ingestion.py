@@ -143,6 +143,25 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 # the preferred channel to a disabled one.
                 if user.preferred_channel != channel and route.enabled and channel != "webchat":
                     user.preferred_channel = channel
+                # Remove stale routes for this user+channel that have a
+                # different identifier (e.g. a UUID handle that was replaced
+                # by a real phone number).  This ensures the outbound
+                # dispatcher always picks up the current address.
+                deleted = (
+                    db.query(ChannelRoute)
+                    .filter_by(user_id=user.id, channel=channel)
+                    .filter(ChannelRoute.channel_identifier != sender_id)
+                    .delete()
+                )
+                if deleted:
+                    user.channel_identifier = sender_id
+                    logger.info(
+                        "Cleaned up %d stale %s route(s) for user %s",
+                        deleted,
+                        channel,
+                        user.id,
+                    )
+                if db.dirty or db.new or db.deleted:
                     db.commit()
                     db.refresh(user)
                 logger.debug("_get_or_create_user: found via channel route -> user %s", user.id)
@@ -157,6 +176,12 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         if len(all_users) == 1 and not settings.premium_plugin:
             user = all_users[0]
             logger.debug("_get_or_create_user: single-tenant reuse -> user %s", user.id)
+            # Remove stale routes for this user+channel before adding the new one.
+            # This prevents the outbound dispatcher from picking up an old
+            # identifier (e.g. a UUID handle instead of a real phone number).
+            db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel).filter(
+                ChannelRoute.channel_identifier != sender_id
+            ).delete()
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
             user.channel_identifier = sender_id
             user.preferred_channel = channel

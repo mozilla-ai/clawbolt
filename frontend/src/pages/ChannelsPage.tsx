@@ -529,14 +529,19 @@ function BlueBubblesSection() {
   const { data: config } = useChannelConfig();
   const updateMutation = useUpdateChannelConfig();
   const [allowedNumbers, setAllowedNumbers] = useState<string | null>(null);
+  const [imessageAddress, setImessageAddress] = useState<string | null>(null);
 
   const displayedNumbers = allowedNumbers ?? config?.bluebubbles_allowed_numbers ?? '';
+  const displayedAddress = imessageAddress ?? config?.bluebubbles_imessage_address ?? '';
   const isConfigured = config?.bluebubbles_configured ?? false;
 
   const handleSave = () => {
     const updates: Record<string, string> = {};
     if (allowedNumbers !== null && allowedNumbers !== (config?.bluebubbles_allowed_numbers ?? '')) {
       updates.bluebubbles_allowed_numbers = allowedNumbers;
+    }
+    if (imessageAddress !== null && imessageAddress !== (config?.bluebubbles_imessage_address ?? '')) {
+      updates.bluebubbles_imessage_address = imessageAddress;
     }
     if (Object.keys(updates).length === 0) {
       toast.error('No changes to save');
@@ -545,6 +550,7 @@ function BlueBubblesSection() {
     updateMutation.mutate(updates, {
       onSuccess: () => {
         setAllowedNumbers(null);
+        setImessageAddress(null);
         toast.success('BlueBubbles settings updated');
       },
       onError: (e) => toast.error(e.message),
@@ -567,6 +573,23 @@ function BlueBubblesSection() {
         </p>
       )}
       <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
+        {isConfigured && displayedAddress && (
+          <TextAssistantCard
+            fromNumber={displayedAddress}
+            subtitle="Send an iMessage to this address to reach your assistant."
+          />
+        )}
+        <Field label="iMessage Address">
+          <Input
+            value={displayedAddress}
+            onChange={(e) => setImessageAddress(e.target.value)}
+            placeholder="e.g. user@icloud.com or +15551234567"
+            disabled={!isConfigured}
+          />
+          <p className="text-xs text-muted-foreground mt-1">
+            The iCloud email or phone number people should text to reach your assistant.
+          </p>
+        </Field>
         <Field label="Allowed Sender">
           <Input
             value={displayedNumbers}
