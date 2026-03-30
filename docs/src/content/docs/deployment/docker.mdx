@@ -22,7 +22,7 @@ docker compose up --build
 
 | Service | Description |
 |---------|-------------|
-| **app** | FastAPI server on port 8000, with ffmpeg for audio |
+| **app** | FastAPI server on port 8000 |
 | **db** | PostgreSQL database for all structured data |
 | **tunnel** | Cloudflare Tunnel for HTTPS webhook registration |
 
@@ -48,7 +48,7 @@ curl http://localhost:8000/api/health
 
 ### Docker build fails with dependency errors
 
-Some optional dependencies require specific system libraries. The Dockerfile includes `ffmpeg` for audio processing.
+Try rebuilding without cache:
 
 ```bash
 # Rebuild without cache

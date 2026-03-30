@@ -16,11 +16,6 @@ MIME_EXTENSIONS: dict[str, str] = {
     "image/png": ".png",
     "image/gif": ".gif",
     "image/webp": ".webp",
-    "audio/ogg": ".ogg",
-    "audio/mp3": ".mp3",
-    "audio/mpeg": ".mp3",
-    "audio/amr": ".amr",
-    "audio/wav": ".wav",
     "video/mp4": ".mp4",
     "video/3gpp": ".3gp",
     "application/pdf": ".pdf",
@@ -42,8 +37,6 @@ def classify_media(mime_type: str) -> str:
     """Classify MIME type into processing category."""
     if mime_type.startswith("image/"):
         return "image"
-    if mime_type.startswith("audio/"):
-        return "audio"
     if mime_type.startswith("video/"):
         return "video"
     if mime_type == "application/pdf":

@@ -74,10 +74,8 @@ class TelegramMessage(BaseModel):
     text: str = ""
     caption: str = ""
     photo: list[TelegramPhotoSize] = Field(default_factory=list)
-    voice: TelegramMediaFile | None = None
     video: TelegramMediaFile | None = None
     video_note: TelegramMediaFile | None = None
-    audio: TelegramMediaFile | None = None
     document: TelegramMediaFile | None = None
 
 
@@ -292,17 +290,11 @@ class TelegramChannel(BaseChannel):
             if largest.file_id:
                 media.append((largest.file_id, "image/jpeg"))
 
-        if msg.voice and msg.voice.file_id:
-            media.append((msg.voice.file_id, msg.voice.mime_type or "audio/ogg"))
-
         if msg.video and msg.video.file_id:
             media.append((msg.video.file_id, msg.video.mime_type or "video/mp4"))
 
         if msg.video_note and msg.video_note.file_id:
             media.append((msg.video_note.file_id, "video/mp4"))
-
-        if msg.audio and msg.audio.file_id:
-            media.append((msg.audio.file_id, msg.audio.mime_type or "audio/mpeg"))
 
         if msg.document and msg.document.file_id:
             media.append(

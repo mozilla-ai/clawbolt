@@ -31,10 +31,9 @@ CATEGORY_SUBFOLDERS: dict[str, str] = {
     "estimate": "estimates",
     "invoice": "invoices",
     "document": "documents",
-    "voice_note": "voice_notes",
 }
 
-FileCategory = Literal["job_photo", "estimate", "document", "voice_note"]
+FileCategory = Literal["job_photo", "estimate", "document"]
 
 
 class UploadToStorageParams(BaseModel):
@@ -138,7 +137,6 @@ def _build_filename(
         "job_photo": "photo",
         "estimate": "estimate",
         "document": "document",
-        "voice_note": "voice_note",
     }
     base = fallback_names.get(category, "file")
 

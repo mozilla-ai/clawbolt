@@ -63,11 +63,6 @@ class Settings(BaseSettings):
     google_drive_credentials_json: str = ""
     file_storage_base_dir: str = "data/storage"
 
-    # Whisper
-    whisper_model_size: str = "base"
-    whisper_device: str = "cpu"
-    whisper_compute_type: str = "int8"
-
     # Agent loop
     approval_timeout_seconds: int = Field(default=120, ge=1)
     message_batch_window_ms: int = Field(default=1500, ge=100)

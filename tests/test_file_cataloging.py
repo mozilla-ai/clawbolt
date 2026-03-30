@@ -79,11 +79,6 @@ def test_build_folder_path_no_client_falls_back_to_unsorted() -> None:
     assert path.startswith("/Unsorted/")
 
 
-def test_build_folder_path_voice_note_with_client() -> None:
-    path = build_folder_path("voice_note", client_name="Bob")
-    assert path == "/Bob/voice_notes"
-
-
 def test_build_folder_path_unknown_category() -> None:
     path = build_folder_path("unknown_type", client_name="Alice")
     assert path == "/Alice/other"
@@ -102,11 +97,6 @@ def test_build_filename_with_description() -> None:
 def test_build_filename_without_description() -> None:
     name = _build_filename("", "job_photo", index=2)
     assert name == "photo_002.jpg"
-
-
-def test_build_filename_voice_note() -> None:
-    name = _build_filename(None, "voice_note", index=1, extension="mp3")
-    assert name == "voice_note_001.mp3"
 
 
 # ---------------------------------------------------------------------------

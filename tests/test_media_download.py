@@ -16,10 +16,11 @@ def test_classify_image_types() -> None:
     assert classify_media("image/gif") == "image"
 
 
-def test_classify_audio_types() -> None:
-    assert classify_media("audio/ogg") == "audio"
-    assert classify_media("audio/mp3") == "audio"
-    assert classify_media("audio/amr") == "audio"
+def test_classify_audio_treated_as_unknown() -> None:
+    """Audio MIME types should be classified as unknown (voice memos removed)."""
+    assert classify_media("audio/ogg") == "unknown"
+    assert classify_media("audio/mp3") == "unknown"
+    assert classify_media("audio/amr") == "unknown"
 
 
 def test_classify_video_types() -> None:

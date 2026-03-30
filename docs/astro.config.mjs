@@ -62,7 +62,6 @@ export default defineConfig({
           items: [
             { label: "Memory", slug: "features/memory" },
             { label: "Photos", slug: "features/photos" },
-            { label: "Voice", slug: "features/voice" },
             { label: "File Cataloging", slug: "features/file-cataloging" },
             { label: "Heartbeat", slug: "features/heartbeat" },
             { label: "Google Calendar", slug: "features/calendar" },
