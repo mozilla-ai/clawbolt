@@ -49,25 +49,60 @@ def test_create_calendar_config(test_user: User) -> None:
         db.close()
 
 
-def test_unique_constraint_user_provider(test_user: User) -> None:
-    """Should enforce unique (user_id, provider) constraint."""
+def test_unique_constraint_user_provider_calendar(test_user: User) -> None:
+    """Should enforce unique (user_id, provider, calendar_id) constraint."""
     db = _db_module.SessionLocal()
     try:
         config1 = CalendarConfig(
             user_id=test_user.id,
             provider="google_calendar",
+            calendar_id="primary",
         )
         db.add(config1)
         db.commit()
 
+        # Same user, provider, AND calendar_id should fail
         config2 = CalendarConfig(
             user_id=test_user.id,
             provider="google_calendar",
+            calendar_id="primary",
         )
         db.add(config2)
         with pytest.raises(IntegrityError):
             db.commit()
         db.rollback()
+    finally:
+        db.close()
+
+
+def test_multiple_calendars_per_user(test_user: User) -> None:
+    """Same user+provider but different calendar_ids should be allowed."""
+    db = _db_module.SessionLocal()
+    try:
+        config1 = CalendarConfig(
+            user_id=test_user.id,
+            provider="google_calendar",
+            calendar_id="primary",
+            display_name="Personal",
+        )
+        config2 = CalendarConfig(
+            user_id=test_user.id,
+            provider="google_calendar",
+            calendar_id="jobs@example.com",
+            display_name="Jobs",
+        )
+        db.add(config1)
+        db.add(config2)
+        db.commit()
+
+        configs = (
+            db.query(CalendarConfig)
+            .filter_by(user_id=test_user.id, provider="google_calendar")
+            .all()
+        )
+        assert len(configs) == 2
+        cal_ids = {c.calendar_id for c in configs}
+        assert cal_ids == {"primary", "jobs@example.com"}
     finally:
         db.close()
 

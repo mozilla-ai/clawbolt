@@ -24,6 +24,7 @@ from backend.app.routers import (
     auth,
     health,
     oauth,
+    user_calendar,
     user_memory,
     user_profile,
     user_sessions,
@@ -254,6 +255,7 @@ app.include_router(user_profile.router, prefix="/api")
 app.include_router(user_sessions.router, prefix="/api")
 app.include_router(user_memory.router, prefix="/api")
 app.include_router(user_tools.router, prefix="/api")
+app.include_router(user_calendar.router, prefix="/api")
 
 # ---------------------------------------------------------------------------
 # Static file serving (built frontend)
@@ -264,7 +266,7 @@ if _FRONTEND_DIST.is_dir():
     # Serve static assets (JS, CSS, images)
     app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
 
-    @app.get("/{full_path:path}")
+    @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
         """Serve the SPA index.html for all non-API routes."""
         file_path = _FRONTEND_DIST / full_path

@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
+from urllib.parse import quote
 
 import httpx
 
@@ -19,6 +20,7 @@ from backend.app.services.calendar_provider import (
     CalendarEventCreate,
     CalendarEventData,
     CalendarEventUpdate,
+    CalendarInfo,
 )
 
 logger = logging.getLogger(__name__)
@@ -28,6 +30,16 @@ GOOGLE_TOKEN_URL = "https://oauth2.googleapis.com/token"
 
 # Refresh 5 minutes before expiry.
 _REFRESH_BUFFER_SECONDS = 300
+
+
+def _encode_cal_id(calendar_id: str) -> str:
+    """URL-encode a calendar ID for use in API paths.
+
+    Google Calendar IDs can contain ``#`` and ``@`` which must be
+    percent-encoded when embedded in URL paths (e.g.
+    ``en.usa#holiday@group.v.calendar.google.com``).
+    """
+    return quote(calendar_id, safe="")
 
 
 class GoogleCalendarService:
@@ -121,6 +133,19 @@ class GoogleCalendarService:
 
     # -- Public API -----------------------------------------------------------
 
+    async def list_calendars(self) -> list[CalendarInfo]:
+        """List calendars visible to the authenticated user."""
+        data = await self._request("GET", "/users/me/calendarList")
+        items = (data or {}).get("items", [])
+        return [
+            CalendarInfo(
+                id=item.get("id", ""),
+                summary=item.get("summary", ""),
+                primary=item.get("primary", False),
+            )
+            for item in items
+        ]
+
     async def list_events(
         self,
         calendar_id: str,
@@ -135,7 +160,9 @@ class GoogleCalendarService:
             "orderBy": "startTime",
             "maxResults": "250",
         }
-        data = await self._request("GET", f"/calendars/{calendar_id}/events", params=params)
+        data = await self._request(
+            "GET", f"/calendars/{_encode_cal_id(calendar_id)}/events", params=params
+        )
         items = (data or {}).get("items", [])
         events: list[CalendarEventData] = []
         for item in items:
@@ -152,7 +179,9 @@ class GoogleCalendarService:
     ) -> CalendarEventData:
         """Create a new event on a calendar."""
         body = _build_event_body(event)
-        data = await self._request("POST", f"/calendars/{calendar_id}/events", json=body)
+        data = await self._request(
+            "POST", f"/calendars/{_encode_cal_id(calendar_id)}/events", json=body
+        )
         return _parse_event(data or {})
 
     async def update_event(
@@ -175,7 +204,9 @@ class GoogleCalendarService:
             body["end"] = {"dateTime": _to_rfc3339(updates.end)}
 
         data = await self._request(
-            "PATCH", f"/calendars/{calendar_id}/events/{event_id}", json=body
+            "PATCH",
+            f"/calendars/{_encode_cal_id(calendar_id)}/events/{event_id}",
+            json=body,
         )
         return _parse_event(data or {})
 
@@ -185,7 +216,7 @@ class GoogleCalendarService:
         event_id: str,
     ) -> None:
         """Delete an event from a calendar."""
-        await self._request("DELETE", f"/calendars/{calendar_id}/events/{event_id}")
+        await self._request("DELETE", f"/calendars/{_encode_cal_id(calendar_id)}/events/{event_id}")
 
     async def check_availability(
         self,

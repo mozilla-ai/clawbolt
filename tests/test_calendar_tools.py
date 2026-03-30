@@ -19,6 +19,19 @@ from backend.app.agent.tools.registry import ToolContext
 from backend.app.models import User
 from tests.mocks.google_calendar import MockGoogleCalendarService
 
+# Tools that are disabled to make a calendar "read-only".
+_WRITE_TOOLS = [
+    ToolName.CALENDAR_CREATE_EVENT,
+    ToolName.CALENDAR_UPDATE_EVENT,
+    ToolName.CALENDAR_DELETE_EVENT,
+]
+
+# Default enabled calendars for tests: both mock calendars enabled with full access.
+_DEFAULT_ENABLED: list[tuple[str, str, list[str]]] = [
+    ("primary", "Personal", []),
+    ("jobs@example.com", "Jobs", []),
+]
+
 
 @pytest.fixture()
 def cal_service() -> MockGoogleCalendarService:
@@ -27,7 +40,7 @@ def cal_service() -> MockGoogleCalendarService:
 
 @pytest.fixture()
 def cal_tools(cal_service: MockGoogleCalendarService) -> list[Tool]:
-    return create_calendar_tools(cal_service)
+    return create_calendar_tools(cal_service, enabled_calendars=_DEFAULT_ENABLED)
 
 
 def _get_tool(tools: list[Tool], name: str) -> Tool:
@@ -76,8 +89,8 @@ def test_factory_returns_empty_when_not_connected() -> None:
     assert tools == []
 
 
-def test_factory_returns_5_tools_when_configured() -> None:
-    """_calendar_factory should return 5 tools when configured and connected."""
+def test_factory_returns_6_tools_when_configured() -> None:
+    """_calendar_factory should return 6 tools when configured and connected."""
     ctx = MagicMock(spec=ToolContext)
     user = MagicMock(spec=User)
     user.id = "1"
@@ -91,6 +104,10 @@ def test_factory_returns_5_tools_when_configured() -> None:
     with (
         patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings,
         patch("backend.app.agent.tools.calendar_tools.oauth_service") as mock_oauth,
+        patch(
+            "backend.app.agent.tools.calendar_tools._get_enabled_calendars",
+            return_value=[("primary", "Primary", [])],
+        ),
     ):
         mock_settings.google_calendar_client_id = "test-id"
         mock_settings.google_calendar_client_secret = "test-secret"
@@ -98,7 +115,7 @@ def test_factory_returns_5_tools_when_configured() -> None:
 
         tools = _calendar_factory(ctx)
 
-    assert len(tools) == 5
+    assert len(tools) == 6
 
 
 # ---------------------------------------------------------------------------
@@ -107,8 +124,8 @@ def test_factory_returns_5_tools_when_configured() -> None:
 
 
 def test_calendar_tools_count(cal_tools: list[Tool]) -> None:
-    """create_calendar_tools should return 5 tools."""
-    assert len(cal_tools) == 5
+    """create_calendar_tools should return 6 tools."""
+    assert len(cal_tools) == 6
 
 
 def test_calendar_tools_have_params_model(cal_tools: list[Tool]) -> None:
@@ -121,6 +138,7 @@ def test_calendar_tools_names(cal_tools: list[Tool]) -> None:
     """Verify all expected tool names are present."""
     names = {t.name for t in cal_tools}
     assert names == {
+        ToolName.CALENDAR_LIST_CALENDARS,
         ToolName.CALENDAR_LIST_EVENTS,
         ToolName.CALENDAR_CREATE_EVENT,
         ToolName.CALENDAR_UPDATE_EVENT,
@@ -132,6 +150,12 @@ def test_calendar_tools_names(cal_tools: list[Tool]) -> None:
 # ---------------------------------------------------------------------------
 # Approval policies
 # ---------------------------------------------------------------------------
+
+
+def test_list_calendars_is_auto(cal_tools: list[Tool]) -> None:
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_CALENDARS)
+    assert tool.approval_policy is not None
+    assert tool.approval_policy.default_level == PermissionLevel.AUTO
 
 
 def test_list_events_is_auto(cal_tools: list[Tool]) -> None:
@@ -201,13 +225,52 @@ def test_delete_event_description_builder(cal_tools: list[Tool]) -> None:
 
 
 # ---------------------------------------------------------------------------
-# list_events
+# list_calendars
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
-async def test_list_events_happy_path(cal_tools: list[Tool]) -> None:
-    """Should return sample events within the time range."""
+async def test_list_calendars_shows_enabled(cal_tools: list[Tool]) -> None:
+    """Should return enabled calendars (not all Google calendars)."""
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_CALENDARS)
+    result = await tool.function()
+    assert result.is_error is False
+    assert "2 enabled calendar(s)" in result.content
+    assert "Personal" in result.content
+    assert "Jobs" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_calendars_single() -> None:
+    """With a single enabled calendar, should show just that one."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=[("jobs@example.com", "Jobs", [])])
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_CALENDARS)
+    result = await tool.function()
+    assert result.is_error is False
+    assert "1 enabled calendar(s)" in result.content
+    assert "Jobs" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_calendars_default_primary() -> None:
+    """With no enabled_calendars, should default to primary."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service)
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_CALENDARS)
+    result = await tool.function()
+    assert result.is_error is False
+    assert "Primary" in result.content
+
+
+# ---------------------------------------------------------------------------
+# list_events -- multi-calendar merge
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_list_events_multi_calendar_merge(cal_tools: list[Tool]) -> None:
+    """Should merge events from all enabled calendars with labels."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
     result = await tool.function(
         start_date="2026-03-25T00:00:00",
@@ -217,6 +280,54 @@ async def test_list_events_happy_path(cal_tools: list[Tool]) -> None:
     assert "2 event(s)" in result.content
     assert "Smith Kitchen Remodel" in result.content
     assert "Jones Roof Repair" in result.content
+    # Multi-cal labels should be present
+    assert "[Personal]" in result.content
+    assert "[Jobs]" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_events_single_calendar_no_label() -> None:
+    """With a single enabled calendar, events should not have labels."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [])])
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
+    result = await tool.function(
+        start_date="2026-03-25T00:00:00",
+        end_date="2026-03-27T23:59:59",
+    )
+    assert result.is_error is False
+    assert "1 event(s)" in result.content
+    assert "Smith Kitchen Remodel" in result.content
+    assert "[Personal]" not in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_events_specific_calendar(cal_tools: list[Tool]) -> None:
+    """Specifying a calendar_id should only query that calendar."""
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
+    result = await tool.function(
+        start_date="2026-03-25T00:00:00",
+        end_date="2026-03-27T23:59:59",
+        calendar_id="primary",
+    )
+    assert result.is_error is False
+    assert "1 event(s)" in result.content
+    assert "Smith Kitchen Remodel" in result.content
+    assert "Jones Roof Repair" not in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_events_invalid_calendar(cal_tools: list[Tool]) -> None:
+    """Should reject a calendar_id not in the enabled set."""
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
+    result = await tool.function(
+        start_date="2026-03-25T00:00:00",
+        end_date="2026-03-27T23:59:59",
+        calendar_id="not-enabled@example.com",
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "not in the enabled set" in result.content
 
 
 @pytest.mark.asyncio()
@@ -262,19 +373,64 @@ async def test_list_events_api_error(cal_service: MockGoogleCalendarService) -> 
 
 
 # ---------------------------------------------------------------------------
-# create_event
+# create_event -- validation
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
+async def test_create_event_auto_select_single_calendar() -> None:
+    """With one enabled calendar, should auto-select it."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [])])
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Job: Test - Plumbing",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert result.is_error is False
+    assert "Event created" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_create_event_requires_calendar_id_multi(cal_tools: list[Tool]) -> None:
+    """With multiple enabled calendars, must specify calendar_id."""
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Job: Test",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "Multiple calendars available" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_create_event_validates_calendar_id(cal_tools: list[Tool]) -> None:
+    """Should reject a calendar_id not in the enabled set."""
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Job: Test",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+        calendar_id="not-enabled@example.com",
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "not in the enabled set" in result.content
+
+
+@pytest.mark.asyncio()
 async def test_create_event_happy_path(cal_tools: list[Tool]) -> None:
-    """Should create an event and return its details."""
+    """Should create an event when calendar_id is specified."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
     result = await tool.function(
         title="Job: Test - Plumbing",
         start="2026-03-28T09:00:00",
         end="2026-03-28T17:00:00",
         location="789 Main St",
+        calendar_id="primary",
     )
     assert result.is_error is False
     assert "Event created" in result.content
@@ -289,6 +445,7 @@ async def test_create_event_invalid_date(cal_tools: list[Tool]) -> None:
         title="Test Event",
         start="bad-date",
         end="2026-03-28T17:00:00",
+        calendar_id="primary",
     )
     assert result.is_error is True
     assert result.error_kind == ToolErrorKind.VALIDATION
@@ -302,6 +459,7 @@ async def test_create_event_end_before_start(cal_tools: list[Tool]) -> None:
         title="Test Event",
         start="2026-03-28T17:00:00",
         end="2026-03-28T09:00:00",
+        calendar_id="primary",
     )
     assert result.is_error is True
     assert result.error_kind == ToolErrorKind.VALIDATION
@@ -335,9 +493,11 @@ async def test_create_event_api_error(
 
 
 @pytest.mark.asyncio()
-async def test_update_event_happy_path(cal_tools: list[Tool]) -> None:
-    """Should update an existing event."""
-    tool = _get_tool(cal_tools, ToolName.CALENDAR_UPDATE_EVENT)
+async def test_update_event_happy_path() -> None:
+    """Should update an existing event with single calendar (auto-select)."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [])])
+    tool = _get_tool(tools, ToolName.CALENDAR_UPDATE_EVENT)
     result = await tool.function(
         event_id="evt-001",
         title="Job: Smith Kitchen Remodel (Revised)",
@@ -369,6 +529,7 @@ async def test_update_event_invalid_date(cal_tools: list[Tool]) -> None:
     result = await tool.function(
         event_id="evt-001",
         start="bad-date",
+        calendar_id="primary",
     )
     assert result.is_error is True
     assert result.error_kind == ToolErrorKind.VALIDATION
@@ -407,20 +568,20 @@ async def test_delete_event_not_found(
 
 
 # ---------------------------------------------------------------------------
-# check_availability
+# check_availability -- multi-calendar merge
 # ---------------------------------------------------------------------------
 
 
 @pytest.mark.asyncio()
 async def test_check_availability_busy(cal_tools: list[Tool]) -> None:
-    """Should return busy slots."""
+    """Should return busy slots from all enabled calendars."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
     result = await tool.function(
         start_date="2026-03-25T00:00:00",
         end_date="2026-03-26T00:00:00",
     )
     assert result.is_error is False
-    assert "1 busy slot(s)" in result.content
+    assert "busy slot(s)" in result.content
 
 
 @pytest.mark.asyncio()
@@ -442,6 +603,19 @@ async def test_check_availability_invalid_date(cal_tools: list[Tool]) -> None:
     result = await tool.function(
         start_date="not-valid",
         end_date="2026-03-26T00:00:00",
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+
+
+@pytest.mark.asyncio()
+async def test_check_availability_invalid_calendar(cal_tools: list[Tool]) -> None:
+    """Should reject a calendar_id not in the enabled set."""
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
+    result = await tool.function(
+        start_date="2026-03-25T00:00:00",
+        end_date="2026-03-26T00:00:00",
+        calendar_id="not-enabled@example.com",
     )
     assert result.is_error is True
     assert result.error_kind == ToolErrorKind.VALIDATION
@@ -525,7 +699,11 @@ def test_parse_dt_defaults_to_utc_when_no_tz() -> None:
 async def test_list_events_respects_user_timezone() -> None:
     """Calendar tools with a user timezone interpret naive dates locally."""
     service = MockGoogleCalendarService()
-    tools = create_calendar_tools(service, user_timezone="America/New_York")
+    tools = create_calendar_tools(
+        service,
+        user_timezone="America/New_York",
+        enabled_calendars=[("primary", "Personal", [])],
+    )
     tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
 
     # "March 25" in Eastern time: midnight to midnight Eastern
@@ -542,7 +720,7 @@ async def test_list_events_respects_user_timezone() -> None:
 async def test_list_events_utc_default_without_timezone() -> None:
     """Without user timezone, naive dates are interpreted as UTC."""
     service = MockGoogleCalendarService()
-    tools = create_calendar_tools(service)
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [])])
     tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
 
     # March 25 midnight-to-midnight UTC includes events at 09:00 UTC
@@ -555,8 +733,8 @@ async def test_list_events_utc_default_without_timezone() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_factory_passes_user_timezone() -> None:
-    """_calendar_factory should pass user timezone to create_calendar_tools."""
+async def test_factory_passes_enabled_calendars() -> None:
+    """_calendar_factory should pass enabled_calendars to create_calendar_tools."""
     ctx = MagicMock(spec=ToolContext)
     user = MagicMock(spec=User)
     user.id = "1"
@@ -575,6 +753,13 @@ async def test_factory_passes_user_timezone() -> None:
             "backend.app.agent.tools.calendar_tools.create_calendar_tools",
             wraps=create_calendar_tools,
         ) as mock_create,
+        patch(
+            "backend.app.agent.tools.calendar_tools._get_enabled_calendars",
+            return_value=[
+                ("primary", "Personal", []),
+                ("jobs@example.com", "Jobs", [ToolName.CALENDAR_CREATE_EVENT]),
+            ],
+        ),
     ):
         mock_settings.google_calendar_client_id = "test-id"
         mock_settings.google_calendar_client_secret = "test-secret"
@@ -584,3 +769,182 @@ async def test_factory_passes_user_timezone() -> None:
 
     mock_create.assert_called_once()
     assert mock_create.call_args.kwargs["user_timezone"] == "America/New_York"
+    assert mock_create.call_args.kwargs["enabled_calendars"] == [
+        ("primary", "Personal", []),
+        ("jobs@example.com", "Jobs", [ToolName.CALENDAR_CREATE_EVENT]),
+    ]
+
+
+# ---------------------------------------------------------------------------
+# Per-calendar permissions
+# ---------------------------------------------------------------------------
+
+_MIXED_PERMS: list[tuple[str, str, list[str]]] = [
+    ("primary", "Personal", []),
+    ("jobs@example.com", "Jobs", list(_WRITE_TOOLS)),
+]
+
+
+@pytest.mark.asyncio()
+async def test_list_calendars_shows_per_tool_access() -> None:
+    """calendar_list_calendars should show per-calendar tool access."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=_MIXED_PERMS)
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_CALENDARS)
+    result = await tool.function()
+    assert result.is_error is False
+    assert "allowed: list events, create event, update event, delete event" in result.content
+    assert "blocked: create event, update event, delete event" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_calendars_shows_read_only() -> None:
+    """Calendars with all per-calendar tools disabled should show READ-ONLY."""
+    service = MockGoogleCalendarService()
+    all_disabled = [*_WRITE_TOOLS, ToolName.CALENDAR_LIST_EVENTS]
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[("primary", "Personal", all_disabled)],
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_CALENDARS)
+    result = await tool.function()
+    assert result.is_error is False
+    assert "allowed: none" in result.content
+    assert "blocked: list events, create event, update event, delete event" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_events_reads_from_restricted_calendar() -> None:
+    """list_events should query calendars where list_events is not disabled."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=_MIXED_PERMS)
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
+    result = await tool.function(
+        start_date="2026-03-25T00:00:00",
+        end_date="2026-03-27T23:59:59",
+    )
+    assert result.is_error is False
+    # Both calendars queried (list_events is not in the disabled set)
+    assert "Smith Kitchen Remodel" in result.content
+    assert "Jones Roof Repair" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_create_event_blocked_on_disabled_calendar() -> None:
+    """create_event should reject a calendar where create_event is disabled."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=_MIXED_PERMS)
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Test",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+        calendar_id="jobs@example.com",
+    )
+    assert result.is_error is True
+    assert result.error_kind == ToolErrorKind.VALIDATION
+    assert "does not allow create event" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_create_event_auto_selects_allowed_calendar() -> None:
+    """With mixed perms, auto-select should pick the calendar that allows creation."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=_MIXED_PERMS)
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    # No calendar_id: should auto-select "primary" (the only one allowing create)
+    result = await tool.function(
+        title="Job: Auto-Select Test",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert result.is_error is False
+    assert "Event created" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_update_event_blocked_on_disabled() -> None:
+    """update_event should reject a calendar where update_event is disabled."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=_MIXED_PERMS)
+    tool = _get_tool(tools, ToolName.CALENDAR_UPDATE_EVENT)
+    result = await tool.function(
+        event_id="evt-002",
+        title="Updated",
+        calendar_id="jobs@example.com",
+    )
+    assert result.is_error is True
+    assert "does not allow update event" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_delete_event_blocked_on_disabled() -> None:
+    """delete_event should reject a calendar where delete_event is disabled."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=_MIXED_PERMS)
+    tool = _get_tool(tools, ToolName.CALENDAR_DELETE_EVENT)
+    result = await tool.function(
+        event_id="evt-002",
+        calendar_id="jobs@example.com",
+    )
+    assert result.is_error is True
+    assert "does not allow delete event" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_no_calendars_allow_tool_error() -> None:
+    """Write tools should error when all calendars have that tool disabled."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[
+            ("primary", "Personal", list(_WRITE_TOOLS)),
+            ("jobs@example.com", "Jobs", list(_WRITE_TOOLS)),
+        ],
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Test",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert result.is_error is True
+    assert "No calendars allow create event" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_check_availability_works_on_restricted_calendar() -> None:
+    """check_availability should work even when write tools are disabled."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[("primary", "Personal", list(_WRITE_TOOLS))],
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
+    result = await tool.function(
+        start_date="2026-03-25T00:00:00",
+        end_date="2026-03-26T00:00:00",
+    )
+    assert result.is_error is False
+    assert "busy slot(s)" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_list_events_skips_disabled_calendar() -> None:
+    """list_events should skip calendars where list_events is disabled."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[
+            ("primary", "Personal", []),
+            ("jobs@example.com", "Jobs", [ToolName.CALENDAR_LIST_EVENTS]),
+        ],
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
+    result = await tool.function(
+        start_date="2026-03-25T00:00:00",
+        end_date="2026-03-27T23:59:59",
+    )
+    assert result.is_error is False
+    assert "Smith Kitchen Remodel" in result.content
+    assert "Jones Roof Repair" not in result.content

@@ -10,9 +10,10 @@ from backend.app.services.calendar_provider import (
     CalendarEventCreate,
     CalendarEventData,
     CalendarEventUpdate,
+    CalendarInfo,
 )
 
-# Sample events for the mock.
+# Sample events for the mock, keyed by calendar_id.
 _SAMPLE_EVENTS: list[dict[str, Any]] = [
     {
         "id": "evt-001",
@@ -23,6 +24,7 @@ _SAMPLE_EVENTS: list[dict[str, Any]] = [
         "location": "123 Oak St, Portland OR",
         "all_day": False,
         "status": "confirmed",
+        "calendar_id": "primary",
     },
     {
         "id": "evt-002",
@@ -33,6 +35,7 @@ _SAMPLE_EVENTS: list[dict[str, Any]] = [
         "location": "456 Elm Ave, Seattle WA",
         "all_day": False,
         "status": "confirmed",
+        "calendar_id": "jobs@example.com",
     },
 ]
 
@@ -49,17 +52,30 @@ class MockGoogleCalendarService:
     def __init__(self) -> None:
         global _NEXT_ID
         _NEXT_ID = 100
-        self.events: list[CalendarEventData] = [CalendarEventData(**e) for e in _SAMPLE_EVENTS]
+        self.events: list[CalendarEventData] = [
+            CalendarEventData(**{k: v for k, v in e.items() if k != "calendar_id"})
+            for e in _SAMPLE_EVENTS
+        ]
+        self._event_calendar_map: dict[str, str] = {
+            e["id"]: e["calendar_id"] for e in _SAMPLE_EVENTS
+        }
         self.busy_slots: list[BusySlot] = [
             BusySlot(
                 start=datetime(2026, 3, 25, 9, 0, tzinfo=UTC),
                 end=datetime(2026, 3, 25, 17, 0, tzinfo=UTC),
             ),
         ]
+        self.calendars: list[CalendarInfo] = [
+            CalendarInfo(id="primary", summary="Personal", primary=True),
+            CalendarInfo(id="jobs@example.com", summary="Jobs", primary=False),
+        ]
 
     @property
     def provider_name(self) -> str:
         return "google_calendar"
+
+    async def list_calendars(self) -> list[CalendarInfo]:
+        return list(self.calendars)
 
     async def list_events(
         self,
@@ -67,7 +83,13 @@ class MockGoogleCalendarService:
         time_min: datetime,
         time_max: datetime,
     ) -> list[CalendarEventData]:
-        return [e for e in self.events if e.start >= time_min and e.start < time_max]
+        return [
+            e
+            for e in self.events
+            if e.start >= time_min
+            and e.start < time_max
+            and self._event_calendar_map.get(e.id, "primary") == calendar_id
+        ]
 
     async def create_event(
         self,
@@ -87,6 +109,7 @@ class MockGoogleCalendarService:
         )
         _NEXT_ID += 1
         self.events.append(new_event)
+        self._event_calendar_map[new_event.id] = calendar_id
         return new_event
 
     async def update_event(
@@ -122,6 +145,7 @@ class MockGoogleCalendarService:
         for i, e in enumerate(self.events):
             if e.id == event_id:
                 self.events.pop(i)
+                self._event_calendar_map.pop(event_id, None)
                 return
         msg = f"Event {event_id} not found"
         raise ValueError(msg)

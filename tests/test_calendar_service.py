@@ -91,6 +91,23 @@ async def test_list_events_empty(service: GoogleCalendarService) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_list_events_encodes_calendar_id(service: GoogleCalendarService) -> None:
+    """Calendar IDs with '#' or '@' must be percent-encoded in the URL path."""
+    cal_id = "en.usa#holiday@group.v.calendar.google.com"
+    with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = {"items": []}
+        await service.list_events(
+            cal_id,
+            datetime(2026, 3, 25, tzinfo=UTC),
+            datetime(2026, 3, 26, tzinfo=UTC),
+        )
+
+    path = mock_req.call_args[0][1]
+    assert "#" not in path
+    assert "en.usa%23holiday%40group.v.calendar.google.com" in path
+
+
+@pytest.mark.asyncio()
 async def test_list_events_skips_malformed_events(service: GoogleCalendarService) -> None:
     """Should skip malformed events instead of crashing the entire list."""
     api_response = {

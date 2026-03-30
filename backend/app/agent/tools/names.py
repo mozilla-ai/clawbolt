@@ -32,6 +32,7 @@ class ToolName:
     QB_SEND = "qb_send"
 
     # Calendar
+    CALENDAR_LIST_CALENDARS = "calendar_list_calendars"
     CALENDAR_LIST_EVENTS = "calendar_list_events"
     CALENDAR_CREATE_EVENT = "calendar_create_event"
     CALENDAR_UPDATE_EVENT = "calendar_update_event"
