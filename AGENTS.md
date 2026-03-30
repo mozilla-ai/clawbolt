@@ -33,7 +33,7 @@ uv run ty check --python .venv backend/ tests/ alembic/
 
 - Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2
 - any-llm-sdk (LLM provider abstraction via `acompletion`)
-- Telegram Bot API for messaging (via python-telegram-bot), faster-whisper for audio transcription
+- Telegram Bot API for messaging (via python-telegram-bot)
 - Dropbox/Google Drive for file storage
 - PostgreSQL for all data persistence, Alembic for migrations
 - uv + hatchling build system, ruff linting, ty type checking
