@@ -101,6 +101,7 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `APPROVAL_TIMEOUT_SECONDS` | `120` | Seconds to wait for user approval of a tool call before automatically denying |
+| `AGENT_PROCESSING_TIMEOUT_SECONDS` | `300` | Maximum seconds for a single message's agent processing (includes waiting for the per-user lock). Prevents one hung LLM call from blocking all subsequent messages for the same user |
 | `MESSAGE_BATCH_WINDOW_MS` | `1500` | Milliseconds to wait for more messages before processing. Groups rapid-fire messages into one agent call. Set to `0` to disable |
 | `MAX_TOOL_ROUNDS` | `10` | Maximum tool-calling rounds per agent invocation |
 | `MAX_INPUT_TOKENS` | `120000` | Max input token budget before context trimming |

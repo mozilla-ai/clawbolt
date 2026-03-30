@@ -65,6 +65,7 @@ class Settings(BaseSettings):
 
     # Agent loop
     approval_timeout_seconds: int = Field(default=120, ge=1)
+    agent_processing_timeout_seconds: float = Field(default=300.0, gt=0)
     message_batch_window_ms: int = Field(default=1500, ge=100)
     max_tool_rounds: int = Field(default=10, ge=1)
     max_input_tokens: int = Field(default=600_000, ge=1)

@@ -372,34 +372,44 @@ class MessageBatcher:
                 last_entry.message.seq,
             )
 
-        async with user_locks.acquire(user_id):
-            try:
-                # Reload user in case it was updated
-                db = SessionLocal()
-                try:
-                    fresh = db.query(User).filter_by(id=user_id).first()
-                    if fresh is not None:
-                        db.expunge(fresh)
-                        user = fresh
-                finally:
-                    db.close()
-                await handle_inbound_message(
-                    user=user,
-                    session=last_entry.session,
-                    message=last_entry.message,
-                    media_urls=all_media,
-                    downloaded_media=all_downloaded or None,
-                    channel=state.channel,
-                    request_id=state.request_id,
-                    download_media=state.download_media,
-                )
-            except Exception:
-                logger.exception(
-                    "Agent pipeline failed for message seq %d (user %s)",
-                    last_entry.message.seq,
-                    user_id,
-                )
-                await _send_error_fallback(state.channel, user, user_id)
+        try:
+            async with asyncio.timeout(settings.agent_processing_timeout_seconds):
+                async with user_locks.acquire(user_id):
+                    try:
+                        # Reload user in case it was updated
+                        db = SessionLocal()
+                        try:
+                            fresh = db.query(User).filter_by(id=user_id).first()
+                            if fresh is not None:
+                                db.expunge(fresh)
+                                user = fresh
+                        finally:
+                            db.close()
+                        await handle_inbound_message(
+                            user=user,
+                            session=last_entry.session,
+                            message=last_entry.message,
+                            media_urls=all_media,
+                            downloaded_media=all_downloaded or None,
+                            channel=state.channel,
+                            request_id=state.request_id,
+                            download_media=state.download_media,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Agent pipeline failed for message seq %d (user %s)",
+                            last_entry.message.seq,
+                            user_id,
+                        )
+                        await _send_error_fallback(state.channel, user, user_id)
+        except TimeoutError:
+            logger.error(
+                "Agent processing timed out after %.0fs for message seq %d (user %s)",
+                settings.agent_processing_timeout_seconds,
+                last_entry.message.seq,
+                user_id,
+            )
+            await _send_error_fallback(state.channel, user, user_id)
 
 
 # Module-level singleton
@@ -557,30 +567,40 @@ async def process_inbound_from_bus(
             download_media=download_media,
         )
     else:
-        async with user_locks.acquire(user.id):
-            try:
-                db = SessionLocal()
-                try:
-                    fresh = db.query(User).filter_by(id=user.id).first()
-                    if fresh is not None:
-                        db.expunge(fresh)
-                        user = fresh
-                finally:
-                    db.close()
-                await handle_inbound_message(
-                    user=user,
-                    session=session,
-                    message=message,
-                    media_urls=inbound.media_refs,
-                    downloaded_media=inbound.downloaded_media,
-                    channel=inbound.channel,
-                    request_id=inbound.request_id,
-                    download_media=download_media,
-                )
-            except Exception:
-                logger.exception(
-                    "Agent pipeline failed for message seq %d (user %s)",
-                    message.seq,
-                    user.id,
-                )
-                await _send_error_fallback(inbound.channel, user, user.id)
+        try:
+            async with asyncio.timeout(settings.agent_processing_timeout_seconds):
+                async with user_locks.acquire(user.id):
+                    try:
+                        db = SessionLocal()
+                        try:
+                            fresh = db.query(User).filter_by(id=user.id).first()
+                            if fresh is not None:
+                                db.expunge(fresh)
+                                user = fresh
+                        finally:
+                            db.close()
+                        await handle_inbound_message(
+                            user=user,
+                            session=session,
+                            message=message,
+                            media_urls=inbound.media_refs,
+                            downloaded_media=inbound.downloaded_media,
+                            channel=inbound.channel,
+                            request_id=inbound.request_id,
+                            download_media=download_media,
+                        )
+                    except Exception:
+                        logger.exception(
+                            "Agent pipeline failed for message seq %d (user %s)",
+                            message.seq,
+                            user.id,
+                        )
+                        await _send_error_fallback(inbound.channel, user, user.id)
+        except TimeoutError:
+            logger.error(
+                "Agent processing timed out after %.0fs for message seq %d (user %s)",
+                settings.agent_processing_timeout_seconds,
+                message.seq,
+                user.id,
+            )
+            await _send_error_fallback(inbound.channel, user, user.id)
