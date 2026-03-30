@@ -6,9 +6,6 @@ def make_telegram_update_payload(
     photo_file_id: str | None = None,
     document_file_id: str | None = None,
     document_mime_type: str = "application/pdf",
-    video_file_id: str | None = None,
-    video_mime_type: str = "video/mp4",
-    video_note_file_id: str | None = None,
     caption: str | None = None,
     first_name: str = "Test",
     username: str | None = None,
@@ -34,8 +31,6 @@ def make_telegram_update_payload(
         [
             photo_file_id,
             document_file_id,
-            video_file_id,
-            video_note_file_id,
         ]
     )
 
@@ -83,24 +78,6 @@ def make_telegram_update_payload(
                 "file_size": 5000,
             },
         ]
-
-    if video_file_id:
-        msg["video"] = {
-            "file_id": video_file_id,
-            "file_unique_id": "vid1",
-            "duration": 10,
-            "width": 1280,
-            "height": 720,
-            "mime_type": video_mime_type,
-        }
-
-    if video_note_file_id:
-        msg["video_note"] = {
-            "file_id": video_note_file_id,
-            "file_unique_id": "vnote1",
-            "duration": 5,
-            "length": 240,
-        }
 
     if document_file_id:
         msg["document"] = {

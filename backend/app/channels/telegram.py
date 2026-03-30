@@ -74,8 +74,6 @@ class TelegramMessage(BaseModel):
     text: str = ""
     caption: str = ""
     photo: list[TelegramPhotoSize] = Field(default_factory=list)
-    video: TelegramMediaFile | None = None
-    video_note: TelegramMediaFile | None = None
     document: TelegramMediaFile | None = None
 
 
@@ -289,12 +287,6 @@ class TelegramChannel(BaseChannel):
             largest = max(msg.photo, key=lambda p: p.file_size)
             if largest.file_id:
                 media.append((largest.file_id, "image/jpeg"))
-
-        if msg.video and msg.video.file_id:
-            media.append((msg.video.file_id, msg.video.mime_type or "video/mp4"))
-
-        if msg.video_note and msg.video_note.file_id:
-            media.append((msg.video_note.file_id, "video/mp4"))
 
         if msg.document and msg.document.file_id:
             media.append(

@@ -23,9 +23,10 @@ def test_classify_audio_treated_as_unknown() -> None:
     assert classify_media("audio/amr") == "unknown"
 
 
-def test_classify_video_types() -> None:
-    assert classify_media("video/mp4") == "video"
-    assert classify_media("video/3gpp") == "video"
+def test_classify_video_treated_as_unknown() -> None:
+    """Video MIME types should be classified as unknown (video support removed)."""
+    assert classify_media("video/mp4") == "unknown"
+    assert classify_media("video/3gpp") == "unknown"
 
 
 def test_classify_pdf() -> None:

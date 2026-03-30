@@ -13,7 +13,6 @@ VISION_FALLBACK = "[Photo - vision analysis not available]"
 # Media type display labels used in combined context output
 MEDIA_TYPE_LABELS: dict[str, str] = {
     "image": "Photo",
-    "video": "Video",
     "pdf": "Document",
 }
 
