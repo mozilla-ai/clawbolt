@@ -287,6 +287,9 @@ def _format_heartbeat_history(
 
     Shows when heartbeat messages were previously sent so the Phase 1
     evaluator can avoid duplicate sends and reason about timing.
+
+    Consecutive skip entries are compressed into a single summary line
+    to avoid bloating the prompt when most checks take no action.
     """
     if not logs:
         return (
@@ -294,8 +297,8 @@ def _format_heartbeat_history(
             f"in the last {_HISTORY_LOOKBACK_DAYS} days."
         )
 
-    lines: list[str] = []
-    for entry in logs:
+    def _format_ts(entry: HeartbeatLogEntry) -> tuple[str, str]:
+        """Return (formatted_timestamp, ago_string) for a log entry."""
         ts = datetime.datetime.fromisoformat(entry.created_at)
         local_ts = to_local_time(ts, tz_name)
         formatted = local_ts.strftime("%A, %Y-%m-%d %I:%M %p").strip()
@@ -306,16 +309,45 @@ def _format_heartbeat_history(
             ago = "1 day ago"
         else:
             ago = f"{delta.days} days ago"
-        detail = ""
+        return formatted, ago
+
+    lines: list[str] = []
+    skip_run: list[HeartbeatLogEntry] = []
+
+    def _flush_skips() -> None:
+        """Flush accumulated consecutive skip entries into a summary line."""
+        if not skip_run:
+            return
+        if len(skip_run) == 1:
+            fmt, ago = _format_ts(skip_run[0])
+            lines.append(f"- {fmt} ({ago}) [skipped]")
+        else:
+            first_fmt, _ = _format_ts(skip_run[0])
+            last_fmt, last_ago = _format_ts(skip_run[-1])
+            lines.append(
+                f"- {first_fmt} to {last_fmt} ({last_ago})"
+                f" [{len(skip_run)} checks, no action taken]"
+            )
+        skip_run.clear()
+
+    for entry in logs:
         if entry.action_type == "skip":
-            detail = " [skipped]"
-        elif entry.tasks:
+            skip_run.append(entry)
+            continue
+        # Non-skip entry: flush any accumulated skips first
+        _flush_skips()
+        formatted, ago = _format_ts(entry)
+        detail = ""
+        if entry.tasks:
             # Truncate long task descriptions to keep the prompt concise.
             task_preview = entry.tasks[:120]
             if len(entry.tasks) > 120:
                 task_preview += "..."
             detail = f' | tasks: "{task_preview}"'
         lines.append(f"- {formatted} ({ago}){detail}")
+
+    # Flush any trailing skips
+    _flush_skips()
 
     summary = "\n".join(lines)
     return (
@@ -577,6 +609,16 @@ async def run_heartbeat_for_user(
             daily_count,
             max_daily,
         )
+        return None
+
+    # Gate: no heartbeat items configured. If the user has no items in their
+    # HEARTBEAT.md, there is nothing for the evaluator to act on. Skip the
+    # LLM call entirely to save tokens and avoid the LLM hallucinating tasks
+    # from conversation history or past heartbeat activity.
+    heartbeat_store = HeartbeatStore(user.id)
+    heartbeat_text = heartbeat_store.read_heartbeat_md()
+    if not heartbeat_text or not heartbeat_text.strip():
+        logger.debug("Heartbeat skip user %s: no heartbeat items configured", user.id)
         return None
 
     logger.debug("Heartbeat evaluating user %s via LLM (channel=%s)", user.id, channel)

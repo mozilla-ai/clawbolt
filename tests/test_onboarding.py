@@ -502,6 +502,7 @@ async def test_prepopulated_user_included_in_heartbeat(
                 phone="+15550009999",
                 channel_identifier="777777777",
                 preferred_channel="telegram",
+                heartbeat_text="- Check weather for outdoor jobs",
             )
         )
         db.commit()
