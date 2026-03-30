@@ -864,6 +864,7 @@ class TestRunHeartbeatForUser:
         )
 
     @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -872,6 +873,7 @@ class TestRunHeartbeatForUser:
         mock_count: AsyncMock,
         mock_eval: AsyncMock,
         mock_execute: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
         user: User,
     ) -> None:
         """When Phase 2 produces no output, no message is sent."""
@@ -880,11 +882,15 @@ class TestRunHeartbeatForUser:
             action="run", tasks="Check something", reasoning="test"
         )
         mock_execute.return_value = ""
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- Check something"
+        mock_heartbeat_store_cls.return_value = mock_hb_store
         result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
         assert result is not None
         assert result.action_type == "no_action"
 
     @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.bus.OutboundMessage")
     @patch("backend.app.bus.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
@@ -897,6 +903,7 @@ class TestRunHeartbeatForUser:
         mock_execute: AsyncMock,
         mock_bus: MagicMock,
         mock_outbound_msg: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
         user: User,
     ) -> None:
         mock_count.return_value = 0
@@ -905,6 +912,9 @@ class TestRunHeartbeatForUser:
         )
         mock_execute.return_value = "Here is an update."
         mock_bus.publish_outbound = AsyncMock(side_effect=Exception("Bus down"))
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- Check something"
+        mock_heartbeat_store_cls.return_value = mock_hb_store
         result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
         # Should still return the action, just not record a message
         assert result is not None
@@ -2218,6 +2228,199 @@ class TestHeartbeatPromptAlwaysIncludesSection:
         assert "not tasks to re-run" in prompt
 
 
+class TestSkipEmptyHeartbeatText:
+    """Regression for #864: heartbeat must not send messages when no items configured."""
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_skip_empty_heartbeat_text(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """When heartbeat_text is empty, skip without calling the LLM."""
+        mock_count.return_value = 0
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = ""
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        assert result is None
+        mock_eval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_skip_whitespace_only_heartbeat_text(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """Whitespace-only heartbeat text is treated as empty."""
+        mock_count.return_value = 0
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "   \n  \n  "
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        assert result is None
+        mock_eval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_nonempty_heartbeat_text_proceeds_to_evaluation(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """When heartbeat items exist, evaluation proceeds normally."""
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(action="skip", tasks="", reasoning="Nothing due")
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- Check weather for outdoor jobs"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        assert result is not None
+        mock_eval.assert_awaited_once()
+
+
+class TestCompressedHeartbeatHistory:
+    """Regression for #856: consecutive no-action checks should be compressed."""
+
+    def test_consecutive_skips_compressed(self) -> None:
+        """Multiple consecutive skips are merged into a single summary line."""
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        logs = [
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 10, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 10, 30, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 11, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+        ]
+        result = _format_heartbeat_history(logs, "America/New_York", now)
+        assert "3 checks, no action taken" in result
+        # Should be a single line, not 3 separate "[skipped]" lines
+        assert result.count("[skipped]") == 0
+
+    def test_single_skip_not_compressed(self) -> None:
+        """A single skip is still shown with [skipped] label, not compressed."""
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        logs = [
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 10, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+        ]
+        result = _format_heartbeat_history(logs, "America/New_York", now)
+        assert "[skipped]" in result
+
+    def test_skips_between_sends_compressed_separately(self) -> None:
+        """Skip runs between send entries are compressed independently."""
+        now = datetime.datetime(2026, 3, 23, 18, 0, tzinfo=datetime.UTC)
+        logs = [
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="send",
+                tasks="Morning check",
+                created_at=datetime.datetime(2026, 3, 23, 9, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 9, 30, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 10, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 10, 30, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="send",
+                tasks="Afternoon reminder",
+                created_at=datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+        ]
+        result = _format_heartbeat_history(logs, "America/New_York", now)
+        assert "3 checks, no action taken" in result
+        assert 'tasks: "Morning check"' in result
+        assert 'tasks: "Afternoon reminder"' in result
+        # The 3 skips should be 1 line, not 3
+        lines = [ln for ln in result.split("\n") if ln.startswith("- ")]
+        assert len(lines) == 3  # send + compressed skips + send
+
+    def test_trailing_skips_flushed(self) -> None:
+        """Skip entries at the end of the log list are properly flushed."""
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        logs = [
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="send",
+                tasks="Check weather",
+                created_at=datetime.datetime(2026, 3, 23, 9, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 10, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(2026, 3, 23, 11, 0, tzinfo=datetime.UTC).isoformat(),
+            ),
+        ]
+        result = _format_heartbeat_history(logs, "America/New_York", now)
+        assert "2 checks, no action taken" in result
+
+    def test_all_skips_compressed(self) -> None:
+        """When all entries are skips, they are compressed into one summary."""
+        now = datetime.datetime(2026, 3, 23, 14, 0, tzinfo=datetime.UTC)
+        logs = [
+            HeartbeatLogEntry(
+                user_id="u1",
+                action_type="skip",
+                created_at=datetime.datetime(
+                    2026, 3, 23, 8 + i, 0, tzinfo=datetime.UTC
+                ).isoformat(),
+            )
+            for i in range(5)
+        ]
+        result = _format_heartbeat_history(logs, "America/New_York", now)
+        assert "5 checks, no action taken" in result
+        lines = [ln for ln in result.split("\n") if ln.startswith("- ")]
+        assert len(lines) == 1
+
+
 class TestHeartbeatRulesGuardRemovedItems:
     """Regression for #858: heartbeat_rules.md must instruct the LLM to only
     act on items in the current heartbeat text."""
@@ -2230,3 +2433,24 @@ class TestHeartbeatRulesGuardRemovedItems:
         assert "Only act on items" in rules
         assert "current" in rules.lower()
         assert "history" in rules.lower()
+
+
+class TestHeartbeatRulesGuardHistoryPatterns:
+    """Regression for #864: rules must prevent the LLM from inferring action
+    patterns from heartbeat activity history."""
+
+    def test_rules_prohibit_pattern_inference(self) -> None:
+        """The rules must explicitly tell the LLM not to infer patterns from history."""
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules")
+        assert "infer" in rules.lower() or "pattern" in rules.lower()
+        assert "removed" in rules.lower() or "no longer" in rules.lower()
+
+    def test_rules_prohibit_time_based_initiative(self) -> None:
+        """The rules must prevent time-of-day or day-of-week driven messages
+        unless a current heartbeat item explicitly calls for it."""
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules")
+        assert "time of day" in rules.lower() or "day of week" in rules.lower()
