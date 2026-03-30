@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 import time
 import zoneinfo
@@ -16,6 +17,8 @@ from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
+from backend.app.database import SessionLocal
+from backend.app.models import CalendarConfig
 from backend.app.services.calendar_provider import (
     CalendarEventCreate,
     CalendarEventUpdate,
@@ -30,6 +33,28 @@ if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
+
+
+def parse_disabled_tools(raw: str) -> list[str]:
+    """Parse a JSON list of disabled tool names, falling back to [].
+
+    Used by both the calendar router and the tool factory to deserialise
+    the ``CalendarConfig.disabled_tools`` column.
+    """
+    if not raw:
+        return []
+    try:
+        parsed = json.loads(raw)
+        if isinstance(parsed, list):
+            return [str(x) for x in parsed]
+    except (json.JSONDecodeError, TypeError):
+        pass
+    return []
 
 
 # ---------------------------------------------------------------------------
@@ -845,22 +870,6 @@ def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str]]]:
 
     Returns a list of ``(calendar_id, display_name, disabled_tools)`` tuples.
     """
-    import json
-
-    from backend.app.database import SessionLocal
-    from backend.app.models import CalendarConfig
-
-    def _parse(raw: str) -> list[str]:
-        if not raw:
-            return []
-        try:
-            parsed = json.loads(raw)
-            if isinstance(parsed, list):
-                return [str(x) for x in parsed]
-        except (json.JSONDecodeError, TypeError):
-            pass
-        return []
-
     db = SessionLocal()
     try:
         configs = (
@@ -868,7 +877,11 @@ def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str]]]:
         )
         if configs:
             result = [
-                (c.calendar_id, c.display_name or c.calendar_id, _parse(c.disabled_tools))
+                (
+                    c.calendar_id,
+                    c.display_name or c.calendar_id,
+                    parse_disabled_tools(c.disabled_tools),
+                )
                 for c in configs
             ]
             logger.debug(

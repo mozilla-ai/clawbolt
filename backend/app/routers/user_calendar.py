@@ -11,6 +11,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.app.agent.tools.calendar_tools import parse_disabled_tools
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
 from backend.app.database import SessionLocal
@@ -28,19 +29,6 @@ from backend.app.services.oauth import oauth_service
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-
-
-def _parse_disabled_tools(raw: str) -> list[str]:
-    """Parse a JSON list of disabled tool names, falling back to []."""
-    if not raw:
-        return []
-    try:
-        parsed = json.loads(raw)
-        if isinstance(parsed, list):
-            return [str(x) for x in parsed]
-    except (json.JSONDecodeError, TypeError):
-        pass
-    return []
 
 
 def _get_calendar_service(user: User) -> GoogleCalendarService:
@@ -100,7 +88,7 @@ async def get_calendar_config(
             CalendarConfigEntry(
                 calendar_id=c.calendar_id,
                 display_name=c.display_name,
-                disabled_tools=_parse_disabled_tools(c.disabled_tools),
+                disabled_tools=parse_disabled_tools(c.disabled_tools),
             )
             for c in configs
         ]
@@ -140,7 +128,7 @@ async def update_calendar_config(
                 CalendarConfigEntry(
                     calendar_id=c.calendar_id,
                     display_name=c.display_name,
-                    disabled_tools=_parse_disabled_tools(c.disabled_tools),
+                    disabled_tools=parse_disabled_tools(c.disabled_tools),
                 )
                 for c in new_configs
             ]
