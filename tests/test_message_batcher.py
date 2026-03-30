@@ -260,6 +260,147 @@ class TestMessageBatcher:
             await asyncio.sleep(0.15)
 
 
+class TestProcessingTimeout:
+    """Tests for agent_processing_timeout_seconds on the lock scope."""
+
+    @pytest.mark.asyncio
+    async def test_batcher_flush_times_out_and_sends_fallback(self) -> None:
+        """When the pipeline exceeds the timeout, a fallback error is sent."""
+        batcher = MessageBatcher(window_ms=50)
+        mock_user = User(id="1", channel_identifier="123", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id="1")
+        mock_message = StoredMessage(direction="inbound", body="hello")
+
+        async def slow_handler(**kwargs: object) -> None:
+            await asyncio.sleep(10)  # Way longer than the timeout
+
+        with (
+            patch(
+                "backend.app.agent.ingestion.handle_inbound_message",
+                new_callable=AsyncMock,
+                side_effect=slow_handler,
+            ),
+            patch("backend.app.agent.ingestion.settings") as mock_settings,
+        ):
+            mock_settings.message_batch_window_ms = 50
+            mock_settings.agent_processing_timeout_seconds = 0.1
+
+            await batcher.enqueue(mock_user, mock_session, mock_message, [], "telegram")
+            await asyncio.sleep(0.3)
+
+            # Fallback error published to bus
+            found = False
+            while not message_bus.outbound.empty():
+                outbound = message_bus.outbound.get_nowait()
+                if not outbound.is_typing_indicator:
+                    assert outbound.chat_id == "123"
+                    assert "something went wrong" in outbound.content.lower()
+                    found = True
+                    break
+            assert found
+
+    @pytest.mark.asyncio
+    async def test_timeout_releases_lock_for_next_request(self) -> None:
+        """After a timeout, the next request for the same user should proceed."""
+        batcher = MessageBatcher(window_ms=50)
+        mock_user = User(id="1", channel_identifier="123", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id="1")
+        mock_msg_1 = StoredMessage(direction="inbound", body="slow request")
+        mock_msg_2 = StoredMessage(direction="inbound", body="fast request")
+
+        call_count = 0
+
+        async def handler(**kwargs: object) -> None:
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                await asyncio.sleep(10)  # First call hangs
+
+        with (
+            patch(
+                "backend.app.agent.ingestion.handle_inbound_message",
+                new_callable=AsyncMock,
+                side_effect=handler,
+            ),
+            patch("backend.app.agent.ingestion.settings") as mock_settings,
+        ):
+            mock_settings.message_batch_window_ms = 50
+            mock_settings.agent_processing_timeout_seconds = 0.1
+
+            # First message: will timeout
+            await batcher.enqueue(mock_user, mock_session, mock_msg_1, [], "telegram")
+            await asyncio.sleep(0.3)
+
+            # Second message: should proceed (lock released after timeout)
+            await batcher.enqueue(mock_user, mock_session, mock_msg_2, [], "telegram")
+            await asyncio.sleep(0.3)
+
+            # Both calls should have been attempted
+            assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_non_batcher_path_times_out_and_sends_fallback(self) -> None:
+        """Timeout on the non-batcher (direct) path sends a fallback error."""
+        inbound = InboundMessage(
+            channel="telegram",
+            sender_id="456",
+            text="hi there",
+        )
+
+        mock_user = User(id="1", channel_identifier="456", phone="")
+        mock_session = SessionState(session_id="sess-1", user_id="1")
+        mock_message = StoredMessage(direction="inbound", body="hi there")
+
+        async def slow_handler(**kwargs: object) -> None:
+            await asyncio.sleep(10)
+
+        with (
+            patch(
+                "backend.app.agent.ingestion._get_or_create_user",
+                new_callable=AsyncMock,
+                return_value=mock_user,
+            ),
+            patch(
+                "backend.app.agent.ingestion.get_approval_gate",
+            ) as mock_gate,
+            patch(
+                "backend.app.agent.ingestion.get_or_create_conversation",
+                new_callable=AsyncMock,
+                return_value=(mock_session, True),
+            ),
+            patch(
+                "backend.app.agent.ingestion.get_session_store",
+            ) as mock_store_fn,
+            patch(
+                "backend.app.agent.ingestion.settings",
+            ) as mock_settings,
+            patch(
+                "backend.app.agent.ingestion.handle_inbound_message",
+                new_callable=AsyncMock,
+                side_effect=slow_handler,
+            ),
+        ):
+            mock_gate.return_value.has_pending.return_value = False
+            mock_session_store = AsyncMock()
+            mock_session_store.add_message.return_value = mock_message
+            mock_store_fn.return_value = mock_session_store
+            mock_settings.message_batch_window_ms = 0
+            mock_settings.agent_processing_timeout_seconds = 0.1
+
+            await process_inbound_from_bus(inbound)
+
+            # Fallback error published to bus
+            found = False
+            while not message_bus.outbound.empty():
+                outbound = message_bus.outbound.get_nowait()
+                if not outbound.is_typing_indicator:
+                    assert outbound.chat_id == "456"
+                    assert "something went wrong" in outbound.content.lower()
+                    found = True
+                    break
+            assert found
+
+
 class TestProcessInboundFallbackError:
     """Tests for error fallback in process_inbound_from_bus (non-batcher path)."""
 
@@ -308,6 +449,7 @@ class TestProcessInboundFallbackError:
             mock_session_store.add_message.return_value = mock_message
             mock_store_fn.return_value = mock_session_store
             mock_settings.message_batch_window_ms = 0
+            mock_settings.agent_processing_timeout_seconds = 300.0
             mock_locks.acquire.return_value = AsyncMock(
                 __aenter__=AsyncMock(), __aexit__=AsyncMock()
             )
