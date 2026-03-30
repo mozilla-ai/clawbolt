@@ -79,6 +79,40 @@ async def test_update_then_get_roundtrip(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_update_heartbeat_shows_previous_content(test_user: User) -> None:
+    """update_heartbeat should include previous content in the result (#873)."""
+    store = HeartbeatStore(test_user.id)
+    await store.write_heartbeat_md("- Old reminder\n- Follow up with client")
+
+    tools = create_heartbeat_tools(test_user.id)
+    update_hb = tools[1].function
+    result = await update_hb(text="- New item only")
+    assert "updated" in result.content.lower()
+    assert "Previous content:" in result.content
+    assert "Old reminder" in result.content
+    assert "Follow up with client" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_update_heartbeat_empty_previous(test_user: User) -> None:
+    """update_heartbeat on an empty file should note it was empty (#873)."""
+    tools = create_heartbeat_tools(test_user.id)
+    update_hb = tools[1].function
+    result = await update_hb(text="- First item")
+    assert "was empty" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_update_heartbeat_description_warns_about_overwrite(test_user: User) -> None:
+    """update_heartbeat tool description should warn about overwrite behavior (#873)."""
+    tools = create_heartbeat_tools(test_user.id)
+    update_tool = tools[1]
+    desc = update_tool.description.lower()
+    assert "overwrite" in desc or "overwrites" in desc
+    assert "never re-add" in desc or "do not restore" in desc
+
+
+@pytest.mark.asyncio()
 async def test_heartbeat_scoped_to_user(test_user: User) -> None:
     """Each user's heartbeat text is independent."""
     db = _db_module.SessionLocal()

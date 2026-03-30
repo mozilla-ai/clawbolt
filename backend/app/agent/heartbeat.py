@@ -481,8 +481,10 @@ async def execute_heartbeat_tasks(
     reply text, or an empty string if the agent produced no output.
     """
     from backend.app.agent.core import AgentResponse, ClawboltAgent
+    from backend.app.agent.stores import ToolConfigStore
     from backend.app.agent.tools.registry import (
         ToolContext,
+        create_list_capabilities_tool,
         default_registry,
         ensure_tool_modules_imported,
     )
@@ -511,6 +513,20 @@ async def execute_heartbeat_tasks(
         to_address=chat_id,
     )
 
+    # Load user's disabled tool groups and sub-tools (same as the normal
+    # message flow in router.py) so the heartbeat respects the user's
+    # tool configuration.
+    tool_config_store = ToolConfigStore(user.id)
+    disabled_groups = await tool_config_store.get_disabled_tool_names()
+    disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
+
+    # Always exclude the messaging factory: the heartbeat system delivers
+    # the agent's final reply text, so the agent should not try to message
+    # the user directly.
+    excluded = (disabled_groups or set()) | {"messaging"}
+
+    activated_specialists: set[str] = set()
+
     agent = ClawboltAgent(
         user=user,
         channel=channel,
@@ -518,20 +534,45 @@ async def execute_heartbeat_tasks(
         chat_id=chat_id,
         tool_context=tool_context,
         registry=default_registry,
+        excluded_tool_names=disabled_sub_tools or None,
+        activated_specialists=activated_specialists,
     )
 
-    # Register ALL tools except messaging (send_reply, send_media_reply).
-    # The heartbeat system delivers the agent's final reply text, so the
-    # agent should not try to message the user directly.
-    all_factories = set(default_registry.factory_names)
-    all_factories.discard("messaging")
-    tools = default_registry.create_tools(tool_context, selected_factories=all_factories)
+    # Follow the same pattern as run_agent() in router.py:
+    # 1. Core tools (always available, respects disabled groups/sub-tools)
+    # 2. list_capabilities meta-tool for on-demand specialist activation
+    #    (QuickBooks, Calendar, etc.)
+    tools = default_registry.create_core_tools(
+        tool_context,
+        excluded_factories=excluded,
+        excluded_tool_names=disabled_sub_tools or None,
+    )
+    specialist_summaries = default_registry.get_available_specialist_summaries(
+        tool_context, excluded_factories=excluded
+    )
+    unauthenticated = default_registry.get_unauthenticated_specialists(
+        tool_context, excluded_factories=excluded
+    )
+    disabled_specialist_subs = default_registry.get_disabled_specialist_sub_tools(
+        disabled_sub_tools or set()
+    )
+    if specialist_summaries or unauthenticated:
+        tools.append(
+            create_list_capabilities_tool(
+                specialist_summaries,
+                unauthenticated=unauthenticated,
+                disabled_sub_tools=disabled_specialist_subs or None,
+                activated_specialists=activated_specialists,
+            )
+        )
     agent.register_tools(tools)
 
     logger.debug(
-        "Heartbeat Phase 2 agent for user %s initialized with %d tools",
+        "Heartbeat Phase 2 agent for user %s initialized with %d core tools, "
+        "%d specialist categories available",
         user.id,
         len(tools),
+        len(specialist_summaries),
     )
 
     # Use at least 1024 tokens for heartbeat execution so the agent can

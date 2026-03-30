@@ -1021,12 +1021,21 @@ class TestExecuteHeartbeatTasks:
             patch("backend.app.bus.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+            patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
+            patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
         ):
+            mock_tc = MagicMock()
+            mock_tc.get_disabled_tool_names = AsyncMock(return_value=set())
+            mock_tc.get_disabled_sub_tool_names = AsyncMock(return_value=set())
+            MockToolConfig.return_value = mock_tc
+
             mock_agent_instance = MagicMock()
             mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
             MockAgent.return_value = mock_agent_instance
-            mock_registry.factory_names = ["core", "quickbooks"]
-            mock_registry.create_tools.return_value = []
+            mock_registry.create_core_tools.return_value = []
+            mock_registry.get_available_specialist_summaries.return_value = {}
+            mock_registry.get_unauthenticated_specialists.return_value = {}
+            mock_registry.get_disabled_specialist_sub_tools.return_value = {}
             mock_bus.publish_outbound = AsyncMock()
 
             result = await execute_heartbeat_tasks(user, "Check QuickBooks for unpaid invoices")
@@ -1042,12 +1051,21 @@ class TestExecuteHeartbeatTasks:
             patch("backend.app.bus.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+            patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
+            patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
         ):
+            mock_tc = MagicMock()
+            mock_tc.get_disabled_tool_names = AsyncMock(return_value=set())
+            mock_tc.get_disabled_sub_tool_names = AsyncMock(return_value=set())
+            MockToolConfig.return_value = mock_tc
+
             mock_agent_instance = MagicMock()
             mock_agent_instance.process_message = AsyncMock(side_effect=Exception("LLM down"))
             MockAgent.return_value = mock_agent_instance
-            mock_registry.factory_names = ["core"]
-            mock_registry.create_tools.return_value = []
+            mock_registry.create_core_tools.return_value = []
+            mock_registry.get_available_specialist_summaries.return_value = {}
+            mock_registry.get_unauthenticated_specialists.return_value = {}
+            mock_registry.get_disabled_specialist_sub_tools.return_value = {}
             mock_bus.publish_outbound = AsyncMock()
 
             result = await execute_heartbeat_tasks(user, "Check something")
@@ -1066,20 +1084,29 @@ class TestExecuteHeartbeatTasks:
             patch("backend.app.bus.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+            patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
+            patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
         ):
+            mock_tc = MagicMock()
+            mock_tc.get_disabled_tool_names = AsyncMock(return_value=set())
+            mock_tc.get_disabled_sub_tool_names = AsyncMock(return_value=set())
+            MockToolConfig.return_value = mock_tc
+
             mock_agent_instance = MagicMock()
             mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
             MockAgent.return_value = mock_agent_instance
-            mock_registry.factory_names = ["core"]
-            mock_registry.create_tools.return_value = []
+            mock_registry.create_core_tools.return_value = []
+            mock_registry.get_available_specialist_summaries.return_value = {}
+            mock_registry.get_unauthenticated_specialists.return_value = {}
+            mock_registry.get_disabled_specialist_sub_tools.return_value = {}
             mock_bus.publish_outbound = AsyncMock()
 
             result = await execute_heartbeat_tasks(user, "Check something")
             assert result == ""
 
     @pytest.mark.asyncio
-    async def test_excludes_messaging_tools(self, user: User) -> None:
-        """Phase 2 should exclude the messaging factory so the agent cannot call send_reply."""
+    async def test_excludes_messaging_and_uses_list_capabilities(self, user: User) -> None:
+        """Phase 2 should use core tools + list_capabilities, excluding messaging."""
         from backend.app.agent.core import AgentResponse
 
         mock_response = AgentResponse(reply_text="Report")
@@ -1090,24 +1117,37 @@ class TestExecuteHeartbeatTasks:
             patch("backend.app.bus.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+            patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
+            patch(
+                "backend.app.agent.tools.registry.create_list_capabilities_tool"
+            ) as mock_list_cap,
         ):
+            mock_tc = MagicMock()
+            mock_tc.get_disabled_tool_names = AsyncMock(return_value=set())
+            mock_tc.get_disabled_sub_tool_names = AsyncMock(return_value=set())
+            MockToolConfig.return_value = mock_tc
+
             mock_agent_instance = MagicMock()
             mock_agent_instance.process_message = AsyncMock(return_value=mock_response)
             MockAgent.return_value = mock_agent_instance
-            mock_registry.factory_names = ["core", "quickbooks", "messaging"]
-            mock_registry.create_tools.return_value = []
+            mock_registry.create_core_tools.return_value = []
+            mock_registry.get_available_specialist_summaries.return_value = {
+                "quickbooks": "QB tools"
+            }
+            mock_registry.get_unauthenticated_specialists.return_value = {}
+            mock_registry.get_disabled_specialist_sub_tools.return_value = {}
             mock_bus.publish_outbound = AsyncMock()
 
             await execute_heartbeat_tasks(user, "Check QB", channel="telegram", chat_id="123")
 
-            # Verify create_tools was called with selected_factories excluding "messaging"
-            call_kwargs = mock_registry.create_tools.call_args
-            selected = call_kwargs.kwargs.get("selected_factories") or call_kwargs[1].get(
-                "selected_factories"
-            )
-            assert "messaging" not in selected
-            assert "core" in selected
-            assert "quickbooks" in selected
+            # Should use create_core_tools with messaging excluded
+            mock_registry.create_core_tools.assert_called_once()
+            call_kwargs = mock_registry.create_core_tools.call_args
+            excluded = call_kwargs.kwargs.get("excluded_factories")
+            assert "messaging" in excluded
+
+            # Should create list_capabilities since specialists are available
+            mock_list_cap.assert_called_once()
 
 
 # ---------------------------------------------------------------------------
@@ -2446,3 +2486,119 @@ class TestHeartbeatRulesGuardHistoryPatterns:
         rules = load_prompt("heartbeat_rules")
         assert "infer" in rules.lower() or "pattern" in rules.lower()
         assert "removed" in rules.lower() or "no longer" in rules.lower()
+
+
+# ---------------------------------------------------------------------------
+# Phase 2: tool wiring (regression for #874)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: User) -> None:
+    """execute_heartbeat_tasks should use create_core_tools + list_capabilities,
+    not create_tools with all factories (regression test for #874)."""
+    mock_agent_cls = MagicMock()
+    mock_agent = MagicMock()
+    mock_agent_cls.return_value = mock_agent
+    mock_agent.register_tools = MagicMock()
+    mock_agent.process_message = AsyncMock(
+        return_value=MagicMock(is_error_fallback=False, reply_text="done", actions_taken="")
+    )
+
+    mock_registry = MagicMock()
+    mock_registry.create_core_tools.return_value = [MagicMock(name="core_tool")]
+    mock_registry.get_available_specialist_summaries.return_value = {"quickbooks": "QB tools"}
+    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_disabled_specialist_sub_tools.return_value = {}
+
+    mock_tool_config = MagicMock()
+    mock_tool_config.get_disabled_tool_names = AsyncMock(return_value=set())
+    mock_tool_config.get_disabled_sub_tool_names = AsyncMock(return_value=set())
+
+    with (
+        patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
+        patch(
+            "backend.app.agent.tools.registry.default_registry",
+            mock_registry,
+        ),
+        patch(
+            "backend.app.agent.stores.ToolConfigStore",
+            return_value=mock_tool_config,
+        ),
+        patch(
+            "backend.app.agent.tools.registry.create_list_capabilities_tool",
+            return_value=MagicMock(name="list_capabilities"),
+        ) as mock_list_cap,
+        patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        patch("backend.app.bus.message_bus"),
+    ):
+        from backend.app.agent.heartbeat import execute_heartbeat_tasks
+
+        await execute_heartbeat_tasks(user, "Check invoices")
+
+    # Should use create_core_tools, not create_tools
+    mock_registry.create_core_tools.assert_called_once()
+    assert not hasattr(mock_registry.create_tools, "call_count") or (
+        mock_registry.create_tools.call_count == 0
+    )
+
+    # Should have created list_capabilities meta-tool
+    mock_list_cap.assert_called_once()
+
+    # "messaging" should be in the excluded factories
+    call_kwargs = mock_registry.create_core_tools.call_args
+    excluded = call_kwargs.kwargs.get("excluded_factories") or call_kwargs[1].get(
+        "excluded_factories"
+    )
+    assert "messaging" in excluded
+
+
+@pytest.mark.asyncio()
+async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
+    """execute_heartbeat_tasks should respect user's disabled tool config (#874)."""
+    mock_agent_cls = MagicMock()
+    mock_agent = MagicMock()
+    mock_agent_cls.return_value = mock_agent
+    mock_agent.register_tools = MagicMock()
+    mock_agent.process_message = AsyncMock(
+        return_value=MagicMock(is_error_fallback=False, reply_text="done", actions_taken="")
+    )
+
+    mock_registry = MagicMock()
+    mock_registry.create_core_tools.return_value = []
+    mock_registry.get_available_specialist_summaries.return_value = {}
+    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_disabled_specialist_sub_tools.return_value = {}
+
+    mock_tool_config = MagicMock()
+    mock_tool_config.get_disabled_tool_names = AsyncMock(return_value={"quickbooks"})
+    mock_tool_config.get_disabled_sub_tool_names = AsyncMock(return_value={"qb_query"})
+
+    with (
+        patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
+        patch("backend.app.agent.tools.registry.default_registry", mock_registry),
+        patch(
+            "backend.app.agent.stores.ToolConfigStore",
+            return_value=mock_tool_config,
+        ),
+        patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+        patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        patch("backend.app.bus.message_bus"),
+    ):
+        from backend.app.agent.heartbeat import execute_heartbeat_tasks
+
+        await execute_heartbeat_tasks(user, "Check something")
+
+    # Disabled groups should be excluded (along with messaging)
+    call_kwargs = mock_registry.create_core_tools.call_args
+    excluded = call_kwargs.kwargs.get("excluded_factories") or call_kwargs[1].get(
+        "excluded_factories"
+    )
+    assert "quickbooks" in excluded
+    assert "messaging" in excluded
+
+    # Disabled sub-tools should be passed through
+    excluded_tools = call_kwargs.kwargs.get("excluded_tool_names") or call_kwargs[1].get(
+        "excluded_tool_names"
+    )
+    assert "qb_query" in excluded_tools
