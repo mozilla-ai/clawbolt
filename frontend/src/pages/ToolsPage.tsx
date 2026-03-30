@@ -3,7 +3,7 @@ import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import { Switch } from '@heroui/switch';
 import { toast } from '@/lib/toast';
-import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect } from '@/hooks/queries';
+import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
 import api from '@/api';
 import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
@@ -31,6 +31,7 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   qb_create: 'Create entities',
   qb_update: 'Update entities',
   qb_send: 'Send documents',
+  calendar_list_calendars: 'List calendars',
   calendar_list_events: 'List events',
   calendar_create_event: 'Create events',
   calendar_update_event: 'Update events',
@@ -220,6 +221,11 @@ export default function ToolsPage() {
                     </div>
                   )}
 
+                  {/* Calendar picker */}
+                  {isConnected && tool.enabled && tool.name === 'calendar' && (
+                    <CalendarPicker />
+                  )}
+
                   {/* Sub-tools (expandable) */}
                   {isConnected && tool.enabled && (
                     <SubToolList
@@ -262,6 +268,164 @@ export default function ToolsPage() {
   );
 }
 
+// Per-calendar tool names that can be individually toggled per calendar.
+const PER_CALENDAR_TOOLS = [
+  'calendar_list_events',
+  'calendar_create_event',
+  'calendar_update_event',
+  'calendar_delete_event',
+] as const;
+
+function CalendarPicker() {
+  const { data: calendars, isPending: isLoadingCalendars } = useCalendarList();
+  const { data: config } = useCalendarConfig();
+  const updateConfig = useUpdateCalendarConfig();
+  const [expandedCals, setExpandedCals] = useState<Set<string>>(new Set());
+
+  const calendarList = calendars?.calendars ?? [];
+  const configMap = new Map(
+    (config?.calendars ?? []).map((c) => [c.calendar_id, c]),
+  );
+
+  if (isLoadingCalendars) {
+    return (
+      <div className="mt-3 pt-3 border-t border-border">
+        <p className="text-xs text-muted-foreground">Loading calendars...</p>
+      </div>
+    );
+  }
+
+  if (calendarList.length === 0) return null;
+
+  const save = (
+    next: Array<{ calendar_id: string; display_name: string; disabled_tools: string[] }>,
+    message: string,
+  ) => {
+    updateConfig.mutate(
+      { calendars: next },
+      {
+        onSuccess: () => toast.success(message),
+        onError: (err) => toast.error(err.message),
+      },
+    );
+  };
+
+  const handleToggle = (calId: string, calName: string, checked: boolean) => {
+    const current = config?.calendars ?? [];
+    if (checked) {
+      save(
+        [...current, { calendar_id: calId, display_name: calName, disabled_tools: [] }],
+        `Calendar enabled: ${calName}`,
+      );
+    } else {
+      save(
+        current.filter((c) => c.calendar_id !== calId),
+        `Calendar disabled: ${calName}`,
+      );
+    }
+  };
+
+  const toggleCalExpanded = (calId: string) => {
+    setExpandedCals((prev) => {
+      const next = new Set(prev);
+      if (next.has(calId)) next.delete(calId);
+      else next.add(calId);
+      return next;
+    });
+  };
+
+  const handleToolToggle = (calId: string, toolName: string, enabled: boolean) => {
+    const current = config?.calendars ?? [];
+    const entry = current.find((c) => c.calendar_id === calId);
+    if (!entry) return;
+
+    const disabled = entry.disabled_tools ?? [];
+    const newDisabled = enabled
+      ? disabled.filter((t) => t !== toolName)
+      : [...disabled, toolName];
+
+    save(
+      current.map((c) =>
+        c.calendar_id === calId ? { ...c, disabled_tools: newDisabled } : c,
+      ),
+      `${subToolDisplayName(toolName)} ${enabled ? 'enabled' : 'disabled'}`,
+    );
+  };
+
+  return (
+    <div className="mt-3 pt-3 border-t border-border">
+      <span className="block text-xs text-muted-foreground mb-1.5">
+        Enabled calendars (the assistant will only see these)
+      </span>
+      <div className="space-y-2">
+        {calendarList.map((cal) => {
+          const entry = configMap.get(cal.id);
+          const isEnabled = !!entry;
+          const isExpanded = expandedCals.has(cal.id);
+          const disabled = new Set(entry?.disabled_tools ?? []);
+
+          return (
+            <div key={cal.id}>
+              <div className="flex items-center gap-2">
+                <label className="flex items-center gap-2 text-sm cursor-pointer flex-1 min-w-0">
+                  <input
+                    type="checkbox"
+                    checked={isEnabled}
+                    disabled={updateConfig.isPending}
+                    onChange={(e) => handleToggle(cal.id, cal.summary, e.target.checked)}
+                    className="rounded border-border shrink-0"
+                  />
+                  <span className="truncate">
+                    {cal.summary}{cal.primary ? ' (primary)' : ''}
+                  </span>
+                </label>
+                {isEnabled && (
+                  <button
+                    type="button"
+                    className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground transition-colors shrink-0"
+                    onClick={() => toggleCalExpanded(cal.id)}
+                    aria-expanded={isExpanded}
+                  >
+                    <svg
+                      className={`w-3 h-3 transition-transform ${isExpanded ? 'rotate-90' : ''}`}
+                      fill="none"
+                      viewBox="0 0 24 24"
+                      stroke="currentColor"
+                      strokeWidth={2}
+                    >
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+                    </svg>
+                    {disabled.size === 0 ? 'Full access' : `${PER_CALENDAR_TOOLS.length - disabled.size}/${PER_CALENDAR_TOOLS.length}`}
+                  </button>
+                )}
+              </div>
+              {isEnabled && isExpanded && (
+                <div className="mt-1.5 ml-6 pl-3 border-l border-border space-y-1">
+                  {PER_CALENDAR_TOOLS.map((toolName) => (
+                    <div key={toolName} className="flex items-center justify-between gap-3 py-0.5">
+                      <span className="text-xs">{subToolDisplayName(toolName)}</span>
+                      <Switch
+                        isSelected={!disabled.has(toolName)}
+                        isDisabled={updateConfig.isPending}
+                        onValueChange={(val) => handleToolToggle(cal.id, toolName, val)}
+                        size="sm"
+                        aria-label={`Toggle ${subToolDisplayName(toolName)} for ${cal.summary}`}
+                      />
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// Per-calendar tool names are managed in CalendarPicker, not in SubToolList.
+const PER_CALENDAR_TOOL_SET = new Set<string>(PER_CALENDAR_TOOLS);
+
 function SubToolList({
   tool,
   isExpanded,
@@ -276,6 +440,13 @@ function SubToolList({
   isUpdating: boolean;
 }) {
   if (!tool.sub_tools || tool.sub_tools.length === 0) return null;
+
+  // For the calendar tool, filter out per-calendar tools (handled in CalendarPicker).
+  const visibleSubTools = tool.name === 'calendar'
+    ? tool.sub_tools.filter((st) => !PER_CALENDAR_TOOL_SET.has(st.name))
+    : tool.sub_tools;
+
+  if (visibleSubTools.length === 0) return null;
 
   return (
     <div className="mt-2">
@@ -294,11 +465,11 @@ function SubToolList({
         >
           <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
         </svg>
-        {tool.sub_tools.length} capabilities
+        {visibleSubTools.length} global {visibleSubTools.length === 1 ? 'capability' : 'capabilities'}
       </button>
       {isExpanded && (
         <div className="mt-2 pl-4 border-l border-border space-y-1.5">
-          {tool.sub_tools.map((st: SubToolEntryResponse) => (
+          {visibleSubTools.map((st: SubToolEntryResponse) => (
             <div key={st.name} className="flex items-center justify-between gap-3 py-0.5">
               <div className="flex-1 min-w-0">
                 <span className="text-xs">{subToolDisplayName(st.name)}</span>

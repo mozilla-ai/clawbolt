@@ -103,6 +103,8 @@ class CalendarProvider(Protocol):
         event_id: str,
     ) -> None: ...
 
+    async def list_calendars(self) -> list[CalendarInfo]: ...
+
     async def check_availability(
         self,
         calendar_id: str,

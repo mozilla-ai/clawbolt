@@ -13,4 +13,6 @@ export const queryKeys = {
   modelConfig: ['modelConfig'] as const,
   storageConfig: ['storageConfig'] as const,
   oauth: ['oauth'] as const,
+  calendarList: ['calendarList'] as const,
+  calendarConfig: ['calendarConfig'] as const,
 };

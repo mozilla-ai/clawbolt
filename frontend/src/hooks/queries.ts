@@ -115,6 +115,33 @@ export function useOAuthDisconnect() {
   });
 }
 
+// --- Calendar config ---
+
+export function useCalendarList() {
+  return useQuery({
+    queryKey: queryKeys.calendarList,
+    queryFn: () => api.getCalendarList(),
+  });
+}
+
+export function useCalendarConfig() {
+  return useQuery({
+    queryKey: queryKeys.calendarConfig,
+    queryFn: () => api.getCalendarConfig(),
+  });
+}
+
+export function useUpdateCalendarConfig() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[] }> }) =>
+      api.updateCalendarConfig(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.calendarConfig });
+    },
+  });
+}
+
 // --- Storage config ---
 
 export function useStorageConfig() {
