@@ -1135,6 +1135,119 @@
           }
         }
       }
+    },
+    "/api/user/calendar/calendars": {
+      "get": {
+        "summary": "List Calendars",
+        "description": "Fetch the user's Google Calendar list from the Google API.",
+        "operationId": "list_calendars_api_user_calendar_calendars_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/user/calendar/config": {
+      "get": {
+        "summary": "Get Calendar Config",
+        "description": "Get all enabled calendars for the user.",
+        "operationId": "get_calendar_config_api_user_calendar_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarConfigResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Calendar Config",
+        "description": "Replace all enabled calendars (delete existing, insert new).",
+        "operationId": "update_calendar_config_api_user_calendar_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CalendarConfigUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarConfigResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/{full_path}": {
+      "get": {
+        "summary": " Spa Fallback",
+        "description": "Serve the SPA index.html for all non-API routes.",
+        "operationId": "_spa_fallback__full_path__get",
+        "parameters": [
+          {
+            "name": "full_path",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Full Path"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1169,6 +1282,102 @@
         },
         "type": "object",
         "title": "Body_send_chat_message_api_user_chat_post"
+      },
+      "CalendarConfigEntry": {
+        "properties": {
+          "calendar_id": {
+            "type": "string",
+            "title": "Calendar Id"
+          },
+          "display_name": {
+            "type": "string",
+            "title": "Display Name"
+          },
+          "disabled_tools": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Disabled Tools"
+          }
+        },
+        "type": "object",
+        "required": [
+          "calendar_id",
+          "display_name"
+        ],
+        "title": "CalendarConfigEntry"
+      },
+      "CalendarConfigResponse": {
+        "properties": {
+          "calendars": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarConfigEntry"
+            },
+            "type": "array",
+            "title": "Calendars"
+          }
+        },
+        "type": "object",
+        "required": [
+          "calendars"
+        ],
+        "title": "CalendarConfigResponse"
+      },
+      "CalendarConfigUpdate": {
+        "properties": {
+          "calendars": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarConfigEntry"
+            },
+            "type": "array",
+            "title": "Calendars"
+          }
+        },
+        "type": "object",
+        "required": [
+          "calendars"
+        ],
+        "title": "CalendarConfigUpdate"
+      },
+      "CalendarListEntry": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "summary": {
+            "type": "string",
+            "title": "Summary"
+          },
+          "primary": {
+            "type": "boolean",
+            "title": "Primary",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "summary"
+        ],
+        "title": "CalendarListEntry"
+      },
+      "CalendarListResponse": {
+        "properties": {
+          "calendars": {
+            "items": {
+              "$ref": "#/components/schemas/CalendarListEntry"
+            },
+            "type": "array",
+            "title": "Calendars"
+          }
+        },
+        "type": "object",
+        "required": [
+          "calendars"
+        ],
+        "title": "CalendarListResponse"
       },
       "ChannelConfigResponse": {
         "properties": {

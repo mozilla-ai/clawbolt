@@ -357,7 +357,12 @@ class LLMUsageLog(Base):
 class CalendarConfig(Base):
     __tablename__ = "calendar_configs"
     __table_args__ = (
-        UniqueConstraint("user_id", "provider", name="uq_calendar_config_user_provider"),
+        UniqueConstraint(
+            "user_id",
+            "provider",
+            "calendar_id",
+            name="uq_calendar_config_user_provider_calendar",
+        ),
     )
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -367,6 +372,7 @@ class CalendarConfig(Base):
     provider: Mapped[str] = mapped_column(String, nullable=False)
     display_name: Mapped[str] = mapped_column(String, default="")
     calendar_id: Mapped[str] = mapped_column(String, default="primary")
+    disabled_tools: Mapped[str] = mapped_column(Text, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

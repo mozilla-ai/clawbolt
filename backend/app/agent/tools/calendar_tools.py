@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import time
 import zoneinfo
@@ -36,6 +37,10 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
+class CalendarListCalendarsParams(BaseModel):
+    """Parameters for the calendar_list_calendars tool."""
+
+
 class CalendarListEventsParams(BaseModel):
     """Parameters for the calendar_list_events tool."""
 
@@ -46,8 +51,11 @@ class CalendarListEventsParams(BaseModel):
         description=("End of the time range in ISO 8601 format (e.g. 2026-03-30T23:59:59).")
     )
     calendar_id: str = Field(
-        default="primary",
-        description="Calendar ID to query. Defaults to 'primary'.",
+        default="",
+        description=(
+            "Calendar ID to query. Leave empty to query all enabled calendars. "
+            "Specify a calendar ID to query only that calendar."
+        ),
     )
 
 
@@ -60,8 +68,10 @@ class CalendarCreateEventParams(BaseModel):
     description: str = Field(default="", description="Event description or notes.")
     location: str = Field(default="", description="Event location address.")
     calendar_id: str = Field(
-        default="primary",
-        description="Calendar ID to create the event on. Defaults to 'primary'.",
+        default="",
+        description=(
+            "Calendar ID to create the event on. Required when multiple calendars are enabled."
+        ),
     )
 
 
@@ -75,8 +85,8 @@ class CalendarUpdateEventParams(BaseModel):
     description: str | None = Field(default=None, description="New description.")
     location: str | None = Field(default=None, description="New location.")
     calendar_id: str = Field(
-        default="primary",
-        description="Calendar ID. Defaults to 'primary'.",
+        default="",
+        description=("Calendar ID. Required when multiple calendars are enabled."),
     )
 
 
@@ -85,8 +95,8 @@ class CalendarDeleteEventParams(BaseModel):
 
     event_id: str = Field(description="Google Calendar event ID to delete.")
     calendar_id: str = Field(
-        default="primary",
-        description="Calendar ID. Defaults to 'primary'.",
+        default="",
+        description=("Calendar ID. Required when multiple calendars are enabled."),
     )
 
 
@@ -96,8 +106,8 @@ class CalendarCheckAvailabilityParams(BaseModel):
     start_date: str = Field(description="Start of the range in ISO 8601 format.")
     end_date: str = Field(description="End of the range in ISO 8601 format.")
     calendar_id: str = Field(
-        default="primary",
-        description="Calendar ID to check. Defaults to 'primary'.",
+        default="",
+        description=("Calendar ID to check. Leave empty to check all enabled calendars."),
     )
 
 
@@ -106,9 +116,12 @@ class CalendarCheckAvailabilityParams(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _format_event(event: Any) -> str:
+def _format_event(event: Any, calendar_label: str = "") -> str:
     """Format a single calendar event for LLM readability."""
-    parts = [event.title]
+    parts = []
+    if calendar_label:
+        parts.append(f"[{calendar_label}]")
+    parts.append(event.title)
     if event.all_day:
         parts.append(f"(all day, {event.start.strftime('%Y-%m-%d')})")
     else:
@@ -180,6 +193,74 @@ def _make_token_refresh_callback(user_id: str) -> Any:
 
 
 # ---------------------------------------------------------------------------
+# Multi-calendar helpers
+# ---------------------------------------------------------------------------
+
+
+def _validate_calendar_id(
+    calendar_id: str,
+    enabled_calendars: list[tuple[str, str, list[str]]],
+    tool_name: str = "",
+) -> tuple[str, str | None]:
+    """Resolve and validate a calendar_id against the enabled set.
+
+    Returns ``(resolved_id, error_message)``.  When *error_message* is
+    ``None`` the *resolved_id* is safe to use.
+
+    When *tool_name* is set, also checks that the tool is not disabled
+    on the resolved calendar.
+    """
+    enabled_ids = {cid for cid, _, _ in enabled_calendars}
+
+    # Filter to calendars where this tool is allowed
+    if tool_name:
+        allowed = [
+            (cid, name) for cid, name, disabled in enabled_calendars if tool_name not in disabled
+        ]
+    else:
+        allowed = [(cid, name) for cid, name, _ in enabled_calendars]
+
+    if not calendar_id:
+        if len(allowed) == 1:
+            return allowed[0][0], None
+        if not allowed:
+            display = tool_name.replace("calendar_", "").replace("_", " ")
+            return "", f"No calendars allow {display}. Update calendar permissions in Settings."
+        return (
+            "",
+            f"Multiple calendars available. Please specify calendar_id. Options: {', '.join(f'{name} ({cid})' for cid, name in allowed)}",
+        )
+
+    if calendar_id not in enabled_ids:
+        return (
+            "",
+            f"Calendar '{calendar_id}' is not in the enabled set. Options: {', '.join(f'{name} ({cid})' for cid, name, _ in enabled_calendars)}",
+        )
+
+    if tool_name:
+        for cid, name, disabled in enabled_calendars:
+            if cid == calendar_id and tool_name in disabled:
+                display = tool_name.replace("calendar_", "").replace("_", " ")
+                return (
+                    "",
+                    f"'{name}' does not allow {display}. Update calendar permissions in Settings.",
+                )
+
+    return calendar_id, None
+
+
+# Per-calendar tools (can be disabled individually per calendar).
+# Global tools (list_calendars, check_availability) are controlled by the
+# existing sub-tool toggle system and are not per-calendar.
+_PER_CALENDAR_TOOLS = [
+    ToolName.CALENDAR_LIST_EVENTS,
+    ToolName.CALENDAR_CREATE_EVENT,
+    ToolName.CALENDAR_UPDATE_EVENT,
+    ToolName.CALENDAR_DELETE_EVENT,
+]
+
+
+# ---------------------------------------------------------------------------
 # Tool creation
 # ---------------------------------------------------------------------------
 
@@ -187,6 +268,7 @@ def _make_token_refresh_callback(user_id: str) -> Any:
 def create_calendar_tools(
     service: GoogleCalendarService | Any,
     user_timezone: str = "",
+    enabled_calendars: list[tuple[str, str, list[str]]] | None = None,
 ) -> list[Tool]:
     """Create calendar tools bound to a calendar service instance.
 
@@ -194,13 +276,54 @@ def create_calendar_tools(
     When the LLM omits a timezone offset from date strings, this timezone
     is used instead of UTC so that ``09:00`` means 9 AM in the user's
     local time.
+
+    *enabled_calendars* is a list of ``(calendar_id, display_name, disabled_tools)``
+    tuples.  *disabled_tools* is a list of tool names disabled on that calendar.
+    When empty or ``None``, defaults to ``[("primary", "Primary", [])]``.
     """
     default_tz = _resolve_tz(user_timezone)
+    _enabled: list[tuple[str, str, list[str]]] = enabled_calendars or [("primary", "Primary", [])]
+    _enabled_ids = {cid for cid, _, _ in _enabled}
+    _cal_name_map = {cid: name for cid, name, _ in _enabled}
+    _disabled_map = {cid: set(disabled) for cid, _, disabled in _enabled}
+
+    async def calendar_list_calendars() -> ToolResult:
+        """List enabled calendars for the user."""
+        if not _enabled:
+            return ToolResult(content="No calendars enabled.")
+
+        lines = [f"{len(_enabled)} enabled calendar(s):"]
+        for cal_id, cal_name, disabled in _enabled:
+            disabled_set = set(disabled)
+            allowed = [
+                t.replace("calendar_", "").replace("_", " ")
+                for t in _PER_CALENDAR_TOOLS
+                if t not in disabled_set
+            ]
+            blocked = [
+                t.replace("calendar_", "").replace("_", " ")
+                for t in _PER_CALENDAR_TOOLS
+                if t in disabled_set
+            ]
+            parts = [cal_name]
+            parts.append(f"allowed: {', '.join(allowed)}" if allowed else "allowed: none")
+            if blocked:
+                parts.append(f"blocked: {', '.join(blocked)}")
+            parts.append(f"id: {cal_id}")
+            lines.append("- " + " | ".join(parts))
+        return ToolResult(content="\n".join(lines))
 
     async def calendar_list_events(
-        start_date: str, end_date: str, calendar_id: str = "primary"
+        start_date: str, end_date: str, calendar_id: str = ""
     ) -> ToolResult:
         """List calendar events in a time range."""
+        logger.debug(
+            "list_events called: start=%s end=%s calendar_id=%r enabled=%s",
+            start_date,
+            end_date,
+            calendar_id,
+            [(cid, name) for cid, name, _ in _enabled],
+        )
         try:
             time_min = _parse_dt(start_date, default_tz)
             time_max = _parse_dt(end_date, default_tz)
@@ -211,30 +334,70 @@ def create_calendar_tools(
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
-        try:
-            events = await service.list_events(calendar_id, time_min, time_max)
-        except httpx.TimeoutException:
-            return ToolResult(
-                content="Calendar service unavailable (timeout). Try again shortly.",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-        except httpx.HTTPStatusError as exc:
-            return _handle_http_error(exc, "list events")
-        except Exception as exc:
-            logger.exception("Calendar list_events failed")
-            return ToolResult(
-                content=f"Calendar error: {exc}",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+        # Determine which calendars to query
+        tool = ToolName.CALENDAR_LIST_EVENTS
+        if calendar_id:
+            resolved_id, err = _validate_calendar_id(calendar_id, _enabled, tool_name=tool)
+            if err:
+                return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
+            query_cals = [(resolved_id, _cal_name_map[resolved_id])]
+        else:
+            # Query all calendars where list_events is not disabled
+            query_cals = [
+                (cid, name)
+                for cid, name, _ in _enabled
+                if tool not in _disabled_map.get(cid, set())
+            ]
+
+        logger.debug("list_events querying calendars: %s", query_cals)
+        all_events: list[tuple[str, Any]] = []
+        skipped: list[str] = []
+        for cal_id, cal_name in query_cals:
+            try:
+                events = await service.list_events(cal_id, time_min, time_max)
+                for event in events:
+                    all_events.append((cal_name, event))
+            except httpx.TimeoutException:
+                return ToolResult(
+                    content="Calendar service unavailable (timeout). Try again shortly.",
+                    is_error=True,
+                    error_kind=ToolErrorKind.SERVICE,
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404 and len(query_cals) > 1:
+                    logger.warning("Calendar %s (%s) returned 404, skipping", cal_id, cal_name)
+                    skipped.append(cal_name)
+                    continue
+                return _handle_http_error(exc, "list events")
+            except Exception as exc:
+                logger.exception("Calendar list_events failed for %s", cal_id)
+                return ToolResult(
+                    content=f"Calendar error: {exc}",
+                    is_error=True,
+                    error_kind=ToolErrorKind.SERVICE,
+                )
+
+        skip_note = ""
+        if skipped:
+            skip_note = (
+                f"\n(Skipped {len(skipped)} calendar(s) not found: "
+                f"{', '.join(skipped)}. Refresh calendar config in Settings.)"
             )
 
-        if not events:
-            return ToolResult(content=f"No events found between {start_date} and {end_date}.")
+        if not all_events:
+            return ToolResult(
+                content=f"No events found between {start_date} and {end_date}.{skip_note}"
+            )
 
-        lines = [f"Found {len(events)} event(s):"]
-        for event in events:
-            lines.append(f"- {_format_event(event)}")
+        # Sort by event start time
+        all_events.sort(key=lambda pair: pair[1].start)
+
+        show_label = len(query_cals) > 1
+        lines = [f"Found {len(all_events)} event(s):"]
+        for cal_name, event in all_events:
+            lines.append(f"- {_format_event(event, calendar_label=cal_name if show_label else '')}")
+        if skip_note:
+            lines.append(skip_note)
         return ToolResult(content="\n".join(lines))
 
     async def calendar_create_event(
@@ -243,9 +406,16 @@ def create_calendar_tools(
         end: str,
         description: str = "",
         location: str = "",
-        calendar_id: str = "primary",
+        calendar_id: str = "",
     ) -> ToolResult:
         """Create a new calendar event."""
+        logger.debug("create_event called: title=%r calendar_id=%r", title, calendar_id)
+        resolved_id, err = _validate_calendar_id(
+            calendar_id, _enabled, tool_name=ToolName.CALENDAR_CREATE_EVENT
+        )
+        if err:
+            return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
+
         try:
             start_dt = _parse_dt(start, default_tz)
             end_dt = _parse_dt(end, default_tz)
@@ -272,7 +442,7 @@ def create_calendar_tools(
         )
 
         try:
-            event = await service.create_event(calendar_id, create_data)
+            event = await service.create_event(resolved_id, create_data)
         except httpx.TimeoutException:
             return ToolResult(
                 content="Calendar service unavailable (timeout). Try again shortly.",
@@ -305,9 +475,16 @@ def create_calendar_tools(
         end: str | None = None,
         description: str | None = None,
         location: str | None = None,
-        calendar_id: str = "primary",
+        calendar_id: str = "",
     ) -> ToolResult:
         """Update an existing calendar event."""
+        logger.debug("update_event called: event_id=%r calendar_id=%r", event_id, calendar_id)
+        resolved_id, err = _validate_calendar_id(
+            calendar_id, _enabled, tool_name=ToolName.CALENDAR_UPDATE_EVENT
+        )
+        if err:
+            return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
+
         start_dt = None
         end_dt = None
         if start is not None:
@@ -338,7 +515,7 @@ def create_calendar_tools(
         )
 
         try:
-            event = await service.update_event(calendar_id, event_id, updates)
+            event = await service.update_event(resolved_id, event_id, updates)
         except httpx.TimeoutException:
             return ToolResult(
                 content="Calendar service unavailable (timeout). Try again shortly.",
@@ -366,11 +543,18 @@ def create_calendar_tools(
 
     async def calendar_delete_event(
         event_id: str,
-        calendar_id: str = "primary",
+        calendar_id: str = "",
     ) -> ToolResult:
         """Delete a calendar event."""
+        logger.debug("delete_event called: event_id=%r calendar_id=%r", event_id, calendar_id)
+        resolved_id, err = _validate_calendar_id(
+            calendar_id, _enabled, tool_name=ToolName.CALENDAR_DELETE_EVENT
+        )
+        if err:
+            return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
+
         try:
-            await service.delete_event(calendar_id, event_id)
+            await service.delete_event(resolved_id, event_id)
         except httpx.TimeoutException:
             return ToolResult(
                 content="Calendar service unavailable (timeout). Try again shortly.",
@@ -390,9 +574,15 @@ def create_calendar_tools(
         return ToolResult(content=f"Event {event_id} deleted.")
 
     async def calendar_check_availability(
-        start_date: str, end_date: str, calendar_id: str = "primary"
+        start_date: str, end_date: str, calendar_id: str = ""
     ) -> ToolResult:
         """Check calendar availability (free/busy) in a time range."""
+        logger.debug(
+            "check_availability called: start=%s end=%s calendar_id=%r",
+            start_date,
+            end_date,
+            calendar_id,
+        )
         try:
             time_min = _parse_dt(start_date, default_tz)
             time_max = _parse_dt(end_date, default_tz)
@@ -403,40 +593,88 @@ def create_calendar_tools(
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
-        try:
-            busy_slots = await service.check_availability(calendar_id, time_min, time_max)
-        except httpx.TimeoutException:
-            return ToolResult(
-                content="Calendar service unavailable (timeout). Try again shortly.",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-        except httpx.HTTPStatusError as exc:
-            return _handle_http_error(exc, "check availability")
-        except Exception as exc:
-            logger.exception("Calendar check_availability failed")
-            return ToolResult(
-                content=f"Calendar error: {exc}",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
+        # Determine which calendars to check (availability is global)
+        if calendar_id:
+            if calendar_id not in _enabled_ids:
+                return ToolResult(
+                    content=f"Calendar '{calendar_id}' is not in the enabled set. Options: {', '.join(f'{name} ({cid})' for cid, name, _ in _enabled)}",
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
+            query_cals = [(calendar_id, _cal_name_map[calendar_id])]
+        else:
+            query_cals = [(cid, name) for cid, name, _ in _enabled]
+
+        all_slots: list[tuple[str, Any]] = []
+        skipped: list[str] = []
+        for cal_id, cal_name in query_cals:
+            try:
+                busy_slots = await service.check_availability(cal_id, time_min, time_max)
+                for slot in busy_slots:
+                    all_slots.append((cal_name, slot))
+            except httpx.TimeoutException:
+                return ToolResult(
+                    content="Calendar service unavailable (timeout). Try again shortly.",
+                    is_error=True,
+                    error_kind=ToolErrorKind.SERVICE,
+                )
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code == 404 and len(query_cals) > 1:
+                    logger.warning("Calendar %s (%s) returned 404, skipping", cal_id, cal_name)
+                    skipped.append(cal_name)
+                    continue
+                return _handle_http_error(exc, "check availability")
+            except Exception as exc:
+                logger.exception("Calendar check_availability failed for %s", cal_id)
+                return ToolResult(
+                    content=f"Calendar error: {exc}",
+                    is_error=True,
+                    error_kind=ToolErrorKind.SERVICE,
+                )
+
+        skip_note = ""
+        if skipped:
+            skip_note = (
+                f"\n(Skipped {len(skipped)} calendar(s) not found: "
+                f"{', '.join(skipped)}. Refresh calendar config in Settings.)"
             )
 
-        if not busy_slots:
-            return ToolResult(content=f"Calendar is free between {start_date} and {end_date}.")
+        if not all_slots:
+            return ToolResult(
+                content=f"Calendar is free between {start_date} and {end_date}.{skip_note}"
+            )
 
-        lines = [f"Found {len(busy_slots)} busy slot(s):"]
-        for slot in busy_slots:
+        all_slots.sort(key=lambda pair: pair[1].start)
+
+        show_label = len(query_cals) > 1
+        lines = [f"Found {len(all_slots)} busy slot(s):"]
+        for cal_name, slot in all_slots:
+            label = f"[{cal_name}] " if show_label else ""
             lines.append(
-                f"- {slot.start.strftime('%Y-%m-%d %H:%M')} - {slot.end.strftime('%H:%M')}"
+                f"- {label}{slot.start.strftime('%Y-%m-%d %H:%M')} - {slot.end.strftime('%H:%M')}"
             )
         return ToolResult(content="\n".join(lines))
 
     return [
         Tool(
+            name=ToolName.CALENDAR_LIST_CALENDARS,
+            description=(
+                "List the calendars the user has enabled for the assistant. "
+                "Shows calendar names and IDs."
+            ),
+            function=calendar_list_calendars,
+            params_model=CalendarListCalendarsParams,
+            usage_hint=("List enabled calendars to help the user pick the right one."),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.AUTO,
+            ),
+        ),
+        Tool(
             name=ToolName.CALENDAR_LIST_EVENTS,
             description=(
                 "List events on Google Calendar within a date range. "
-                "Returns event titles, times, locations, and IDs."
+                "Returns event titles, times, locations, and IDs. "
+                "When no calendar_id is specified, queries all enabled calendars."
             ),
             function=calendar_list_events,
             params_model=CalendarListEventsParams,
@@ -452,14 +690,17 @@ def create_calendar_tools(
             name=ToolName.CALENDAR_CREATE_EVENT,
             description=(
                 "Create a new event on Google Calendar. "
+                "IMPORTANT: Some calendars are read-only. Check calendar_list_calendars "
+                "first to verify the target calendar allows creation. "
                 "Use 'Job: {client} - {description}' format for job events. "
-                "Include the job location."
+                "Include the job location. "
+                "Specify calendar_id when multiple calendars are enabled."
             ),
             function=calendar_create_event,
             params_model=CalendarCreateEventParams,
             usage_hint=(
-                "Create a calendar event. Check availability first. "
-                "Use 'Job: Client - Description' format for job titles."
+                "Create a calendar event. Check calendar_list_calendars for write access "
+                "and availability first. Use 'Job: Client - Description' format for job titles."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
@@ -473,13 +714,15 @@ def create_calendar_tools(
             name=ToolName.CALENDAR_UPDATE_EVENT,
             description=(
                 "Update an existing Google Calendar event. "
+                "Only works on calendars with update access (check calendar_list_calendars). "
                 "Pass the event_id from a prior calendar_list_events call "
                 "and only the fields to change."
             ),
             function=calendar_update_event,
             params_model=CalendarUpdateEventParams,
             usage_hint=(
-                "Update an existing event. Get the event_id from calendar_list_events first."
+                "Update an existing event. Verify the calendar allows updates first. "
+                "Get the event_id from calendar_list_events."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
@@ -495,11 +738,15 @@ def create_calendar_tools(
             name=ToolName.CALENDAR_DELETE_EVENT,
             description=(
                 "Delete an event from Google Calendar. "
+                "Only works on calendars with delete access (check calendar_list_calendars). "
                 "Pass the event_id from a prior calendar_list_events call."
             ),
             function=calendar_delete_event,
             params_model=CalendarDeleteEventParams,
-            usage_hint=("Delete a calendar event. Confirm with the user first."),
+            usage_hint=(
+                "Delete a calendar event. Verify the calendar allows deletion first. "
+                "Confirm with the user before deleting."
+            ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 resource_extractor=lambda args: f"delete {args.get('event_id', '')}",
@@ -511,7 +758,8 @@ def create_calendar_tools(
             description=(
                 "Check free/busy status on Google Calendar for a date range. "
                 "Returns busy time slots. Use this before suggesting new "
-                "appointment times."
+                "appointment times. "
+                "When no calendar_id is specified, checks all enabled calendars."
             ),
             function=calendar_check_availability,
             params_model=CalendarCheckAvailabilityParams,
@@ -533,6 +781,16 @@ def create_calendar_tools(
 def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
     """Convert an HTTP error into a user-friendly ToolResult."""
     status = exc.response.status_code
+    body = ""
+    with contextlib.suppress(Exception):
+        body = exc.response.text[:500]
+    logger.warning(
+        "Calendar HTTP %d during %s: url=%s body=%s",
+        status,
+        action,
+        str(exc.request.url) if exc.request else "unknown",
+        body,
+    )
     if status == 401:
         return ToolResult(
             content="Calendar disconnected. Please reconnect Google Calendar in Settings.",
@@ -541,7 +799,7 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
         )
     if status == 404:
         return ToolResult(
-            content=f"Calendar event not found while trying to {action}.",
+            content=f"Not found while trying to {action}. The calendar or event may no longer exist.",
             is_error=True,
             error_kind=ToolErrorKind.NOT_FOUND,
         )
@@ -552,7 +810,6 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
             error_kind=ToolErrorKind.SERVICE,
             hint="Wait a moment before retrying calendar operations.",
         )
-    logger.exception("Calendar HTTP error during %s", action)
     return ToolResult(
         content=f"Calendar service error ({status}) while trying to {action}.",
         is_error=True,
@@ -583,6 +840,50 @@ def _calendar_auth_check(ctx: ToolContext) -> str | None:
     )
 
 
+def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str]]]:
+    """Load the user's enabled calendars from CalendarConfig.
+
+    Returns a list of ``(calendar_id, display_name, disabled_tools)`` tuples.
+    """
+    import json
+
+    from backend.app.database import SessionLocal
+    from backend.app.models import CalendarConfig
+
+    def _parse(raw: str) -> list[str]:
+        if not raw:
+            return []
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return [str(x) for x in parsed]
+        except (json.JSONDecodeError, TypeError):
+            pass
+        return []
+
+    db = SessionLocal()
+    try:
+        configs = (
+            db.query(CalendarConfig).filter_by(user_id=user_id, provider="google_calendar").all()
+        )
+        if configs:
+            result = [
+                (c.calendar_id, c.display_name or c.calendar_id, _parse(c.disabled_tools))
+                for c in configs
+            ]
+            logger.debug(
+                "Loaded %d enabled calendar(s) for user %s: %s",
+                len(result),
+                user_id,
+                [(cid, name) for cid, name, _ in result],
+            )
+            return result
+    finally:
+        db.close()
+    logger.debug("No calendar config for user %s, defaulting to primary", user_id)
+    return [("primary", "Primary", [])]
+
+
 def _calendar_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for calendar tools, used by the registry."""
     if not settings.google_calendar_client_id or not settings.google_calendar_client_secret:
@@ -598,7 +899,12 @@ def _calendar_factory(ctx: ToolContext) -> list[Tool]:
         on_token_refresh=_make_token_refresh_callback(ctx.user.id),
         token_expires_at=token.expires_at,
     )
-    return create_calendar_tools(service, user_timezone=ctx.user.timezone)
+    enabled_calendars = _get_enabled_calendars(ctx.user.id)
+    return create_calendar_tools(
+        service,
+        user_timezone=ctx.user.timezone,
+        enabled_calendars=enabled_calendars,
+    )
 
 
 def _register() -> None:
@@ -610,6 +916,10 @@ def _register() -> None:
         core=False,
         summary=("Read and manage Google Calendar events, check availability"),
         sub_tools=[
+            SubToolInfo(
+                ToolName.CALENDAR_LIST_CALENDARS,
+                "List available calendars",
+            ),
             SubToolInfo(
                 ToolName.CALENDAR_LIST_EVENTS,
                 "List calendar events in a date range",
