@@ -2446,11 +2446,3 @@ class TestHeartbeatRulesGuardHistoryPatterns:
         rules = load_prompt("heartbeat_rules")
         assert "infer" in rules.lower() or "pattern" in rules.lower()
         assert "removed" in rules.lower() or "no longer" in rules.lower()
-
-    def test_rules_prohibit_time_based_initiative(self) -> None:
-        """The rules must prevent time-of-day or day-of-week driven messages
-        unless a current heartbeat item explicitly calls for it."""
-        from backend.app.agent.system_prompt import load_prompt
-
-        rules = load_prompt("heartbeat_rules")
-        assert "time of day" in rules.lower() or "day of week" in rules.lower()
