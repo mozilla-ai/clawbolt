@@ -37,10 +37,16 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
         return ToolResult(content=text)
 
     async def update_heartbeat(text: str) -> ToolResult:
-        """Update the user's heartbeat notes."""
+        """Update the user's heartbeat notes.
+
+        Reads the current content first so the result shows what changed.
+        """
         store = HeartbeatStore(user_id)
+        previous = store.read_heartbeat_md()
         await store.write_heartbeat_md(text)
-        return ToolResult(content="Heartbeat notes updated.")
+        if previous:
+            return ToolResult(content=f"Heartbeat notes updated.\n\nPrevious content:\n{previous}")
+        return ToolResult(content="Heartbeat notes updated (was empty).")
 
     return [
         Tool(
@@ -52,10 +58,20 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
         ),
         Tool(
             name=ToolName.UPDATE_HEARTBEAT,
-            description="Update the user's heartbeat notes with new markdown text.",
+            description=(
+                "Update the user's heartbeat notes with new markdown text. "
+                "IMPORTANT: This overwrites the entire file. Only include items "
+                "that currently exist in the file plus whatever the user asked to "
+                "add or change. Never re-add items that are not in the current "
+                "file, even if you remember them from conversation history."
+            ),
             function=update_heartbeat,
             params_model=UpdateHeartbeatParams,
-            usage_hint="When the user wants to change heartbeat notes, update them.",
+            usage_hint=(
+                "Always call get_heartbeat first to see the current content. "
+                "Only add, remove, or change what the user explicitly asked for. "
+                "Do not restore items that were previously deleted."
+            ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.AUTO,
                 description_builder=lambda args: "Update heartbeat notes",
