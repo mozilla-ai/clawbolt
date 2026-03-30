@@ -11,7 +11,7 @@ Clawbolt is a FastAPI backend with a multi-channel messaging interface and a cus
 User sends a message (iMessage/RCS/SMS or Telegram)
         |
         v
-  Channel webhook  -->  Media pipeline (photos, voice, docs)
+  Channel webhook  -->  Media pipeline (photos, docs)
         |                        |
         v                        v
   Agent loop (any-llm)  <--  Processed context
@@ -24,7 +24,7 @@ User sends a message (iMessage/RCS/SMS or Telegram)
 ```
 
 1. **Webhook**: A channel delivers an inbound message (Linq sends to `/api/webhooks/linq`, Telegram to `/api/webhooks/telegram`)
-2. **Media pipeline**: Photos, voice notes, and documents are downloaded and processed (transcription, image analysis)
+2. **Media pipeline**: Photos and documents are downloaded and processed (image analysis)
 3. **Agent loop**: The LLM receives the message plus conversation history and available tools, then decides what to do
 4. **Tool execution**: The agent calls tools (edit memory, upload a file, query QuickBooks, check calendar, etc.)
 5. **Reply**: The agent's response is sent back via the originating channel
@@ -37,7 +37,7 @@ User sends a message (iMessage/RCS/SMS or Telegram)
 - **any-llm** for LLM provider abstraction (swap between OpenAI, Anthropic, etc.)
 - **python-telegram-bot** for the Telegram Bot API
 - **httpx** for the Linq Partner API (iMessage/RCS/SMS)
-- **faster-whisper** for voice memo transcription
+- **httpx** for the BlueBubbles API (self-hosted iMessage bridge)
 
 ## Storage
 

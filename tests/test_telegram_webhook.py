@@ -54,21 +54,6 @@ def test_inbound_webhook_publishes_photo(client: TestClient) -> None:
     assert ("AgACAgIAAxkBAAI", "image/jpeg") in inbound.media_refs
 
 
-def test_inbound_webhook_publishes_voice(client: TestClient) -> None:
-    """Voice file_ids should be included in the published InboundMessage."""
-    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
-        payload = make_telegram_update_payload(
-            chat_id=123456789,
-            text="",
-            voice_file_id="AwACAgIAAxkBAAI",
-        )
-        client.post("/api/webhooks/telegram", json=payload)
-
-    mock_pub.assert_called_once()
-    inbound = mock_pub.call_args[0][0]
-    assert any(fid == "AwACAgIAAxkBAAI" for fid, _ in inbound.media_refs)
-
-
 def test_inbound_webhook_publishes_document(client: TestClient) -> None:
     """Document file_ids should be included in the published InboundMessage."""
     with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
@@ -82,20 +67,6 @@ def test_inbound_webhook_publishes_document(client: TestClient) -> None:
     mock_pub.assert_called_once()
     inbound = mock_pub.call_args[0][0]
     assert any(fid == "BQACAgIAAxkBAAI" for fid, _ in inbound.media_refs)
-
-
-def test_inbound_webhook_publishes_video(client: TestClient) -> None:
-    """Video file_ids should be included in the published InboundMessage."""
-    with patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub:
-        payload = make_telegram_update_payload(
-            chat_id=123456789,
-            video_file_id="BAACAgIAAxkBAAI",
-        )
-        client.post("/api/webhooks/telegram", json=payload)
-
-    mock_pub.assert_called_once()
-    inbound = mock_pub.call_args[0][0]
-    assert any(fid == "BAACAgIAAxkBAAI" for fid, _ in inbound.media_refs)
 
 
 def test_webhook_idempotency_skips_duplicate(client: TestClient) -> None:
@@ -312,21 +283,6 @@ def test_extract_media_skips_photo_without_file_id() -> None:
     assert media == []
 
 
-def test_extract_media_skips_voice_without_file_id() -> None:
-    """Voice notes missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
-
-    update = TelegramUpdate.model_validate(
-        {
-            "message": {
-                "voice": {"file_unique_id": "v1", "duration": 5},
-            }
-        }
-    )
-    media = TelegramChannel.extract_media(update)
-    assert media == []
-
-
 def test_extract_media_skips_document_without_file_id() -> None:
     """Documents missing file_id should be skipped."""
     from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
@@ -385,104 +341,6 @@ def test_extract_telegram_media_document_without_mime_defaults() -> None:
     media = TelegramChannel.extract_media(update)
     assert len(media) == 1
     assert media[0] == ("BQACAgIAAxkBAAI", "application/octet-stream")
-
-
-def test_extract_media_video() -> None:
-    """Video file_ids should be extracted."""
-    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
-
-    update = TelegramUpdate.model_validate(
-        {
-            "message": {
-                "video": {
-                    "file_id": "BAACAgIAAxkBAAI",
-                    "file_unique_id": "vid1",
-                    "duration": 10,
-                    "width": 1280,
-                    "height": 720,
-                    "mime_type": "video/mp4",
-                }
-            }
-        }
-    )
-    media = TelegramChannel.extract_media(update)
-    assert len(media) == 1
-    assert media[0] == ("BAACAgIAAxkBAAI", "video/mp4")
-
-
-def test_extract_media_video_note() -> None:
-    """Video note (round video) file_ids should be extracted."""
-    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
-
-    update = TelegramUpdate.model_validate(
-        {
-            "message": {
-                "video_note": {
-                    "file_id": "DQACAgIAAxkBAAI",
-                    "file_unique_id": "vnote1",
-                    "duration": 5,
-                    "length": 240,
-                }
-            }
-        }
-    )
-    media = TelegramChannel.extract_media(update)
-    assert len(media) == 1
-    assert media[0] == ("DQACAgIAAxkBAAI", "video/mp4")
-
-
-def test_extract_media_audio() -> None:
-    """Audio file_ids should be extracted."""
-    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
-
-    update = TelegramUpdate.model_validate(
-        {
-            "message": {
-                "audio": {
-                    "file_id": "CQACAgIAAxkBAAI",
-                    "file_unique_id": "audio1",
-                    "duration": 180,
-                    "mime_type": "audio/mpeg",
-                }
-            }
-        }
-    )
-    media = TelegramChannel.extract_media(update)
-    assert len(media) == 1
-    assert media[0] == ("CQACAgIAAxkBAAI", "audio/mpeg")
-
-
-def test_extract_media_video_without_file_id() -> None:
-    """Videos missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
-
-    update = TelegramUpdate.model_validate(
-        {"message": {"video": {"file_unique_id": "v1", "duration": 10}}}
-    )
-    media = TelegramChannel.extract_media(update)
-    assert media == []
-
-
-def test_extract_media_video_note_without_file_id() -> None:
-    """Video notes missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
-
-    update = TelegramUpdate.model_validate(
-        {"message": {"video_note": {"file_unique_id": "vn1", "duration": 5}}}
-    )
-    media = TelegramChannel.extract_media(update)
-    assert media == []
-
-
-def test_extract_media_audio_without_file_id() -> None:
-    """Audio files missing file_id should be skipped."""
-    from backend.app.channels.telegram import TelegramChannel, TelegramUpdate
-
-    update = TelegramUpdate.model_validate(
-        {"message": {"audio": {"file_unique_id": "a1", "duration": 180}}}
-    )
-    media = TelegramChannel.extract_media(update)
-    assert media == []
 
 
 # -- TelegramUpdate model tests --

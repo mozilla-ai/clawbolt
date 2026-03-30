@@ -16,7 +16,7 @@
 
 ---
 
-Clawbolt is a messaging-first AI assistant that helps users manage their business: estimates, client records, job photos, voice memos, and more. Text your assistant from iMessage, RCS, SMS, or Telegram. No app to install, no dashboard to learn. Just text.
+Clawbolt is a messaging-first AI assistant that helps users manage their business: estimates, client records, job photos, and more. Text your assistant from iMessage, RCS, SMS, or Telegram. No app to install, no dashboard to learn. Just text.
 
 **[Read the full documentation](https://mozilla-ai.github.io/clawbolt)**
 
@@ -28,7 +28,6 @@ Clawbolt is a messaging-first AI assistant that helps users manage their busines
 
 - **Memory** -- Clawbolt remembers your rates, clients, preferences, and past conversations
 - **Photo analysis** -- Send a job site photo and get an AI description for documentation
-- **Voice memos** -- Send a voice note, get it transcribed and processed as a message
 - **File cataloging** -- Photos and documents auto-organized in Dropbox or Google Drive
 - **Proactive heartbeat** -- Clawbolt checks in periodically with reminders and follow-ups
 - **QuickBooks Online** -- Query, create, and send invoices and estimates via QuickBooks (experimental)

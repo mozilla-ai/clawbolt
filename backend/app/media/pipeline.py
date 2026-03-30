@@ -2,7 +2,6 @@ import asyncio
 import logging
 from dataclasses import dataclass
 
-from backend.app.media.audio import transcribe_audio
 from backend.app.media.download import DownloadedMedia, classify_media
 from backend.app.media.vision import analyze_image
 
@@ -10,14 +9,10 @@ logger = logging.getLogger(__name__)
 
 # Fallback messages when media processing is unavailable
 VISION_FALLBACK = "[Photo - vision analysis not available]"
-AUDIO_ERROR_FALLBACK = "[Audio file - transcription not available]"
-VIDEO_ERROR_FALLBACK = "[Video file - transcription not available]"
 
 # Media type display labels used in combined context output
 MEDIA_TYPE_LABELS: dict[str, str] = {
     "image": "Photo",
-    "audio": "Voice note",
-    "video": "Video",
     "pdf": "Document",
 }
 
@@ -53,19 +48,6 @@ async def _process_single_media(
                 "Vision analysis failed for %s (mime_type=%s)", media.original_url, media.mime_type
             )
             extracted_text = VISION_FALLBACK
-    elif category == "audio":
-        try:
-            extracted_text = await transcribe_audio(media.content)
-        except Exception:
-            logger.warning("Could not transcribe audio: %s", media.original_url)
-            extracted_text = AUDIO_ERROR_FALLBACK
-    elif category == "video":
-        # Future: extract audio track. For now, try audio transcription.
-        try:
-            extracted_text = await transcribe_audio(media.content)
-        except Exception:
-            logger.warning("Could not process video file: %s", media.original_url)
-            extracted_text = VIDEO_ERROR_FALLBACK
     else:
         logger.info("Skipping unsupported media type: %s", media.mime_type)
         extracted_text = f"[{category.title()} file - processing not available]"
@@ -113,6 +95,4 @@ async def process_message_media(
 def _format_label(category: str, index: int) -> str:
     """Format a label for a media item in the combined context."""
     label = MEDIA_TYPE_LABELS.get(category, "Attachment")
-    if label == "Voice note":
-        return label
     return f"{label} {index}"

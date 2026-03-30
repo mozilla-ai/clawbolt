@@ -260,12 +260,6 @@ class LinqChannel(BaseChannel):
             return "image/png"
         if url_lower.endswith(".gif"):
             return "image/gif"
-        if url_lower.endswith(".mp4"):
-            return "video/mp4"
-        if url_lower.endswith(".mp3"):
-            return "audio/mpeg"
-        if url_lower.endswith(".ogg"):
-            return "audio/ogg"
         if url_lower.endswith(".pdf"):
             return "application/pdf"
         return "application/octet-stream"
