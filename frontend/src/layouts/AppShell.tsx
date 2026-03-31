@@ -23,8 +23,11 @@ export interface AppShellContext {
   isAdmin: boolean;
 }
 
-const NAV_ITEMS = [
-  { to: '/app/chat', label: 'Chat', icon: ChatIcon, end: false },
+const NAV_TOP = [
+  { to: '/app/dashboard', label: 'Dashboard', icon: DashboardIcon, end: false },
+] as const;
+
+const NAV_MAIN = [
   { to: '/app/memory', label: 'Memory', icon: MemoryIcon, end: false },
   { to: '/app/heartbeat', label: 'Heartbeat', icon: HeartbeatIcon, end: false },
   { to: '/app/soul', label: 'Soul', icon: SoulIcon, end: false },
@@ -32,6 +35,10 @@ const NAV_ITEMS = [
   { to: '/app/channels', label: 'Channels', icon: ChannelsIcon, end: false },
   { to: '/app/tools', label: 'Tools', icon: ToolsIcon, end: false },
   { to: '/app/settings', label: 'Settings', icon: SettingsIcon, end: false },
+] as const;
+
+const NAV_BOTTOM = [
+  { to: '/app/chat', label: 'Chat', icon: ChatIcon, end: false },
 ] as const;
 
 export default function AppShell() {
@@ -110,7 +117,7 @@ export default function AppShell() {
 
       {/* Sidebar */}
       <aside
-        className={`fixed md:static z-50 top-0 left-0 h-full w-64 bg-card border-r border-border flex flex-col transition-transform md:translate-x-0 ${
+        className={`fixed md:static z-50 top-0 left-0 h-full w-56 bg-card border-r border-border flex flex-col transition-transform md:translate-x-0 ${
           sidebarOpen ? 'translate-x-0' : '-translate-x-full'
         }`}
       >
@@ -122,7 +129,26 @@ export default function AppShell() {
         </div>
 
         <nav className="p-2 space-y-0.5">
-          {NAV_ITEMS.map(({ to, label, icon: Icon, end }) => (
+          {NAV_TOP.map(({ to, label, icon: Icon, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
+              onClick={closeSidebar}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
+                  isActive
+                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                }`
+              }
+            >
+              <Icon />
+              {label}
+            </NavLink>
+          ))}
+          <Divider className="my-1" />
+          {NAV_MAIN.map(({ to, label, icon: Icon, end }) => (
             <NavLink
               key={to}
               to={to}
@@ -144,6 +170,25 @@ export default function AppShell() {
             <NavLink
               key={to}
               to={to}
+              onClick={closeSidebar}
+              className={({ isActive }) =>
+                `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
+                  isActive
+                    ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                    : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                }`
+              }
+            >
+              <Icon />
+              {label}
+            </NavLink>
+          ))}
+          <Divider className="my-1" />
+          {NAV_BOTTOM.map(({ to, label, icon: Icon, end }) => (
+            <NavLink
+              key={to}
+              to={to}
+              end={end}
               onClick={closeSidebar}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
@@ -232,7 +277,7 @@ export default function AppShell() {
           <h1 className="text-lg font-bold font-display text-foreground">Clawbolt</h1>
         </header>
 
-        <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 max-w-5xl w-full mx-auto">
+        <main className="flex-1 min-h-0 overflow-y-auto p-4 sm:p-6 max-w-7xl w-full mx-auto">
           <Outlet context={ctx} />
         </main>
       </div>
@@ -244,6 +289,14 @@ export default function AppShell() {
 }
 
 // --- Nav icons (inline SVG) ---
+
+function DashboardIcon() {
+  return (
+    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+    </svg>
+  );
+}
 
 function ChatIcon() {
   return (
