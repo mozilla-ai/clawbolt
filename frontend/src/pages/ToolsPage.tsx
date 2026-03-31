@@ -276,6 +276,15 @@ const PER_CALENDAR_TOOLS = [
   'calendar_delete_event',
 ] as const;
 
+// Write tools that are auto-disabled on read-only calendars.
+const WRITE_TOOLS = new Set([
+  'calendar_create_event',
+  'calendar_update_event',
+  'calendar_delete_event',
+]);
+
+const READ_ONLY_ROLES = new Set(['reader', 'freeBusyReader']);
+
 function CalendarPicker() {
   const { data: calendars, isPending: isLoadingCalendars } = useCalendarList();
   const { data: config } = useCalendarConfig();
@@ -298,7 +307,7 @@ function CalendarPicker() {
   if (calendarList.length === 0) return null;
 
   const save = (
-    next: Array<{ calendar_id: string; display_name: string; disabled_tools: string[] }>,
+    next: Array<{ calendar_id: string; display_name: string; disabled_tools: string[]; access_role: string }>,
     message: string,
   ) => {
     updateConfig.mutate(
@@ -310,11 +319,15 @@ function CalendarPicker() {
     );
   };
 
-  const handleToggle = (calId: string, calName: string, checked: boolean) => {
+  const handleToggle = (calId: string, calName: string, accessRole: string, checked: boolean) => {
     const current = config?.calendars ?? [];
     if (checked) {
+      // Auto-disable write tools for read-only calendars
+      const autoDisabled = READ_ONLY_ROLES.has(accessRole)
+        ? [...WRITE_TOOLS]
+        : [];
       save(
-        [...current, { calendar_id: calId, display_name: calName, disabled_tools: [] }],
+        [...current, { calendar_id: calId, display_name: calName, disabled_tools: autoDisabled, access_role: accessRole }],
         `Calendar enabled: ${calName}`,
       );
     } else {
@@ -346,7 +359,7 @@ function CalendarPicker() {
 
     save(
       current.map((c) =>
-        c.calendar_id === calId ? { ...c, disabled_tools: newDisabled } : c,
+        c.calendar_id === calId ? { ...c, disabled_tools: newDisabled, access_role: c.access_role ?? '' } : { ...c, access_role: c.access_role ?? '' },
       ),
       `${subToolDisplayName(toolName)} ${enabled ? 'enabled' : 'disabled'}`,
     );
@@ -363,6 +376,7 @@ function CalendarPicker() {
           const isEnabled = !!entry;
           const isExpanded = expandedCals.has(cal.id);
           const disabled = new Set(entry?.disabled_tools ?? []);
+          const isReadOnly = READ_ONLY_ROLES.has(cal.access_role ?? '');
 
           return (
             <div key={cal.id}>
@@ -372,12 +386,17 @@ function CalendarPicker() {
                     type="checkbox"
                     checked={isEnabled}
                     disabled={updateConfig.isPending}
-                    onChange={(e) => handleToggle(cal.id, cal.summary, e.target.checked)}
+                    onChange={(e) => handleToggle(cal.id, cal.summary, cal.access_role ?? '', e.target.checked)}
                     className="rounded border-border shrink-0"
                   />
                   <span className="truncate">
                     {cal.summary}{cal.primary ? ' (primary)' : ''}
                   </span>
+                  {isReadOnly && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground shrink-0">
+                      read-only
+                    </span>
+                  )}
                 </label>
                 {isEnabled && (
                   <button
@@ -401,18 +420,25 @@ function CalendarPicker() {
               </div>
               {isEnabled && isExpanded && (
                 <div className="mt-1.5 ml-6 pl-3 border-l border-border space-y-1">
-                  {PER_CALENDAR_TOOLS.map((toolName) => (
-                    <div key={toolName} className="flex items-center justify-between gap-3 py-0.5">
-                      <span className="text-xs">{subToolDisplayName(toolName)}</span>
-                      <Switch
-                        isSelected={!disabled.has(toolName)}
-                        isDisabled={updateConfig.isPending}
-                        onValueChange={(val) => handleToolToggle(cal.id, toolName, val)}
-                        size="sm"
-                        aria-label={`Toggle ${subToolDisplayName(toolName)} for ${cal.summary}`}
-                      />
-                    </div>
-                  ))}
+                  {PER_CALENDAR_TOOLS.map((toolName) => {
+                    const isWriteTool = WRITE_TOOLS.has(toolName);
+                    const lockedByRole = isReadOnly && isWriteTool;
+                    return (
+                      <div key={toolName} className="flex items-center justify-between gap-3 py-0.5">
+                        <span className={`text-xs ${lockedByRole ? 'text-muted-foreground' : ''}`}>
+                          {subToolDisplayName(toolName)}
+                          {lockedByRole ? ' (read-only)' : ''}
+                        </span>
+                        <Switch
+                          isSelected={!disabled.has(toolName)}
+                          isDisabled={updateConfig.isPending || lockedByRole}
+                          onValueChange={(val) => handleToolToggle(cal.id, toolName, val)}
+                          size="sm"
+                          aria-label={`Toggle ${subToolDisplayName(toolName)} for ${cal.summary}`}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               )}
             </div>

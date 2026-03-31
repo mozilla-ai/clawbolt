@@ -1261,6 +1261,11 @@
             },
             "type": "array",
             "title": "Disabled Tools"
+          },
+          "access_role": {
+            "type": "string",
+            "title": "Access Role",
+            "default": ""
           }
         },
         "type": "object",
@@ -1316,6 +1321,11 @@
             "type": "boolean",
             "title": "Primary",
             "default": false
+          },
+          "access_role": {
+            "type": "string",
+            "title": "Access Role",
+            "default": ""
           }
         },
         "type": "object",

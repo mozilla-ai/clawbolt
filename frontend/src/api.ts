@@ -219,19 +219,19 @@ const api = {
   getCalendarList: async () => {
     const { data, error } = await client.GET('/api/user/calendar/calendars');
     if (error) _throwApiError(error, 'Failed to list calendars');
-    return data as { calendars: Array<{ id: string; summary: string; primary: boolean }> };
+    return data as { calendars: Array<{ id: string; summary: string; primary: boolean; access_role: string }> };
   },
   getCalendarConfig: async () => {
     const { data, error } = await client.GET('/api/user/calendar/config');
     if (error) _throwApiError(error, 'Failed to get calendar config');
-    return data as { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[] }> };
+    return data as { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[]; access_role: string }> };
   },
-  updateCalendarConfig: async (body: { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[] }> }) => {
+  updateCalendarConfig: async (body: { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[]; access_role: string }> }) => {
     const { data, error } = await client.PUT('/api/user/calendar/config', {
       body: body as never,
     });
     if (error) _throwApiError(error, 'Failed to update calendar config');
-    return data as { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[] }> };
+    return data as { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[]; access_role: string }> };
   },
 
   // Premium channel linking (raw fetch -- these endpoints are premium-only,

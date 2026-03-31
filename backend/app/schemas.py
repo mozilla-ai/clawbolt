@@ -333,6 +333,7 @@ class CalendarListEntry(BaseModel):
     id: str
     summary: str
     primary: bool = False
+    access_role: str = ""
 
 
 class CalendarListResponse(BaseModel):
@@ -343,6 +344,7 @@ class CalendarConfigEntry(BaseModel):
     calendar_id: str
     display_name: str
     disabled_tools: list[str] = Field(default_factory=list)
+    access_role: str = ""
 
 
 class CalendarConfigResponse(BaseModel):

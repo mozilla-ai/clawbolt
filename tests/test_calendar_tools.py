@@ -27,9 +27,9 @@ _WRITE_TOOLS = [
 ]
 
 # Default enabled calendars for tests: both mock calendars enabled with full access.
-_DEFAULT_ENABLED: list[tuple[str, str, list[str]]] = [
-    ("primary", "Personal", []),
-    ("jobs@example.com", "Jobs", []),
+_DEFAULT_ENABLED: list[tuple[str, str, list[str], str]] = [
+    ("primary", "Personal", [], "owner"),
+    ("jobs@example.com", "Jobs", [], "writer"),
 ]
 
 
@@ -106,7 +106,7 @@ def test_factory_returns_6_tools_when_configured() -> None:
         patch("backend.app.agent.tools.calendar_tools.oauth_service") as mock_oauth,
         patch(
             "backend.app.agent.tools.calendar_tools._get_enabled_calendars",
-            return_value=[("primary", "Primary", [])],
+            return_value=[("primary", "Primary", [], "owner")],
         ),
     ):
         mock_settings.google_calendar_client_id = "test-id"
@@ -158,10 +158,10 @@ def test_list_calendars_is_auto(cal_tools: list[Tool]) -> None:
     assert tool.approval_policy.default_level == PermissionLevel.AUTO
 
 
-def test_list_events_is_auto(cal_tools: list[Tool]) -> None:
+def test_list_events_is_ask(cal_tools: list[Tool]) -> None:
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
     assert tool.approval_policy is not None
-    assert tool.approval_policy.default_level == PermissionLevel.AUTO
+    assert tool.approval_policy.default_level == PermissionLevel.ASK
 
 
 def test_create_event_is_ask(cal_tools: list[Tool]) -> None:
@@ -182,15 +182,36 @@ def test_delete_event_is_ask(cal_tools: list[Tool]) -> None:
     assert tool.approval_policy.default_level == PermissionLevel.ASK
 
 
-def test_check_availability_is_auto(cal_tools: list[Tool]) -> None:
+def test_check_availability_is_ask(cal_tools: list[Tool]) -> None:
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
     assert tool.approval_policy is not None
-    assert tool.approval_policy.default_level == PermissionLevel.AUTO
+    assert tool.approval_policy.default_level == PermissionLevel.ASK
 
 
 # ---------------------------------------------------------------------------
 # Description builders
 # ---------------------------------------------------------------------------
+
+
+def test_list_events_description_builder(cal_tools: list[Tool]) -> None:
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
+    assert tool.approval_policy is not None
+    assert tool.approval_policy.description_builder is not None
+    desc = tool.approval_policy.description_builder(
+        {"start_date": "2026-03-31T00:00:00", "end_date": "2026-03-31T23:59:59"}
+    )
+    assert "Read calendar events" in desc
+    assert "2026-03-31" in desc
+
+
+def test_check_availability_description_builder(cal_tools: list[Tool]) -> None:
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
+    assert tool.approval_policy is not None
+    assert tool.approval_policy.description_builder is not None
+    desc = tool.approval_policy.description_builder(
+        {"start_date": "2026-03-31T00:00:00", "end_date": "2026-04-01T00:00:00"}
+    )
+    assert "Check calendar availability" in desc
 
 
 def test_create_event_description_builder(cal_tools: list[Tool]) -> None:
@@ -244,7 +265,9 @@ async def test_list_calendars_shows_enabled(cal_tools: list[Tool]) -> None:
 async def test_list_calendars_single() -> None:
     """With a single enabled calendar, should show just that one."""
     service = MockGoogleCalendarService()
-    tools = create_calendar_tools(service, enabled_calendars=[("jobs@example.com", "Jobs", [])])
+    tools = create_calendar_tools(
+        service, enabled_calendars=[("jobs@example.com", "Jobs", [], "writer")]
+    )
     tool = _get_tool(tools, ToolName.CALENDAR_LIST_CALENDARS)
     result = await tool.function()
     assert result.is_error is False
@@ -289,7 +312,7 @@ async def test_list_events_multi_calendar_merge(cal_tools: list[Tool]) -> None:
 async def test_list_events_single_calendar_no_label() -> None:
     """With a single enabled calendar, events should not have labels."""
     service = MockGoogleCalendarService()
-    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [])])
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [], "owner")])
     tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
     result = await tool.function(
         start_date="2026-03-25T00:00:00",
@@ -381,7 +404,7 @@ async def test_list_events_api_error(cal_service: MockGoogleCalendarService) -> 
 async def test_create_event_auto_select_single_calendar() -> None:
     """With one enabled calendar, should auto-select it."""
     service = MockGoogleCalendarService()
-    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [])])
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [], "owner")])
     tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
     result = await tool.function(
         title="Job: Test - Plumbing",
@@ -496,7 +519,7 @@ async def test_create_event_api_error(
 async def test_update_event_happy_path() -> None:
     """Should update an existing event with single calendar (auto-select)."""
     service = MockGoogleCalendarService()
-    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [])])
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [], "owner")])
     tool = _get_tool(tools, ToolName.CALENDAR_UPDATE_EVENT)
     result = await tool.function(
         event_id="evt-001",
@@ -702,7 +725,7 @@ async def test_list_events_respects_user_timezone() -> None:
     tools = create_calendar_tools(
         service,
         user_timezone="America/New_York",
-        enabled_calendars=[("primary", "Personal", [])],
+        enabled_calendars=[("primary", "Personal", [], "owner")],
     )
     tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
 
@@ -720,7 +743,7 @@ async def test_list_events_respects_user_timezone() -> None:
 async def test_list_events_utc_default_without_timezone() -> None:
     """Without user timezone, naive dates are interpreted as UTC."""
     service = MockGoogleCalendarService()
-    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [])])
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [], "owner")])
     tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
 
     # March 25 midnight-to-midnight UTC includes events at 09:00 UTC
@@ -756,8 +779,8 @@ async def test_factory_passes_enabled_calendars() -> None:
         patch(
             "backend.app.agent.tools.calendar_tools._get_enabled_calendars",
             return_value=[
-                ("primary", "Personal", []),
-                ("jobs@example.com", "Jobs", [ToolName.CALENDAR_CREATE_EVENT]),
+                ("primary", "Personal", [], "owner"),
+                ("jobs@example.com", "Jobs", [ToolName.CALENDAR_CREATE_EVENT], "writer"),
             ],
         ),
     ):
@@ -770,8 +793,8 @@ async def test_factory_passes_enabled_calendars() -> None:
     mock_create.assert_called_once()
     assert mock_create.call_args.kwargs["user_timezone"] == "America/New_York"
     assert mock_create.call_args.kwargs["enabled_calendars"] == [
-        ("primary", "Personal", []),
-        ("jobs@example.com", "Jobs", [ToolName.CALENDAR_CREATE_EVENT]),
+        ("primary", "Personal", [], "owner"),
+        ("jobs@example.com", "Jobs", [ToolName.CALENDAR_CREATE_EVENT], "writer"),
     ]
 
 
@@ -779,9 +802,9 @@ async def test_factory_passes_enabled_calendars() -> None:
 # Per-calendar permissions
 # ---------------------------------------------------------------------------
 
-_MIXED_PERMS: list[tuple[str, str, list[str]]] = [
-    ("primary", "Personal", []),
-    ("jobs@example.com", "Jobs", list(_WRITE_TOOLS)),
+_MIXED_PERMS: list[tuple[str, str, list[str], str]] = [
+    ("primary", "Personal", [], "owner"),
+    ("jobs@example.com", "Jobs", list(_WRITE_TOOLS), "writer"),
 ]
 
 
@@ -804,7 +827,7 @@ async def test_list_calendars_shows_read_only() -> None:
     all_disabled = [*_WRITE_TOOLS, ToolName.CALENDAR_LIST_EVENTS]
     tools = create_calendar_tools(
         service,
-        enabled_calendars=[("primary", "Personal", all_disabled)],
+        enabled_calendars=[("primary", "Personal", all_disabled, "owner")],
     )
     tool = _get_tool(tools, ToolName.CALENDAR_LIST_CALENDARS)
     result = await tool.function()
@@ -898,8 +921,8 @@ async def test_no_calendars_allow_tool_error() -> None:
     tools = create_calendar_tools(
         service,
         enabled_calendars=[
-            ("primary", "Personal", list(_WRITE_TOOLS)),
-            ("jobs@example.com", "Jobs", list(_WRITE_TOOLS)),
+            ("primary", "Personal", list(_WRITE_TOOLS), "owner"),
+            ("jobs@example.com", "Jobs", list(_WRITE_TOOLS), "writer"),
         ],
     )
     tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
@@ -918,7 +941,7 @@ async def test_check_availability_works_on_restricted_calendar() -> None:
     service = MockGoogleCalendarService()
     tools = create_calendar_tools(
         service,
-        enabled_calendars=[("primary", "Personal", list(_WRITE_TOOLS))],
+        enabled_calendars=[("primary", "Personal", list(_WRITE_TOOLS), "owner")],
     )
     tool = _get_tool(tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
     result = await tool.function(
@@ -936,8 +959,8 @@ async def test_list_events_skips_disabled_calendar() -> None:
     tools = create_calendar_tools(
         service,
         enabled_calendars=[
-            ("primary", "Personal", []),
-            ("jobs@example.com", "Jobs", [ToolName.CALENDAR_LIST_EVENTS]),
+            ("primary", "Personal", [], "owner"),
+            ("jobs@example.com", "Jobs", [ToolName.CALENDAR_LIST_EVENTS], "writer"),
         ],
     )
     tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
@@ -947,4 +970,128 @@ async def test_list_events_skips_disabled_calendar() -> None:
     )
     assert result.is_error is False
     assert "Smith Kitchen Remodel" in result.content
+    # Jobs calendar has list_events disabled, so its events should not appear
     assert "Jones Roof Repair" not in result.content
+
+
+# ---------------------------------------------------------------------------
+# Issue #881: agent should be aware of granular calendar permissions
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_list_calendars_shows_access_role() -> None:
+    """calendar_list_calendars should display the Google access role."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[
+            ("primary", "Personal", [], "owner"),
+            ("shared@example.com", "Shared", [], "reader"),
+        ],
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_CALENDARS)
+    result = await tool.function()
+    assert result.is_error is False
+    assert "access: owner" in result.content
+    assert "access: reader" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_read_only_calendar_blocks_write_tools() -> None:
+    """Write tools should be auto-blocked on a read-only (reader role) calendar."""
+    service = MockGoogleCalendarService()
+    # Simulate a reader calendar with no explicit disabled_tools -- the system
+    # should auto-block writes based on access_role.
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[
+            ("primary", "Personal", [], "owner"),
+            ("readonly@example.com", "Read Only", [], "reader"),
+        ],
+    )
+    # Create event should auto-select the writable calendar
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Test Event",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert result.is_error is False
+    assert "Event created" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_read_only_calendar_explicit_write_blocked() -> None:
+    """Explicitly targeting a read-only calendar for a write should fail."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[
+            ("primary", "Personal", [], "owner"),
+            ("readonly@example.com", "Read Only", [], "reader"),
+        ],
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Test Event",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+        calendar_id="readonly@example.com",
+    )
+    assert result.is_error is True
+    assert "read-only calendar" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_read_only_calendar_allows_list_events() -> None:
+    """Read-only calendars should still allow listing events."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[
+            ("readonly@example.com", "Read Only", [], "reader"),
+        ],
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_LIST_EVENTS)
+    result = await tool.function(
+        start_date="2026-03-25T00:00:00",
+        end_date="2026-03-27T23:59:59",
+    )
+    assert result.is_error is False
+
+
+@pytest.mark.asyncio()
+async def test_free_busy_reader_blocks_writes() -> None:
+    """freeBusyReader calendars should also block write tools."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(
+        service,
+        enabled_calendars=[
+            ("freebusy@example.com", "Free Busy", [], "freeBusyReader"),
+        ],
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Test",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert result.is_error is True
+    assert "No calendars allow create event" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_403_error_mentions_permissions() -> None:
+    """A 403 from Google should tell the agent it's a permissions issue."""
+    import httpx
+
+    from backend.app.agent.tools.calendar_tools import _handle_http_error
+
+    request = httpx.Request("POST", "https://example.com/calendars/test/events")
+    response = httpx.Response(403, request=request, text="Forbidden")
+    exc = httpx.HTTPStatusError("Forbidden", request=request, response=response)
+    result = _handle_http_error(exc, "create event")
+    assert result.is_error is True
+    assert "Permission denied" in result.content
+    assert "read-only" in result.content
