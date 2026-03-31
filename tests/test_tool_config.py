@@ -349,12 +349,14 @@ def test_get_tool_config_includes_sub_tools(client: TestClient) -> None:
     assert "read_file" in sub_names
     assert "write_file" in sub_names
 
-    # Each sub-tool should have name, description, and enabled
+    # Each sub-tool should have name, description, enabled, and permission_level
     for st in ws["sub_tools"]:
         assert "name" in st
         assert "description" in st
         assert "enabled" in st
+        assert "permission_level" in st
         assert st["enabled"] is True  # all enabled by default
+        assert st["permission_level"] in ("auto", "ask", "deny")
 
 
 def test_put_tool_config_disable_sub_tools(client: TestClient) -> None:

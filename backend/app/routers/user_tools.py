@@ -8,7 +8,7 @@ from typing import NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.agent.approval import ApprovalStore, PermissionLevel
+from backend.app.agent.approval import ApprovalStore, PermissionLevel, get_approval_store
 from backend.app.agent.dto import SubToolEntry
 from backend.app.agent.file_store import (
     ToolConfigEntry,
@@ -85,7 +85,11 @@ def _build_tool_list(
     ``ApprovalStore`` are resolved for each sub-tool.
     """
     sub_map = disabled_sub_tools_map or {}
-    approval_store = ApprovalStore() if user_id else None
+    # Load permission data once to avoid repeated file reads per sub-tool.
+    approval_store = get_approval_store() if user_id else None
+    perm_data = (
+        approval_store.load_user_permissions(user_id) if approval_store and user_id else None
+    )
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
         is_core = name in _CORE_FACTORIES
@@ -102,13 +106,13 @@ def _build_tool_list(
                 description=st.description,
                 enabled=st.name not in disabled_subs,
                 permission_level=str(
-                    approval_store.check_permission(
-                        user_id,
+                    ApprovalStore.resolve_permission(
+                        perm_data,
                         st.name,
                         default=PermissionLevel(st.default_permission),
                     )
                 )
-                if approval_store and user_id
+                if perm_data is not None
                 else st.default_permission,
             )
             for st in factory_sub_tools

@@ -207,6 +207,41 @@ class ApprovalStore:
     def _save(self, user_id: str, data: dict[str, Any]) -> None:
         _write_json(self._permissions_path(user_id), data)
 
+    def load_user_permissions(self, user_id: str) -> dict[str, Any]:
+        """Load the raw permission data for a user.
+
+        Use with :meth:`resolve_permission` for bulk lookups to avoid
+        repeated file reads.
+        """
+        return self._load(user_id)
+
+    @staticmethod
+    def resolve_permission(
+        data: dict[str, Any],
+        tool_name: str,
+        resource: str | None = None,
+        default: PermissionLevel = PermissionLevel.ASK,
+    ) -> PermissionLevel:
+        """Resolve a permission from pre-loaded user data.
+
+        Resolution order: resource match (exact then glob) > tool match > default.
+        """
+        # Resource-level check
+        if resource is not None:
+            resource_map: dict[str, str] = data.get("resources", {}).get(tool_name, {})
+            if resource in resource_map:
+                return PermissionLevel(resource_map[resource])
+            for pattern, level in resource_map.items():
+                if fnmatch(resource, pattern):
+                    return PermissionLevel(level)
+
+        # Tool-level check
+        tools: dict[str, str] = data.get("tools", {})
+        if tool_name in tools:
+            return PermissionLevel(tools[tool_name])
+
+        return default
+
     def check_permission(
         self,
         user_id: str,
@@ -219,24 +254,7 @@ class ApprovalStore:
         Resolution order: resource match (exact then glob) > tool match > default.
         """
         data = self._load(user_id)
-
-        # Resource-level check
-        if resource is not None:
-            resource_map: dict[str, str] = data.get("resources", {}).get(tool_name, {})
-            # Exact match first
-            if resource in resource_map:
-                return PermissionLevel(resource_map[resource])
-            # Glob match
-            for pattern, level in resource_map.items():
-                if fnmatch(resource, pattern):
-                    return PermissionLevel(level)
-
-        # Tool-level check
-        tools: dict[str, str] = data.get("tools", {})
-        if tool_name in tools:
-            return PermissionLevel(tools[tool_name])
-
-        return default
+        return self.resolve_permission(data, tool_name, resource, default)
 
     def set_permission(
         self,
