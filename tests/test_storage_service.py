@@ -179,6 +179,15 @@ async def test_local_safe_relative_path_allowed(local_storage: LocalFileStorage)
     assert (local_storage.base_dir / "b" / "file.txt").exists()
 
 
+@pytest.mark.asyncio()
+async def test_local_upload_rejects_sibling_prefix_escape(tmp_path: Path) -> None:
+    """upload_file should reject sibling paths that only share a string prefix."""
+    storage = LocalFileStorage(base_dir=str(tmp_path), user_id="1")
+    with pytest.raises(ValueError, match="Path escapes storage directory"):
+        await storage.upload_file(b"evil", "../10", "evil.txt")
+    assert not (tmp_path / "10" / "evil.txt").exists()
+
+
 # ---------------------------------------------------------------------------
 # DropboxStorage tests
 # ---------------------------------------------------------------------------
