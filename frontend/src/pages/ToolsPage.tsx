@@ -24,6 +24,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   messaging: 'Messaging',
   file: 'File Storage',
   heartbeat: 'Heartbeat',
+  permissions: 'Permissions',
 };
 
 // Human-readable sub-tool display names.
@@ -48,6 +49,7 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   update_heartbeat: 'Update heartbeat',
   send_reply: 'Send replies',
   send_media_reply: 'Send media',
+  update_permission: 'Change permissions',
 };
 
 function displayName(name: string): string {
@@ -62,17 +64,17 @@ const PERMISSION_LABELS: Record<string, { label: string; className: string; tool
   auto: {
     label: 'Runs freely',
     className: 'text-success',
-    tooltip: 'The assistant will use this without asking. You can change this by replying "never" when prompted.',
+    tooltip: 'Used automatically, no approval needed. To change, just tell your assistant in chat.',
   },
   ask: {
     label: 'Asks first',
     className: 'text-warning',
-    tooltip: 'The assistant will ask for your OK before using this. Reply "always" to let it run freely.',
+    tooltip: 'Your assistant asks for your OK before using this. To change, just tell your assistant in chat.',
   },
   deny: {
     label: 'Blocked',
     className: 'text-danger',
-    tooltip: 'The assistant cannot use this. You previously replied "never" when prompted.',
+    tooltip: 'Your assistant will not use this. To unblock, just tell your assistant in chat.',
   },
 };
 
