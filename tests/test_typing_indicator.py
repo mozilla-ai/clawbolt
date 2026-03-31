@@ -258,6 +258,41 @@ async def test_bus_activity_queue_register_publish_remove() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_bus_activity_replays_last_event_on_register() -> None:
+    """New activity subscribers should immediately receive the last published event.
+
+    This covers the case where an SSE client reconnects after missing the
+    'done' event: the reconnected queue should get 'done' right away so
+    the frontend clears the spinner.
+    """
+    bus = MessageBus()
+    q1 = bus.register_activity_queue("user-1")
+
+    await bus.publish_activity("user-1", {"type": "thinking"})
+    await bus.publish_activity("user-1", {"type": "done"})
+
+    # Drain q1
+    assert (await q1.get()) == {"type": "thinking"}
+    assert (await q1.get()) == {"type": "done"}
+
+    # Simulate disconnect + reconnect: remove old queue, register new one
+    bus.remove_activity_queue("user-1", q1)
+    q2 = bus.register_activity_queue("user-1")
+
+    # q2 should get the last event ("done") replayed immediately
+    assert not q2.empty()
+    assert (await q2.get()) == {"type": "done"}
+
+
+@pytest.mark.asyncio()
+async def test_bus_activity_no_replay_without_prior_events() -> None:
+    """When no activity has been published, new queues should start empty."""
+    bus = MessageBus()
+    q = bus.register_activity_queue("user-1")
+    assert q.empty()
+
+
+@pytest.mark.asyncio()
 async def test_bus_publish_activity_no_subscribers() -> None:
     """Publishing activity with no subscribers should not raise."""
     bus = MessageBus()

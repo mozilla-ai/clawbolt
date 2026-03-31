@@ -54,6 +54,9 @@ class MessageBus:
         # User-level activity streams for the web dashboard.  Multiple
         # browser tabs can subscribe concurrently for the same user.
         self._activity_queues: dict[str, set[asyncio.Queue[dict[str, Any]]]] = {}
+        # Last published activity event per user, replayed to new subscribers
+        # so reconnecting clients immediately learn the current agent state.
+        self._last_activity: dict[str, dict[str, Any]] = {}
 
     async def publish_inbound(self, msg: InboundMessage) -> None:
         """Publish a message from a channel to the agent."""
@@ -142,10 +145,16 @@ class MessageBus:
         """Create a new activity queue for *user_id* and return it.
 
         Each call creates a fresh queue so multiple browser tabs can
-        subscribe concurrently.
+        subscribe concurrently.  The last published activity event is
+        replayed into the new queue so reconnecting clients immediately
+        learn the current agent state (e.g. whether the agent finished
+        while the SSE connection was down).
         """
         queue: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         self._activity_queues.setdefault(user_id, set()).add(queue)
+        last = self._last_activity.get(user_id)
+        if last is not None:
+            queue.put_nowait(last)
         return queue
 
     def remove_activity_queue(self, user_id: str, queue: asyncio.Queue[dict[str, Any]]) -> None:
@@ -158,6 +167,7 @@ class MessageBus:
 
     async def publish_activity(self, user_id: str, event: dict[str, Any]) -> None:
         """Push an activity event to all connected dashboard clients for *user_id*."""
+        self._last_activity[user_id] = event
         queues = self._activity_queues.get(user_id)
         if queues:
             # Snapshot to avoid RuntimeError if a queue is removed during iteration
@@ -193,6 +203,7 @@ class MessageBus:
         self._event_queues.clear()
         self._request_owners.clear()
         self._activity_queues.clear()
+        self._last_activity.clear()
 
     @property
     def inbound_size(self) -> int:
