@@ -276,57 +276,75 @@ const api = {
     return res.json() as Promise<{ phone_number: string | null; connected: boolean; linq_from_number?: string }>;
   },
 
-  // Activity stream: real-time agent status from any channel
+  // Activity stream: real-time agent status from any channel.
+  // Auto-reconnects on disconnect so transient drops (proxy timeout,
+  // network glitch) don't permanently kill the spinner updates.
   subscribeToActivity: (
     onEvent: (event: { type: string; tool_name?: string; channel?: string }) => void,
   ): AbortController => {
     const controller = new AbortController();
-    const token = getAccessToken();
+    const RECONNECT_MS = 2_000;
 
-    fetch('/api/user/chat/activity', {
-      headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
-      signal: controller.signal,
-    })
-      .then((res) => {
-        if (!res.ok || !res.body) return;
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = '';
+    const connect = (): void => {
+      if (controller.signal.aborted) return;
+      const token = getAccessToken();
 
-        const read = (): void => {
-          reader
-            .read()
-            .then(({ done, value }) => {
-              if (done) return;
-              buffer += decoder.decode(value, { stream: true });
-              const lines = buffer.split('\n');
-              buffer = lines.pop() || '';
-              for (const line of lines) {
-                if (line.startsWith('data: ')) {
-                  try {
-                    const payload = JSON.parse(line.slice(6)) as {
-                      type: string;
-                      tool_name?: string;
-                      channel?: string;
-                    };
-                    onEvent(payload);
-                  } catch {
-                    // skip malformed JSON
+      fetch('/api/user/chat/activity', {
+        headers: { ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        signal: controller.signal,
+      })
+        .then((res) => {
+          if (!res.ok || !res.body) {
+            // Non-OK response (e.g. 401): retry after delay
+            if (!controller.signal.aborted) setTimeout(connect, RECONNECT_MS);
+            return;
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = '';
+
+          const read = (): void => {
+            reader
+              .read()
+              .then(({ done, value }) => {
+                if (done) {
+                  // Server closed the stream: reconnect
+                  if (!controller.signal.aborted) setTimeout(connect, RECONNECT_MS);
+                  return;
+                }
+                buffer += decoder.decode(value, { stream: true });
+                const lines = buffer.split('\n');
+                buffer = lines.pop() || '';
+                for (const line of lines) {
+                  if (line.startsWith('data: ')) {
+                    try {
+                      const payload = JSON.parse(line.slice(6)) as {
+                        type: string;
+                        tool_name?: string;
+                        channel?: string;
+                      };
+                      onEvent(payload);
+                    } catch {
+                      // skip malformed JSON
+                    }
                   }
                 }
-              }
-              read();
-            })
-            .catch(() => {
-              // Stream ended or aborted
-            });
-        };
-        read();
-      })
-      .catch(() => {
-        // Connection failed or aborted
-      });
+                read();
+              })
+              .catch(() => {
+                // Stream error: reconnect unless intentionally aborted
+                if (!controller.signal.aborted) setTimeout(connect, RECONNECT_MS);
+              });
+          };
+          read();
+        })
+        .catch(() => {
+          // Connection failed: reconnect unless intentionally aborted
+          if (!controller.signal.aborted) setTimeout(connect, RECONNECT_MS);
+        });
+    };
 
+    connect();
     return controller;
   },
 
