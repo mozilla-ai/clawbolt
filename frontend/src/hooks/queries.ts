@@ -134,7 +134,7 @@ export function useCalendarConfig() {
 export function useUpdateCalendarConfig() {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: (body: { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[] }> }) =>
+    mutationFn: (body: { calendars: Array<{ calendar_id: string; display_name: string; disabled_tools: string[]; access_role: string }> }) =>
       api.updateCalendarConfig(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.calendarConfig });

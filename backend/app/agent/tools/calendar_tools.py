@@ -224,7 +224,7 @@ def _make_token_refresh_callback(user_id: str) -> Any:
 
 def _validate_calendar_id(
     calendar_id: str,
-    enabled_calendars: list[tuple[str, str, list[str]]],
+    enabled_calendars: list[tuple[str, str, list[str], str]],
     tool_name: str = "",
 ) -> tuple[str, str | None]:
     """Resolve and validate a calendar_id against the enabled set.
@@ -232,18 +232,21 @@ def _validate_calendar_id(
     Returns ``(resolved_id, error_message)``.  When *error_message* is
     ``None`` the *resolved_id* is safe to use.
 
+    Each entry in *enabled_calendars* is
+    ``(calendar_id, display_name, disabled_tools, access_role)``.
+
     When *tool_name* is set, also checks that the tool is not disabled
     on the resolved calendar.
     """
-    enabled_ids = {cid for cid, _, _ in enabled_calendars}
+    enabled_ids = {cid for cid, _, _, _ in enabled_calendars}
 
     # Filter to calendars where this tool is allowed
     if tool_name:
         allowed = [
-            (cid, name) for cid, name, disabled in enabled_calendars if tool_name not in disabled
+            (cid, name) for cid, name, disabled, _ in enabled_calendars if tool_name not in disabled
         ]
     else:
-        allowed = [(cid, name) for cid, name, _ in enabled_calendars]
+        allowed = [(cid, name) for cid, name, _, _ in enabled_calendars]
 
     if not calendar_id:
         if len(allowed) == 1:
@@ -259,16 +262,18 @@ def _validate_calendar_id(
     if calendar_id not in enabled_ids:
         return (
             "",
-            f"Calendar '{calendar_id}' is not in the enabled set. Options: {', '.join(f'{name} ({cid})' for cid, name, _ in enabled_calendars)}",
+            f"Calendar '{calendar_id}' is not in the enabled set. Options: {', '.join(f'{name} ({cid})' for cid, name, _, _ in enabled_calendars)}",
         )
 
     if tool_name:
-        for cid, name, disabled in enabled_calendars:
+        for cid, name, disabled, role in enabled_calendars:
             if cid == calendar_id and tool_name in disabled:
                 display = tool_name.replace("calendar_", "").replace("_", " ")
+                reason = " (read-only calendar)" if role in _READ_ONLY_ROLES else ""
                 return (
                     "",
-                    f"'{name}' does not allow {display}. Update calendar permissions in Settings.",
+                    f"'{name}' does not allow {display}{reason}. "
+                    "Update calendar permissions in Settings.",
                 )
 
     return calendar_id, None
@@ -284,6 +289,16 @@ _PER_CALENDAR_TOOLS = [
     ToolName.CALENDAR_DELETE_EVENT,
 ]
 
+# Write tools that should be auto-disabled on read-only calendars.
+_WRITE_TOOLS = [
+    ToolName.CALENDAR_CREATE_EVENT,
+    ToolName.CALENDAR_UPDATE_EVENT,
+    ToolName.CALENDAR_DELETE_EVENT,
+]
+
+# Google Calendar access roles that only allow reading.
+_READ_ONLY_ROLES = {"reader", "freeBusyReader"}
+
 
 # ---------------------------------------------------------------------------
 # Tool creation
@@ -293,7 +308,7 @@ _PER_CALENDAR_TOOLS = [
 def create_calendar_tools(
     service: GoogleCalendarService | Any,
     user_timezone: str = "",
-    enabled_calendars: list[tuple[str, str, list[str]]] | None = None,
+    enabled_calendars: list[tuple[str, str, list[str], str]] | None = None,
 ) -> list[Tool]:
     """Create calendar tools bound to a calendar service instance.
 
@@ -302,15 +317,31 @@ def create_calendar_tools(
     is used instead of UTC so that ``09:00`` means 9 AM in the user's
     local time.
 
-    *enabled_calendars* is a list of ``(calendar_id, display_name, disabled_tools)``
-    tuples.  *disabled_tools* is a list of tool names disabled on that calendar.
-    When empty or ``None``, defaults to ``[("primary", "Primary", [])]``.
+    *enabled_calendars* is a list of
+    ``(calendar_id, display_name, disabled_tools, access_role)`` tuples.
+    *disabled_tools* is a list of tool names disabled on that calendar.
+    *access_role* is the Google Calendar access role (owner/writer/reader/freeBusyReader).
+    When empty or ``None``, defaults to ``[("primary", "Primary", [], "owner")]``.
     """
     default_tz = _resolve_tz(user_timezone)
-    _enabled: list[tuple[str, str, list[str]]] = enabled_calendars or [("primary", "Primary", [])]
-    _enabled_ids = {cid for cid, _, _ in _enabled}
-    _cal_name_map = {cid: name for cid, name, _ in _enabled}
-    _disabled_map = {cid: set(disabled) for cid, _, disabled in _enabled}
+    raw: list[tuple[str, str, list[str], str]] = enabled_calendars or [
+        ("primary", "Primary", [], "owner")
+    ]
+    # Auto-block write tools on read-only calendars.
+    _enabled: list[tuple[str, str, list[str], str]] = []
+    for cid, name, disabled, role in raw:
+        if role in _READ_ONLY_ROLES:
+            disabled_set = set(disabled)
+            merged = list(disabled)
+            for wt in _WRITE_TOOLS:
+                if wt not in disabled_set:
+                    merged.append(wt)
+            _enabled.append((cid, name, merged, role))
+        else:
+            _enabled.append((cid, name, disabled, role))
+    _enabled_ids = {cid for cid, _, _, _ in _enabled}
+    _cal_name_map = {cid: name for cid, name, _, _ in _enabled}
+    _disabled_map = {cid: set(disabled) for cid, _, disabled, _ in _enabled}
 
     async def calendar_list_calendars() -> ToolResult:
         """List enabled calendars for the user."""
@@ -318,7 +349,7 @@ def create_calendar_tools(
             return ToolResult(content="No calendars enabled.")
 
         lines = [f"{len(_enabled)} enabled calendar(s):"]
-        for cal_id, cal_name, disabled in _enabled:
+        for cal_id, cal_name, disabled, access_role in _enabled:
             disabled_set = set(disabled)
             allowed = [
                 t.replace("calendar_", "").replace("_", " ")
@@ -331,6 +362,8 @@ def create_calendar_tools(
                 if t in disabled_set
             ]
             parts = [cal_name]
+            if access_role:
+                parts.append(f"access: {access_role}")
             parts.append(f"allowed: {', '.join(allowed)}" if allowed else "allowed: none")
             if blocked:
                 parts.append(f"blocked: {', '.join(blocked)}")
@@ -347,7 +380,7 @@ def create_calendar_tools(
             start_date,
             end_date,
             calendar_id,
-            [(cid, name) for cid, name, _ in _enabled],
+            [(cid, name) for cid, name, _, _ in _enabled],
         )
         try:
             time_min = _parse_dt(start_date, default_tz)
@@ -370,7 +403,7 @@ def create_calendar_tools(
             # Query all calendars where list_events is not disabled
             query_cals = [
                 (cid, name)
-                for cid, name, _ in _enabled
+                for cid, name, _, _ in _enabled
                 if tool not in _disabled_map.get(cid, set())
             ]
 
@@ -622,13 +655,13 @@ def create_calendar_tools(
         if calendar_id:
             if calendar_id not in _enabled_ids:
                 return ToolResult(
-                    content=f"Calendar '{calendar_id}' is not in the enabled set. Options: {', '.join(f'{name} ({cid})' for cid, name, _ in _enabled)}",
+                    content=f"Calendar '{calendar_id}' is not in the enabled set. Options: {', '.join(f'{name} ({cid})' for cid, name, _, _ in _enabled)}",
                     is_error=True,
                     error_kind=ToolErrorKind.VALIDATION,
                 )
             query_cals = [(calendar_id, _cal_name_map[calendar_id])]
         else:
-            query_cals = [(cid, name) for cid, name, _ in _enabled]
+            query_cals = [(cid, name) for cid, name, _, _ in _enabled]
 
         all_slots: list[tuple[str, Any]] = []
         skipped: list[str] = []
@@ -822,6 +855,16 @@ def _handle_http_error(exc: httpx.HTTPStatusError, action: str) -> ToolResult:
             is_error=True,
             error_kind=ToolErrorKind.SERVICE,
         )
+    if status == 403:
+        return ToolResult(
+            content=(
+                f"Permission denied while trying to {action}. "
+                "This calendar is likely read-only. "
+                "Use calendar_list_calendars to check which calendars allow writes."
+            ),
+            is_error=True,
+            error_kind=ToolErrorKind.VALIDATION,
+        )
     if status == 404:
         return ToolResult(
             content=f"Not found while trying to {action}. The calendar or event may no longer exist.",
@@ -865,10 +908,12 @@ def _calendar_auth_check(ctx: ToolContext) -> str | None:
     )
 
 
-def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str]]]:
+def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str], str]]:
     """Load the user's enabled calendars from CalendarConfig.
 
-    Returns a list of ``(calendar_id, display_name, disabled_tools)`` tuples.
+    Returns a list of ``(calendar_id, display_name, disabled_tools, access_role)``
+    tuples.  Write tools are automatically added to *disabled_tools* for
+    calendars whose *access_role* is ``reader`` or ``freeBusyReader``.
     """
     db = SessionLocal()
     try:
@@ -876,25 +921,35 @@ def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str]]]:
             db.query(CalendarConfig).filter_by(user_id=user_id, provider="google_calendar").all()
         )
         if configs:
-            result = [
-                (
-                    c.calendar_id,
-                    c.display_name or c.calendar_id,
-                    parse_disabled_tools(c.disabled_tools),
+            result: list[tuple[str, str, list[str], str]] = []
+            for c in configs:
+                disabled = parse_disabled_tools(c.disabled_tools)
+                role = c.access_role or ""
+                # Auto-block write tools on read-only calendars
+                if role in _READ_ONLY_ROLES:
+                    disabled_set = set(disabled)
+                    for wt in _WRITE_TOOLS:
+                        if wt not in disabled_set:
+                            disabled.append(wt)
+                result.append(
+                    (
+                        c.calendar_id,
+                        c.display_name or c.calendar_id,
+                        disabled,
+                        role,
+                    )
                 )
-                for c in configs
-            ]
             logger.debug(
                 "Loaded %d enabled calendar(s) for user %s: %s",
                 len(result),
                 user_id,
-                [(cid, name) for cid, name, _ in result],
+                [(cid, name, role) for cid, name, _, role in result],
             )
             return result
     finally:
         db.close()
     logger.debug("No calendar config for user %s, defaulting to primary", user_id)
-    return [("primary", "Primary", [])]
+    return [("primary", "Primary", [], "owner")]
 
 
 def _calendar_factory(ctx: ToolContext) -> list[Tool]:

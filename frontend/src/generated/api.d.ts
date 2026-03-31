@@ -687,6 +687,11 @@ export interface components {
             display_name: string;
             /** Disabled Tools */
             disabled_tools?: string[];
+            /**
+             * Access Role
+             * @default
+             */
+            access_role: string;
         };
         /** CalendarConfigResponse */
         CalendarConfigResponse: {
@@ -709,6 +714,11 @@ export interface components {
              * @default false
              */
             primary: boolean;
+            /**
+             * Access Role
+             * @default
+             */
+            access_role: string;
         };
         /** CalendarListResponse */
         CalendarListResponse: {

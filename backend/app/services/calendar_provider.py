@@ -63,6 +63,7 @@ class CalendarInfo(BaseModel):
     id: str
     summary: str
     primary: bool = False
+    access_role: str = ""
 
 
 # ---------------------------------------------------------------------------

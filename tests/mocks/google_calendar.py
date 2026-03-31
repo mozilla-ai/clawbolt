@@ -66,8 +66,10 @@ class MockGoogleCalendarService:
             ),
         ]
         self.calendars: list[CalendarInfo] = [
-            CalendarInfo(id="primary", summary="Personal", primary=True),
-            CalendarInfo(id="jobs@example.com", summary="Jobs", primary=False),
+            CalendarInfo(id="primary", summary="Personal", primary=True, access_role="owner"),
+            CalendarInfo(
+                id="jobs@example.com", summary="Jobs", primary=False, access_role="writer"
+            ),
         ]
 
     @property
