@@ -318,6 +318,19 @@ def test_get_factory_sub_tools_unknown_factory() -> None:
     assert sub_tools == []
 
 
+def test_sub_tool_info_default_permission() -> None:
+    """SubToolInfo carries correct default_permission for each tool."""
+    ws_sub_tools = {st.name: st for st in default_registry.get_factory_sub_tools("workspace")}
+    # read_file, write_file, edit_file are auto; delete_file is ask
+    assert ws_sub_tools["read_file"].default_permission == "auto"
+    assert ws_sub_tools["write_file"].default_permission == "auto"
+    assert ws_sub_tools["delete_file"].default_permission == "ask"
+
+    # messaging tools are all ask
+    msg_sub_tools = {st.name: st for st in default_registry.get_factory_sub_tools("messaging")}
+    assert msg_sub_tools["send_reply"].default_permission == "ask"
+
+
 # ---------------------------------------------------------------------------
 # Sub-tool tests: API layer
 # ---------------------------------------------------------------------------

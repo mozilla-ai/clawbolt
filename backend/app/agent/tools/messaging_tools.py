@@ -120,8 +120,14 @@ def _register() -> None:
         _messaging_factory,
         requires_outbound=True,
         sub_tools=[
-            SubToolInfo(ToolName.SEND_REPLY, "Send text replies to the user"),
-            SubToolInfo(ToolName.SEND_MEDIA_REPLY, "Send replies with media attachments"),
+            SubToolInfo(
+                ToolName.SEND_REPLY, "Send text replies to the user", default_permission="ask"
+            ),
+            SubToolInfo(
+                ToolName.SEND_MEDIA_REPLY,
+                "Send replies with media attachments",
+                default_permission="ask",
+            ),
         ],
     )
 

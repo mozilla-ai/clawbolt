@@ -432,7 +432,7 @@ def _register() -> None:
             SubToolInfo(ToolName.READ_FILE, "Read markdown files from workspace"),
             SubToolInfo(ToolName.WRITE_FILE, "Write or overwrite markdown files"),
             SubToolInfo(ToolName.EDIT_FILE, "Replace text in markdown files"),
-            SubToolInfo(ToolName.DELETE_FILE, "Delete markdown files"),
+            SubToolInfo(ToolName.DELETE_FILE, "Delete markdown files", default_permission="ask"),
         ],
     )
 

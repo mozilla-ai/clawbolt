@@ -52,6 +52,7 @@ class SubToolInfo:
 
     name: str
     description: str
+    default_permission: str = "auto"
 
 
 @dataclass

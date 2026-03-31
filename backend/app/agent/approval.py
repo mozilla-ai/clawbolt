@@ -137,10 +137,8 @@ def format_plan_message(
 ) -> str:
     """Build a plain-text plan message for batch approval.
 
-    Compression rules:
-    - Single ask step, no auto steps: simple single-tool prompt.
-    - Single ask step with auto steps: compact one-line format.
-    - Multiple ask steps: full numbered plan with [auto] and [needs OK] markers.
+    Uses natural language to clearly separate what the agent will do
+    automatically from what needs user approval.
     """
     if not ask_steps:
         return ""
@@ -150,36 +148,28 @@ def format_plan_message(
     # Single ask, no auto: simple prompt
     if len(ask_steps) == 1 and not auto_steps:
         desc = ask_steps[0].description
-        return f"{desc}\n\n{_reply_line}"
+        return f"I'd like to: {desc}\n\n{_reply_line}"
 
-    # Single ask with auto steps: compact format
-    if len(ask_steps) == 1:
-        auto_desc = ", ".join(s.description for s in auto_steps)
-        ask_desc = ask_steps[0].description
-        return (
-            f"{plan_description}\n"
-            f"I'll {auto_desc.lower()} [auto]. "
-            f"{ask_desc} [needs OK]\n\n"
-            f"{_reply_line}"
-        )
-
-    # Multiple ask steps: full numbered plan
-    lines = [plan_description]
-    step_num = 0
-
-    # Group auto steps into one line if any
+    # Auto steps preamble
+    auto_part = ""
     if auto_steps:
-        step_num += 1
         auto_desc = ", ".join(s.description.lower() for s in auto_steps)
-        lines.append(f"  {step_num}. [auto] {auto_desc.capitalize()}")
+        auto_part = f"I'll {auto_desc}."
 
-    for step in ask_steps:
-        step_num += 1
-        lines.append(f"  {step_num}. [needs OK] {step.description}")
+    # Single ask with auto steps
+    if len(ask_steps) == 1:
+        ask_desc = ask_steps[0].description.lower()
+        return f"{auto_part} I need your approval to {ask_desc}.\n\n{_reply_line}"
 
-    lines.append("")
-    lines.append(_reply_line)
-    return "\n".join(lines)
+    # Multiple ask steps
+    ask_lines = "\n".join(f"  - {step.description}" for step in ask_steps)
+    parts = []
+    if auto_part:
+        parts.append(auto_part)
+    parts.append(f"I need your approval for:\n{ask_lines}")
+    parts.append("")
+    parts.append(_reply_line)
+    return " ".join(parts[:2]) + "\n" + "\n".join(parts[2:]) if auto_part else "\n".join(parts)
 
 
 # ---------------------------------------------------------------------------
