@@ -1,11 +1,23 @@
 """Abstract base class for messaging channels."""
 
+from __future__ import annotations
+
+import logging
 from abc import ABC, abstractmethod
 from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter
+from fastapi.responses import JSONResponse
 
+from backend.app.agent.file_store import get_idempotency_store
+from backend.app.bus import message_bus
 from backend.app.media.download import DownloadedMedia
+
+if TYPE_CHECKING:
+    from backend.app.agent.ingestion import InboundMessage
+
+logger = logging.getLogger(__name__)
 
 # Type for the pluggable allowlist override. The callback receives
 # (channel_name, sender_id) and returns True/False. When set, channels
@@ -72,6 +84,22 @@ class BaseChannel(ABC):
             return None
         return override(self.name, sender_id)
 
+    def _check_static_allowlist(self, setting_value: str, sender_id: str) -> bool:
+        """Check premium route first, then fall back to a static allowlist setting.
+
+        Consolidates the common pattern used by Telegram, BlueBubbles, and Linq:
+        premium override -> empty denies all -> ``"*"`` allows all -> exact match.
+        """
+        premium = self._check_premium_route(sender_id)
+        if premium is not None:
+            return premium
+        allowed = setting_value.strip()
+        if not allowed:
+            return False
+        if allowed == "*":
+            return True
+        return sender_id == allowed
+
     # -- Outbound --------------------------------------------------------------
 
     @abstractmethod
@@ -82,9 +110,21 @@ class BaseChannel(ABC):
     async def send_media(self, to: str, body: str, media_url: str) -> str:
         """Send a message with a media attachment. Returns an external message ID."""
 
-    @abstractmethod
     async def send_message(self, to: str, body: str, media_urls: list[str] | None = None) -> str:
-        """Send a text or media message. Returns an external message ID."""
+        """Send a text or media message. Returns an external message ID.
+
+        Default implementation delegates to ``send_media`` for each URL (first
+        URL carries the body as caption) or ``send_text`` when no media is
+        provided. Channels that need different behavior (e.g. Linq's
+        multi-part API) can override.
+        """
+        if media_urls:
+            last_id = ""
+            for i, url in enumerate(media_urls):
+                caption = body if i == 0 else ""
+                last_id = await self.send_media(to, caption, url)
+            return last_id
+        return await self.send_text(to, body)
 
     @abstractmethod
     async def send_typing_indicator(self, to: str) -> None:
@@ -93,3 +133,54 @@ class BaseChannel(ABC):
     @abstractmethod
     async def download_media(self, file_id: str) -> DownloadedMedia:
         """Download media by channel-specific file identifier."""
+
+
+async def handle_webhook_inbound(
+    channel: BaseChannel,
+    inbound: InboundMessage | None,
+    *,
+    on_accepted: Callable[[], None] | None = None,
+) -> JSONResponse:
+    """Shared post-parse logic for webhook-based channels.
+
+    After a channel parses its provider-specific payload into an
+    ``InboundMessage``, this helper runs the common steps: allowlist
+    check, idempotency dedup, and bus publish.
+
+    *on_accepted* is called after the allowlist check passes, before
+    idempotency and publish. Use it for side effects that should only
+    run for allowed senders (e.g. populating a chat-ID cache).
+    """
+    if inbound is None:
+        return JSONResponse(content={"ok": True})
+
+    if not channel.is_allowed(inbound.sender_id, inbound.sender_username or ""):
+        logger.debug(
+            "%s: sender not in allowlist, ignoring",
+            channel.name,
+        )
+        return JSONResponse(content={"ok": True})
+
+    if on_accepted is not None:
+        try:
+            on_accepted()
+        except Exception:
+            logger.exception("%s: on_accepted callback failed", channel.name)
+
+    if inbound.external_message_id:
+        idempotency = get_idempotency_store()
+        if not idempotency.try_mark_seen(inbound.external_message_id):
+            logger.info(
+                "%s: duplicate webhook for %s, skipping",
+                channel.name,
+                inbound.external_message_id,
+            )
+            return JSONResponse(content={"ok": True})
+
+    logger.info(
+        "%s: inbound accepted, extId=%s",
+        channel.name,
+        inbound.external_message_id,
+    )
+    await message_bus.publish_inbound(inbound)
+    return JSONResponse(content={"ok": True})
