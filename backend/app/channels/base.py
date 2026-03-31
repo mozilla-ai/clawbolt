@@ -138,12 +138,18 @@ class BaseChannel(ABC):
 async def handle_webhook_inbound(
     channel: BaseChannel,
     inbound: InboundMessage | None,
+    *,
+    on_accepted: Callable[[], None] | None = None,
 ) -> JSONResponse:
     """Shared post-parse logic for webhook-based channels.
 
     After a channel parses its provider-specific payload into an
     ``InboundMessage``, this helper runs the common steps: allowlist
     check, idempotency dedup, and bus publish.
+
+    *on_accepted* is called after the allowlist check passes, before
+    idempotency and publish. Use it for side effects that should only
+    run for allowed senders (e.g. populating a chat-ID cache).
     """
     if inbound is None:
         return JSONResponse(content={"ok": True})
@@ -155,6 +161,9 @@ async def handle_webhook_inbound(
             inbound.sender_id,
         )
         return JSONResponse(content={"ok": True})
+
+    if on_accepted is not None:
+        on_accepted()
 
     if inbound.external_message_id:
         idempotency = get_idempotency_store()
