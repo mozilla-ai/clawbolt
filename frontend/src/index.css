@@ -413,4 +413,99 @@
     margin-right: 0.5rem;
     accent-color: var(--color-primary);
   }
+
+  /* Compact markdown preview for dashboard cards */
+  .prose-card {
+    font-size: 0.8125rem;
+    line-height: 1.6;
+    color: var(--color-foreground);
+  }
+
+  .prose-card > :first-child {
+    margin-top: 0;
+  }
+
+  .prose-card > :last-child {
+    margin-bottom: 0;
+  }
+
+  .prose-card p {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .prose-card ul,
+  .prose-card ol {
+    margin-top: 0.25rem;
+    margin-bottom: 0.25rem;
+    padding-left: 1.25rem;
+  }
+
+  .prose-card ul {
+    list-style-type: disc;
+  }
+
+  .prose-card ol {
+    list-style-type: decimal;
+  }
+
+  .prose-card li {
+    margin-top: 0.125rem;
+    margin-bottom: 0.125rem;
+  }
+
+  .prose-card h1,
+  .prose-card h2,
+  .prose-card h3 {
+    font-weight: 600;
+    font-size: 0.8125rem;
+    margin-top: 0.5rem;
+    margin-bottom: 0.25rem;
+  }
+
+  .prose-card code {
+    font-family: var(--font-mono);
+    font-size: 0.75rem;
+    background: var(--color-panel);
+    border-radius: 4px;
+    padding: 0.0625rem 0.25rem;
+  }
+
+  .prose-card pre {
+    background: var(--color-panel);
+    border-radius: var(--radius-sm);
+    padding: 0.5rem 0.75rem;
+    overflow-x: auto;
+    margin-top: 0.375rem;
+    margin-bottom: 0.375rem;
+  }
+
+  .prose-card pre code {
+    background: none;
+    padding: 0;
+  }
+
+  .prose-card blockquote {
+    border-left: 2px solid var(--color-primary);
+    padding-left: 0.75rem;
+    color: var(--color-muted-foreground);
+    margin-top: 0.375rem;
+    margin-bottom: 0.375rem;
+  }
+
+  .prose-card a {
+    color: var(--color-primary);
+    text-decoration: underline;
+  }
+
+  .prose-card input[type="checkbox"] {
+    margin-right: 0.375rem;
+    accent-color: var(--color-primary);
+  }
+
+  .prose-card hr {
+    border-color: var(--color-border);
+    margin-top: 0.5rem;
+    margin-bottom: 0.5rem;
+  }
 }

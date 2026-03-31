@@ -61,11 +61,27 @@ describe('AppShell', () => {
     renderWithRouter(<AppShell />, { route: '/app' });
 
     await waitFor(() => {
-      expect(screen.getByText('Chat')).toBeInTheDocument();
+      expect(screen.getByText('Dashboard')).toBeInTheDocument();
     });
     expect(screen.getByText('Memory')).toBeInTheDocument();
     expect(screen.getByText('Heartbeat')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
+    expect(screen.getByText('Chat')).toBeInTheDocument();
+  });
+
+  it('renders Dashboard first and Chat last in sidebar', async () => {
+    renderWithRouter(<AppShell />, { route: '/app' });
+
+    await waitFor(() => {
+      expect(screen.getByText('Dashboard')).toBeInTheDocument();
+    });
+
+    const nav = document.querySelector('nav');
+    const links = nav?.querySelectorAll('a');
+    if (links && links.length > 0) {
+      expect(links[0]?.textContent).toContain('Dashboard');
+      expect(links[links.length - 1]?.textContent).toContain('Chat');
+    }
   });
 
   it('does not render a Conversations nav link', async () => {
