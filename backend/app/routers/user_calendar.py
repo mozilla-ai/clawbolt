@@ -63,7 +63,10 @@ async def list_calendars(
 
     return CalendarListResponse(
         calendars=[
-            CalendarListEntry(id=c.id, summary=c.summary, primary=c.primary) for c in calendars
+            CalendarListEntry(
+                id=c.id, summary=c.summary, primary=c.primary, access_role=c.access_role
+            )
+            for c in calendars
         ]
     )
 
@@ -89,6 +92,7 @@ async def get_calendar_config(
                 calendar_id=c.calendar_id,
                 display_name=c.display_name,
                 disabled_tools=parse_disabled_tools(c.disabled_tools),
+                access_role=c.access_role or "",
             )
             for c in configs
         ]
@@ -115,6 +119,7 @@ async def update_calendar_config(
                 calendar_id=entry.calendar_id,
                 display_name=entry.display_name,
                 disabled_tools=json.dumps(entry.disabled_tools) if entry.disabled_tools else "",
+                access_role=entry.access_role,
             )
             db.add(config)
             new_configs.append(config)
@@ -129,6 +134,7 @@ async def update_calendar_config(
                     calendar_id=c.calendar_id,
                     display_name=c.display_name,
                     disabled_tools=parse_disabled_tools(c.disabled_tools),
+                    access_role=c.access_role or "",
                 )
                 for c in new_configs
             ]

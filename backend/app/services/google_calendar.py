@@ -142,6 +142,7 @@ class GoogleCalendarService:
                 id=item.get("id", ""),
                 summary=item.get("summary", ""),
                 primary=item.get("primary", False),
+                access_role=item.get("accessRole", ""),
             )
             for item in items
         ]

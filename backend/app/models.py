@@ -373,6 +373,7 @@ class CalendarConfig(Base):
     display_name: Mapped[str] = mapped_column(String, default="")
     calendar_id: Mapped[str] = mapped_column(String, default="primary")
     disabled_tools: Mapped[str] = mapped_column(Text, default="")
+    access_role: Mapped[str] = mapped_column(String, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
