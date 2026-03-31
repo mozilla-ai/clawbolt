@@ -520,10 +520,24 @@ def _register() -> None:
             "invoices, estimates, customers, and more"
         ),
         sub_tools=[
-            SubToolInfo(ToolName.QB_QUERY, "Run read-only queries against QuickBooks Online"),
-            SubToolInfo(ToolName.QB_CREATE, "Create entities in QuickBooks"),
-            SubToolInfo(ToolName.QB_UPDATE, "Update existing entities in QuickBooks"),
-            SubToolInfo(ToolName.QB_SEND, "Send invoices or estimates via QuickBooks email"),
+            SubToolInfo(
+                ToolName.QB_QUERY,
+                "Run read-only queries against QuickBooks Online",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.QB_CREATE, "Create entities in QuickBooks", default_permission="ask"
+            ),
+            SubToolInfo(
+                ToolName.QB_UPDATE,
+                "Update existing entities in QuickBooks",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.QB_SEND,
+                "Send invoices or estimates via QuickBooks email",
+                default_permission="ask",
+            ),
         ],
         auth_check=_quickbooks_auth_check,
     )

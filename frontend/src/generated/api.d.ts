@@ -1096,6 +1096,11 @@ export interface components {
             description: string;
             /** Enabled */
             enabled: boolean;
+            /**
+             * Permission Level
+             * @default auto
+             */
+            permission_level: string;
         };
         /** TelegramBotInfoResponse */
         TelegramBotInfoResponse: {

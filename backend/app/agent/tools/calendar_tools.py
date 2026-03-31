@@ -997,22 +997,27 @@ def _register() -> None:
             SubToolInfo(
                 ToolName.CALENDAR_LIST_EVENTS,
                 "List calendar events in a date range",
+                default_permission="ask",
             ),
             SubToolInfo(
                 ToolName.CALENDAR_CREATE_EVENT,
                 "Create a new calendar event",
+                default_permission="ask",
             ),
             SubToolInfo(
                 ToolName.CALENDAR_UPDATE_EVENT,
                 "Update an existing calendar event",
+                default_permission="ask",
             ),
             SubToolInfo(
                 ToolName.CALENDAR_DELETE_EVENT,
                 "Delete a calendar event",
+                default_permission="ask",
             ),
             SubToolInfo(
                 ToolName.CALENDAR_CHECK_AVAILABILITY,
                 "Check calendar free/busy availability",
+                default_permission="ask",
             ),
         ],
         auth_check=_calendar_auth_check,

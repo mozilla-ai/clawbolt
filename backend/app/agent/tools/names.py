@@ -39,6 +39,9 @@ class ToolName:
     CALENDAR_DELETE_EVENT = "calendar_delete_event"
     CALENDAR_CHECK_AVAILABILITY = "calendar_check_availability"
 
+    # Permissions
+    UPDATE_PERMISSION = "update_permission"
+
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
 

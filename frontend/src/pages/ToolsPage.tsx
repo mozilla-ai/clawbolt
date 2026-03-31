@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import { Switch } from '@heroui/switch';
+import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
 import api from '@/api';
@@ -23,6 +24,7 @@ const DISPLAY_NAMES: Record<string, string> = {
   messaging: 'Messaging',
   file: 'File Storage',
   heartbeat: 'Heartbeat',
+  permissions: 'Permissions',
 };
 
 // Human-readable sub-tool display names.
@@ -47,6 +49,7 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   update_heartbeat: 'Update heartbeat',
   send_reply: 'Send replies',
   send_media_reply: 'Send media',
+  update_permission: 'Change permissions',
 };
 
 function displayName(name: string): string {
@@ -55,6 +58,35 @@ function displayName(name: string): string {
 
 function subToolDisplayName(name: string): string {
   return SUB_TOOL_NAMES[name] ?? name.split('_').join(' ');
+}
+
+const PERMISSION_LABELS: Record<string, { label: string; className: string; tooltip: string }> = {
+  auto: {
+    label: 'Runs freely',
+    className: 'text-success',
+    tooltip: 'Used automatically, no approval needed. To change, just tell your assistant in chat.',
+  },
+  ask: {
+    label: 'Asks first',
+    className: 'text-warning',
+    tooltip: 'Your assistant asks for your OK before using this. To change, just tell your assistant in chat.',
+  },
+  deny: {
+    label: 'Blocked',
+    className: 'text-danger',
+    tooltip: 'Your assistant will not use this. To unblock, just tell your assistant in chat.',
+  },
+};
+
+function PermissionBadge({ level }: { level: string }) {
+  const info = PERMISSION_LABELS[level] ?? PERMISSION_LABELS['ask']!;
+  return (
+    <Tooltip content={info.tooltip} delay={400} closeDelay={0}>
+      <span className={`text-[10px] ${info.className} shrink-0 cursor-default`}>
+        {info.label}
+      </span>
+    </Tooltip>
+  );
 }
 
 export default function ToolsPage() {
@@ -223,7 +255,9 @@ export default function ToolsPage() {
 
                   {/* Calendar picker */}
                   {isConnected && tool.enabled && tool.name === 'calendar' && (
-                    <CalendarPicker />
+                    <CalendarPicker subToolPermissions={
+                      Object.fromEntries((tool.sub_tools ?? []).map((st) => [st.name, st.permission_level]))
+                    } />
                   )}
 
                   {/* Sub-tools (expandable) */}
@@ -285,7 +319,7 @@ const WRITE_TOOLS = new Set([
 
 const READ_ONLY_ROLES = new Set(['reader', 'freeBusyReader']);
 
-function CalendarPicker() {
+function CalendarPicker({ subToolPermissions }: { subToolPermissions: Record<string, string> }) {
   const { data: calendars, isPending: isLoadingCalendars } = useCalendarList();
   const { data: config } = useCalendarConfig();
   const updateConfig = useUpdateCalendarConfig();
@@ -425,10 +459,13 @@ function CalendarPicker() {
                     const lockedByRole = isReadOnly && isWriteTool;
                     return (
                       <div key={toolName} className="flex items-center justify-between gap-3 py-0.5">
-                        <span className={`text-xs ${lockedByRole ? 'text-muted-foreground' : ''}`}>
-                          {subToolDisplayName(toolName)}
-                          {lockedByRole ? ' (read-only)' : ''}
-                        </span>
+                        <div className="flex items-center gap-2">
+                          <span className={`text-xs ${lockedByRole ? 'text-muted-foreground' : ''}`}>
+                            {subToolDisplayName(toolName)}
+                            {lockedByRole ? ' (read-only)' : ''}
+                          </span>
+                          <PermissionBadge level={subToolPermissions[toolName] ?? 'ask'} />
+                        </div>
                         <Switch
                           isSelected={!disabled.has(toolName)}
                           isDisabled={updateConfig.isPending || lockedByRole}
@@ -498,7 +535,10 @@ function SubToolList({
           {visibleSubTools.map((st: SubToolEntryResponse) => (
             <div key={st.name} className="flex items-center justify-between gap-3 py-0.5">
               <div className="flex-1 min-w-0">
-                <span className="text-xs">{subToolDisplayName(st.name)}</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-xs">{subToolDisplayName(st.name)}</span>
+                  <PermissionBadge level={st.permission_level} />
+                </div>
                 {st.description && (
                   <p className="text-xs text-muted-foreground">{st.description}</p>
                 )}
