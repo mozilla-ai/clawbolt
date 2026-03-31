@@ -11,6 +11,7 @@ import {
   getAdminPageElement,
 } from '@/extensions';
 
+const DashboardPage = lazy(() => import('@/pages/DashboardPage'));
 const ChatPage = lazy(() => import('@/pages/ChatPage'));
 const MemoryPage = lazy(() => import('@/pages/MemoryPage'));
 const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
@@ -28,7 +29,7 @@ function DefaultRedirect() {
   if (profile && !profile.onboarding_complete) {
     return <Navigate to="/app/get-started" replace />;
   }
-  return <Navigate to="/app/chat" replace />;
+  return <Navigate to="/app/dashboard" replace />;
 }
 
 /** Render admin page from extension, or redirect if not admin. */
@@ -70,6 +71,7 @@ export default function App() {
         <Route path="/app" element={<AppShell />}>
           <Route index element={<DefaultRedirect />} />
           <Route path="get-started" element={<GetStartedPage />} />
+          <Route path="dashboard" element={<DashboardPage />} />
           <Route path="chat" element={<ChatPage />} />
           <Route path="memory" element={<MemoryPage />} />
           <Route path="heartbeat" element={<HeartbeatPage />} />
