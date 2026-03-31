@@ -20,7 +20,7 @@ from backend.app.models import User
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from tests.mocks.telegram import make_telegram_update_payload
 
-_PATCH_BUS_PUBLISH = "backend.app.channels.telegram.message_bus.publish_inbound"
+_PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
 _SECRET_HEADER = "X-Telegram-Bot-Api-Secret-Token"
 
 

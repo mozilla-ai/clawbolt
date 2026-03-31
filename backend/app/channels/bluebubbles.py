@@ -10,12 +10,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
-from backend.app.agent.file_store import get_idempotency_store
 from backend.app.agent.ingestion import InboundMessage
-from backend.app.bus import message_bus
-from backend.app.channels.base import BaseChannel
+from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
-from backend.app.media.download import DownloadedMedia, generate_filename
+from backend.app.media.download import DownloadedMedia, check_media_size, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 
@@ -220,16 +218,7 @@ class BlueBubblesChannel(BaseChannel):
         or email) is checked against ``settings.bluebubbles_allowed_numbers``:
         empty denies all, ``"*"`` allows all, or a specific value must match.
         """
-        premium = self._check_premium_route(sender_id)
-        if premium is not None:
-            return premium
-
-        allowed = settings.bluebubbles_allowed_numbers.strip()
-        if not allowed:
-            return False
-        if allowed == "*":
-            return True
-        return sender_id == allowed
+        return self._check_static_allowlist(settings.bluebubbles_allowed_numbers, sender_id)
 
     @staticmethod
     def parse_webhook(payload: BBWebhookPayload) -> InboundMessage | None:
@@ -313,40 +302,16 @@ class BlueBubblesChannel(BaseChannel):
             )
 
             inbound = BlueBubblesChannel.parse_webhook(payload)
-            if inbound is None:
-                logger.debug("BlueBubbles parse_webhook returned None, skipping")
-                return JSONResponse(content={"ok": True})
 
-            if not channel.is_allowed(inbound.sender_id, ""):
-                logger.info("Sender %s not in BlueBubbles allowlist, ignoring", inbound.sender_id)
-                return JSONResponse(content={"ok": True})
+            def _cache_chat_guid() -> None:
+                if data and data.chats and data.chats[0].guid and inbound is not None:
+                    channel._chat_cache[inbound.sender_id] = data.chats[0].guid
 
-            # Cache the chat_guid for outbound use
-            if data and data.chats and data.chats[0].guid:
-                channel._chat_cache[inbound.sender_id] = data.chats[0].guid
-
-            # Idempotency: skip duplicate messages
-            if inbound.external_message_id:
-                idempotency = get_idempotency_store()
-                if idempotency.has_seen(inbound.external_message_id):
-                    logger.info(
-                        "Duplicate BlueBubbles webhook for %s, skipping",
-                        inbound.external_message_id,
-                    )
-                    return JSONResponse(content={"ok": True})
-                await idempotency.mark_seen(inbound.external_message_id)
-
-            logger.info(
-                "BlueBubbles inbound accepted: sender=%s extId=%s",
-                inbound.sender_id,
-                inbound.external_message_id,
+            return await handle_webhook_inbound(
+                channel,
+                inbound,
+                on_accepted=_cache_chat_guid,
             )
-            logger.debug(
-                "BlueBubbles inbound text preview: %r",
-                inbound.text[:80] if inbound.text else "",
-            )
-            await message_bus.publish_inbound(inbound)
-            return JSONResponse(content={"ok": True})
 
         return router
 
@@ -423,16 +388,6 @@ class BlueBubblesChannel(BaseChannel):
         result = resp.json()
         return result.get("guid", "")
 
-    async def send_message(self, to: str, body: str, media_urls: list[str] | None = None) -> str:
-        """Send a text or media message."""
-        if not media_urls:
-            return await self.send_text(to, body)
-        # Send the first media with the body text, then any additional media without body
-        result = await self.send_media(to, body, media_urls[0])
-        for url in media_urls[1:]:
-            await self.send_media(to, "", url)
-        return result
-
     async def send_typing_indicator(self, to: str) -> None:
         """Send a typing indicator via BlueBubbles API (best-effort).
 
@@ -460,14 +415,7 @@ class BlueBubblesChannel(BaseChannel):
         resp.raise_for_status()
 
         content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-
-        size_bytes = len(resp.content)
-        if size_bytes > settings.max_media_size_bytes:
-            msg = (
-                f"Media file too large: {size_bytes} bytes "
-                f"(limit {settings.max_media_size_bytes} bytes)"
-            )
-            raise ValueError(msg)
+        check_media_size(resp.content)
 
         filename = generate_filename(content_type)
         return DownloadedMedia(

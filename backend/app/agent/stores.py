@@ -328,21 +328,31 @@ class IdempotencyStore:
         finally:
             db.close()
 
-    async def mark_seen(self, external_id: str) -> None:
-        """Insert an IdempotencyKey row (ignore if it already exists)."""
+    def try_mark_seen(self, external_id: str) -> bool:
+        """Atomically insert an IdempotencyKey row and return whether it was new.
+
+        Returns ``True`` if the row was newly inserted (first time seen),
+        ``False`` if it already existed (duplicate). This replaces the
+        separate has_seen + mark_seen pattern to eliminate the TOCTOU race.
+        """
         from sqlalchemy.exc import IntegrityError
 
         with db_session() as db:
-            existing = db.query(IdempotencyKey).filter_by(external_id=external_id).first()
-            if existing is not None:
-                return
             key = IdempotencyKey(external_id=external_id)
             db.add(key)
             try:
                 db.commit()
+                return True
             except IntegrityError:
-                # Concurrent insert won the race; the key is already marked
                 db.rollback()
+                return False
+
+    async def mark_seen(self, external_id: str) -> None:
+        """Insert an IdempotencyKey row (ignore if it already exists).
+
+        Prefer ``try_mark_seen`` for atomic check-and-insert.
+        """
+        self.try_mark_seen(external_id)
 
 
 # ---------------------------------------------------------------------------

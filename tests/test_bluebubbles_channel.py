@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 from backend.app.channels.bluebubbles import BlueBubblesChannel
 from tests.mocks.bluebubbles import make_bluebubbles_webhook_payload
 
-_PATCH_BUS_PUBLISH = "backend.app.channels.bluebubbles.message_bus.publish_inbound"
+_PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
 
 
 # ---------------------------------------------------------------------------
@@ -461,7 +461,7 @@ async def test_download_media_size_limit_exceeded() -> None:
     channel._client = mock_http
 
     with (
-        patch("backend.app.channels.bluebubbles.settings.max_media_size_bytes", 50),
+        patch("backend.app.media.download.settings.max_media_size_bytes", 50),
         pytest.raises(ValueError, match="too large"),
     ):
         await channel.download_media("att-guid-too-large")
