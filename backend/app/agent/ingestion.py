@@ -79,8 +79,14 @@ async def _send_error_fallback(
     channel: str,
     user: User,
     user_id: str,
+    request_id: str = "",
 ) -> None:
     """Send a fallback error message to the user via the bus.
+
+    When *request_id* is provided the outbound message includes it so the
+    web chat SSE response future is resolved and the frontend spinner clears.
+    A ``done`` activity event is also published so the activity stream stops
+    showing the agent as busy.
 
     Swallows any exception so this never propagates.
     """
@@ -95,8 +101,11 @@ async def _send_error_fallback(
                 channel=channel,
                 chat_id=to_address,
                 content="Sorry, something went wrong processing your message. Please try again.",
+                request_id=request_id,
             )
         )
+        # Clear the frontend "thinking" spinner via the activity stream.
+        await message_bus.publish_activity(user_id, {"type": "done", "channel": channel})
     except Exception:
         logger.exception("Failed to send error fallback to user %s", user_id)
 
@@ -401,7 +410,12 @@ class MessageBatcher:
                             last_entry.message.seq,
                             user_id,
                         )
-                        await _send_error_fallback(state.channel, user, user_id)
+                        await _send_error_fallback(
+                            state.channel,
+                            user,
+                            user_id,
+                            request_id=state.request_id,
+                        )
         except TimeoutError:
             logger.error(
                 "Agent processing timed out after %.0fs for message seq %d (user %s)",
@@ -409,7 +423,12 @@ class MessageBatcher:
                 last_entry.message.seq,
                 user_id,
             )
-            await _send_error_fallback(state.channel, user, user_id)
+            await _send_error_fallback(
+                state.channel,
+                user,
+                user_id,
+                request_id=state.request_id,
+            )
 
 
 # Module-level singleton
@@ -595,7 +614,12 @@ async def process_inbound_from_bus(
                             message.seq,
                             user.id,
                         )
-                        await _send_error_fallback(inbound.channel, user, user.id)
+                        await _send_error_fallback(
+                            inbound.channel,
+                            user,
+                            user.id,
+                            request_id=inbound.request_id,
+                        )
         except TimeoutError:
             logger.error(
                 "Agent processing timed out after %.0fs for message seq %d (user %s)",
@@ -603,4 +627,9 @@ async def process_inbound_from_bus(
                 message.seq,
                 user.id,
             )
-            await _send_error_fallback(inbound.channel, user, user.id)
+            await _send_error_fallback(
+                inbound.channel,
+                user,
+                user.id,
+                request_id=inbound.request_id,
+            )
