@@ -5,7 +5,8 @@ import Card from '@/components/ui/card';
 import { Switch } from '@heroui/switch';
 import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
-import { useChannelRoutes, useToolConfig, useUpdateToolConfig, useOAuthStatus, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
+import { useChannelRoutes, useChannelConfig, useToolConfig, useUpdateToolConfig, useOAuthStatus, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
+import { MESSAGING_CHANNELS, getChannelState, getChannelStatusDisplay } from '@/lib/channel-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
 
 // Human-readable display names for tool factories (matches ToolsPage).
@@ -108,6 +109,7 @@ export default function DashboardPage() {
   const { profile, reloadProfile } = useOutletContext<AppShellContext>();
 
   const channels = useChannelRoutes();
+  const channelConfigData = useChannelConfig();
   const tools = useToolConfig();
   const updateToolConfig = useUpdateToolConfig();
   const oauth = useOAuthStatus();
@@ -117,8 +119,19 @@ export default function DashboardPage() {
 
   // --- Channels ---
   const allRoutes = channels.data?.routes ?? [];
-  const activeChannels = allRoutes.filter((r) => r.enabled);
-  const channelConfigured = activeChannels.length > 0;
+  const channelConf = channelConfigData.data;
+  const channelStates = channelConf
+    ? MESSAGING_CHANNELS.map((ch) => ({
+        ...ch,
+        state: getChannelState(ch.key, channelConf, allRoutes, false),
+      }))
+    : [];
+  const hasAnyActive = channelStates.some((ch) => ch.state === 'active');
+  const hasAnyAvailable = channelStates.some(
+    (ch) => ch.state === 'available' || ch.state === 'configured' || ch.state === 'active',
+  );
+  // Overall card dot: green if any active, amber if any available, gray otherwise
+  const channelConfigured = hasAnyActive;
 
   // --- Tools ---
   const allTools = tools.data?.tools ?? [];
@@ -186,27 +199,26 @@ export default function DashboardPage() {
           configured={channelConfigured}
           icon={<ChannelsIcon />}
           onClick={() => navigate('/app/channels')}
-          isLoading={channels.isPending && !channels.data}
+          isLoading={(channels.isPending && !channels.data) || (channelConfigData.isPending && !channelConfigData.data)}
           isError={channels.isError && !channels.data}
         >
-          {channelConfigured ? (
-            <div className="space-y-1.5">
-              <div className="flex flex-wrap gap-1.5">
-                {activeChannels.map((r) => (
-                  <span key={r.channel} className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full bg-success-bg text-success">
-                    <span className="size-1.5 rounded-full bg-success" />
-                    {r.channel}
-                  </span>
-                ))}
-              </div>
-              {allRoutes.length > activeChannels.length && (
-                <p className="text-xs text-muted-foreground">
-                  {allRoutes.length - activeChannels.length} inactive {allRoutes.length - activeChannels.length === 1 ? 'channel' : 'channels'}
-                </p>
-              )}
+          {hasAnyAvailable ? (
+            <div className="space-y-2">
+              {channelStates.map((ch) => {
+                const display = getChannelStatusDisplay(ch.state);
+                return (
+                  <div key={ch.key} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`size-1.5 rounded-full shrink-0 ${display.dotClass}`} />
+                      <span className="text-xs text-foreground">{ch.label}</span>
+                    </div>
+                    <span className={`text-xs ${display.labelClass}`}>{display.label}</span>
+                  </div>
+                );
+              })}
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">Set up a messaging channel to start chatting with your assistant.</p>
+            <p className="text-xs text-muted-foreground">Set up a messaging channel to start chatting with your assistant beyond web chat.</p>
           )}
         </DashboardCard>
 

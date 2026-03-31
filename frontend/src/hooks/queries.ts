@@ -196,6 +196,7 @@ export function useToggleChannelRoute() {
       api.toggleChannelRoute(channel, enabled),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.channelRoutes });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channels });
     },
   });
 }
@@ -215,6 +216,7 @@ export function useUpdateChannelConfig() {
     mutationFn: (body: ChannelConfigUpdate) => api.updateChannelConfig(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.channels });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.channelRoutes });
     },
   });
 }

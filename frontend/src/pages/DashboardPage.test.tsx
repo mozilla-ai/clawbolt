@@ -7,6 +7,7 @@ import DashboardPage from './DashboardPage';
 const mockNavigate = vi.fn();
 
 const mockGetChannelRoutes = vi.fn();
+const mockGetChannelConfig = vi.fn();
 const mockGetToolConfig = vi.fn();
 const mockUpdateToolConfig = vi.fn();
 const mockGetOAuthStatus = vi.fn();
@@ -18,6 +19,7 @@ vi.mock('@/api', () => ({
   default: {
     getProfile: vi.fn().mockResolvedValue({}),
     getChannelRoutes: (...args: unknown[]) => mockGetChannelRoutes(...args),
+    getChannelConfig: (...args: unknown[]) => mockGetChannelConfig(...args),
     getToolConfig: (...args: unknown[]) => mockGetToolConfig(...args),
     updateToolConfig: (...args: unknown[]) => mockUpdateToolConfig(...args),
     getOAuthStatus: (...args: unknown[]) => mockGetOAuthStatus(...args),
@@ -57,6 +59,7 @@ vi.mock('react-router-dom', async () => {
 
 function setupMocks(overrides?: {
   routes?: unknown;
+  channelConfig?: unknown;
   tools?: unknown;
   oauth?: unknown;
   memory?: unknown;
@@ -65,6 +68,18 @@ function setupMocks(overrides?: {
   mockGetChannelRoutes.mockResolvedValue(
     overrides?.routes ?? {
       routes: [{ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' }],
+    },
+  );
+  mockGetChannelConfig.mockResolvedValue(
+    overrides?.channelConfig ?? {
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '*',
+      linq_api_token_set: true,
+      linq_from_number: '+15551234567',
+      linq_allowed_numbers: '*',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     },
   );
   mockGetToolConfig.mockResolvedValue(
@@ -130,17 +145,85 @@ describe('DashboardPage', () => {
     expect(screen.getByText("Long-term facts your assistant has learned about your business.")).toBeInTheDocument();
   });
 
-  it('shows active channel as badge', async () => {
+  it('shows per-channel status lines with Active for active channel', async () => {
     setupMocks();
     renderWithRouter(<DashboardPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('telegram')).toBeInTheDocument();
+      expect(screen.getByText('Telegram')).toBeInTheDocument();
+    });
+    // Telegram should show "Active"
+    expect(screen.getByText('Active')).toBeInTheDocument();
+  });
+
+  it('shows per-channel status lines for all channels', async () => {
+    setupMocks();
+    renderWithRouter(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Telegram')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Text Messaging (iMessage / RCS / SMS)')).toBeInTheDocument();
+    expect(screen.getByText('BlueBubbles (iMessage)')).toBeInTheDocument();
+  });
+
+  it('shows "Setup needed" for available but unconfigured channels', async () => {
+    setupMocks({
+      channelConfig: {
+        telegram_bot_token_set: true,
+        telegram_allowed_chat_id: '',
+        linq_api_token_set: true,
+        linq_from_number: '+15551234567',
+        linq_allowed_numbers: '',
+        linq_preferred_service: 'iMessage',
+        bluebubbles_configured: false,
+        bluebubbles_allowed_numbers: '',
+      },
+      routes: { routes: [] },
+    });
+    renderWithRouter(<DashboardPage />);
+
+    await waitFor(() => {
+      const badges = screen.getAllByText('Setup needed');
+      expect(badges.length).toBe(2);
     });
   });
 
-  it('shows setup prompt when no channels configured', async () => {
-    setupMocks({ routes: { routes: [] } });
+  it('shows "Not available" for channels without server config', async () => {
+    setupMocks({
+      channelConfig: {
+        telegram_bot_token_set: true,
+        telegram_allowed_chat_id: '*',
+        linq_api_token_set: false,
+        linq_from_number: '',
+        linq_allowed_numbers: '',
+        linq_preferred_service: 'iMessage',
+        bluebubbles_configured: false,
+        bluebubbles_allowed_numbers: '',
+      },
+    });
+    renderWithRouter(<DashboardPage />);
+
+    await waitFor(() => {
+      const badges = screen.getAllByText('Not available');
+      expect(badges.length).toBe(2);
+    });
+  });
+
+  it('shows setup prompt when no channels are available at all', async () => {
+    setupMocks({
+      routes: { routes: [] },
+      channelConfig: {
+        telegram_bot_token_set: false,
+        telegram_allowed_chat_id: '',
+        linq_api_token_set: false,
+        linq_from_number: '',
+        linq_allowed_numbers: '',
+        linq_preferred_service: 'iMessage',
+        bluebubbles_configured: false,
+        bluebubbles_allowed_numbers: '',
+      },
+    });
     renderWithRouter(<DashboardPage />);
 
     await waitFor(() => {
@@ -392,6 +475,16 @@ describe('DashboardPage', () => {
 
   it('shows per-card error when one API fails', async () => {
     mockGetChannelRoutes.mockRejectedValue(new Error('Network error'));
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '*',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
     mockGetToolConfig.mockResolvedValue({ tools: [] });
     mockGetOAuthStatus.mockResolvedValue({ integrations: [] });
     mockGetMemory.mockResolvedValue({ content: 'some memory content here' });
@@ -414,21 +507,5 @@ describe('DashboardPage', () => {
     });
     // Other cards still render
     expect(screen.getByText('some memory content here')).toBeInTheDocument();
-  });
-
-  it('shows inactive channel count when some channels are disabled', async () => {
-    setupMocks({
-      routes: {
-        routes: [
-          { channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' },
-          { channel: 'linq', channel_identifier: '+1555', enabled: false, created_at: '' },
-        ],
-      },
-    });
-    renderWithRouter(<DashboardPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText('1 inactive channel')).toBeInTheDocument();
-    });
   });
 });
