@@ -14,10 +14,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from telegram import Bot
 from telegram.constants import ChatAction
 
-from backend.app.agent.file_store import get_idempotency_store
 from backend.app.agent.ingestion import InboundMessage
-from backend.app.bus import message_bus
-from backend.app.channels.base import BaseChannel
+from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import Settings, get_effective_webhook_secret, settings
 from backend.app.media.download import DownloadedMedia, download_telegram_media
 from backend.app.services.rate_limiter import check_webhook_rate_limit
@@ -309,19 +307,7 @@ class TelegramChannel(BaseChannel):
         is used: empty rejects all, ``"*"`` allows all, or a specific
         chat ID must match.
         """
-        premium = self._check_premium_route(sender_id)
-        if premium is not None:
-            return premium
-
-        allowed = settings.telegram_allowed_chat_id.strip()
-
-        if not allowed:
-            return False
-
-        if allowed == "*":
-            return True
-
-        return sender_id == allowed
+        return self._check_static_allowlist(settings.telegram_allowed_chat_id, sender_id)
 
     @staticmethod
     def parse_update(update: TelegramUpdate) -> InboundMessage | None:
@@ -393,27 +379,7 @@ class TelegramChannel(BaseChannel):
                 return JSONResponse(content={"ok": True})
 
             inbound = TelegramChannel.parse_update(update)
-            if inbound is None:
-                return JSONResponse(content={"ok": True})
-
-            if not channel.is_allowed(inbound.sender_id, inbound.sender_username or ""):
-                logger.info(
-                    "Chat %s / @%s not in allowlist, ignoring",
-                    inbound.sender_id,
-                    inbound.sender_username or "",
-                )
-                return JSONResponse(content={"ok": True})
-
-            # Idempotency: skip duplicate updates
-            if inbound.external_message_id:
-                idempotency = get_idempotency_store()
-                if idempotency.has_seen(inbound.external_message_id):
-                    logger.info("Duplicate webhook for %s, skipping", inbound.external_message_id)
-                    return JSONResponse(content={"ok": True})
-                await idempotency.mark_seen(inbound.external_message_id)
-
-            await message_bus.publish_inbound(inbound)
-            return JSONResponse(content={"ok": True})
+            return await handle_webhook_inbound(channel, inbound)
 
         return router
 
@@ -488,16 +454,6 @@ class TelegramChannel(BaseChannel):
                 parse_mode="MarkdownV2",
             )
         return str(msg.message_id)
-
-    async def send_message(self, to: str, body: str, media_urls: list[str] | None = None) -> str:
-        """Send text or media based on whether media_urls is provided."""
-        if media_urls:
-            last_id = ""
-            for i, url in enumerate(media_urls):
-                caption = body if i == 0 else ""
-                last_id = await self.send_media(to, caption, url)
-            return last_id
-        return await self.send_text(to, body)
 
     async def send_typing_indicator(self, to: str) -> None:
         """Send 'typing...' chat action to Telegram."""

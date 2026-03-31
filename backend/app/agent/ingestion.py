@@ -265,6 +265,66 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
 
 
 # ---------------------------------------------------------------------------
+# Shared pipeline dispatch
+# ---------------------------------------------------------------------------
+
+
+async def _dispatch_to_pipeline(
+    user: User,
+    session: SessionState,
+    message: StoredMessage,
+    media_urls: list[tuple[str, str]],
+    channel: str,
+    request_id: str = "",
+    downloaded_media: list[DownloadedMedia] | None = None,
+    download_media: Callable[[str], Awaitable[DownloadedMedia]] | None = None,
+) -> None:
+    """Acquire the per-user lock, refresh user state, and run the agent pipeline.
+
+    Handles timeout and exception fallbacks. Used by both the direct
+    (non-batched) path and the ``MessageBatcher`` flush path.
+    """
+    user_id = user.id
+    try:
+        async with asyncio.timeout(settings.agent_processing_timeout_seconds):
+            async with user_locks.acquire(user_id):
+                try:
+                    db = SessionLocal()
+                    try:
+                        fresh = db.query(User).filter_by(id=user_id).first()
+                        if fresh is not None:
+                            db.expunge(fresh)
+                            user = fresh
+                    finally:
+                        db.close()
+                    await handle_inbound_message(
+                        user=user,
+                        session=session,
+                        message=message,
+                        media_urls=media_urls,
+                        downloaded_media=downloaded_media,
+                        channel=channel,
+                        request_id=request_id,
+                        download_media=download_media,
+                    )
+                except Exception:
+                    logger.exception(
+                        "Agent pipeline failed for message seq %d (user %s)",
+                        message.seq,
+                        user_id,
+                    )
+                    await _send_error_fallback(channel, user, user_id, request_id=request_id)
+    except TimeoutError:
+        logger.error(
+            "Agent processing timed out after %.0fs for message seq %d (user %s)",
+            settings.agent_processing_timeout_seconds,
+            message.seq,
+            user_id,
+        )
+        await _send_error_fallback(channel, user, user_id, request_id=request_id)
+
+
+# ---------------------------------------------------------------------------
 # Message batcher
 # ---------------------------------------------------------------------------
 
@@ -381,54 +441,16 @@ class MessageBatcher:
                 last_entry.message.seq,
             )
 
-        try:
-            async with asyncio.timeout(settings.agent_processing_timeout_seconds):
-                async with user_locks.acquire(user_id):
-                    try:
-                        # Reload user in case it was updated
-                        db = SessionLocal()
-                        try:
-                            fresh = db.query(User).filter_by(id=user_id).first()
-                            if fresh is not None:
-                                db.expunge(fresh)
-                                user = fresh
-                        finally:
-                            db.close()
-                        await handle_inbound_message(
-                            user=user,
-                            session=last_entry.session,
-                            message=last_entry.message,
-                            media_urls=all_media,
-                            downloaded_media=all_downloaded or None,
-                            channel=state.channel,
-                            request_id=state.request_id,
-                            download_media=state.download_media,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Agent pipeline failed for message seq %d (user %s)",
-                            last_entry.message.seq,
-                            user_id,
-                        )
-                        await _send_error_fallback(
-                            state.channel,
-                            user,
-                            user_id,
-                            request_id=state.request_id,
-                        )
-        except TimeoutError:
-            logger.error(
-                "Agent processing timed out after %.0fs for message seq %d (user %s)",
-                settings.agent_processing_timeout_seconds,
-                last_entry.message.seq,
-                user_id,
-            )
-            await _send_error_fallback(
-                state.channel,
-                user,
-                user_id,
-                request_id=state.request_id,
-            )
+        await _dispatch_to_pipeline(
+            user=user,
+            session=last_entry.session,
+            message=last_entry.message,
+            media_urls=all_media,
+            channel=state.channel,
+            request_id=state.request_id,
+            downloaded_media=all_downloaded or None,
+            download_media=state.download_media,
+        )
 
 
 # Module-level singleton
@@ -586,50 +608,13 @@ async def process_inbound_from_bus(
             download_media=download_media,
         )
     else:
-        try:
-            async with asyncio.timeout(settings.agent_processing_timeout_seconds):
-                async with user_locks.acquire(user.id):
-                    try:
-                        db = SessionLocal()
-                        try:
-                            fresh = db.query(User).filter_by(id=user.id).first()
-                            if fresh is not None:
-                                db.expunge(fresh)
-                                user = fresh
-                        finally:
-                            db.close()
-                        await handle_inbound_message(
-                            user=user,
-                            session=session,
-                            message=message,
-                            media_urls=inbound.media_refs,
-                            downloaded_media=inbound.downloaded_media,
-                            channel=inbound.channel,
-                            request_id=inbound.request_id,
-                            download_media=download_media,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Agent pipeline failed for message seq %d (user %s)",
-                            message.seq,
-                            user.id,
-                        )
-                        await _send_error_fallback(
-                            inbound.channel,
-                            user,
-                            user.id,
-                            request_id=inbound.request_id,
-                        )
-        except TimeoutError:
-            logger.error(
-                "Agent processing timed out after %.0fs for message seq %d (user %s)",
-                settings.agent_processing_timeout_seconds,
-                message.seq,
-                user.id,
-            )
-            await _send_error_fallback(
-                inbound.channel,
-                user,
-                user.id,
-                request_id=inbound.request_id,
-            )
+        await _dispatch_to_pipeline(
+            user=user,
+            session=session,
+            message=message,
+            media_urls=inbound.media_refs,
+            channel=inbound.channel,
+            request_id=inbound.request_id,
+            downloaded_media=inbound.downloaded_media,
+            download_media=download_media,
+        )
