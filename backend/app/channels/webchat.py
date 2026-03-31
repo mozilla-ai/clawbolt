@@ -235,6 +235,10 @@ class WebChatChannel(BaseChannel):
         """No-op: web chat delivers responses via the message bus / SSE."""
         return ""
 
+    async def send_message(self, to: str, body: str, media_urls: list[str] | None = None) -> str:
+        """No-op: web chat delivers responses via the message bus / SSE."""
+        return ""
+
     async def send_typing_indicator(self, to: str) -> None:
         """No-op: typing state handled client-side."""
 

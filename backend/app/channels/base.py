@@ -155,31 +155,31 @@ async def handle_webhook_inbound(
         return JSONResponse(content={"ok": True})
 
     if not channel.is_allowed(inbound.sender_id, inbound.sender_username or ""):
-        logger.info(
-            "%s: sender %s not in allowlist, ignoring",
+        logger.debug(
+            "%s: sender not in allowlist, ignoring",
             channel.name,
-            inbound.sender_id,
         )
         return JSONResponse(content={"ok": True})
 
     if on_accepted is not None:
-        on_accepted()
+        try:
+            on_accepted()
+        except Exception:
+            logger.exception("%s: on_accepted callback failed", channel.name)
 
     if inbound.external_message_id:
         idempotency = get_idempotency_store()
-        if idempotency.has_seen(inbound.external_message_id):
+        if not idempotency.try_mark_seen(inbound.external_message_id):
             logger.info(
                 "%s: duplicate webhook for %s, skipping",
                 channel.name,
                 inbound.external_message_id,
             )
             return JSONResponse(content={"ok": True})
-        await idempotency.mark_seen(inbound.external_message_id)
 
     logger.info(
-        "%s: inbound accepted, sender=%s extId=%s",
+        "%s: inbound accepted, extId=%s",
         channel.name,
-        inbound.sender_id,
         inbound.external_message_id,
     )
     await message_bus.publish_inbound(inbound)

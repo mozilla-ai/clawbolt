@@ -285,6 +285,8 @@ async def _dispatch_to_pipeline(
     (non-batched) path and the ``MessageBatcher`` flush path.
     """
     user_id = user.id
+    pipeline_error: Exception | None = None
+    timed_out = False
     try:
         async with asyncio.timeout(settings.agent_processing_timeout_seconds):
             async with user_locks.acquire(user_id):
@@ -307,19 +309,27 @@ async def _dispatch_to_pipeline(
                         request_id=request_id,
                         download_media=download_media,
                     )
-                except Exception:
-                    logger.exception(
-                        "Agent pipeline failed for message seq %d (user %s)",
-                        message.seq,
-                        user_id,
-                    )
-                    await _send_error_fallback(channel, user, user_id, request_id=request_id)
+                except Exception as exc:
+                    pipeline_error = exc
     except TimeoutError:
+        timed_out = True
+
+    # Error fallback runs outside both the timeout and lock scopes so it
+    # is never cut short by the same timeout that killed the pipeline.
+    if timed_out:
         logger.error(
             "Agent processing timed out after %.0fs for message seq %d (user %s)",
             settings.agent_processing_timeout_seconds,
             message.seq,
             user_id,
+        )
+        await _send_error_fallback(channel, user, user_id, request_id=request_id)
+    elif pipeline_error is not None:
+        logger.exception(
+            "Agent pipeline failed for message seq %d (user %s)",
+            message.seq,
+            user_id,
+            exc_info=pipeline_error,
         )
         await _send_error_fallback(channel, user, user_id, request_id=request_id)
 

@@ -409,7 +409,12 @@ class LinqChannel(BaseChannel):
         return await self._send_to_linq(to, parts)
 
     async def send_message(self, to: str, body: str, media_urls: list[str] | None = None) -> str:
-        """Send a text or media message, combining multiple media into one multi-part message."""
+        """Send a text or media message, combining multiple media into one multi-part message.
+
+        Required override: Linq's API accepts all parts in a single request.
+        The base class default sends one API call per media URL, which would
+        deliver separate messages to the recipient instead of one grouped message.
+        """
         if not media_urls:
             return await self.send_text(to, body)
 
