@@ -741,7 +741,10 @@ def create_calendar_tools(
                 "Always check the calendar before scheduling new events."
             ),
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.AUTO,
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Read calendar events ({args.get('start_date', '')} to {args.get('end_date', '')})"
+                ),
             ),
         ),
         Tool(
@@ -825,7 +828,10 @@ def create_calendar_tools(
                 "Check availability before scheduling. Always use this before creating events."
             ),
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.AUTO,
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Check calendar availability ({args.get('start_date', '')} to {args.get('end_date', '')})"
+                ),
             ),
         ),
     ]

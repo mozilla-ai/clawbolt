@@ -158,10 +158,10 @@ def test_list_calendars_is_auto(cal_tools: list[Tool]) -> None:
     assert tool.approval_policy.default_level == PermissionLevel.AUTO
 
 
-def test_list_events_is_auto(cal_tools: list[Tool]) -> None:
+def test_list_events_is_ask(cal_tools: list[Tool]) -> None:
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
     assert tool.approval_policy is not None
-    assert tool.approval_policy.default_level == PermissionLevel.AUTO
+    assert tool.approval_policy.default_level == PermissionLevel.ASK
 
 
 def test_create_event_is_ask(cal_tools: list[Tool]) -> None:
@@ -182,15 +182,36 @@ def test_delete_event_is_ask(cal_tools: list[Tool]) -> None:
     assert tool.approval_policy.default_level == PermissionLevel.ASK
 
 
-def test_check_availability_is_auto(cal_tools: list[Tool]) -> None:
+def test_check_availability_is_ask(cal_tools: list[Tool]) -> None:
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
     assert tool.approval_policy is not None
-    assert tool.approval_policy.default_level == PermissionLevel.AUTO
+    assert tool.approval_policy.default_level == PermissionLevel.ASK
 
 
 # ---------------------------------------------------------------------------
 # Description builders
 # ---------------------------------------------------------------------------
+
+
+def test_list_events_description_builder(cal_tools: list[Tool]) -> None:
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_EVENTS)
+    assert tool.approval_policy is not None
+    assert tool.approval_policy.description_builder is not None
+    desc = tool.approval_policy.description_builder(
+        {"start_date": "2026-03-31T00:00:00", "end_date": "2026-03-31T23:59:59"}
+    )
+    assert "Read calendar events" in desc
+    assert "2026-03-31" in desc
+
+
+def test_check_availability_description_builder(cal_tools: list[Tool]) -> None:
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_CHECK_AVAILABILITY)
+    assert tool.approval_policy is not None
+    assert tool.approval_policy.description_builder is not None
+    desc = tool.approval_policy.description_builder(
+        {"start_date": "2026-03-31T00:00:00", "end_date": "2026-04-01T00:00:00"}
+    )
+    assert "Check calendar availability" in desc
 
 
 def test_create_event_description_builder(cal_tools: list[Tool]) -> None:
