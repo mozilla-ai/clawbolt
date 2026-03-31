@@ -303,9 +303,15 @@ class BlueBubblesChannel(BaseChannel):
 
             inbound = BlueBubblesChannel.parse_webhook(payload)
 
-            # Cache the chat_guid for outbound use before the shared handler
-            # may short-circuit on allowlist or idempotency checks.
-            if inbound is not None and data and data.chats and data.chats[0].guid:
+            # Cache the chat_guid for outbound use (only for allowed senders
+            # to avoid unbounded growth from disallowed traffic).
+            if (
+                inbound is not None
+                and channel.is_allowed(inbound.sender_id, "")
+                and data
+                and data.chats
+                and data.chats[0].guid
+            ):
                 channel._chat_cache[inbound.sender_id] = data.chats[0].guid
 
             return await handle_webhook_inbound(channel, inbound)

@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
+from backend.app.agent.file_store import get_idempotency_store
+from backend.app.bus import message_bus
 from backend.app.media.download import DownloadedMedia
 
 if TYPE_CHECKING:
@@ -155,8 +157,6 @@ async def handle_webhook_inbound(
         return JSONResponse(content={"ok": True})
 
     if inbound.external_message_id:
-        from backend.app.agent.file_store import get_idempotency_store
-
         idempotency = get_idempotency_store()
         if idempotency.has_seen(inbound.external_message_id):
             logger.info(
@@ -167,7 +167,11 @@ async def handle_webhook_inbound(
             return JSONResponse(content={"ok": True})
         await idempotency.mark_seen(inbound.external_message_id)
 
-    from backend.app.bus import message_bus
-
+    logger.info(
+        "%s: inbound accepted, sender=%s extId=%s",
+        channel.name,
+        inbound.sender_id,
+        inbound.external_message_id,
+    )
     await message_bus.publish_inbound(inbound)
     return JSONResponse(content={"ok": True})

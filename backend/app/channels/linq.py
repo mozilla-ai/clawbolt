@@ -340,9 +340,16 @@ class LinqChannel(BaseChannel):
 
             inbound = LinqChannel.parse_webhook(payload)
 
-            # Cache the chat_id for outbound use before the shared handler
-            # may short-circuit on allowlist or idempotency checks.
-            if inbound is not None and data and data.chat and data.chat.id and data.sender_handle:
+            # Cache the chat_id for outbound use (only for allowed senders
+            # to avoid unbounded growth from disallowed traffic).
+            if (
+                inbound is not None
+                and channel.is_allowed(inbound.sender_id, "")
+                and data
+                and data.chat
+                and data.chat.id
+                and data.sender_handle
+            ):
                 channel._chat_cache[data.sender_handle.handle] = data.chat.id
 
             return await handle_webhook_inbound(channel, inbound)
