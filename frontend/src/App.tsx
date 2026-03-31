@@ -23,7 +23,7 @@ const ToolsPage = lazy(() => import('@/pages/ToolsPage'));
 const OAuthCallbackPage = lazy(() => import('@/pages/OAuthCallbackPage'));
 const GetStartedPage = lazy(() => import('@/pages/GetStartedPage'));
 
-/** Redirect index to get-started if onboarding is incomplete, otherwise to chat. */
+/** Redirect index to get-started if onboarding is incomplete, otherwise to dashboard. */
 function DefaultRedirect() {
   const { profile } = useOutletContext<AppShellContext>();
   if (profile && !profile.onboarding_complete) {
