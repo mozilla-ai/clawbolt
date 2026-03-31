@@ -207,6 +207,7 @@ class SubToolEntryResponse(BaseModel):
     name: str
     description: str
     enabled: bool
+    permission_level: str = "auto"
 
 
 class ToolConfigEntryResponse(BaseModel):

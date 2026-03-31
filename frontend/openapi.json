@@ -2317,6 +2317,11 @@
           "enabled": {
             "type": "boolean",
             "title": "Enabled"
+          },
+          "permission_level": {
+            "type": "string",
+            "title": "Permission Level",
+            "default": "auto"
           }
         },
         "type": "object",

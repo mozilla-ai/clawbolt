@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
+from backend.app.agent.approval import PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
@@ -52,6 +53,10 @@ class SubToolInfo:
 
     name: str
     description: str
+    default_permission: str = "auto"
+
+    def __post_init__(self) -> None:
+        PermissionLevel(self.default_permission)  # validates at registration time
 
 
 @dataclass

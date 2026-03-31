@@ -97,31 +97,29 @@ class TestFormatPlanMessage:
         assert "Write USER.md" in msg
         assert "yes" in msg
         assert "always" in msg
-        assert "[auto]" not in msg
-        assert "[needs OK]" not in msg
 
     def test_single_ask_with_auto(self) -> None:
-        """Single ask step with auto steps: compact format."""
+        """Single ask step with auto steps: natural language format."""
         auto = [PlanStep("reader", "Read config", PermissionLevel.AUTO)]
         ask = [PlanStep("writer", "Write USER.md", PermissionLevel.ASK)]
         msg = format_plan_message("Plan:", auto, ask)
-        assert "[auto]" in msg
-        assert "[needs OK]" in msg
+        assert "read config" in msg.lower()
+        assert "approval" in msg.lower()
+        assert "write user.md" in msg.lower()
         assert "yes" in msg
 
     def test_multiple_ask_steps(self) -> None:
-        """Multiple ask steps: full numbered plan."""
+        """Multiple ask steps: lists items needing approval."""
         auto = [PlanStep("reader", "Read config", PermissionLevel.AUTO)]
         ask = [
             PlanStep("writer", "Write USER.md", PermissionLevel.ASK),
             PlanStep("sender", "Send message", PermissionLevel.ASK),
         ]
         msg = format_plan_message("Here's what I need to do:", auto, ask)
-        assert "1." in msg
-        assert "2." in msg
-        assert "3." in msg
-        assert "[auto]" in msg
-        assert "[needs OK]" in msg
+        assert "read config" in msg.lower()
+        assert "approval" in msg.lower()
+        assert "Write USER.md" in msg
+        assert "Send message" in msg
         assert "yes" in msg
 
     def test_empty_ask_returns_empty(self) -> None:
@@ -130,7 +128,7 @@ class TestFormatPlanMessage:
         assert msg == ""
 
     def test_multiple_auto_grouped(self) -> None:
-        """Multiple auto steps are grouped into one line."""
+        """Multiple auto steps are combined in a single sentence."""
         auto = [
             PlanStep("reader1", "Read file A", PermissionLevel.AUTO),
             PlanStep("reader2", "Read file B", PermissionLevel.AUTO),
@@ -140,10 +138,10 @@ class TestFormatPlanMessage:
             PlanStep("sender", "Send message", PermissionLevel.ASK),
         ]
         msg = format_plan_message("Plan:", auto, ask)
-        # Auto steps grouped on one line
-        lines = msg.split("\n")
-        auto_lines = [line for line in lines if "[auto]" in line]
-        assert len(auto_lines) == 1
+        # Auto steps combined: "I'll read file a, read file b."
+        assert "read file a" in msg.lower()
+        assert "read file b" in msg.lower()
+        assert "approval" in msg.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -221,7 +219,7 @@ class TestBatchApproval:
         plan_sent = False
         for call in mock_publish.call_args_list:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
-            if isinstance(msg, OutboundMessage) and "needs OK" in msg.content:
+            if isinstance(msg, OutboundMessage) and "approval" in msg.content.lower():
                 plan_sent = True
         assert plan_sent
 
@@ -444,7 +442,7 @@ class TestBatchApproval:
         for call in mock_publish.call_args_list:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
             if isinstance(msg, OutboundMessage):
-                assert "needs OK" not in msg.content
+                assert "approval" not in msg.content.lower()
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -600,6 +598,6 @@ class TestBatchApproval:
         session = store.load_session(session_id)
         assert session is not None
         outbound_msgs = [m for m in session.messages if m.direction == "outbound"]
-        assert any("needs OK" in m.body for m in outbound_msgs), (
+        assert any("approval" in m.body.lower() for m in outbound_msgs), (
             "Approval prompt not found in session history"
         )

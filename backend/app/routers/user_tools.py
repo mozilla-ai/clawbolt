@@ -8,6 +8,7 @@ from typing import NamedTuple
 
 from fastapi import APIRouter, Depends, HTTPException
 
+from backend.app.agent.approval import ApprovalStore, PermissionLevel, get_approval_store
 from backend.app.agent.dto import SubToolEntry
 from backend.app.agent.file_store import (
     ToolConfigEntry,
@@ -33,7 +34,7 @@ ensure_tool_modules_imported()
 
 # Factories whose tools are always available and cannot be disabled.
 _CORE_FACTORIES: frozenset[str] = frozenset(
-    {"workspace", "profile", "memory", "messaging", "file", "heartbeat"}
+    {"workspace", "profile", "memory", "messaging", "file", "heartbeat", "permissions"}
 )
 
 # Consolidated metadata for each factory group: description, display group,
@@ -53,6 +54,7 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
     "messaging": _FactoryMeta("Send text and media replies to the user"),
     "file": _FactoryMeta("Upload and organize files in cloud storage"),
     "heartbeat": _FactoryMeta("View and edit heartbeat notes"),
+    "permissions": _FactoryMeta("Change tool permission levels (run freely, ask first, or block)"),
     "quickbooks": _FactoryMeta(
         "Query, create, and manage QuickBooks Online entities",
         domain_group="Integrations",
@@ -69,6 +71,7 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
 def _build_tool_list(
     disabled_names: set[str],
     disabled_sub_tools_map: dict[str, list[str]] | None = None,
+    user_id: str | None = None,
 ) -> list[ToolConfigEntry]:
     """Build the full tool config list from the registry.
 
@@ -78,8 +81,16 @@ def _build_tool_list(
 
     When *disabled_sub_tools_map* is provided, it maps factory names to
     lists of disabled individual tool names within that factory.
+
+    When *user_id* is provided, per-user permission overrides from the
+    ``ApprovalStore`` are resolved for each sub-tool.
     """
     sub_map = disabled_sub_tools_map or {}
+    # Load permission data once to avoid repeated file reads per sub-tool.
+    approval_store = get_approval_store() if user_id else None
+    perm_data = (
+        approval_store.load_user_permissions(user_id) if approval_store and user_id else None
+    )
     entries: list[ToolConfigEntry] = []
     for name in sorted(default_registry.factory_names):
         is_core = name in _CORE_FACTORIES
@@ -95,6 +106,15 @@ def _build_tool_list(
                 name=st.name,
                 description=st.description,
                 enabled=st.name not in disabled_subs,
+                permission_level=str(
+                    ApprovalStore.resolve_permission(
+                        perm_data,
+                        st.name,
+                        default=PermissionLevel(st.default_permission),
+                    )
+                )
+                if perm_data is not None
+                else st.default_permission,
             )
             for st in factory_sub_tools
         ]
@@ -124,7 +144,12 @@ def _entry_to_response(e: ToolConfigEntry) -> ToolConfigEntryResponse:
         domain_group_order=e.domain_group_order,
         enabled=e.enabled,
         sub_tools=[
-            SubToolEntryResponse(name=st.name, description=st.description, enabled=st.enabled)
+            SubToolEntryResponse(
+                name=st.name,
+                description=st.description,
+                enabled=st.enabled,
+                permission_level=st.permission_level,
+            )
             for st in e.sub_tools
         ],
     )
@@ -139,7 +164,7 @@ async def get_tool_config(
     saved = await store.load()
     disabled_names = {e.name for e in saved if not e.enabled}
     disabled_sub_map = {e.name: e.disabled_sub_tools for e in saved if e.disabled_sub_tools}
-    entries = _build_tool_list(disabled_names, disabled_sub_map)
+    entries = _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
     return ToolConfigResponse(tools=[_entry_to_response(e) for e in entries])
 
 
@@ -193,7 +218,7 @@ async def update_tool_config(
                 disabled_sub_map.pop(name, None)
 
     # Build and save the full config
-    entries = _build_tool_list(disabled_names, disabled_sub_map)
+    entries = _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
     await store.save(entries)
 
     return ToolConfigResponse(tools=[_entry_to_response(e) for e in entries])

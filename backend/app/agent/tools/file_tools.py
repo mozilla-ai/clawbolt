@@ -408,8 +408,14 @@ def _register() -> None:
         core=True,
         summary="Upload and organize files in cloud storage (Dropbox/Google Drive)",
         sub_tools=[
-            SubToolInfo(ToolName.UPLOAD_TO_STORAGE, "Upload files to cloud storage"),
-            SubToolInfo(ToolName.ORGANIZE_FILE, "Move files into client folders"),
+            SubToolInfo(
+                ToolName.UPLOAD_TO_STORAGE,
+                "Upload files to cloud storage",
+                default_permission="ask",
+            ),
+            SubToolInfo(
+                ToolName.ORGANIZE_FILE, "Move files into client folders", default_permission="ask"
+            ),
         ],
     )
 
