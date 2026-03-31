@@ -2,6 +2,7 @@ import { useState } from 'react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import { Switch } from '@heroui/switch';
+import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
 import api from '@/api';
@@ -57,18 +58,32 @@ function subToolDisplayName(name: string): string {
   return SUB_TOOL_NAMES[name] ?? name.split('_').join(' ');
 }
 
-const PERMISSION_LABELS: Record<string, { label: string; className: string }> = {
-  auto: { label: 'Runs freely', className: 'text-success' },
-  ask: { label: 'Asks first', className: 'text-warning' },
-  deny: { label: 'Blocked', className: 'text-danger' },
+const PERMISSION_LABELS: Record<string, { label: string; className: string; tooltip: string }> = {
+  auto: {
+    label: 'Runs freely',
+    className: 'text-success',
+    tooltip: 'The assistant will use this without asking. You can change this by replying "never" when prompted.',
+  },
+  ask: {
+    label: 'Asks first',
+    className: 'text-warning',
+    tooltip: 'The assistant will ask for your OK before using this. Reply "always" to let it run freely.',
+  },
+  deny: {
+    label: 'Blocked',
+    className: 'text-danger',
+    tooltip: 'The assistant cannot use this. You previously replied "never" when prompted.',
+  },
 };
 
 function PermissionBadge({ level }: { level: string }) {
   const info = PERMISSION_LABELS[level] ?? PERMISSION_LABELS['ask']!;
   return (
-    <span className={`text-[10px] ${info.className} shrink-0`}>
-      {info.label}
-    </span>
+    <Tooltip content={info.tooltip} delay={400} closeDelay={0}>
+      <span className={`text-[10px] ${info.className} shrink-0 cursor-default`}>
+        {info.label}
+      </span>
+    </Tooltip>
   );
 }
 
