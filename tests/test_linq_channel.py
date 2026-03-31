@@ -19,7 +19,7 @@ from tests.mocks.linq import (
     make_linq_webhook_payload,
 )
 
-_PATCH_BUS_PUBLISH = "backend.app.channels.linq.message_bus.publish_inbound"
+_PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
 
 
 # ---------------------------------------------------------------------------

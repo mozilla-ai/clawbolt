@@ -47,6 +47,21 @@ def generate_filename(mime_type: str) -> str:
     return f"media_{timestamp}{ext}"
 
 
+def check_media_size(content: bytes) -> int:
+    """Raise ``ValueError`` if *content* exceeds the configured media size limit.
+
+    Returns the size in bytes so callers can reuse it without a second ``len()`` call.
+    """
+    size_bytes = len(content)
+    if size_bytes > settings.max_media_size_bytes:
+        msg = (
+            f"Media file too large: {size_bytes} bytes "
+            f"(limit {settings.max_media_size_bytes} bytes)"
+        )
+        raise ValueError(msg)
+    return size_bytes
+
+
 async def download_telegram_media(
     file_id: str,
     bot_token: str | None = None,
@@ -88,13 +103,7 @@ async def download_telegram_media(
             logger.debug("Inferred MIME type %s from file path extension %s", inferred, ext)
             mime_type = inferred
 
-    size_bytes = len(download.content)
-    if size_bytes > settings.max_media_size_bytes:
-        msg = (
-            f"Media file too large: {size_bytes} bytes "
-            f"(limit {settings.max_media_size_bytes} bytes)"
-        )
-        raise ValueError(msg)
+    size_bytes = check_media_size(download.content)
 
     logger.info(
         "Download complete: file_id=%s, mime_type=%s, size=%d bytes",

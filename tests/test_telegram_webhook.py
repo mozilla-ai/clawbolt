@@ -14,7 +14,7 @@ from fastapi.testclient import TestClient
 
 from tests.mocks.telegram import make_telegram_update_payload
 
-_PATCH_BUS_PUBLISH = "backend.app.channels.telegram.message_bus.publish_inbound"
+_PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
 
 
 def test_inbound_webhook_returns_200(client: TestClient) -> None:

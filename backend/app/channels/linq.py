@@ -11,12 +11,10 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict
 
-from backend.app.agent.file_store import get_idempotency_store
 from backend.app.agent.ingestion import InboundMessage
-from backend.app.bus import message_bus
-from backend.app.channels.base import BaseChannel
+from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
-from backend.app.media.download import DownloadedMedia, generate_filename
+from backend.app.media.download import DownloadedMedia, check_media_size, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 
@@ -239,16 +237,7 @@ class LinqChannel(BaseChannel):
         number) is checked against ``settings.linq_allowed_numbers``:
         empty denies all, ``"*"`` allows all, or a specific number must match.
         """
-        premium = self._check_premium_route(sender_id)
-        if premium is not None:
-            return premium
-
-        allowed = settings.linq_allowed_numbers.strip()
-        if not allowed:
-            return False
-        if allowed == "*":
-            return True
-        return sender_id == allowed
+        return self._check_static_allowlist(settings.linq_allowed_numbers, sender_id)
 
     @staticmethod
     def _guess_mime(url: str) -> str:
@@ -350,30 +339,16 @@ class LinqChannel(BaseChannel):
             )
 
             inbound = LinqChannel.parse_webhook(payload)
-            if inbound is None:
-                logger.debug("Linq parse_webhook returned None, skipping")
-                return JSONResponse(content={"ok": True})
 
-            if not channel.is_allowed(inbound.sender_id, ""):
-                logger.info("Phone %s not in Linq allowlist, ignoring", inbound.sender_id)
-                return JSONResponse(content={"ok": True})
+            def _cache_chat_id() -> None:
+                if data and data.chat and data.chat.id and data.sender_handle:
+                    channel._chat_cache[data.sender_handle.handle] = data.chat.id
 
-            # Cache the chat_id for outbound use
-            if data and data.chat and data.chat.id and data.sender_handle:
-                channel._chat_cache[data.sender_handle.handle] = data.chat.id
-
-            # Idempotency: skip duplicate messages
-            if inbound.external_message_id:
-                idempotency = get_idempotency_store()
-                if idempotency.has_seen(inbound.external_message_id):
-                    logger.info(
-                        "Duplicate Linq webhook for %s, skipping", inbound.external_message_id
-                    )
-                    return JSONResponse(content={"ok": True})
-                await idempotency.mark_seen(inbound.external_message_id)
-
-            await message_bus.publish_inbound(inbound)
-            return JSONResponse(content={"ok": True})
+            return await handle_webhook_inbound(
+                channel,
+                inbound,
+                on_accepted=_cache_chat_id,
+            )
 
         return router
 
@@ -434,7 +409,12 @@ class LinqChannel(BaseChannel):
         return await self._send_to_linq(to, parts)
 
     async def send_message(self, to: str, body: str, media_urls: list[str] | None = None) -> str:
-        """Send a text or media message, combining multiple media into one multi-part message."""
+        """Send a text or media message, combining multiple media into one multi-part message.
+
+        Required override: Linq's API accepts all parts in a single request.
+        The base class default sends one API call per media URL, which would
+        deliver separate messages to the recipient instead of one grouped message.
+        """
         if not media_urls:
             return await self.send_text(to, body)
 
@@ -464,14 +444,7 @@ class LinqChannel(BaseChannel):
         resp.raise_for_status()
 
         content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-
-        size_bytes = len(resp.content)
-        if size_bytes > settings.max_media_size_bytes:
-            msg = (
-                f"Media file too large: {size_bytes} bytes "
-                f"(limit {settings.max_media_size_bytes} bytes)"
-            )
-            raise ValueError(msg)
+        check_media_size(resp.content)
 
         filename = generate_filename(content_type)
         return DownloadedMedia(
