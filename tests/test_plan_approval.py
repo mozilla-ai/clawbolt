@@ -359,6 +359,68 @@ class TestBatchApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
+    async def test_interrupted_returns_error_for_all_ask_tools(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """INTERRUPTED on a batch plan returns errors for all ASK tools, no permission persisted."""
+        mock_publish = AsyncMock()
+
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [
+                    {"name": "reader", "arguments": {"text": "config"}},
+                    {"name": "writer", "arguments": {"text": "data"}},
+                    {"name": "sender", "arguments": {"text": "msg"}},
+                ]
+            ),
+            make_text_response("OK, setting that aside."),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _interrupt_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            gate.resolve(test_user.id, ApprovalDecision.INTERRUPTED)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools(
+            [
+                _auto_tool(),
+                _ask_tool("writer", "Write"),
+                _ask_tool("sender", "Send"),
+            ]
+        )
+
+        task = asyncio.create_task(_interrupt_soon())
+        response = await agent.process_message("read, write, and send")
+        await task
+
+        # AUTO tool still executed
+        assert any(tc.name == "reader" and not tc.is_error for tc in response.tool_calls)
+
+        # Both ASK tools should be errors with "interrupted" in the message
+        writer_calls = [tc for tc in response.tool_calls if tc.name == "writer"]
+        sender_calls = [tc for tc in response.tool_calls if tc.name == "sender"]
+        assert len(writer_calls) == 1
+        assert writer_calls[0].is_error
+        assert "interrupted" in writer_calls[0].result.lower()
+        assert len(sender_calls) == 1
+        assert sender_calls[0].is_error
+        assert "interrupted" in sender_calls[0].result.lower()
+
+        # No permissions should have been persisted
+        store = get_approval_store()
+        assert store.check_permission(test_user.id, "writer") == PermissionLevel.ASK
+        assert store.check_permission(test_user.id, "sender") == PermissionLevel.ASK
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
     async def test_timeout_denies_ask_tools(self, mock_amessages: object, test_user: User) -> None:
         """Timeout on plan approval denies ask tools, auto tools still execute."""
         mock_publish = AsyncMock()

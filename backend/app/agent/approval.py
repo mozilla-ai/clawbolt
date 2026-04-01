@@ -85,6 +85,7 @@ class ApprovalDecision(StrEnum):
     DENIED = "denied"
     ALWAYS_ALLOW = "always_allow"
     ALWAYS_DENY = "always_deny"
+    INTERRUPTED = "interrupted"
 
 
 # ---------------------------------------------------------------------------

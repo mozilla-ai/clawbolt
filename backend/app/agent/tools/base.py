@@ -27,6 +27,7 @@ class ToolErrorKind(StrEnum):
     PERMISSION = "permission"
     AUTH = "auth"
     INTERNAL = "internal"
+    INTERRUPTED = "interrupted"
 
 
 @dataclass
