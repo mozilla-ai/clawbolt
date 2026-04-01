@@ -36,6 +36,48 @@ async def update_permissions(
     if not isinstance(data, dict):
         raise HTTPException(status_code=400, detail="Permissions must be a JSON object")
 
+    _validate_permissions_shape(data)
+
     store = get_approval_store()
     store._save(current_user.id, data)
     return PermissionsResponse(content=json.dumps(data, indent=2))
+
+
+_VALID_LEVELS = {"auto", "ask", "deny"}
+
+
+def _validate_permissions_shape(data: dict[str, object]) -> None:
+    """Validate that tools/resources contain only valid permission levels."""
+    tools = data.get("tools")
+    if tools is not None:
+        if not isinstance(tools, dict):
+            raise HTTPException(status_code=400, detail="'tools' must be an object")
+        bad = [str(k) for k, v in tools.items() if not isinstance(v, str) or v not in _VALID_LEVELS]
+        if bad:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid permission level for: {', '.join(bad[:5])}. "
+                f"Allowed values: auto, ask, deny",
+            )
+
+    resources = data.get("resources")
+    if resources is not None:
+        if not isinstance(resources, dict):
+            raise HTTPException(status_code=400, detail="'resources' must be an object")
+        for tool_name, res_map in resources.items():
+            if not isinstance(res_map, dict):
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"'resources.{tool_name}' must be an object",
+                )
+            bad = [
+                str(k)
+                for k, v in res_map.items()
+                if not isinstance(v, str) or v not in _VALID_LEVELS
+            ]
+            if bad:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"Invalid permission level in resources.{tool_name}: "
+                    f"{', '.join(bad[:5])}. Allowed values: auto, ask, deny",
+                )
