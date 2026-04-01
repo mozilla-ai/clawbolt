@@ -1,23 +1,17 @@
-import { useState } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
-import Input from '@/components/ui/input';
-import Field from '@/components/ui/field';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
-import { useUpdateProfile, useChannelConfig, useUpdateChannelConfig, useToggleChannelRoute } from '@/hooks/queries';
+import { useUpdateProfile, useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
+import { MESSAGING_CHANNELS, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
+import { ChannelConfigForm, type TelegramLinkData, type LinqLinkData } from '@/components/ChannelConfigForm';
 import api from '@/api';
 import type { AppShellContext } from '@/layouts/AppShell';
 
-const CHANNEL_OPTIONS = [
-  { key: 'linq', label: 'Text Messaging', description: 'iMessage, RCS, or SMS from your phone' },
-  { key: 'telegram', label: 'Telegram', description: 'Message via the Telegram app' },
-  { key: 'bluebubbles', label: 'BlueBubbles', description: 'iMessage via self-hosted Mac bridge' },
-] as const;
-
-type ChannelKey = (typeof CHANNEL_OPTIONS)[number]['key'];
+type Selection = ChannelKey | 'none';
 
 export default function GetStartedPage() {
   const { reloadProfile } = useOutletContext<AppShellContext>();
@@ -25,28 +19,71 @@ export default function GetStartedPage() {
   const { isPremium } = useAuth();
   const updateProfile = useUpdateProfile();
   const { data: channelConfig } = useChannelConfig();
-  const updateChannelConfig = useUpdateChannelConfig();
+  const { data: routesData } = useChannelRoutes();
   const toggleChannelRoute = useToggleChannelRoute();
-  const [selectedChannel, setSelectedChannel] = useState<ChannelKey | null>(null);
-  const [confirmedChannel, setConfirmedChannel] = useState<ChannelKey | null>(null);
-  const [phoneNumber, setPhoneNumber] = useState('');
-  const [phoneSaved, setPhoneSaved] = useState(false);
-  const [savingPhone, setSavingPhone] = useState(false);
+  const [selectedChannel, setSelectedChannel] = useState<Selection | null>(null);
+  const [confirmedChannel, setConfirmedChannel] = useState<Selection | null>(null);
 
-  const linqConfigured = channelConfig?.linq_api_token_set ?? false;
+  // Premium link data (fetched once, same pattern as ChannelsPage)
+  const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
+  const [linqLinkData, setLinqLinkData] = useState<LinqLinkData | null>(null);
+
+  useEffect(() => {
+    if (isPremium) {
+      api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
+      api.getLinqLink().then(setLinqLinkData).catch(() => {});
+    }
+  }, [isPremium]);
+
+  const routes = routesData?.routes ?? [];
+
+  const linqConfigured = channelConfig ? isServerAvailable('linq', channelConfig) : false;
   const fromNumber = channelConfig?.linq_from_number ?? '';
   const bbAddress = channelConfig?.bluebubbles_imessage_address ?? '';
-  const bbConfigured = channelConfig?.bluebubbles_configured ?? false;
+  const bbConfigured = channelConfig ? isServerAvailable('bluebubbles', channelConfig) : false;
 
-  const isChannelConfigured = (channel: string): boolean => {
-    if (channel === 'linq') return linqConfigured;
-    if (channel === 'telegram') return channelConfig?.telegram_bot_token_set ?? false;
-    if (channel === 'bluebubbles') return channelConfig?.bluebubbles_configured ?? false;
-    return false;
-  };
+  // Find the currently active channel route
+  const activeChannelKey = MESSAGING_CHANNELS.find(
+    (ch) => routes.some((r) => r.channel === ch.key && r.enabled),
+  )?.key ?? null;
 
-  const handleSelectChannel = (channel: ChannelKey) => {
+  // Pre-populate selection from active route on initial data load
+  const prePopulated = useRef(false);
+  useEffect(() => {
+    if (prePopulated.current || !channelConfig || !routesData) return;
+    prePopulated.current = true;
+    if (activeChannelKey) {
+      setSelectedChannel(activeChannelKey);
+      setConfirmedChannel(activeChannelKey);
+    }
+  }, [channelConfig, routesData, activeChannelKey]);
+
+  const handleSelectChannel = (channel: Selection) => {
     setSelectedChannel(channel);
+
+    if (channel === 'none') {
+      // Disable the currently active channel
+      const toDisable = confirmedChannel && confirmedChannel !== 'none'
+        ? confirmedChannel
+        : activeChannelKey;
+
+      if (toDisable) {
+        toggleChannelRoute.mutate(
+          { channel: toDisable, enabled: false },
+          {
+            onSuccess: () => setConfirmedChannel('none'),
+            onError: (e) => {
+              setSelectedChannel(confirmedChannel);
+              toast.error(e.message);
+            },
+          },
+        );
+      } else {
+        setConfirmedChannel('none');
+      }
+      return;
+    }
+
     // Enable the selected channel route (backend auto-disables others)
     toggleChannelRoute.mutate(
       { channel, enabled: true },
@@ -60,39 +97,12 @@ export default function GetStartedPage() {
     );
   };
 
-  const handleSavePhone = async () => {
-    const trimmed = phoneNumber.trim();
-    if (!trimmed) {
-      toast.error('Please enter your phone number');
-      return;
-    }
-
+  const handleConfigSaved = (key: ChannelKey) => {
+    // Refresh premium link data after save
     if (isPremium) {
-      setSavingPhone(true);
-      try {
-        await api.setLinqLink(trimmed);
-        updateProfile.mutate({ phone: trimmed });
-        setPhoneSaved(true);
-        toast.success('Phone number saved');
-      } catch (e) {
-        toast.error(e instanceof Error ? e.message : 'Failed to save');
-      } finally {
-        setSavingPhone(false);
-      }
-      return;
+      if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
+      if (key === 'linq') api.getLinqLink().then(setLinqLinkData).catch(() => {});
     }
-
-    updateChannelConfig.mutate(
-      { linq_allowed_numbers: trimmed },
-      {
-        onSuccess: () => {
-          updateProfile.mutate({ phone: trimmed });
-          setPhoneSaved(true);
-          toast.success('Phone number saved');
-        },
-        onError: (e) => toast.error(e.message),
-      },
-    );
   };
 
   const handleDismiss = () => {
@@ -107,6 +117,13 @@ export default function GetStartedPage() {
       },
     );
   };
+
+  // Determine Step 2 heading based on selection
+  const step2Label = selectedChannel === 'none'
+    ? 'No setup needed'
+    : selectedChannel
+      ? `Configure ${MESSAGING_CHANNELS.find((c) => c.key === selectedChannel)?.label ?? selectedChannel}`
+      : 'Configure your channel';
 
   return (
     <div className="max-w-2xl mx-auto">
@@ -134,8 +151,8 @@ export default function GetStartedPage() {
                 Pick how you want to talk to Clawbolt. You can change this later.
               </p>
               <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Messaging channel">
-                {CHANNEL_OPTIONS.map(({ key, label, description }) => {
-                  const configured = isChannelConfigured(key);
+                {MESSAGING_CHANNELS.map(({ key, label }) => {
+                  const configured = channelConfig ? isServerAvailable(key, channelConfig) : false;
                   const isSelected = selectedChannel === key;
                   const isConfirmed = confirmedChannel === key;
                   const isDisabled = !configured;
@@ -168,7 +185,6 @@ export default function GetStartedPage() {
                       )}
                       <div className="flex-1">
                         <span className="text-sm font-medium">{label}</span>
-                        <p className="text-xs text-muted-foreground">{description}</p>
                       </div>
                       {isConfirmed && (
                         <span className="text-xs text-success flex items-center gap-1">
@@ -180,6 +196,15 @@ export default function GetStartedPage() {
                     </label>
                   );
                 })}
+
+                {/* None option */}
+                <NoneOption
+                  isSelected={selectedChannel === 'none'}
+                  isConfirmed={confirmedChannel === 'none'}
+                  isSwitching={toggleChannelRoute.isPending && selectedChannel === 'none' && confirmedChannel !== 'none'}
+                  isMutating={toggleChannelRoute.isPending}
+                  onSelect={() => handleSelectChannel('none')}
+                />
               </div>
             </div>
           </div>
@@ -189,55 +214,36 @@ export default function GetStartedPage() {
         <Card>
           <div className="flex items-start gap-4">
             <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
-              <PhoneIcon />
+              <SettingsIcon />
             </div>
             <div className="flex-1 min-w-0">
               <div className="flex items-center gap-2 mb-1">
                 <span className="text-xs font-medium text-muted-foreground">Step 2</span>
               </div>
-              {selectedChannel === 'linq' || !selectedChannel ? (
-                <>
-                  <h3 className="text-sm font-semibold font-display">Enter your phone number</h3>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    This is the number you will text Clawbolt from.
-                  </p>
-                  <div className="mt-3">
-                    <Field label="Phone Number">
-                      <div className="flex gap-2">
-                        <div className="flex-1">
-                          <Input
-                            value={phoneNumber}
-                            onChange={(e) => setPhoneNumber(e.target.value)}
-                            placeholder="e.g. +15551234567"
-                            inputMode="tel"
-                            disabled={phoneSaved}
-                          />
-                        </div>
-                        {!phoneSaved ? (
-                          <Button
-                            onClick={handleSavePhone}
-                            disabled={savingPhone || updateChannelConfig.isPending || !phoneNumber.trim()}
-                            isLoading={savingPhone || updateChannelConfig.isPending}
-                          >
-                            Save
-                          </Button>
-                        ) : (
-                          <Button variant="ghost" onClick={() => setPhoneSaved(false)}>
-                            Edit
-                          </Button>
-                        )}
-                      </div>
-                      <p className="text-xs text-muted-foreground mt-1">
-                        Use E.164 format with country code (e.g. +1 for US).
-                      </p>
-                    </Field>
-                  </div>
-                </>
+              <h3 className="text-sm font-semibold font-display">{step2Label}</h3>
+              {selectedChannel === 'none' ? (
+                <p className="text-sm text-muted-foreground mt-1">
+                  You can always add a messaging channel later from the{' '}
+                  <button type="button" className="text-primary hover:underline font-medium" onClick={() => navigate('/app/channels')}>
+                    Channels page
+                  </button>
+                  .
+                </p>
+              ) : selectedChannel ? (
+                <div className="mt-3">
+                  <ChannelConfigForm
+                    channelKey={selectedChannel}
+                    isPremium={isPremium}
+                    channelConfig={channelConfig}
+                    telegramLinkData={telegramLinkData}
+                    linqLinkData={linqLinkData}
+                    onSaved={() => handleConfigSaved(selectedChannel)}
+                  />
+                </div>
               ) : (
-                <ChannelSetupDeferred
-                  channelName={selectedChannel === 'telegram' ? 'Telegram' : 'BlueBubbles'}
-                  onNavigate={() => navigate('/app/channels')}
-                />
+                <p className="text-sm text-muted-foreground mt-1">
+                  Select a channel above to configure it.
+                </p>
               )}
             </div>
           </div>
@@ -272,33 +278,35 @@ export default function GetStartedPage() {
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-1">
-                  {selectedChannel === 'telegram'
-                    ? 'Open Telegram and send a message to your bot to get started.'
-                    : selectedChannel === 'bluebubbles'
-                      ? 'Send an iMessage to get started.'
-                      : linqConfigured && fromNumber
-                        ? 'Text your assistant to get started.'
-                        : (
-                            <>
-                              Text messaging is not configured yet. You can also{' '}
-                              <button
-                                type="button"
-                                className="text-primary hover:underline font-medium"
-                                onClick={() => navigate('/app/chat')}
-                              >
-                                chat from the web
-                              </button>
-                              {' '}or{' '}
-                              <button
-                                type="button"
-                                className="text-primary hover:underline font-medium"
-                                onClick={() => navigate('/app/channels')}
-                              >
-                                set up a channel
-                              </button>
-                              .
-                            </>
-                          )}
+                  {selectedChannel === 'none'
+                    ? 'Use the chat in the sidebar to talk to your assistant.'
+                    : selectedChannel === 'telegram'
+                      ? 'Open Telegram and send a message to your bot to get started.'
+                      : selectedChannel === 'bluebubbles'
+                        ? 'Send an iMessage to get started.'
+                        : linqConfigured && fromNumber
+                          ? 'Text your assistant to get started.'
+                          : (
+                              <>
+                                Text messaging is not configured yet. You can also{' '}
+                                <button
+                                  type="button"
+                                  className="text-primary hover:underline font-medium"
+                                  onClick={() => navigate('/app/chat')}
+                                >
+                                  chat from the web
+                                </button>
+                                {' '}or{' '}
+                                <button
+                                  type="button"
+                                  className="text-primary hover:underline font-medium"
+                                  onClick={() => navigate('/app/channels')}
+                                >
+                                  set up a channel
+                                </button>
+                                .
+                              </>
+                            )}
                 </p>
               )}
             </div>
@@ -339,18 +347,54 @@ export default function GetStartedPage() {
   );
 }
 
-function ChannelSetupDeferred({ channelName, onNavigate }: { channelName: string; onNavigate: () => void }) {
+function NoneOption({
+  isSelected,
+  isConfirmed,
+  isSwitching,
+  isMutating,
+  onSelect,
+}: {
+  isSelected: boolean;
+  isConfirmed: boolean;
+  isSwitching: boolean;
+  isMutating: boolean;
+  onSelect: () => void;
+}) {
   return (
-    <>
-      <h3 className="text-sm font-semibold font-display">Set up {channelName}</h3>
-      <p className="text-sm text-muted-foreground mt-1">
-        You can configure {channelName} from the{' '}
-        <button type="button" className="text-primary hover:underline font-medium" onClick={onNavigate}>
-          Channels page
-        </button>
-        {' '}after onboarding.
-      </p>
-    </>
+    <label
+      className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
+        isSelected
+          ? 'border-primary bg-primary-light cursor-pointer'
+          : 'border-border hover:border-primary/40 cursor-pointer'
+      }`}
+    >
+      {isSwitching ? (
+        <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+          <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+        </span>
+      ) : (
+        <input
+          type="radio"
+          name="onboarding-channel"
+          value="none"
+          checked={isSelected}
+          onChange={onSelect}
+          disabled={isMutating}
+          className="accent-primary w-4 h-4 shrink-0"
+        />
+      )}
+      <div className="flex-1">
+        <span className="text-sm font-medium">None</span>
+        <p className="text-xs text-muted-foreground">Web chat only, no external messaging channel</p>
+      </div>
+      {isConfirmed && (
+        <span className="text-xs text-success flex items-center gap-1">
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+          </svg>
+        </span>
+      )}
+    </label>
   );
 }
 
@@ -364,10 +408,11 @@ function ChannelIcon() {
   );
 }
 
-function PhoneIcon() {
+function SettingsIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M3 5a2 2 0 012-2h3.28a1 1 0 01.948.684l1.498 4.493a1 1 0 01-.502 1.21l-2.257 1.13a11.042 11.042 0 005.516 5.516l1.13-2.257a1 1 0 011.21-.502l4.493 1.498a1 1 0 01.684.949V19a2 2 0 01-2 2h-1C9.716 21 3 14.284 3 6V5z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
     </svg>
   );
 }

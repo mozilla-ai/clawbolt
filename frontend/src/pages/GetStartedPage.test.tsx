@@ -35,7 +35,6 @@ vi.mock('@/contexts/AuthContext', () => ({
 }));
 
 const mockUpdateProfile = vi.fn().mockResolvedValue({ onboarding_complete: true });
-const mockSetLinqLink = vi.fn().mockResolvedValue({ phone_number: '+15551234567', connected: true });
 const mockUpdateChannelConfig = vi.fn().mockResolvedValue({
   telegram_bot_token_set: false,
   telegram_allowed_chat_id: '',
@@ -69,12 +68,16 @@ vi.mock('@/api', () => ({
     updateChannelConfig: (...args: unknown[]) => mockUpdateChannelConfig(...args),
     getChannelRoutes: (...args: unknown[]) => mockGetChannelRoutes(...args),
     toggleChannelRoute: (...args: unknown[]) => mockToggleChannelRoute(...args),
-    setLinqLink: (...args: unknown[]) => mockSetLinqLink(...args),
+    getTelegramLink: vi.fn().mockResolvedValue({ telegram_user_id: null, connected: false }),
+    getLinqLink: vi.fn().mockResolvedValue({ phone_number: null, connected: false }),
+    setLinqLink: vi.fn().mockResolvedValue({ phone_number: '+15551234567', connected: true }),
+    setTelegramLink: vi.fn().mockResolvedValue({ telegram_user_id: null, connected: false }),
   },
 }));
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsPremium = false;
 });
 
 describe('GetStartedPage', () => {
@@ -87,12 +90,13 @@ describe('GetStartedPage', () => {
     expect(screen.getByText("You're off to the races")).toBeInTheDocument();
   });
 
-  it('renders channel selection radio options', () => {
+  it('renders channel selection radio options from shared MESSAGING_CHANNELS', () => {
     renderWithRouter(<GetStartedPage />);
 
-    expect(screen.getByText('Text Messaging')).toBeInTheDocument();
     expect(screen.getByText('Telegram')).toBeInTheDocument();
-    expect(screen.getByText('BlueBubbles')).toBeInTheDocument();
+    expect(screen.getByText('Text Messaging (iMessage / RCS / SMS)')).toBeInTheDocument();
+    expect(screen.getByText('BlueBubbles (iMessage)')).toBeInTheDocument();
+    expect(screen.getByText('None')).toBeInTheDocument();
   });
 
   it('renders the dismiss button', () => {
@@ -100,33 +104,64 @@ describe('GetStartedPage', () => {
     expect(screen.getByText('Got it, take me to chat')).toBeInTheDocument();
   });
 
-  it('shows phone number step for text messaging by default', () => {
+  it('shows "Configure your channel" placeholder when no channel is selected', () => {
     renderWithRouter(<GetStartedPage />);
-    expect(screen.getByText('Enter your phone number')).toBeInTheDocument();
+    expect(screen.getByText('Configure your channel')).toBeInTheDocument();
+    expect(screen.getByText('Select a channel above to configure it.')).toBeInTheDocument();
+  });
+
+  it('shows the shared OSS linq config form when text messaging is selected', async () => {
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const linqRadio = screen.getByDisplayValue('linq');
+    await user.click(linqRadio);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Configure Text Messaging/)).toBeInTheDocument();
+    });
+    // The shared OssLinqForm shows "Allowed Phone Number" field
     expect(screen.getByPlaceholderText('e.g. +15551234567')).toBeInTheDocument();
   });
 
-  it('shows save button that is disabled when phone input is empty', () => {
-    renderWithRouter(<GetStartedPage />);
+  it('shows the shared telegram config form when telegram is selected', async () => {
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: true,
+      linq_from_number: '+15559876543',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
 
-    const saveButton = screen.getByRole('button', { name: 'Save' });
-    expect(saveButton).toBeDisabled();
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('telegram')).not.toBeDisabled();
+    });
+
+    await user.click(screen.getByDisplayValue('telegram'));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Configure Telegram/)).toBeInTheDocument();
+    });
+    // The shared OssTelegramForm shows "Your Telegram User ID" field
+    expect(screen.getByPlaceholderText('e.g. 123456789')).toBeInTheDocument();
   });
 
-  it('enables save button when phone number is entered', async () => {
+  it('saves linq config via the shared form (updateChannelConfig)', async () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    const input = screen.getByPlaceholderText('e.g. +15551234567');
-    await user.type(input, '+15551234567');
+    const linqRadio = screen.getByDisplayValue('linq');
+    await user.click(linqRadio);
 
-    const saveButton = screen.getByRole('button', { name: 'Save' });
-    expect(saveButton).not.toBeDisabled();
-  });
-
-  it('saves phone number and shows edit button on success', async () => {
-    renderWithRouter(<GetStartedPage />);
-    const user = userEvent.setup();
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('e.g. +15551234567')).toBeInTheDocument();
+    });
 
     const input = screen.getByPlaceholderText('e.g. +15551234567');
     await user.type(input, '+15551234567');
@@ -141,33 +176,15 @@ describe('GetStartedPage', () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    // Select text messaging channel
     const linqRadio = screen.getByDisplayValue('linq');
     await user.click(linqRadio);
 
     await waitFor(() => {
-      expect(screen.getByText('+15559876543')).toBeInTheDocument();
+      // From-number appears in both the config form and Step 3
+      const matches = screen.getAllByText('+15559876543');
+      expect(matches.length).toBeGreaterThanOrEqual(1);
     });
     expect(screen.getByText(/say hello to get started/)).toBeInTheDocument();
-  });
-
-  it('saves phone number via premium channel route when isPremium is true', async () => {
-    mockIsPremium = true;
-
-    renderWithRouter(<GetStartedPage />);
-    const user = userEvent.setup();
-
-    const input = screen.getByPlaceholderText('e.g. +15551234567');
-    await user.type(input, '+15551234567');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
-
-    await waitFor(() => {
-      expect(mockSetLinqLink).toHaveBeenCalledWith('+15551234567');
-    });
-
-    expect(mockUpdateChannelConfig).not.toHaveBeenCalled();
-
-    mockIsPremium = false;
   });
 
   it('shows fallback messaging when linq is not configured', async () => {
@@ -215,10 +232,26 @@ describe('GetStartedPage', () => {
     });
   });
 
-  it('shows Telegram setup message when telegram is selected', async () => {
+  it('renders a clickable "None" option for web chat only', async () => {
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const noneRadio = screen.getByDisplayValue('none');
+    expect(noneRadio).toBeInTheDocument();
+    expect(noneRadio).not.toBeDisabled();
+
+    await user.click(noneRadio);
+
+    await waitFor(() => {
+      expect(screen.getByText('No setup needed')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Use the chat in the sidebar to talk to your assistant.')).toBeInTheDocument();
+  });
+
+  it('pre-populates selection from active channel route', async () => {
     mockGetChannelConfig.mockResolvedValue({
       telegram_bot_token_set: true,
-      telegram_allowed_chat_id: '',
+      telegram_allowed_chat_id: '123',
       linq_api_token_set: true,
       linq_from_number: '+15559876543',
       linq_allowed_numbers: '',
@@ -226,18 +259,17 @@ describe('GetStartedPage', () => {
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
     });
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [{ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' }],
+    });
 
     renderWithRouter(<GetStartedPage />);
-    const user = userEvent.setup();
 
     await waitFor(() => {
-      expect(screen.getByDisplayValue('telegram')).not.toBeDisabled();
+      const telegramRadio = screen.getByDisplayValue('telegram') as HTMLInputElement;
+      expect(telegramRadio.checked).toBe(true);
     });
-
-    await user.click(screen.getByDisplayValue('telegram'));
-
-    await waitFor(() => {
-      expect(screen.getByText('Set up Telegram')).toBeInTheDocument();
-    });
+    // Should show the telegram config form since it's pre-selected
+    expect(screen.getByText(/Configure Telegram/)).toBeInTheDocument();
   });
 });
