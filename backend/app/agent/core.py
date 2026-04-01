@@ -628,7 +628,9 @@ class ClawboltAgent:
                     hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERRUPTED]
                     msg = (
                         f"Tool request interrupted: the user moved on to a "
-                        f'different topic instead of approving "{desc}".\n\n{hint}'
+                        f'different topic instead of approving "{desc}". '
+                        f"Do not proactively retry this tool; only call it "
+                        f"again if the user explicitly asks.\n\n{hint}"
                     )
                     actions_taken.append(f"Interrupted: {tc_req.name}")
                     tool_call_records.append(
