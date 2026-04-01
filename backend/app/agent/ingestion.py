@@ -17,6 +17,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from backend.app.agent.approval import (
+    ApprovalDecision,
     _parse_approval_response,
     classify_approval_response,
     get_approval_gate,
@@ -565,26 +566,16 @@ async def process_inbound_from_bus(
                 )
             return
 
-        # Neither exact match nor LLM could classify: send feedback so the
-        # user knows their response wasn't understood (instead of silently
-        # hanging until the approval timeout).
-        logger.warning(
-            "Approval pending for user %s but could not classify response %r; "
-            "sending clarification prompt",
+        # The message is unrelated to the pending approval. Interrupt the
+        # approval (so the blocked agent loop can finish) and let this
+        # message fall through to normal processing.
+        logger.info(
+            "Approval pending for user %s but message %r is unrelated; resolving as INTERRUPTED",
             user.id,
             inbound.text[:100],
         )
-        from backend.app.bus import OutboundMessage, message_bus
-
-        await message_bus.publish_outbound(
-            OutboundMessage(
-                channel=inbound.channel,
-                chat_id=inbound.sender_id,
-                content="I didn't catch that. Reply yes or no (always/never to remember your choice).",
-                request_id=inbound.request_id,
-            )
-        )
-        return
+        gate.resolve(user.id, ApprovalDecision.INTERRUPTED)
+        # Fall through to normal session/pipeline dispatch below.
 
     session, _is_new = await get_or_create_conversation(
         user.id, external_session_id=inbound.session_id

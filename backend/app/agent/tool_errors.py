@@ -45,6 +45,10 @@ _ERROR_KIND_HINTS: dict[ToolErrorKind, str] = {
         "[An internal error occurred."
         " Inform the user that this operation is temporarily unavailable.]"
     ),
+    ToolErrorKind.INTERRUPTED: (
+        "[The user changed the subject instead of responding to the approval prompt."
+        " Do not retry this tool. Answer the user's new question instead.]"
+    ),
 }
 
 

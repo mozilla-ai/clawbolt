@@ -620,6 +620,30 @@ class ClawboltAgent:
                             )
                         except Exception:
                             logger.warning("Failed to persist AUTO for tool %s", tool_obj.name)
+            elif decision == ApprovalDecision.INTERRUPTED:
+                # User changed the subject. Don't persist any permission.
+                for (idx, _tool_obj, v_args), _resource, _desc in ask_entries:
+                    tc_req = parsed_calls[idx]
+                    tool_tags = self._get_tool_tags(tc_req.name)
+                    hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERRUPTED]
+                    msg = (
+                        f"Tool request interrupted: the user moved on to a "
+                        f"different topic.\n\n{hint}"
+                    )
+                    actions_taken.append(f"Interrupted: {tc_req.name}")
+                    tool_call_records.append(
+                        StoredToolInteraction(
+                            tool_call_id=tc_req.id,
+                            name=tc_req.name,
+                            args=v_args,
+                            result=msg,
+                            is_error=True,
+                            tags=set(tool_tags),
+                        )
+                    )
+                    tool_results.append(
+                        ToolResultMessage(tool_call_id=tc_req.id, content=msg, is_error=True)
+                    )
             else:
                 if decision == ApprovalDecision.ALWAYS_DENY:
                     for (_, tool_obj, _a), resource, _desc in ask_entries:
