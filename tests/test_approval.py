@@ -885,6 +885,55 @@ class TestIngestionIntercept:
         decision = await gate_task
         assert decision == ApprovalDecision.INTERRUPTED
 
+    @pytest.mark.asyncio()
+    async def test_dispatch_reloads_session_after_lock(self, test_user: User) -> None:
+        """_dispatch_to_pipeline reloads session from DB after acquiring the user lock."""
+        from backend.app.agent.dto import SessionState, StoredMessage
+
+        session = SessionState(session_id="test-sess", user_id=test_user.id)
+        message = StoredMessage(direction="inbound", body="hello", seq=1)
+
+        fresh_session = SessionState(session_id="test-sess", user_id=test_user.id)
+        fresh_session.messages = [
+            StoredMessage(direction="inbound", body="hello", seq=1),
+            StoredMessage(direction="outbound", body="tool result from pipeline 1", seq=2),
+        ]
+
+        from unittest.mock import MagicMock
+
+        mock_store = MagicMock()
+        mock_store.load_session.return_value = fresh_session
+
+        mock_handle = AsyncMock()
+
+        with (
+            patch(
+                "backend.app.agent.ingestion.handle_inbound_message",
+                mock_handle,
+            ),
+            patch(
+                "backend.app.agent.ingestion.get_session_store",
+                return_value=mock_store,
+            ),
+        ):
+            await _dispatch_to_pipeline(
+                user=test_user,
+                session=session,
+                message=message,
+                media_urls=[],
+                channel="telegram",
+            )
+
+        # Session store should have been called to reload
+        mock_store.load_session.assert_called_once_with("test-sess")
+
+        # handle_inbound_message should have received the fresh session
+        mock_handle.assert_called_once()
+        call_kwargs = mock_handle.call_args.kwargs
+        passed_session = call_kwargs["session"]
+        assert len(passed_session.messages) == 2
+        assert passed_session.messages[1].body == "tool result from pipeline 1"
+
 
 # ---------------------------------------------------------------------------
 # Module-level accessors
