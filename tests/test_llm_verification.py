@@ -37,7 +37,7 @@ def test_startup_succeeds_when_primary_model_is_valid(
         call_kwargs = mock_amessages.call_args
         assert call_kwargs.kwargs["provider"] == "openai"
         assert call_kwargs.kwargs["model"] == "gpt-4o"
-        assert call_kwargs.kwargs["max_tokens"] == 1
+        assert call_kwargs.kwargs["max_tokens"] == 10
 
     assert any("LLM verified (primary)" in msg for msg in caplog.messages)
 
