@@ -284,34 +284,64 @@ async def _dispatch_to_pipeline(
 
     Handles timeout and exception fallbacks. Used by both the direct
     (non-batched) path and the ``MessageBatcher`` flush path.
+
+    While waiting for the per-user lock, a background task polls for a
+    stale approval gate left by the previous pipeline. If found, it
+    resolves the gate as INTERRUPTED so the previous pipeline can finish
+    and release the lock. Without this, a new message that arrives after
+    the batcher dispatches the first but before the approval gate is set
+    would deadlock: pipeline 1 waits on the gate, pipeline 2 waits on
+    the lock, nobody resolves the gate.
     """
     user_id = user.id
     pipeline_error: Exception | None = None
     timed_out = False
+    gate = get_approval_gate()
+
+    async def _interrupt_stale_approval() -> None:
+        """Resolve a stale approval gate so the previous pipeline releases the lock."""
+        try:
+            while True:
+                await asyncio.sleep(0.5)
+                if gate.has_pending(user_id):
+                    logger.info(
+                        "New message queued for user %s; resolving stale approval as INTERRUPTED",
+                        user_id,
+                    )
+                    gate.resolve(user_id, ApprovalDecision.INTERRUPTED)
+                    return
+        except asyncio.CancelledError:
+            return
+
     try:
         async with asyncio.timeout(settings.agent_processing_timeout_seconds):
-            async with user_locks.acquire(user_id):
-                try:
-                    db = SessionLocal()
+            interrupt_task = asyncio.create_task(_interrupt_stale_approval())
+            try:
+                async with user_locks.acquire(user_id):
+                    interrupt_task.cancel()
                     try:
-                        fresh = db.query(User).filter_by(id=user_id).first()
-                        if fresh is not None:
-                            db.expunge(fresh)
-                            user = fresh
-                    finally:
-                        db.close()
-                    await handle_inbound_message(
-                        user=user,
-                        session=session,
-                        message=message,
-                        media_urls=media_urls,
-                        downloaded_media=downloaded_media,
-                        channel=channel,
-                        request_id=request_id,
-                        download_media=download_media,
-                    )
-                except Exception as exc:
-                    pipeline_error = exc
+                        db = SessionLocal()
+                        try:
+                            fresh = db.query(User).filter_by(id=user_id).first()
+                            if fresh is not None:
+                                db.expunge(fresh)
+                                user = fresh
+                        finally:
+                            db.close()
+                        await handle_inbound_message(
+                            user=user,
+                            session=session,
+                            message=message,
+                            media_urls=media_urls,
+                            downloaded_media=downloaded_media,
+                            channel=channel,
+                            request_id=request_id,
+                            download_media=download_media,
+                        )
+                    except Exception as exc:
+                        pipeline_error = exc
+            finally:
+                interrupt_task.cancel()
     except TimeoutError:
         timed_out = True
 

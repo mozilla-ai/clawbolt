@@ -18,8 +18,13 @@ from backend.app.agent.approval import (
     get_approval_store,
     reset_approval_gate,
 )
+from backend.app.agent.concurrency import user_locks
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
+from backend.app.agent.ingestion import (
+    InboundMessage,
+    _dispatch_to_pipeline,
+    process_inbound_from_bus,
+)
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage
 from backend.app.models import User
@@ -827,6 +832,58 @@ class TestIngestionIntercept:
         decision = await approval_task
         assert decision == ApprovalDecision.APPROVED
         assert not gate.has_pending(test_user.id)
+
+    @pytest.mark.asyncio()
+    async def test_dispatch_resolves_stale_gate_while_waiting_for_lock(
+        self, test_user: User
+    ) -> None:
+        """_dispatch_to_pipeline resolves a stale approval gate set up after the lock was taken."""
+        from backend.app.agent.dto import SessionState, StoredMessage
+
+        gate = get_approval_gate()
+        mock_publish = AsyncMock()
+
+        # Simulate pipeline 1 holding the lock and setting up a gate
+        lock = user_locks.acquire(test_user.id)
+        await lock.acquire()
+
+        async def _setup_gate_then_release() -> ApprovalDecision:
+            """Mimic pipeline 1: set up approval gate while holding the lock."""
+            await asyncio.sleep(0.1)
+            decision = await gate.request_approval(
+                user_id=test_user.id,
+                tool_name="calendar_read",
+                description="Read calendar events",
+                publish_outbound=mock_publish,
+                channel="telegram",
+                chat_id="chat_1",
+                timeout=30.0,
+            )
+            # Pipeline 1 finishes after gate resolves
+            lock.release()
+            return decision
+
+        gate_task = asyncio.create_task(_setup_gate_then_release())
+
+        # Pipeline 2: dispatch a new message. The background poller should
+        # resolve the gate so pipeline 1 releases the lock.
+        session = SessionState(session_id="test", user_id=test_user.id)
+        message = StoredMessage(direction="inbound", body="what's in quickbooks", seq=2)
+
+        with patch("backend.app.agent.ingestion.handle_inbound_message", new_callable=AsyncMock):
+            await asyncio.wait_for(
+                _dispatch_to_pipeline(
+                    user=test_user,
+                    session=session,
+                    message=message,
+                    media_urls=[],
+                    channel="telegram",
+                ),
+                timeout=5.0,
+            )
+
+        decision = await gate_task
+        assert decision == ApprovalDecision.INTERRUPTED
 
 
 # ---------------------------------------------------------------------------
