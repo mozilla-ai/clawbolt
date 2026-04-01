@@ -328,6 +328,13 @@ async def _dispatch_to_pipeline(
                                 user = fresh
                         finally:
                             db.close()
+                        # Reload session messages from DB so we see any
+                        # messages persisted by a previous pipeline that
+                        # was holding the lock (e.g. tool interactions
+                        # from an interrupted approval).
+                        fresh_session = get_session_store(user_id).load_session(session.session_id)
+                        if fresh_session is not None:
+                            session = fresh_session
                         await handle_inbound_message(
                             user=user,
                             session=session,
