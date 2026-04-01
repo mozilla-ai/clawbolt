@@ -47,7 +47,9 @@ _ERROR_KIND_HINTS: dict[ToolErrorKind, str] = {
     ),
     ToolErrorKind.INTERRUPTED: (
         "[The user changed the subject instead of responding to the approval prompt."
-        " Do not retry this tool. Answer the user's new question instead.]"
+        " Do not retry this tool. Briefly acknowledge you are setting this aside"
+        " (one short sentence, no details) and end your turn."
+        " The user's new message is being handled separately.]"
     ),
 }
 
