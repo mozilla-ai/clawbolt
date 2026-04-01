@@ -6,6 +6,7 @@ import { Switch } from '@heroui/switch';
 import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
 import { useChannelRoutes, useChannelConfig, useToolConfig, useUpdateToolConfig, useOAuthStatus, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
+import { useAuth } from '@/contexts/AuthContext';
 import { MESSAGING_CHANNELS, getChannelState, getChannelStatusDisplay } from '@/lib/channel-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
 
@@ -107,6 +108,7 @@ function DashboardCard({ title, description, configured, icon, onClick, isLoadin
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { profile, reloadProfile } = useOutletContext<AppShellContext>();
+  const { isPremium } = useAuth();
 
   const channels = useChannelRoutes();
   const channelConfigData = useChannelConfig();
@@ -123,7 +125,7 @@ export default function DashboardPage() {
   const channelStates = channelConf
     ? MESSAGING_CHANNELS.map((ch) => ({
         ...ch,
-        state: getChannelState(ch.key, channelConf, allRoutes, false),
+        state: getChannelState(ch.key, channelConf, allRoutes, isPremium),
       }))
     : [];
   const hasAnyActive = channelStates.some((ch) => ch.state === 'active');
@@ -200,7 +202,7 @@ export default function DashboardPage() {
           icon={<ChannelsIcon />}
           onClick={() => navigate('/app/channels')}
           isLoading={(channels.isPending && !channels.data) || (channelConfigData.isPending && !channelConfigData.data)}
-          isError={channels.isError && !channels.data}
+          isError={(channels.isError && !channels.data) || (channelConfigData.isError && !channelConfigData.data)}
         >
           {hasAnyAvailable ? (
             <div className="space-y-2">

@@ -1,5 +1,4 @@
 import { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import Input from '@/components/ui/input';
@@ -18,7 +17,6 @@ import {
   type ChannelState,
 } from '@/lib/channel-utils';
 import api from '@/api';
-import type { AppShellContext } from '@/layouts/AppShell';
 
 // Types for premium linking responses
 type TelegramLinkData = Awaited<ReturnType<typeof api.getTelegramLink>>;
@@ -33,7 +31,6 @@ interface PremiumChannelData {
 
 export default function ChannelsPage() {
   const { isPremium } = useAuth();
-  const { profile } = useOutletContext<AppShellContext>();
   const { data: routesData } = useChannelRoutes();
   const { data: channelConfig } = useChannelConfig();
   const toggleMutation = useToggleChannelRoute();
@@ -206,7 +203,6 @@ export default function ChannelsPage() {
                     telegramLinkData={key === 'telegram' ? telegramLinkData : null}
                     linqLinkData={key === 'linq' ? linqLinkData : null}
                     onConfigSaved={() => handleConfigSaved(key)}
-                    profile={profile}
                     selectable
                   />
                 ))}
@@ -232,7 +228,6 @@ export default function ChannelsPage() {
               telegramLinkData={key === 'telegram' ? telegramLinkData : null}
               linqLinkData={key === 'linq' ? linqLinkData : null}
               onConfigSaved={() => handleConfigSaved(key)}
-              profile={profile}
               selectable={false}
             />
           ))}
@@ -263,7 +258,6 @@ interface ChannelCardProps {
   telegramLinkData: TelegramLinkData | null;
   linqLinkData: LinqLinkData | null;
   onConfigSaved: () => void;
-  profile: AppShellContext['profile'];
   selectable: boolean;
 }
 
@@ -371,7 +365,7 @@ function ChannelCard({
 
       {/* Config form (for "available" state) */}
       {state === 'available' && (
-        <div className="mt-4 ml-8" aria-expanded="true">
+        <div className="mt-4 ml-8">
           <ChannelConfigForm
             channelKey={channelKey}
             isPremium={isPremium}
@@ -423,12 +417,9 @@ interface NoneCardProps {
 }
 
 function NoneCard({ isSelected, isSwitching, isMutating, onSelect }: NoneCardProps) {
-  const borderClass = isSelected ? 'border-border' : 'border-border';
-  const bgClass = '';
-
   return (
     <div
-      className={`rounded-xl border p-4 transition-colors ${borderClass} ${bgClass}`}
+      className="rounded-xl border border-border p-4 transition-colors"
       aria-label={`None: ${isSelected ? 'Selected' : 'Not selected'}`}
     >
       <div className="flex items-center gap-3 min-h-[44px]">

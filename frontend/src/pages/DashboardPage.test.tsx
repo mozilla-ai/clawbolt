@@ -48,6 +48,17 @@ const mockProfile = {
   updated_at: '2024-01-01T00:00:00Z',
 };
 
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => ({
+    authState: 'ready',
+    currentAuthUser: { id: 1, name: 'Test User' },
+    authConfig: { required: true, method: 'oidc' },
+    isPremium: false,
+    handleLogin: vi.fn(),
+    handleLogout: vi.fn(),
+  }),
+}));
+
 vi.mock('react-router-dom', async () => {
   const actual = await vi.importActual('react-router-dom');
   return {
