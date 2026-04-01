@@ -73,15 +73,15 @@ beforeEach(() => {
   });
   mockGetChannelRoutes.mockResolvedValue({ routes: [] });
   mockToggleChannelRoute.mockResolvedValue({ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' });
-  mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+  mockGetTelegramLink.mockResolvedValue({ telegram_user_id: '12345', connected: true });
   mockGetTelegramBotInfo.mockResolvedValue(null);
   mockSetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
-  mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
+  mockGetLinqLink.mockResolvedValue({ phone_number: '+15559876543', connected: true });
   mockSetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
 });
 
-describe('ChannelsPage - Radio Selector', () => {
-  it('renders three channel radio options', async () => {
+describe('ChannelsPage - Channel States', () => {
+  it('renders all three channel cards', async () => {
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
@@ -91,57 +91,67 @@ describe('ChannelsPage - Radio Selector', () => {
     expect(screen.getByText('BlueBubbles (iMessage)')).toBeInTheDocument();
   });
 
-  it('shows radio inputs for channel selection', async () => {
-    renderWithRouter(<ChannelsPage />);
-
-    await waitFor(() => {
-      const radios = screen.getAllByRole('radio');
-      expect(radios).toHaveLength(3);
+  it('shows "Not available" badge for unavailable channels alongside available ones', async () => {
+    // Telegram available, Linq and BB unavailable
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
     });
-  });
-
-  it('shows webchat always-available note', async () => {
-    renderWithRouter(<ChannelsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/web chat is always available/i)).toBeInTheDocument();
-    });
-  });
-
-  it('selects channel and calls toggle endpoint on radio change', async () => {
-    renderWithRouter(<ChannelsPage />);
-    const user = userEvent.setup();
-
-    await waitFor(() => {
-      expect(screen.getByText('Telegram')).toBeInTheDocument();
-    });
-
-    const telegramRadio = screen.getByDisplayValue('telegram');
-    await user.click(telegramRadio);
-
-    await waitFor(() => {
-      expect(mockToggleChannelRoute).toHaveBeenCalledWith('telegram', true);
-    });
-  });
-
-  it('shows config section for selected channel', async () => {
-    mockProfile.preferred_channel = 'telegram';
-    mockGetChannelRoutes.mockResolvedValue({
-      routes: [
-        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
-      ],
-    });
-    mockGetTelegramBotInfo.mockResolvedValue({ bot_username: 'test_bot', bot_link: 'https://t.me/test_bot' });
+    mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+    mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
 
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Telegram Configuration')).toBeInTheDocument();
+      const badges = screen.getAllByText('Not available');
+      expect(badges.length).toBe(2); // Linq and BB
+    });
+    // Telegram should show Setup needed
+    expect(screen.getByText('Setup needed')).toBeInTheDocument();
+  });
+
+  it('shows "Setup needed" badge for available but unconfigured channels', async () => {
+    // Telegram available (token set) but user has no chat ID configured
+    mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+    mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Setup needed')).toBeInTheDocument();
     });
   });
 
-  it('shows Active badge for the enabled channel', async () => {
-    mockProfile.preferred_channel = 'telegram';
+  it('shows "Ready" badge for configured but inactive channels', async () => {
+    // Telegram configured (premium user with telegram_user_id) but no active route
+    mockGetChannelRoutes.mockResolvedValue({ routes: [] });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      const badges = screen.getAllByText('Ready');
+      // Both Telegram and Linq are configured (have premium link data) with no routes
+      expect(badges.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('shows "Active" badge with check for active channel', async () => {
     mockGetChannelRoutes.mockResolvedValue({
       routes: [
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
@@ -155,36 +165,122 @@ describe('ChannelsPage - Radio Selector', () => {
     });
   });
 
-  it('shows Not configured badge for channels without routes', async () => {
-    mockGetChannelRoutes.mockResolvedValue({ routes: [] });
+  it('shows radio buttons only for configured/active channels plus None', async () => {
+    // Telegram: active (configured + route), Linq: configured (has phone), BB: unavailable
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
+      ],
+    });
 
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      const badges = screen.getAllByText('Not configured');
-      expect(badges.length).toBe(3);
+      const radios = screen.getAllByRole('radio');
+      // None + telegram (active) + linq (configured) = 3 radios
+      expect(radios).toHaveLength(3);
     });
   });
 
-  it('does not show config section when no channel is selected', async () => {
-    mockProfile.preferred_channel = 'webchat';
-    mockGetChannelRoutes.mockResolvedValue({ routes: [] });
-
+  it('shows webchat always-available note', async () => {
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Telegram')).toBeInTheDocument();
+      expect(screen.getByText(/web chat is always available/i)).toBeInTheDocument();
     });
-
-    expect(screen.queryByText('Telegram Configuration')).not.toBeInTheDocument();
-    expect(screen.queryByText('Text Messaging Configuration')).not.toBeInTheDocument();
-    expect(screen.queryByText('BlueBubbles Configuration')).not.toBeInTheDocument();
   });
 });
 
-describe('ChannelsPage - PremiumTelegramSection via radio', () => {
-  it('shows bot info banner when bot-info endpoint returns data', async () => {
-    mockProfile.preferred_channel = 'telegram';
+describe('ChannelsPage - Channel Activation', () => {
+  it('calls toggle endpoint when radio is clicked', async () => {
+    // Both telegram and linq are configured; telegram is active
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
+      ],
+    });
+
+    renderWithRouter(<ChannelsPage />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      // None + telegram + linq = 3 radios
+      expect(screen.getAllByRole('radio')).toHaveLength(3);
+    });
+
+    // Click linq radio to switch
+    const linqRadio = screen.getByDisplayValue('linq');
+    await user.click(linqRadio);
+
+    await waitFor(() => {
+      expect(mockToggleChannelRoute).toHaveBeenCalledWith('linq', true);
+    });
+  });
+
+  it('deactivates channel when None is selected', async () => {
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
+      ],
+    });
+    mockToggleChannelRoute.mockResolvedValue({ channel: 'telegram', channel_identifier: '111', enabled: false, created_at: '' });
+
+    renderWithRouter(<ChannelsPage />);
+    const user = userEvent.setup();
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('none')).toBeInTheDocument();
+    });
+
+    const noneRadio = screen.getByDisplayValue('none');
+    await user.click(noneRadio);
+
+    await waitFor(() => {
+      expect(mockToggleChannelRoute).toHaveBeenCalledWith('telegram', false);
+    });
+  });
+});
+
+describe('ChannelsPage - Config Forms', () => {
+  it('auto-expands config form for "available" channels', async () => {
+    // Telegram is available (token set) but not configured (no user ID)
+    mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+    mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      // Config form auto-expands for the available channel
+      expect(screen.getByPlaceholderText('e.g. 123456789')).toBeInTheDocument();
+    });
+  });
+
+  it('shows settings toggle for configured/active channels', async () => {
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
+      ],
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      const toggles = screen.getAllByText('Your settings');
+      expect(toggles.length).toBeGreaterThanOrEqual(1);
+    });
+  });
+
+  it('shows bot info banner for premium Telegram when active', async () => {
     mockGetChannelRoutes.mockResolvedValue({
       routes: [
         { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
@@ -198,132 +294,23 @@ describe('ChannelsPage - PremiumTelegramSection via radio', () => {
       expect(screen.getByText('@my_cool_bot')).toBeInTheDocument();
     });
   });
-
-  it('shows not-configured message when bot token is not set', async () => {
-    mockGetChannelConfig.mockResolvedValue({
-      telegram_bot_token_set: false,
-      telegram_allowed_chat_id: '',
-      linq_api_token_set: false,
-      linq_from_number: '',
-      linq_allowed_numbers: '',
-      linq_preferred_service: 'iMessage',
-      bluebubbles_configured: false,
-      bluebubbles_allowed_numbers: '',
-    });
-    mockProfile.preferred_channel = 'telegram';
-    mockGetChannelRoutes.mockResolvedValue({
-      routes: [
-        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
-      ],
-    });
-    // bot-info returns null (not found), link returns default
-    mockGetTelegramBotInfo.mockResolvedValue(null);
-
-    renderWithRouter(<ChannelsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/a telegram bot token must be configured/i)).toBeInTheDocument();
-    });
-  });
 });
 
-describe('ChannelsPage - disabled state when channels not configured', () => {
-  it('disables Telegram user ID input when bot token is not set (premium)', async () => {
-    mockIsPremium = true;
-    mockProfile.preferred_channel = 'telegram';
+describe('ChannelsPage - Unavailable hints', () => {
+  it('shows environment variable hint for unavailable Telegram', async () => {
+    // Telegram unavailable, but Linq available so page renders channel cards (not empty state)
     mockGetChannelConfig.mockResolvedValue({
       telegram_bot_token_set: false,
       telegram_allowed_chat_id: '',
       linq_api_token_set: true,
       linq_from_number: '+15551234567',
-      linq_allowed_numbers: '*',
-      linq_preferred_service: 'iMessage',
-      bluebubbles_configured: false,
-      bluebubbles_allowed_numbers: '',
-    });
-    mockGetChannelRoutes.mockResolvedValue({
-      routes: [
-        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
-      ],
-    });
-    mockGetTelegramBotInfo.mockResolvedValue(null);
-
-    renderWithRouter(<ChannelsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('e.g. 123456789')).toBeInTheDocument();
-    });
-
-    const telegramInput = screen.getByPlaceholderText('e.g. 123456789');
-    expect(telegramInput).toBeDisabled();
-  });
-
-  it('enables Telegram user ID input when bot token is set (premium)', async () => {
-    mockIsPremium = true;
-    mockProfile.preferred_channel = 'telegram';
-    mockGetChannelRoutes.mockResolvedValue({
-      routes: [
-        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
-      ],
-    });
-    mockGetTelegramBotInfo.mockResolvedValue({ bot_username: 'test_bot', bot_link: 'https://t.me/test_bot' });
-
-    renderWithRouter(<ChannelsPage />);
-
-    await waitFor(() => {
-      const telegramInput = screen.getByPlaceholderText('e.g. 123456789');
-      expect(telegramInput).not.toBeDisabled();
-    });
-  });
-
-  it('disables Telegram user ID input when bot token is not set (OSS)', async () => {
-    mockIsPremium = false;
-    mockProfile.preferred_channel = 'telegram';
-    mockGetChannelConfig.mockResolvedValue({
-      telegram_bot_token_set: false,
-      telegram_allowed_chat_id: '',
-      linq_api_token_set: false,
-      linq_from_number: '',
       linq_allowed_numbers: '',
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
     });
-    mockGetChannelRoutes.mockResolvedValue({
-      routes: [
-        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
-      ],
-    });
-    mockGetTelegramBotInfo.mockResolvedValue(null);
-
-    renderWithRouter(<ChannelsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByPlaceholderText('e.g. 123456789')).toBeInTheDocument();
-    });
-
-    const telegramInput = screen.getByPlaceholderText('e.g. 123456789');
-    expect(telegramInput).toBeDisabled();
-  });
-
-  it('shows setup hint for Telegram in OSS mode when not configured', async () => {
-    mockIsPremium = false;
-    mockProfile.preferred_channel = 'telegram';
-    mockGetChannelConfig.mockResolvedValue({
-      telegram_bot_token_set: false,
-      telegram_allowed_chat_id: '',
-      linq_api_token_set: false,
-      linq_from_number: '',
-      linq_allowed_numbers: '',
-      linq_preferred_service: 'iMessage',
-      bluebubbles_configured: false,
-      bluebubbles_allowed_numbers: '',
-    });
-    mockGetChannelRoutes.mockResolvedValue({
-      routes: [
-        { channel: 'telegram', channel_identifier: '111', enabled: true, created_at: '' },
-      ],
-    });
+    mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+    mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
 
     renderWithRouter(<ChannelsPage />);
 
@@ -332,9 +319,7 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
     });
   });
 
-  it('shows setup hint for Linq in OSS mode when not configured', async () => {
-    mockIsPremium = false;
-    mockProfile.preferred_channel = 'linq';
+  it('shows environment variable hint for unavailable Linq', async () => {
     mockGetChannelConfig.mockResolvedValue({
       telegram_bot_token_set: true,
       telegram_allowed_chat_id: '*',
@@ -345,16 +330,78 @@ describe('ChannelsPage - disabled state when channels not configured', () => {
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
     });
-    mockGetChannelRoutes.mockResolvedValue({
-      routes: [
-        { channel: 'linq', channel_identifier: '+15551234567', enabled: true, created_at: '' },
-      ],
-    });
 
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
       expect(screen.getByText(/LINQ_API_TOKEN/)).toBeInTheDocument();
+    });
+  });
+
+  it('shows environment variable hint for unavailable BlueBubbles', async () => {
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '*',
+      linq_api_token_set: true,
+      linq_from_number: '+15551234567',
+      linq_allowed_numbers: '*',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/BLUEBUBBLES_SERVER_URL/)).toBeInTheDocument();
+    });
+  });
+});
+
+describe('ChannelsPage - Empty state', () => {
+  it('shows empty state when no channels are available', async () => {
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: false,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
+    mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+    mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('No messaging channels available')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Go to Chat')).toBeInTheDocument();
+  });
+});
+
+describe('ChannelsPage - OSS mode', () => {
+  it('shows OSS telegram config form when not premium', async () => {
+    mockIsPremium = false;
+    // Telegram available but needs config
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      // Config form auto-expands for available channel
+      expect(screen.getByPlaceholderText('e.g. 123456789')).toBeInTheDocument();
     });
   });
 });

@@ -1,5 +1,4 @@
-import { useState, useEffect } from 'react';
-import { useOutletContext } from 'react-router-dom';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import Card from '@/components/ui/card';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import Input from '@/components/ui/input';
@@ -10,150 +9,401 @@ import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useChannelConfig, useUpdateChannelConfig, useChannelRoutes, useToggleChannelRoute } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
+import {
+  MESSAGING_CHANNELS,
+  getChannelState,
+  getChannelStatusDisplay,
+  type ChannelKey,
+  type ChannelState,
+} from '@/lib/channel-utils';
 import api from '@/api';
-import type { ChannelRouteResponse } from '@/types';
-import type { AppShellContext } from '@/layouts/AppShell';
 
-// Messaging channel definitions (webchat excluded, it is always available)
-const MESSAGING_CHANNELS = [
-  { key: 'telegram', label: 'Telegram' },
-  { key: 'linq', label: 'Text Messaging (iMessage / RCS / SMS)' },
-  { key: 'bluebubbles', label: 'BlueBubbles (iMessage)' },
-] as const;
+// Types for premium linking responses
+type TelegramLinkData = Awaited<ReturnType<typeof api.getTelegramLink>>;
+type TelegramBotInfo = NonNullable<Awaited<ReturnType<typeof api.getTelegramBotInfo>>>;
+type LinqLinkData = Awaited<ReturnType<typeof api.getLinqLink>>;
 
-type ChannelKey = (typeof MESSAGING_CHANNELS)[number]['key'];
+// Premium data used for state derivation
+interface PremiumChannelData {
+  telegram_user_id?: string | null;
+  phone_number?: string | null;
+}
 
 export default function ChannelsPage() {
   const { isPremium } = useAuth();
-  const { profile } = useOutletContext<AppShellContext>();
   const { data: routesData } = useChannelRoutes();
   const { data: channelConfig } = useChannelConfig();
   const toggleMutation = useToggleChannelRoute();
 
-  // Determine which channel is currently active:
-  // 1. Find the enabled route (should be at most one after enforcement)
-  // 2. Fall back to preferred_channel from profile
-  // 3. Fall back to null (no selection)
-  const enabledRoute = routesData?.routes.find(
-    (r: ChannelRouteResponse) => r.enabled && r.channel !== 'webchat',
-  );
-  const preferredChannel = profile?.preferred_channel;
-  const defaultChannel =
-    enabledRoute?.channel ??
-    (preferredChannel && preferredChannel !== 'webchat' ? preferredChannel : null);
+  // Premium link data (fetched once for state derivation)
+  const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
+  const [linqLinkData, setLinqLinkData] = useState<LinqLinkData | null>(null);
+  const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
 
-  const [selectedChannel, setSelectedChannel] = useState<ChannelKey | null>(null);
-  // Track which channel was just confirmed so we can show the Active badge
-  const [confirmedChannel, setConfirmedChannel] = useState<ChannelKey | null>(null);
-
-  // Sync selected channel with backend state
   useEffect(() => {
-    if (defaultChannel && MESSAGING_CHANNELS.some((c) => c.key === defaultChannel)) {
-      setSelectedChannel(defaultChannel as ChannelKey);
-      setConfirmedChannel(defaultChannel as ChannelKey);
+    if (isPremium) {
+      api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
+      api.getTelegramBotInfo().then(setBotInfo).catch(() => {});
+      api.getLinqLink().then(setLinqLinkData).catch(() => {});
     }
-  }, [defaultChannel]);
+  }, [isPremium]);
 
-  const handleSelectChannel = (channel: ChannelKey) => {
-    setSelectedChannel(channel);
+  // Track which config form is expanded
+  const [expandedChannel, setExpandedChannel] = useState<ChannelKey | null>(null);
+  // Track which channel is switching (optimistic)
+  const [switchingChannel, setSwitchingChannel] = useState<ChannelKey | null>(null);
+
+  const routes = routesData?.routes ?? [];
+
+  // Build premium data for state derivation
+  const premiumData: PremiumChannelData = {
+    telegram_user_id: telegramLinkData?.telegram_user_id,
+    phone_number: linqLinkData?.phone_number,
+  };
+
+  // Compute states for each channel (memoized to prevent useEffect churn)
+  const channelStates = useMemo(() => {
+    const states: Record<ChannelKey, ChannelState> = {} as Record<ChannelKey, ChannelState>;
+    if (channelConfig) {
+      for (const ch of MESSAGING_CHANNELS) {
+        states[ch.key] = getChannelState(
+          ch.key,
+          channelConfig,
+          routes,
+          isPremium,
+          premiumData,
+        );
+      }
+    }
+    return states;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelConfig, routesData, isPremium, telegramLinkData, linqLinkData]);
+
+  // Auto-expand the first "available" channel on initial load only
+  const hasAutoExpanded = useRef(false);
+  useEffect(() => {
+    if (!channelConfig || hasAutoExpanded.current) return;
+    const needsSetup = MESSAGING_CHANNELS.find(
+      (ch) => channelStates[ch.key] === 'available',
+    );
+    if (needsSetup) {
+      setExpandedChannel(needsSetup.key);
+      hasAutoExpanded.current = true;
+    }
+  }, [channelConfig, channelStates]);
+
+  // Find which channel is currently active (if any)
+  const activeChannelKey = MESSAGING_CHANNELS.find(
+    (ch) => channelStates[ch.key] === 'active',
+  )?.key ?? null;
+
+  const handleActivateChannel = (key: ChannelKey) => {
+    setSwitchingChannel(key);
     toggleMutation.mutate(
-      { channel, enabled: true },
+      { channel: key, enabled: true },
       {
         onSuccess: () => {
-          setConfirmedChannel(channel);
-          toast.success(`Switched to ${MESSAGING_CHANNELS.find((c) => c.key === channel)?.label}`);
+          setSwitchingChannel(null);
+          toast.success(`Switched to ${MESSAGING_CHANNELS.find((c) => c.key === key)?.label}`);
         },
         onError: (e) => {
-          // Revert optimistic selection on failure
-          setSelectedChannel(confirmedChannel);
+          setSwitchingChannel(null);
           toast.error(e.message);
         },
       },
     );
   };
 
-  const isChannelConfigured = (channel: string): boolean => {
-    if (channel === 'telegram') return channelConfig?.telegram_bot_token_set ?? false;
-    if (channel === 'linq') return channelConfig?.linq_api_token_set ?? false;
-    if (channel === 'bluebubbles') return channelConfig?.bluebubbles_configured ?? false;
-    return false;
+  const handleDeactivateAll = () => {
+    if (!activeChannelKey) return;
+    setSwitchingChannel('none' as ChannelKey);
+    toggleMutation.mutate(
+      { channel: activeChannelKey, enabled: false },
+      {
+        onSuccess: () => {
+          setSwitchingChannel(null);
+          toast.success('Messaging channel deactivated');
+        },
+        onError: (e) => {
+          setSwitchingChannel(null);
+          toast.error(e.message);
+        },
+      },
+    );
   };
+
+  const handleToggleExpand = (key: ChannelKey) => {
+    setExpandedChannel(expandedChannel === key ? null : key);
+  };
+
+  // Callback after config save: collapse form (channel becomes configured)
+  const handleConfigSaved = (key: ChannelKey) => {
+    // Refresh premium link data after save
+    if (isPremium) {
+      if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
+      if (key === 'linq') api.getLinqLink().then(setLinqLinkData).catch(() => {});
+    }
+    setExpandedChannel(null);
+  };
+
+  // Check if any channels are available at all
+  const anyAvailable = channelConfig
+    ? MESSAGING_CHANNELS.some((ch) => channelStates[ch.key] !== 'unavailable')
+    : true; // Don't show empty state while loading
+
+  // Separate channels into selectable (configured/active) and non-selectable
+  const selectableChannels = MESSAGING_CHANNELS.filter(
+    (ch) => channelStates[ch.key] === 'configured' || channelStates[ch.key] === 'active',
+  );
+  const nonSelectableChannels = MESSAGING_CHANNELS.filter(
+    (ch) => channelStates[ch.key] === 'unavailable' || channelStates[ch.key] === 'available',
+  );
 
   return (
     <div className="max-w-2xl">
-      <h2 className="text-xl font-semibold font-display mb-6">Channels</h2>
+      <h2 className="text-xl font-semibold font-display mb-1">Channels</h2>
+      <p className="text-[13px] text-muted-foreground mb-6">
+        Choose how your assistant receives messages.
+      </p>
 
-      {/* Channel selector */}
-      <Card>
-        <h3 className="text-sm font-medium mb-4">Select your messaging channel</h3>
-        <div className="grid gap-2" role="radiogroup" aria-label="Messaging channel">
-          {MESSAGING_CHANNELS.map(({ key, label }) => {
-            const configured = isChannelConfigured(key);
-            const isSelected = selectedChannel === key;
-            const isConfirmed = confirmedChannel === key;
-            const isDisabled = !configured && !isConfirmed;
-            const isSwitching = toggleMutation.isPending && isSelected && !isConfirmed;
-            return (
-              <label
-                key={key}
-                className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
-                  isDisabled
-                    ? 'opacity-50 cursor-not-allowed'
-                    : isSelected
-                      ? 'border-primary bg-primary-light cursor-pointer'
-                      : 'border-border hover:border-primary/40 cursor-pointer'
-                }`}
-              >
-                {isSwitching ? (
-                  <span className="w-4 h-4 shrink-0 flex items-center justify-center">
-                    <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                  </span>
-                ) : (
-                  <input
-                    type="radio"
-                    name="messaging-channel"
-                    value={key}
-                    checked={isSelected}
-                    onChange={() => handleSelectChannel(key)}
-                    disabled={isDisabled || toggleMutation.isPending}
-                    className="accent-primary w-4 h-4 shrink-0"
+      {!anyAvailable && channelConfig ? (
+        <Card>
+          <div className="text-center py-4">
+            <h3 className="text-sm font-medium mb-2">No messaging channels available</h3>
+            <p className="text-xs text-muted-foreground mb-4">
+              Your server doesn't have any messaging channels configured yet.
+              Ask your administrator to set up Telegram, Text Messaging, or BlueBubbles.
+            </p>
+            <Button onClick={() => window.location.assign('/app/chat')}>Go to Chat</Button>
+          </div>
+        </Card>
+      ) : (
+        <div className="grid gap-3">
+          {/* Selectable channels (configured + active) in a radio group */}
+          {selectableChannels.length > 0 && (
+            <div role="radiogroup" aria-label="Active messaging channel">
+              <div className="grid gap-3">
+                {/* None option */}
+                <NoneCard
+                  isSelected={!activeChannelKey}
+                  isSwitching={switchingChannel === ('none' as ChannelKey)}
+                  isMutating={toggleMutation.isPending}
+                  onSelect={handleDeactivateAll}
+                />
+                {selectableChannels.map(({ key, label }) => (
+                  <ChannelCard
+                    key={key}
+                    channelKey={key}
+                    label={label}
+                    state={channelStates[key]}
+                    isExpanded={expandedChannel === key}
+                    isSwitching={switchingChannel === key}
+                    isMutating={toggleMutation.isPending}
+                    onActivate={() => handleActivateChannel(key)}
+                    onToggleExpand={() => handleToggleExpand(key)}
+                    isPremium={isPremium}
+                    channelConfig={channelConfig}
+                    botInfo={key === 'telegram' ? botInfo : null}
+                    telegramLinkData={key === 'telegram' ? telegramLinkData : null}
+                    linqLinkData={key === 'linq' ? linqLinkData : null}
+                    onConfigSaved={() => handleConfigSaved(key)}
+                    selectable
                   />
-                )}
-                <span className="flex-1 text-sm font-medium">{label}</span>
-                {isConfirmed ? (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-primary-light text-primary font-medium flex items-center gap-1">
-                    <CheckIcon />
-                    Active
-                  </span>
-                ) : configured ? (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-success/10 text-success">
-                    Connected
-                  </span>
-                ) : (
-                  <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
-                    Not configured
-                  </span>
-                )}
-              </label>
-            );
-          })}
-        </div>
-        <p className="text-xs text-muted-foreground mt-4">
-          Web Chat is always available via the dashboard.
-        </p>
-      </Card>
+                ))}
+              </div>
+            </div>
+          )}
 
-      {/* Channel configuration (shown for selected channel) */}
-      {selectedChannel && (
-        <div className="mt-6">
-          {selectedChannel === 'telegram' && (
-            isPremium ? <PremiumTelegramSection /> : <OssTelegramSection />
-          )}
-          {selectedChannel === 'linq' && (
-            isPremium ? <PremiumTextMessagingSection /> : <TextMessagingSection />
-          )}
-          {selectedChannel === 'bluebubbles' && (
-            <BlueBubblesSection />
+          {/* Non-selectable channels (unavailable + available) */}
+          {nonSelectableChannels.map(({ key, label }) => (
+            <ChannelCard
+              key={key}
+              channelKey={key}
+              label={label}
+              state={channelStates[key]}
+              isExpanded={expandedChannel === key}
+              isSwitching={false}
+              isMutating={toggleMutation.isPending}
+              onActivate={() => {}}
+              onToggleExpand={() => handleToggleExpand(key)}
+              isPremium={isPremium}
+              channelConfig={channelConfig}
+              botInfo={key === 'telegram' ? botInfo : null}
+              telegramLinkData={key === 'telegram' ? telegramLinkData : null}
+              linqLinkData={key === 'linq' ? linqLinkData : null}
+              onConfigSaved={() => handleConfigSaved(key)}
+              selectable={false}
+            />
+          ))}
+        </div>
+      )}
+
+      <p className="text-xs text-muted-foreground mt-4">
+        Web Chat is always available via the dashboard.
+      </p>
+    </div>
+  );
+}
+
+// --- Channel Card ---
+
+interface ChannelCardProps {
+  channelKey: ChannelKey;
+  label: string;
+  state: ChannelState;
+  isExpanded: boolean;
+  isSwitching: boolean;
+  isMutating: boolean;
+  onActivate: () => void;
+  onToggleExpand: () => void;
+  isPremium: boolean;
+  channelConfig: ReturnType<typeof useChannelConfig>['data'];
+  botInfo: TelegramBotInfo | null;
+  telegramLinkData: TelegramLinkData | null;
+  linqLinkData: LinqLinkData | null;
+  onConfigSaved: () => void;
+  selectable: boolean;
+}
+
+function ChannelCard({
+  channelKey,
+  label,
+  state,
+  isExpanded,
+  isSwitching,
+  isMutating,
+  onActivate,
+  onToggleExpand,
+  isPremium,
+  channelConfig,
+  botInfo,
+  telegramLinkData,
+  linqLinkData,
+  onConfigSaved,
+  selectable,
+}: ChannelCardProps) {
+  const status = getChannelStatusDisplay(state);
+
+  const borderClass =
+    state === 'active'
+      ? 'border-primary'
+      : state === 'available'
+        ? 'border-warning'
+        : 'border-border';
+  const bgClass = state === 'active' ? 'bg-primary-light' : '';
+  const opacityClass = state === 'unavailable' ? 'opacity-60' : '';
+
+  const subtitleText =
+    state === 'unavailable'
+      ? getUnavailableHint(channelKey)
+      : state === 'available'
+        ? 'Server connected. Complete your setup below.'
+        : state === 'active'
+          ? 'Receiving messages on this channel.'
+          : 'Your settings are complete.';
+
+  return (
+    <div
+      className={`rounded-xl border p-4 transition-colors ${borderClass} ${bgClass} ${opacityClass}`}
+      aria-label={`${label}: ${status.label}`}
+    >
+      {/* Header row */}
+      <div className="flex items-center gap-3 min-h-[44px]">
+        {/* Radio button for selectable channels */}
+        {selectable && (
+          <>
+            {isSwitching ? (
+              <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+                <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+              </span>
+            ) : (
+              <input
+                type="radio"
+                name="messaging-channel"
+                value={channelKey}
+                checked={state === 'active'}
+                onChange={() => onActivate()}
+                disabled={isMutating}
+                className="accent-primary w-4 h-4 shrink-0"
+              />
+            )}
+          </>
+        )}
+
+        <ChannelIcon channelKey={channelKey} />
+
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium">{label}</span>
+        </div>
+
+        {/* Status badge */}
+        <span
+          className={`text-xs px-2 py-0.5 rounded-full font-medium flex items-center gap-1 ${status.badgeBgClass}`}
+          aria-hidden="true"
+        >
+          {state === 'active' && <CheckIcon />}
+          {status.label}
+        </span>
+      </div>
+
+      {/* Subtitle */}
+      <p className={`text-xs text-muted-foreground mt-1 ${selectable ? 'ml-7' : 'ml-8'}`}>
+        {subtitleText}
+      </p>
+
+      {/* Bot info banner for premium Telegram */}
+      {channelKey === 'telegram' && botInfo && (state === 'configured' || state === 'active') && (
+        <div className="mt-3 ml-7 text-sm">
+          Message{' '}
+          <a
+            href={botInfo.bot_link}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="font-medium text-primary hover:underline"
+          >
+            @{botInfo.bot_username}
+          </a>
+          {' '}on Telegram to chat with your assistant.
+        </div>
+      )}
+
+      {/* Config form (for "available" state) */}
+      {state === 'available' && (
+        <div className="mt-4 ml-8">
+          <ChannelConfigForm
+            channelKey={channelKey}
+            isPremium={isPremium}
+            channelConfig={channelConfig}
+            telegramLinkData={telegramLinkData}
+            linqLinkData={linqLinkData}
+            onSaved={onConfigSaved}
+          />
+        </div>
+      )}
+
+      {/* Settings summary (for "configured" and "active") */}
+      {(state === 'configured' || state === 'active') && (
+        <div className={`mt-3 ${selectable ? 'ml-7' : 'ml-8'}`}>
+          <button
+            type="button"
+            onClick={onToggleExpand}
+            className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+            aria-expanded={isExpanded}
+          >
+            <ChevronIcon expanded={isExpanded} />
+            Your settings
+          </button>
+          {isExpanded && (
+            <div className="mt-3">
+              <ChannelConfigForm
+                channelKey={channelKey}
+                isPremium={isPremium}
+                channelConfig={channelConfig}
+                telegramLinkData={telegramLinkData}
+                linqLinkData={linqLinkData}
+                onSaved={onConfigSaved}
+              />
+            </div>
           )}
         </div>
       )}
@@ -161,40 +411,112 @@ export default function ChannelsPage() {
   );
 }
 
-// Types for premium linking responses (inferred from api module)
-type TelegramLinkData = Awaited<ReturnType<typeof api.getTelegramLink>>;
-type TelegramBotInfo = NonNullable<Awaited<ReturnType<typeof api.getTelegramBotInfo>>>;
-type LinqLinkData = Awaited<ReturnType<typeof api.getLinqLink>>;
+// --- None Card ---
 
-// --- Telegram section ---
+interface NoneCardProps {
+  isSelected: boolean;
+  isSwitching: boolean;
+  isMutating: boolean;
+  onSelect: () => void;
+}
 
-function PremiumTelegramSection() {
-  const { data: channelConfig } = useChannelConfig();
-  const [linkData, setLinkData] = useState<TelegramLinkData | null>(null);
-  const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
+function NoneCard({ isSelected, isSwitching, isMutating, onSelect }: NoneCardProps) {
+  return (
+    <div
+      className="rounded-xl border border-border p-4 transition-colors"
+      aria-label={`None: ${isSelected ? 'Selected' : 'Not selected'}`}
+    >
+      <div className="flex items-center gap-3 min-h-[44px]">
+        {isSwitching ? (
+          <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+            <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
+          </span>
+        ) : (
+          <input
+            type="radio"
+            name="messaging-channel"
+            value="none"
+            checked={isSelected}
+            onChange={onSelect}
+            disabled={isSelected || isMutating}
+            className="accent-primary w-4 h-4 shrink-0"
+          />
+        )}
+        <NoneIcon />
+        <div className="flex-1 min-w-0">
+          <span className="text-sm font-medium">None</span>
+        </div>
+      </div>
+      <p className="text-xs text-muted-foreground mt-1 ml-7">
+        Web chat only. No external messaging channel active.
+      </p>
+    </div>
+  );
+}
+
+function NoneIcon() {
+  return (
+    <svg className="w-5 h-5 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <circle cx="12" cy="12" r="9" strokeWidth={1.5} />
+      <path strokeLinecap="round" strokeWidth={1.5} d="M6 18L18 6" />
+    </svg>
+  );
+}
+
+function getUnavailableHint(key: ChannelKey): string {
+  if (key === 'telegram') return 'Set TELEGRAM_BOT_TOKEN in your environment to enable.';
+  if (key === 'linq') return 'Set LINQ_API_TOKEN in your environment to enable.';
+  if (key === 'bluebubbles')
+    return 'Set BLUEBUBBLES_SERVER_URL and BLUEBUBBLES_PASSWORD in your environment to enable.';
+  return '';
+}
+
+// --- Config forms ---
+
+interface ChannelConfigFormProps {
+  channelKey: ChannelKey;
+  isPremium: boolean;
+  channelConfig: ReturnType<typeof useChannelConfig>['data'];
+  telegramLinkData: TelegramLinkData | null;
+  linqLinkData: LinqLinkData | null;
+  onSaved: () => void;
+}
+
+function ChannelConfigForm({ channelKey, isPremium, ...rest }: ChannelConfigFormProps) {
+  if (channelKey === 'telegram') {
+    return isPremium ? <PremiumTelegramForm {...rest} /> : <OssTelegramForm {...rest} />;
+  }
+  if (channelKey === 'linq') {
+    return isPremium ? <PremiumLinqForm {...rest} /> : <OssLinqForm {...rest} />;
+  }
+  if (channelKey === 'bluebubbles') {
+    return <BlueBubblesForm {...rest} />;
+  }
+  return null;
+}
+
+// --- Telegram forms ---
+
+function PremiumTelegramForm({
+  telegramLinkData,
+  onSaved,
+}: Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
-  const isConfigured = channelConfig?.telegram_bot_token_set ?? false;
-
-  useEffect(() => {
-    api.getTelegramLink().then(setLinkData).catch(() => {});
-    api.getTelegramBotInfo().then(setBotInfo).catch(() => {});
-  }, []);
-
-  const displayedId = telegramUserId ?? linkData?.telegram_user_id ?? '';
+  const displayedId = telegramUserId ?? telegramLinkData?.telegram_user_id ?? '';
 
   const handleSave = async () => {
-    if (linkData && displayedId === (linkData.telegram_user_id ?? '')) {
+    if (telegramLinkData && displayedId === (telegramLinkData.telegram_user_id ?? '')) {
       toast.error('No changes to save');
       return;
     }
     setSaving(true);
     try {
-      const result = await api.setTelegramLink(displayedId);
-      setLinkData(result);
+      await api.setTelegramLink(displayedId);
       setTelegramUserId(null);
       toast.success('Telegram settings updated');
+      onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save');
     } finally {
@@ -203,67 +525,31 @@ function PremiumTelegramSection() {
   };
 
   return (
-    <div className="grid gap-6">
-      {botInfo && (
-        <Card>
-          <div className="flex items-center gap-3">
-            <span className="text-sm">
-              Message{' '}
-              <a
-                href={botInfo.bot_link}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="font-medium text-primary hover:underline"
-              >
-                @{botInfo.bot_username}
-              </a>
-              {' '}on Telegram to chat with your assistant.
-            </span>
-          </div>
-        </Card>
-      )}
-
-      <Card>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-medium">Telegram Configuration</h3>
-          {!isConfigured && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
-              Not configured
-            </span>
-          )}
-        </div>
-        {!isConfigured && (
-          <p className="text-xs text-muted-foreground mb-4">
-            A Telegram bot token must be configured by an administrator to enable this channel.
-          </p>
-        )}
-        <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
-          <TelegramUserIdField
-            value={displayedId}
-            onChange={(v) => setTelegramUserId(v)}
-            disabled={!isConfigured}
-          />
-          <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null} isLoading={saving}>
-              Save
-            </Button>
-          </div>
-        </div>
-      </Card>
+    <div className="grid gap-4">
+      <TelegramUserIdField
+        value={displayedId}
+        onChange={(v) => setTelegramUserId(v)}
+      />
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={saving || telegramLinkData === null} isLoading={saving}>
+          Save
+        </Button>
+      </div>
     </div>
   );
 }
 
-function OssTelegramSection() {
-  const { data: config } = useChannelConfig();
+function OssTelegramForm({
+  channelConfig,
+  onSaved,
+}: Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
   const updateMutation = useUpdateChannelConfig();
   const [telegramUserId, setTelegramUserId] = useState<string | null>(null);
 
-  const displayedId = telegramUserId ?? config?.telegram_allowed_chat_id ?? '';
-  const isConfigured = config?.telegram_bot_token_set ?? false;
+  const displayedId = telegramUserId ?? channelConfig?.telegram_allowed_chat_id ?? '';
 
   const handleSave = () => {
-    if (config && displayedId === config.telegram_allowed_chat_id) {
+    if (channelConfig && displayedId === channelConfig.telegram_allowed_chat_id) {
       toast.error('No changes to save');
       return;
     }
@@ -271,47 +557,266 @@ function OssTelegramSection() {
       onSuccess: () => {
         setTelegramUserId(null);
         toast.success('Telegram settings updated');
+        onSaved();
       },
       onError: (e) => toast.error(e.message),
     });
   };
 
   return (
-    <div className="grid gap-6">
-      <Card>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-medium">Telegram Configuration</h3>
-          <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
-            {isConfigured ? 'Connected' : 'Not configured'}
-          </span>
-        </div>
-        {!isConfigured && (
-          <p className="text-xs text-muted-foreground mb-4">
-            Set <code className="font-mono text-[11px]">TELEGRAM_BOT_TOKEN</code> in your environment
-            or in <a href="/app/settings/telegram" className="underline">Settings &gt; Telegram</a> to enable.
-          </p>
-        )}
-        <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
-          <TelegramUserIdField
-            value={displayedId}
-            onChange={(v) => setTelegramUserId(v)}
-            disabled={!isConfigured}
-          />
-          <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
-              Save
-            </Button>
-          </div>
-        </div>
-      </Card>
+    <div className="grid gap-4">
+      <TelegramUserIdField
+        value={displayedId}
+        onChange={(v) => setTelegramUserId(v)}
+      />
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={updateMutation.isPending || channelConfig === undefined} isLoading={updateMutation.isPending}>
+          Save
+        </Button>
+      </div>
     </div>
   );
 }
+
+// --- Linq forms ---
+
+function PremiumLinqForm({
+  linqLinkData,
+  onSaved,
+}: Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const displayedNumber = phoneNumber ?? linqLinkData?.phone_number ?? '';
+  const fromNumber = linqLinkData?.linq_from_number ?? '';
+
+  const handleSave = async () => {
+    if (linqLinkData && displayedNumber === (linqLinkData.phone_number ?? '')) {
+      toast.error('No changes to save');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.setLinqLink(displayedNumber);
+      setPhoneNumber(null);
+      toast.success('Text messaging settings updated');
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-4">
+      {fromNumber && <TextAssistantCard fromNumber={fromNumber} />}
+      <Field label="Your Phone Number">
+        <Input
+          value={displayedNumber}
+          onChange={(e) => setPhoneNumber(e.target.value)}
+          placeholder="e.g. +15551234567"
+          inputMode="tel"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          E.164 format phone number. This is the number you'll text from.
+        </p>
+      </Field>
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={saving || linqLinkData === null} isLoading={saving}>
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+const LINQ_SERVICES = ['iMessage', 'SMS', 'RCS'] as const;
+
+function OssLinqForm({
+  channelConfig,
+  onSaved,
+}: Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
+  const updateMutation = useUpdateChannelConfig();
+  const [allowedNumber, setAllowedNumber] = useState<string | null>(null);
+  const [preferredService, setPreferredService] = useState<string | null>(null);
+
+  const displayedNumber = allowedNumber ?? channelConfig?.linq_allowed_numbers ?? '';
+  const displayedService = preferredService ?? channelConfig?.linq_preferred_service ?? 'iMessage';
+  const fromNumber = channelConfig?.linq_from_number ?? '';
+
+  const handleSave = () => {
+    const updates: Record<string, string> = {};
+    if (allowedNumber !== null && allowedNumber !== (channelConfig?.linq_allowed_numbers ?? '')) {
+      updates.linq_allowed_numbers = allowedNumber;
+    }
+    if (preferredService !== null && preferredService !== (channelConfig?.linq_preferred_service ?? 'iMessage')) {
+      updates.linq_preferred_service = preferredService;
+    }
+    if (Object.keys(updates).length === 0) {
+      toast.error('No changes to save');
+      return;
+    }
+    updateMutation.mutate(updates, {
+      onSuccess: () => {
+        setAllowedNumber(null);
+        setPreferredService(null);
+        toast.success('Linq settings updated');
+        onSaved();
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  return (
+    <div className="grid gap-4">
+      {fromNumber && <TextAssistantCard fromNumber={fromNumber} />}
+      <Field label="Allowed Phone Number">
+        <Input
+          value={displayedNumber}
+          onChange={(e) => setAllowedNumber(e.target.value)}
+          placeholder="e.g. +15551234567"
+          inputMode="tel"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          E.164 phone number, or * to allow all. Empty = deny all.
+        </p>
+      </Field>
+      <Field label="Preferred Service">
+        <Select
+          value={displayedService}
+          onChange={(e) => setPreferredService(e.target.value)}
+          aria-label="Preferred messaging service"
+        >
+          {LINQ_SERVICES.map((svc) => (
+            <option key={svc} value={svc}>{svc}</option>
+          ))}
+        </Select>
+      </Field>
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={updateMutation.isPending || channelConfig === undefined} isLoading={updateMutation.isPending}>
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- BlueBubbles form ---
+
+function BlueBubblesForm({
+  channelConfig,
+  onSaved,
+}: Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
+  const updateMutation = useUpdateChannelConfig();
+  const [allowedNumbers, setAllowedNumbers] = useState<string | null>(null);
+  const [imessageAddress, setImessageAddress] = useState<string | null>(null);
+
+  const displayedNumbers = allowedNumbers ?? channelConfig?.bluebubbles_allowed_numbers ?? '';
+  const displayedAddress = imessageAddress ?? channelConfig?.bluebubbles_imessage_address ?? '';
+
+  const handleSave = () => {
+    const updates: Record<string, string> = {};
+    if (allowedNumbers !== null && allowedNumbers !== (channelConfig?.bluebubbles_allowed_numbers ?? '')) {
+      updates.bluebubbles_allowed_numbers = allowedNumbers;
+    }
+    if (imessageAddress !== null && imessageAddress !== (channelConfig?.bluebubbles_imessage_address ?? '')) {
+      updates.bluebubbles_imessage_address = imessageAddress;
+    }
+    if (Object.keys(updates).length === 0) {
+      toast.error('No changes to save');
+      return;
+    }
+    updateMutation.mutate(updates, {
+      onSuccess: () => {
+        setAllowedNumbers(null);
+        setImessageAddress(null);
+        toast.success('BlueBubbles settings updated');
+        onSaved();
+      },
+      onError: (e) => toast.error(e.message),
+    });
+  };
+
+  return (
+    <div className="grid gap-4">
+      {displayedAddress && (
+        <TextAssistantCard
+          fromNumber={displayedAddress}
+          subtitle="Send an iMessage to this address to reach your assistant."
+        />
+      )}
+      <Field label="iMessage Address">
+        <Input
+          value={displayedAddress}
+          onChange={(e) => setImessageAddress(e.target.value)}
+          placeholder="e.g. user@icloud.com or +15551234567"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          The iCloud email or phone number people should text to reach your assistant.
+        </p>
+      </Field>
+      <Field label="Allowed Sender">
+        <Input
+          value={displayedNumbers}
+          onChange={(e) => setAllowedNumbers(e.target.value)}
+          placeholder="e.g. +15551234567 or user@icloud.com"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          E.164 phone number or iCloud email, or * to allow all. Empty = deny all.
+        </p>
+      </Field>
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={updateMutation.isPending || channelConfig === undefined} isLoading={updateMutation.isPending}>
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// --- Shared UI components ---
 
 function CheckIcon() {
   return (
     <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={`w-3 h-3 transition-transform ${expanded ? 'rotate-90' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function ChannelIcon({ channelKey }: { channelKey: ChannelKey }) {
+  if (channelKey === 'telegram') {
+    return (
+      <svg className="w-5 h-5 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z" />
+      </svg>
+    );
+  }
+  if (channelKey === 'linq') {
+    return (
+      <svg className="w-5 h-5 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+      </svg>
+    );
+  }
+  // bluebubbles
+  return (
+    <svg className="w-5 h-5 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2v-1M13 4H7a2 2 0 00-2 2v6a2 2 0 002 2h2v4l4-4h2a2 2 0 002-2V6a2 2 0 00-2-2z" />
     </svg>
   );
 }
@@ -358,255 +863,5 @@ function TelegramUserIdField({
         </Tooltip>
       </p>
     </Field>
-  );
-}
-
-// --- Premium Linq section ---
-
-function PremiumTextMessagingSection() {
-  const { data: channelConfig } = useChannelConfig();
-  const [linkData, setLinkData] = useState<LinqLinkData | null>(null);
-  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-  const isConfigured = channelConfig?.linq_api_token_set ?? false;
-
-  useEffect(() => {
-    api.getLinqLink().then(setLinkData).catch(() => {});
-  }, []);
-
-  const displayedNumber = phoneNumber ?? linkData?.phone_number ?? '';
-  const fromNumber = linkData?.linq_from_number ?? '';
-
-  const handleSave = async () => {
-    if (linkData && displayedNumber === (linkData.phone_number ?? '')) {
-      toast.error('No changes to save');
-      return;
-    }
-    setSaving(true);
-    try {
-      const result = await api.setLinqLink(displayedNumber);
-      setLinkData(result);
-      setPhoneNumber(null);
-      toast.success('Text messaging settings updated');
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="grid gap-6">
-      {fromNumber && <TextAssistantCard fromNumber={fromNumber} />}
-      <Card>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-medium">Text Messaging Configuration</h3>
-          {!isConfigured && (
-            <span className="text-xs px-2 py-0.5 rounded-full bg-muted text-muted-foreground">
-              Not configured
-            </span>
-          )}
-        </div>
-        <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
-          <Field label="Your Phone Number">
-            <Input
-              value={displayedNumber}
-              onChange={(e) => setPhoneNumber(e.target.value)}
-              placeholder="e.g. +15551234567"
-              inputMode="tel"
-              disabled={!isConfigured}
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              E.164 format phone number. This is the number you'll text from.
-            </p>
-          </Field>
-          <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={!isConfigured || saving || linkData === null} isLoading={saving}>
-              Save
-            </Button>
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-// --- OSS Linq section ---
-
-const LINQ_SERVICES = ['iMessage', 'SMS', 'RCS'] as const;
-
-function TextMessagingSection() {
-  const { data: config } = useChannelConfig();
-  const updateMutation = useUpdateChannelConfig();
-  const [allowedNumber, setAllowedNumber] = useState<string | null>(null);
-  const [preferredService, setPreferredService] = useState<string | null>(null);
-
-  const displayedNumber = allowedNumber ?? config?.linq_allowed_numbers ?? '';
-  const displayedService = preferredService ?? config?.linq_preferred_service ?? 'iMessage';
-  const isConfigured = config?.linq_api_token_set ?? false;
-
-  const handleSave = () => {
-    const updates: Record<string, string> = {};
-    if (allowedNumber !== null && allowedNumber !== (config?.linq_allowed_numbers ?? '')) {
-      updates.linq_allowed_numbers = allowedNumber;
-    }
-    if (preferredService !== null && preferredService !== (config?.linq_preferred_service ?? 'iMessage')) {
-      updates.linq_preferred_service = preferredService;
-    }
-    if (Object.keys(updates).length === 0) {
-      toast.error('No changes to save');
-      return;
-    }
-    updateMutation.mutate(updates, {
-      onSuccess: () => {
-        setAllowedNumber(null);
-        setPreferredService(null);
-        toast.success('Linq settings updated');
-      },
-      onError: (e) => toast.error(e.message),
-    });
-  };
-
-  const fromNumber = config?.linq_from_number ?? '';
-
-  return (
-    <div className="grid gap-6">
-      {isConfigured && fromNumber && (
-        <TextAssistantCard fromNumber={fromNumber} />
-      )}
-      <Card>
-        <div className="flex items-center justify-between mb-3">
-          <h3 className="text-sm font-medium">Text Messaging Configuration</h3>
-          <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
-            {isConfigured ? 'Connected' : 'Not configured'}
-          </span>
-        </div>
-        {!isConfigured && (
-          <p className="text-xs text-muted-foreground mb-4">
-            Let users text your assistant from their phone's native messaging app.
-            Set <code className="font-mono text-[11px]">LINQ_API_TOKEN</code> in your environment to enable.
-          </p>
-        )}
-        <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
-          <Field label="Allowed Phone Number">
-            <Input
-              value={displayedNumber}
-              onChange={(e) => setAllowedNumber(e.target.value)}
-              placeholder="e.g. +15551234567"
-              inputMode="tel"
-              disabled={!isConfigured}
-            />
-            <p className="text-xs text-muted-foreground mt-1">
-              E.164 phone number, or * to allow all. Empty = deny all.
-            </p>
-          </Field>
-          <Field label="Preferred Service">
-            <Select
-              value={displayedService}
-              onChange={(e) => setPreferredService(e.target.value)}
-              aria-label="Preferred messaging service"
-              disabled={!isConfigured}
-            >
-              {LINQ_SERVICES.map((svc) => (
-                <option key={svc} value={svc}>{svc}</option>
-              ))}
-            </Select>
-          </Field>
-          <div className="flex justify-end">
-            <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
-              Save
-            </Button>
-          </div>
-        </div>
-      </Card>
-    </div>
-  );
-}
-
-// --- BlueBubbles section ---
-
-function BlueBubblesSection() {
-  const { data: config } = useChannelConfig();
-  const updateMutation = useUpdateChannelConfig();
-  const [allowedNumbers, setAllowedNumbers] = useState<string | null>(null);
-  const [imessageAddress, setImessageAddress] = useState<string | null>(null);
-
-  const displayedNumbers = allowedNumbers ?? config?.bluebubbles_allowed_numbers ?? '';
-  const displayedAddress = imessageAddress ?? config?.bluebubbles_imessage_address ?? '';
-  const isConfigured = config?.bluebubbles_configured ?? false;
-
-  const handleSave = () => {
-    const updates: Record<string, string> = {};
-    if (allowedNumbers !== null && allowedNumbers !== (config?.bluebubbles_allowed_numbers ?? '')) {
-      updates.bluebubbles_allowed_numbers = allowedNumbers;
-    }
-    if (imessageAddress !== null && imessageAddress !== (config?.bluebubbles_imessage_address ?? '')) {
-      updates.bluebubbles_imessage_address = imessageAddress;
-    }
-    if (Object.keys(updates).length === 0) {
-      toast.error('No changes to save');
-      return;
-    }
-    updateMutation.mutate(updates, {
-      onSuccess: () => {
-        setAllowedNumbers(null);
-        setImessageAddress(null);
-        toast.success('BlueBubbles settings updated');
-      },
-      onError: (e) => toast.error(e.message),
-    });
-  };
-
-  return (
-    <Card>
-      <div className="flex items-center justify-between mb-3">
-        <h3 className="text-sm font-medium">BlueBubbles Configuration</h3>
-        <span className={`text-xs px-2 py-0.5 rounded-full ${isConfigured ? 'bg-success/10 text-success' : 'bg-muted text-muted-foreground'}`}>
-          {isConfigured ? 'Connected' : 'Not configured'}
-        </span>
-      </div>
-      {!isConfigured && (
-        <p className="text-xs text-muted-foreground mb-4">
-          Self-hosted iMessage bridge via a Mac with BlueBubbles.
-          Set <code className="font-mono text-[11px]">BLUEBUBBLES_SERVER_URL</code> and{' '}
-          <code className="font-mono text-[11px]">BLUEBUBBLES_PASSWORD</code> in your environment to enable.
-        </p>
-      )}
-      <div className={`grid gap-4${!isConfigured ? ' opacity-50 pointer-events-none' : ''}`}>
-        {isConfigured && displayedAddress && (
-          <TextAssistantCard
-            fromNumber={displayedAddress}
-            subtitle="Send an iMessage to this address to reach your assistant."
-          />
-        )}
-        <Field label="iMessage Address">
-          <Input
-            value={displayedAddress}
-            onChange={(e) => setImessageAddress(e.target.value)}
-            placeholder="e.g. user@icloud.com or +15551234567"
-            disabled={!isConfigured}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            The iCloud email or phone number people should text to reach your assistant.
-          </p>
-        </Field>
-        <Field label="Allowed Sender">
-          <Input
-            value={displayedNumbers}
-            onChange={(e) => setAllowedNumbers(e.target.value)}
-            placeholder="e.g. +15551234567 or user@icloud.com"
-            disabled={!isConfigured}
-          />
-          <p className="text-xs text-muted-foreground mt-1">
-            E.164 phone number or iCloud email, or * to allow all. Empty = deny all.
-          </p>
-        </Field>
-        <div className="flex justify-end">
-          <Button onClick={handleSave} disabled={!isConfigured || updateMutation.isPending || config === undefined} isLoading={updateMutation.isPending}>
-            Save
-          </Button>
-        </div>
-      </div>
-    </Card>
   );
 }
