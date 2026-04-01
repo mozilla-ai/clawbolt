@@ -256,7 +256,7 @@ export default function DashboardPage() {
                       <div className="flex items-center gap-2 min-w-0">
                         <span className="text-xs text-foreground">{toolDisplayName(tool.name)}</span>
                         {isConfigured && (
-                          <span className={`inline-flex items-center gap-1 text-[11px] ${isConnected ? 'text-success' : 'text-warning'}`}>
+                          <span className={`inline-flex items-center gap-1 text-xs ${isConnected ? 'text-success' : 'text-warning'}`}>
                             <span className={`size-1.5 rounded-full ${isConnected ? 'bg-success' : 'bg-warning'}`} />
                             {isConnected ? 'Connected' : 'Not connected'}
                           </span>
@@ -282,20 +282,20 @@ export default function DashboardPage() {
                           const enabledCount = PER_CALENDAR_TOOLS.length - disabledCount;
                           return (
                             <div key={cal.calendar_id} className="flex items-center justify-between gap-2">
-                              <span className="text-[11px] text-muted-foreground truncate">{cal.display_name}</span>
-                              <span className="text-[11px] text-muted-foreground shrink-0">{enabledCount}/{PER_CALENDAR_TOOLS.length}</span>
+                              <span className="text-xs text-muted-foreground truncate">{cal.display_name}</span>
+                              <span className="text-xs text-muted-foreground shrink-0">{enabledCount}/{PER_CALENDAR_TOOLS.length}</span>
                             </div>
                           );
                         })}
                       </div>
                     )}
                     {isConnected && tool.enabled && tool.name !== 'calendar' && totalSubTools > 0 && (
-                      <p className="text-[11px] text-muted-foreground mt-0.5 ml-0">
+                      <p className="text-xs text-muted-foreground mt-0.5 ml-0">
                         {enabledSubTools}/{totalSubTools} capabilities enabled
                       </p>
                     )}
                     {isConfigured && !isConnected && (
-                      <p className="text-[11px] text-muted-foreground mt-0.5 ml-0">
+                      <p className="text-xs text-muted-foreground mt-0.5 ml-0">
                         Reconnect to enable
                       </p>
                     )}

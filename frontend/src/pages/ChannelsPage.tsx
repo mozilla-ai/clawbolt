@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import Card from '@/components/ui/card';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import Input from '@/components/ui/input';
@@ -61,32 +61,36 @@ export default function ChannelsPage() {
     phone_number: linqLinkData?.phone_number,
   };
 
-  // Compute states for each channel
-  const channelStates: Record<ChannelKey, ChannelState> = {} as Record<ChannelKey, ChannelState>;
-  if (channelConfig) {
-    for (const ch of MESSAGING_CHANNELS) {
-      channelStates[ch.key] = getChannelState(
-        ch.key,
-        channelConfig,
-        routes,
-        isPremium,
-        premiumData,
-      );
+  // Compute states for each channel (memoized to prevent useEffect churn)
+  const channelStates = useMemo(() => {
+    const states: Record<ChannelKey, ChannelState> = {} as Record<ChannelKey, ChannelState>;
+    if (channelConfig) {
+      for (const ch of MESSAGING_CHANNELS) {
+        states[ch.key] = getChannelState(
+          ch.key,
+          channelConfig,
+          routes,
+          isPremium,
+          premiumData,
+        );
+      }
     }
-  }
+    return states;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelConfig, routesData, isPremium, telegramLinkData, linqLinkData]);
 
-  // Auto-expand the first "available" channel that needs setup
+  // Auto-expand the first "available" channel on initial load only
+  const hasAutoExpanded = useRef(false);
   useEffect(() => {
-    if (!channelConfig) return;
-    // Don't auto-expand if user already has something expanded
-    if (expandedChannel) return;
+    if (!channelConfig || hasAutoExpanded.current) return;
     const needsSetup = MESSAGING_CHANNELS.find(
       (ch) => channelStates[ch.key] === 'available',
     );
     if (needsSetup) {
       setExpandedChannel(needsSetup.key);
+      hasAutoExpanded.current = true;
     }
-  }, [channelConfig, channelStates, expandedChannel]);
+  }, [channelConfig, channelStates]);
 
   // Find which channel is currently active (if any)
   const activeChannelKey = MESSAGING_CHANNELS.find(
