@@ -175,7 +175,6 @@ export default function ToolsPage() {
     );
   }
 
-  const coreTools = tools.filter((t: ToolConfigEntryResponse) => t.category === 'core');
   const domainTools = tools.filter((t: ToolConfigEntryResponse) => t.category === 'domain');
 
   return (
@@ -277,27 +276,6 @@ export default function ToolsPage() {
         </section>
       )}
 
-      {/* Core Tools */}
-      {coreTools.length > 0 && (
-        <section className={domainTools.length > 0 ? 'mt-8' : ''}>
-          <h3 className="text-sm font-medium mb-3">Core Tools</h3>
-          <Card>
-            <div className="divide-y divide-border -my-1">
-              {coreTools.map((tool) => (
-                <div key={tool.name} className="flex items-center justify-between py-2.5 first:pt-0 last:pb-0">
-                  <div className="flex-1 min-w-0">
-                    <span className="text-sm font-medium">{displayName(tool.name)}</span>
-                    {tool.description && (
-                      <p className="text-xs text-muted-foreground mt-0.5">{tool.description}</p>
-                    )}
-                  </div>
-                  <span className="text-xs text-muted-foreground shrink-0 ml-4">Always on</span>
-                </div>
-              ))}
-            </div>
-          </Card>
-        </section>
-      )}
     </div>
   );
 }

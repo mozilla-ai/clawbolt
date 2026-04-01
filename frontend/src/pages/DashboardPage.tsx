@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import Markdown from 'react-markdown';
@@ -5,8 +6,11 @@ import Card from '@/components/ui/card';
 import { Switch } from '@heroui/switch';
 import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
-import { useChannelRoutes, useToolConfig, useUpdateToolConfig, useOAuthStatus, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
+import { useChannelRoutes, useChannelConfig, useToolConfig, useUpdateToolConfig, useOAuthStatus, useCalendarConfig, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
+import { useAuth } from '@/contexts/AuthContext';
+import { MESSAGING_CHANNELS, getChannelState, getChannelStatusDisplay } from '@/lib/channel-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
+import api from '@/api';
 
 // Human-readable display names for tool factories (matches ToolsPage).
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
@@ -26,6 +30,14 @@ const TOOL_OAUTH_MAP: Record<string, string> = {
   quickbooks: 'quickbooks',
   calendar: 'google_calendar',
 };
+
+// Per-calendar tools that can be individually toggled (matches ToolsPage).
+const PER_CALENDAR_TOOLS = [
+  'calendar_list_events',
+  'calendar_create_event',
+  'calendar_update_event',
+  'calendar_delete_event',
+] as const;
 
 function toolDisplayName(name: string): string {
   return TOOL_DISPLAY_NAMES[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
@@ -106,29 +118,56 @@ function DashboardCard({ title, description, configured, icon, onClick, isLoadin
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { profile, reloadProfile } = useOutletContext<AppShellContext>();
+  const { isPremium } = useAuth();
 
   const channels = useChannelRoutes();
+  const channelConfigData = useChannelConfig();
   const tools = useToolConfig();
   const updateToolConfig = useUpdateToolConfig();
   const oauth = useOAuthStatus();
+  const calendarConfig = useCalendarConfig();
   const memory = useMemory();
   const modelConfig = useModelConfig();
   const updateProfile = useUpdateProfile();
 
+  // --- Premium channel link data (needed for correct state derivation) ---
+  const [telegramLinkData, setTelegramLinkData] = useState<{ telegram_user_id?: string | null } | null>(null);
+  const [linqLinkData, setLinqLinkData] = useState<{ phone_number?: string | null } | null>(null);
+
+  useEffect(() => {
+    if (isPremium) {
+      api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
+      api.getLinqLink().then(setLinqLinkData).catch(() => {});
+    }
+  }, [isPremium]);
+
+  const premiumData = isPremium
+    ? { telegram_user_id: telegramLinkData?.telegram_user_id, phone_number: linqLinkData?.phone_number }
+    : undefined;
+
   // --- Channels ---
   const allRoutes = channels.data?.routes ?? [];
-  const activeChannels = allRoutes.filter((r) => r.enabled);
-  const channelConfigured = activeChannels.length > 0;
+  const channelConf = channelConfigData.data;
+  const channelStates = channelConf
+    ? MESSAGING_CHANNELS.map((ch) => ({
+        ...ch,
+        state: getChannelState(ch.key, channelConf, allRoutes, isPremium, premiumData),
+      }))
+    : [];
+  const hasAnyActive = channelStates.some((ch) => ch.state === 'active');
+  const hasAnyAvailable = channelStates.some(
+    (ch) => ch.state === 'available' || ch.state === 'configured' || ch.state === 'active',
+  );
+  // Overall card dot: green if any active, amber if any available, gray otherwise
+  const channelConfigured = hasAnyActive;
 
   // --- Tools ---
   const allTools = tools.data?.tools ?? [];
-  const enabledTools = allTools.filter((t) => t.enabled);
   const domainTools = allTools.filter((t) => t.category === 'domain');
-  const coreToolCount = allTools.filter((t) => t.category === 'core' && t.enabled).length;
   const integrations = oauth.data?.integrations ?? [];
   const oauthMap = Object.fromEntries(integrations.map((i) => [i.integration, i]));
-  const connectedIntegrations = integrations.filter((i) => i.connected);
-  const toolsConfigured = enabledTools.length > 0;
+  const enabledCalendars = calendarConfig.data?.calendars ?? [];
+  const toolsConfigured = domainTools.some((t) => t.enabled);
 
   // --- Memory ---
   const memoryContent = memory.data?.content ?? '';
@@ -186,27 +225,26 @@ export default function DashboardPage() {
           configured={channelConfigured}
           icon={<ChannelsIcon />}
           onClick={() => navigate('/app/channels')}
-          isLoading={channels.isPending && !channels.data}
-          isError={channels.isError && !channels.data}
+          isLoading={(channels.isPending && !channels.data) || (channelConfigData.isPending && !channelConfigData.data)}
+          isError={(channels.isError && !channels.data) || (channelConfigData.isError && !channelConfigData.data)}
         >
-          {channelConfigured ? (
-            <div className="space-y-1.5">
-              <div className="flex flex-wrap gap-1.5">
-                {activeChannels.map((r) => (
-                  <span key={r.channel} className="inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full bg-success-bg text-success">
-                    <span className="size-1.5 rounded-full bg-success" />
-                    {r.channel}
-                  </span>
-                ))}
-              </div>
-              {allRoutes.length > activeChannels.length && (
-                <p className="text-xs text-muted-foreground">
-                  {allRoutes.length - activeChannels.length} inactive {allRoutes.length - activeChannels.length === 1 ? 'channel' : 'channels'}
-                </p>
-              )}
+          {hasAnyAvailable ? (
+            <div className="space-y-2">
+              {channelStates.map((ch) => {
+                const display = getChannelStatusDisplay(ch.state);
+                return (
+                  <div key={ch.key} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-2 min-w-0">
+                      <span className={`size-1.5 rounded-full shrink-0 ${display.dotClass}`} />
+                      <span className="text-xs text-foreground">{ch.label}</span>
+                    </div>
+                    <span className={`text-xs ${display.labelClass}`}>{display.label}</span>
+                  </div>
+                );
+              })}
             </div>
           ) : (
-            <p className="text-xs text-muted-foreground">Set up a messaging channel to start chatting with your assistant.</p>
+            <p className="text-xs text-muted-foreground">Set up a messaging channel to start chatting with your assistant beyond web chat.</p>
           )}
         </DashboardCard>
 
@@ -227,40 +265,60 @@ export default function DashboardPage() {
                 const oauthEntry = oauthKey ? oauthMap[oauthKey] : undefined;
                 const isConnected = oauthEntry?.connected ?? false;
                 const isConfigured = oauthEntry?.configured ?? false;
+                const enabledSubTools = (tool.sub_tools ?? []).filter((st) => st.enabled).length;
+                const totalSubTools = (tool.sub_tools ?? []).length;
                 return (
-                  <div key={tool.name} className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-foreground">{toolDisplayName(tool.name)}</span>
-                      {isConfigured && (
-                        <span className={`inline-flex items-center gap-1 text-[11px] ${isConnected ? 'text-success' : 'text-warning'}`}>
-                          <span className={`size-1.5 rounded-full ${isConnected ? 'bg-success' : 'bg-warning'}`} />
-                          {isConnected ? 'Connected' : 'Not connected'}
-                        </span>
+                  <div key={tool.name}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs text-foreground">{toolDisplayName(tool.name)}</span>
+                        {isConfigured && (
+                          <span className={`inline-flex items-center gap-1 text-xs ${isConnected ? 'text-success' : 'text-warning'}`}>
+                            <span className={`size-1.5 rounded-full ${isConnected ? 'bg-success' : 'bg-warning'}`} />
+                            {isConnected ? 'Connected' : 'Not connected'}
+                          </span>
+                        )}
+                      </div>
+                      {isConnected && (
+                        /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
+                        <div onClick={stopCardPress}>
+                          <Switch
+                            isSelected={tool.enabled}
+                            isDisabled={updateToolConfig.isPending}
+                            onValueChange={(val) => handleToolToggle(tool.name, val)}
+                            size="sm"
+                            aria-label={`Toggle ${toolDisplayName(tool.name)}`}
+                          />
+                        </div>
                       )}
                     </div>
-                    {isConnected && (
-                      /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
-                      <div onClick={stopCardPress}>
-                        <Switch
-                          isSelected={tool.enabled}
-                          isDisabled={updateToolConfig.isPending}
-                          onValueChange={(val) => handleToolToggle(tool.name, val)}
-                          size="sm"
-                          aria-label={`Toggle ${toolDisplayName(tool.name)}`}
-                        />
+                    {isConnected && tool.enabled && tool.name === 'calendar' && enabledCalendars.length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {enabledCalendars.map((cal) => {
+                          const disabledCount = (cal.disabled_tools ?? []).length;
+                          const enabledCount = Math.max(0, PER_CALENDAR_TOOLS.length - disabledCount);
+                          return (
+                            <div key={cal.calendar_id} className="flex items-center justify-between gap-2">
+                              <span className="text-xs text-muted-foreground truncate">{cal.display_name}</span>
+                              <span className="text-xs text-muted-foreground shrink-0">{enabledCount}/{PER_CALENDAR_TOOLS.length}</span>
+                            </div>
+                          );
+                        })}
                       </div>
+                    )}
+                    {isConnected && tool.enabled && tool.name !== 'calendar' && totalSubTools > 0 && (
+                      <p className="text-xs text-muted-foreground mt-0.5 ml-0">
+                        {enabledSubTools}/{totalSubTools} capabilities enabled
+                      </p>
+                    )}
+                    {isConfigured && !isConnected && (
+                      <p className="text-xs text-muted-foreground mt-0.5 ml-0">
+                        Reconnect to enable
+                      </p>
                     )}
                   </div>
                 );
               })}
-              {coreToolCount > 0 && (
-                <p className="text-xs text-muted-foreground">{coreToolCount} core {coreToolCount === 1 ? 'tool' : 'tools'} active</p>
-              )}
-              {connectedIntegrations.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {connectedIntegrations.length} {connectedIntegrations.length === 1 ? 'integration' : 'integrations'} connected
-                </p>
-              )}
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">Enable tools to let your assistant take actions on your behalf.</p>
