@@ -153,52 +153,25 @@ export default function GetStartedPage() {
               <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Messaging channel">
                 {MESSAGING_CHANNELS.map(({ key, label }) => {
                   const configured = channelConfig ? isServerAvailable(key, channelConfig) : false;
-                  const isSelected = selectedChannel === key;
-                  const isConfirmed = confirmedChannel === key;
-                  const isDisabled = !configured;
-                  const isSwitching = toggleChannelRoute.isPending && isSelected && !isConfirmed;
                   return (
-                    <label
+                    <ChannelRadioItem
                       key={key}
-                      className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
-                        isDisabled
-                          ? 'opacity-50 cursor-not-allowed'
-                          : isSelected
-                            ? 'border-primary bg-primary-light cursor-pointer'
-                            : 'border-border hover:border-primary/40 cursor-pointer'
-                      }`}
-                    >
-                      {isSwitching ? (
-                        <span className="w-4 h-4 shrink-0 flex items-center justify-center">
-                          <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
-                        </span>
-                      ) : (
-                        <input
-                          type="radio"
-                          name="onboarding-channel"
-                          value={key}
-                          checked={isSelected}
-                          onChange={() => handleSelectChannel(key)}
-                          disabled={isDisabled || toggleChannelRoute.isPending}
-                          className="accent-primary w-4 h-4 shrink-0"
-                        />
-                      )}
-                      <div className="flex-1">
-                        <span className="text-sm font-medium">{label}</span>
-                      </div>
-                      {isConfirmed && (
-                        <span className="text-xs text-success flex items-center gap-1">
-                          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
-                          </svg>
-                        </span>
-                      )}
-                    </label>
+                      value={key}
+                      label={label}
+                      isSelected={selectedChannel === key}
+                      isConfirmed={confirmedChannel === key}
+                      isDisabled={!configured}
+                      isSwitching={toggleChannelRoute.isPending && selectedChannel === key && confirmedChannel !== key}
+                      isMutating={toggleChannelRoute.isPending}
+                      onSelect={() => handleSelectChannel(key)}
+                    />
                   );
                 })}
 
-                {/* None option */}
-                <NoneOption
+                <ChannelRadioItem
+                  value="none"
+                  label="None"
+                  description="Web chat only, no external messaging channel"
                   isSelected={selectedChannel === 'none'}
                   isConfirmed={confirmedChannel === 'none'}
                   isSwitching={toggleChannelRoute.isPending && selectedChannel === 'none' && confirmedChannel !== 'none'}
@@ -347,15 +320,23 @@ export default function GetStartedPage() {
   );
 }
 
-function NoneOption({
+function ChannelRadioItem({
+  value,
+  label,
+  description,
   isSelected,
   isConfirmed,
+  isDisabled,
   isSwitching,
   isMutating,
   onSelect,
 }: {
+  value: string;
+  label: string;
+  description?: string;
   isSelected: boolean;
   isConfirmed: boolean;
+  isDisabled?: boolean;
   isSwitching: boolean;
   isMutating: boolean;
   onSelect: () => void;
@@ -363,9 +344,11 @@ function NoneOption({
   return (
     <label
       className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
-        isSelected
-          ? 'border-primary bg-primary-light cursor-pointer'
-          : 'border-border hover:border-primary/40 cursor-pointer'
+        isDisabled
+          ? 'opacity-50 cursor-not-allowed'
+          : isSelected
+            ? 'border-primary bg-primary-light cursor-pointer'
+            : 'border-border hover:border-primary/40 cursor-pointer'
       }`}
     >
       {isSwitching ? (
@@ -376,16 +359,16 @@ function NoneOption({
         <input
           type="radio"
           name="onboarding-channel"
-          value="none"
+          value={value}
           checked={isSelected}
           onChange={onSelect}
-          disabled={isMutating}
+          disabled={isDisabled || isMutating}
           className="accent-primary w-4 h-4 shrink-0"
         />
       )}
       <div className="flex-1">
-        <span className="text-sm font-medium">None</span>
-        <p className="text-xs text-muted-foreground">Web chat only, no external messaging channel</p>
+        <span className="text-sm font-medium">{label}</span>
+        {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </div>
       {isConfirmed && (
         <span className="text-xs text-success flex items-center gap-1">
