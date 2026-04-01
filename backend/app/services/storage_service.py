@@ -283,7 +283,7 @@ class LocalFileStorage(StorageBackend):
         for seg in segments:
             result = result / seg.lstrip("/")
         resolved = result.resolve()
-        if not str(resolved).startswith(str(self.base_dir)):
+        if not resolved.is_relative_to(self.base_dir):
             msg = f"Path escapes storage directory: {'/'.join(segments)}"
             raise ValueError(msg)
         return resolved
