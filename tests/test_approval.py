@@ -126,6 +126,83 @@ class TestApprovalStore:
 
 
 # ---------------------------------------------------------------------------
+# ApprovalStore: generate_defaults / ensure_complete / reset_permissions
+# ---------------------------------------------------------------------------
+
+
+class TestApprovalStoreComplete:
+    def test_generate_defaults_includes_all_tools(self, tmp_path: object) -> None:
+        """generate_defaults returns a dict with all registered tools."""
+        from backend.app.agent.tools.registry import (
+            default_registry,
+            ensure_tool_modules_imported,
+        )
+
+        ensure_tool_modules_imported()
+        store = ApprovalStore()
+        defaults = store.generate_defaults("gen-user")
+        assert defaults["version"] == 1
+        assert isinstance(defaults["tools"], dict)
+        assert len(defaults["tools"]) > 0
+        # Every registered sub-tool should be present
+        for factory_name in default_registry.factory_names:
+            for st in default_registry.get_factory_sub_tools(factory_name):
+                assert st.name in defaults["tools"]
+
+    def test_ensure_complete_backfills_missing(self, tmp_path: object) -> None:
+        """ensure_complete adds new tools to an existing file."""
+        store = ApprovalStore()
+        # Start with a partial file
+        store._save(
+            "backfill-user", {"version": 1, "tools": {"send_reply": "deny"}, "resources": {}}
+        )
+        data = store.ensure_complete("backfill-user")
+        # send_reply should keep its override
+        assert data["tools"]["send_reply"] == "deny"
+        # Other tools should have been backfilled
+        assert len(data["tools"]) > 1
+
+    def test_ensure_complete_preserves_overrides(self, tmp_path: object) -> None:
+        """ensure_complete does not overwrite user customizations."""
+        store = ApprovalStore()
+        store._save(
+            "preserve-user",
+            {
+                "version": 1,
+                "tools": {"send_reply": "deny", "read_file": "ask"},
+                "resources": {"web_fetch": {"evil.com": "deny"}},
+            },
+        )
+        data = store.ensure_complete("preserve-user")
+        assert data["tools"]["send_reply"] == "deny"
+        assert data["tools"]["read_file"] == "ask"
+        assert data["resources"]["web_fetch"]["evil.com"] == "deny"
+
+    def test_reset_permissions_writes_defaults(self, tmp_path: object) -> None:
+        """reset_permissions replaces everything with defaults."""
+        store = ApprovalStore()
+        store.set_permission("reset-user", "send_reply", PermissionLevel.DENY)
+        store.reset_permissions("reset-user")
+        data = store._load("reset-user")
+        # send_reply should be back to its default, not deny
+        defaults = store.generate_defaults("reset-user")
+        assert data["tools"]["send_reply"] == defaults["tools"]["send_reply"]
+
+    def test_set_permission_preserves_complete_file(self, tmp_path: object) -> None:
+        """set_permission does not lose other entries."""
+        store = ApprovalStore()
+        store.ensure_complete("set-perm-user")
+        defaults = store.generate_defaults("set-perm-user")
+        original_count = len(defaults["tools"])
+
+        store.set_permission("set-perm-user", "send_reply", PermissionLevel.DENY)
+        data = store._load("set-perm-user")
+        # All tools should still be present
+        assert len(data["tools"]) >= original_count
+        assert data["tools"]["send_reply"] == "deny"
+
+
+# ---------------------------------------------------------------------------
 # _parse_approval_response
 # ---------------------------------------------------------------------------
 
