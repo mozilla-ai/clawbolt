@@ -129,7 +129,7 @@ async def _verify_llm_settings() -> None:
                 provider=provider,
                 api_base=settings.llm_api_base,
                 messages=[{"role": "user", "content": "ping"}],
-                max_tokens=1,
+                max_tokens=10,
             )
             logger.info("LLM verified (%s): provider=%s, model=%s", label, provider, model)
         except Exception as exc:
