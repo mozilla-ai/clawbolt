@@ -4,6 +4,7 @@ import { queryKeys } from '@/lib/query-keys';
 import api from '@/api';
 import type {
   MemoryUpdate,
+  PermissionsUpdate,
   ModelConfigUpdate,
   StorageConfigUpdate,
   ToolConfigUpdateEntry,
@@ -73,6 +74,25 @@ export function useUpdateMemory() {
     mutationFn: (body: MemoryUpdate) => api.updateMemory(body),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.memory.all });
+    },
+  });
+}
+
+// --- Permissions ---
+
+export function usePermissions() {
+  return useQuery({
+    queryKey: queryKeys.permissions.all,
+    queryFn: () => api.getPermissions(),
+  });
+}
+
+export function useUpdatePermissions() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: PermissionsUpdate) => api.updatePermissions(body),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.permissions.all });
     },
   });
 }

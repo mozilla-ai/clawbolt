@@ -19,6 +19,7 @@ const HeartbeatPage = lazy(() => import('@/pages/HeartbeatPage'));
 const SoulPage = lazy(() => import('@/pages/SoulPage'));
 const UserPage = lazy(() => import('@/pages/UserPage'));
 const ChannelsPage = lazy(() => import('@/pages/ChannelsPage'));
+const PermissionsPage = lazy(() => import('@/pages/PermissionsPage'));
 const ToolsPage = lazy(() => import('@/pages/ToolsPage'));
 const OAuthCallbackPage = lazy(() => import('@/pages/OAuthCallbackPage'));
 const GetStartedPage = lazy(() => import('@/pages/GetStartedPage'));
@@ -78,6 +79,7 @@ export default function App() {
           <Route path="soul" element={<SoulPage />} />
           <Route path="user" element={<UserPage />} />
           <Route path="channels" element={<ChannelsPage />} />
+          <Route path="permissions" element={<PermissionsPage />} />
           <Route path="tools" element={<ToolsPage />} />
           <Route path="oauth/callback" element={<OAuthCallbackPage />} />
           <Route path="admin" element={<AdminRoute />} />

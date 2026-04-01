@@ -7,6 +7,9 @@ export const queryKeys = {
   memory: {
     all: ['memory'] as const,
   },
+  permissions: {
+    all: ['permissions'] as const,
+  },
   tools: ['tools'] as const,
   channels: ['channels'] as const,
   channelRoutes: ['channelRoutes'] as const,

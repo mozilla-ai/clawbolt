@@ -26,6 +26,7 @@ from backend.app.routers import (
     oauth,
     user_calendar,
     user_memory,
+    user_permissions,
     user_profile,
     user_sessions,
     user_tools,
@@ -254,6 +255,7 @@ for _channel in get_manager().channels.values():
 app.include_router(user_profile.router, prefix="/api")
 app.include_router(user_sessions.router, prefix="/api")
 app.include_router(user_memory.router, prefix="/api")
+app.include_router(user_permissions.router, prefix="/api")
 app.include_router(user_tools.router, prefix="/api")
 app.include_router(user_calendar.router, prefix="/api")
 

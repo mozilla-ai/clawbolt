@@ -75,12 +75,12 @@ async def test_read_file_not_found(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_read_file_rejects_non_markdown(test_user: User) -> None:
-    """read_file should reject non-markdown files."""
+async def test_read_file_rejects_unsupported_extension(test_user: User) -> None:
+    """read_file should reject files with unsupported extensions."""
     read_fn = _get_tool_fn(test_user.id, "read_file")
-    result = await read_fn(path="user.json")
+    result = await read_fn(path="user.txt")
     assert result.is_error is True
-    assert ".md" in result.content
+    assert ".md" in result.content or ".json" in result.content
 
 
 @pytest.mark.asyncio()
@@ -127,10 +127,10 @@ async def test_write_file_creates_subdirectory(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_write_file_rejects_non_markdown(test_user: User) -> None:
-    """write_file should reject non-markdown files."""
+async def test_write_file_rejects_unsupported_extension(test_user: User) -> None:
+    """write_file should reject files with unsupported extensions."""
     write_fn = _get_tool_fn(test_user.id, "write_file")
-    result = await write_fn(path="evil.json", content="{}")
+    result = await write_fn(path="evil.txt", content="nope")
     assert result.is_error is True
 
 
@@ -248,12 +248,12 @@ async def test_delete_file_protected_via_path_variant(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_delete_file_rejects_non_markdown(test_user: User) -> None:
-    """delete_file should reject non-markdown files."""
+async def test_delete_file_rejects_unsupported_extension(test_user: User) -> None:
+    """delete_file should reject files with unsupported extensions."""
     delete_fn = _get_tool_fn(test_user.id, "delete_file")
-    result = await delete_fn(path="user.json")
+    result = await delete_fn(path="user.txt")
     assert result.is_error is True
-    assert ".md" in result.content
+    assert ".md" in result.content or ".json" in result.content
 
 
 @pytest.mark.asyncio()

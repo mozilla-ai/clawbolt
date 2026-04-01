@@ -354,3 +354,16 @@ class CalendarConfigResponse(BaseModel):
 
 class CalendarConfigUpdate(BaseModel):
     calendars: list[CalendarConfigEntry]
+
+
+# ---------------------------------------------------------------------------
+# Permissions (PERMISSIONS.json via API)
+# ---------------------------------------------------------------------------
+
+
+class PermissionsResponse(BaseModel):
+    content: str
+
+
+class PermissionsUpdate(BaseModel):
+    content: str
