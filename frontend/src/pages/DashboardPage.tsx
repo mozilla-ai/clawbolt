@@ -271,11 +271,16 @@ export default function DashboardPage() {
                   <div key={tool.name}>
                     <div className="flex items-center justify-between gap-2">
                       <div className="flex items-center gap-2 min-w-0">
-                        <span className="text-xs text-foreground">{toolDisplayName(tool.name)}</span>
-                        {isConfigured && (
+                        <span className={`text-xs ${isConfigured ? 'text-foreground' : 'text-muted-foreground'}`}>{toolDisplayName(tool.name)}</span>
+                        {isConfigured ? (
                           <span className={`inline-flex items-center gap-1 text-xs ${isConnected ? 'text-success' : 'text-warning'}`}>
                             <span className={`size-1.5 rounded-full ${isConnected ? 'bg-success' : 'bg-warning'}`} />
                             {isConnected ? 'Connected' : 'Not connected'}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+                            <span className="size-1.5 rounded-full bg-default-300" />
+                            Not configured
                           </span>
                         )}
                       </div>

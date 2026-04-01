@@ -193,17 +193,22 @@ export default function ToolsPage() {
               const isConfigured = oauthEntry?.configured ?? false;
 
               return (
-                <Card key={tool.name}>
+                <Card key={tool.name} className={!isConfigured ? 'opacity-50' : undefined}>
                   <div className="flex items-start justify-between gap-4">
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="text-sm font-medium">{displayName(tool.name)}</span>
-                        {isConfigured && (
+                        {isConfigured ? (
                           <span className="inline-flex items-center gap-1.5 text-xs">
                             <span className={`size-1.5 rounded-full inline-block shrink-0 ${
                               isConnected ? 'bg-success' : 'bg-warning'
                             }`} />
                             {isConnected ? 'Connected' : 'Not connected'}
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                            <span className="size-1.5 rounded-full inline-block shrink-0 bg-default-300" />
+                            Not configured
                           </span>
                         )}
                       </div>

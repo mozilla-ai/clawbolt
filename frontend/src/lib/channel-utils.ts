@@ -11,7 +11,7 @@ export const MESSAGING_CHANNELS = [
 ] as const;
 
 /** Whether the server has the necessary credentials/config for this channel. */
-function isServerAvailable(key: ChannelKey, config: ChannelConfigResponse): boolean {
+export function isServerAvailable(key: ChannelKey, config: ChannelConfigResponse): boolean {
   if (key === 'telegram') return config.telegram_bot_token_set;
   if (key === 'linq') return config.linq_api_token_set;
   if (key === 'bluebubbles') return config.bluebubbles_configured;
