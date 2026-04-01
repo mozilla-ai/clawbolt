@@ -1,3 +1,4 @@
+import { useState, useEffect } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import Markdown from 'react-markdown';
@@ -9,6 +10,7 @@ import { useChannelRoutes, useChannelConfig, useToolConfig, useUpdateToolConfig,
 import { useAuth } from '@/contexts/AuthContext';
 import { MESSAGING_CHANNELS, getChannelState, getChannelStatusDisplay } from '@/lib/channel-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
+import api from '@/api';
 
 // Human-readable display names for tool factories (matches ToolsPage).
 const TOOL_DISPLAY_NAMES: Record<string, string> = {
@@ -128,13 +130,28 @@ export default function DashboardPage() {
   const modelConfig = useModelConfig();
   const updateProfile = useUpdateProfile();
 
+  // --- Premium channel link data (needed for correct state derivation) ---
+  const [telegramLinkData, setTelegramLinkData] = useState<{ telegram_user_id?: string | null } | null>(null);
+  const [linqLinkData, setLinqLinkData] = useState<{ phone_number?: string | null } | null>(null);
+
+  useEffect(() => {
+    if (isPremium) {
+      api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
+      api.getLinqLink().then(setLinqLinkData).catch(() => {});
+    }
+  }, [isPremium]);
+
+  const premiumData = isPremium
+    ? { telegram_user_id: telegramLinkData?.telegram_user_id, phone_number: linqLinkData?.phone_number }
+    : undefined;
+
   // --- Channels ---
   const allRoutes = channels.data?.routes ?? [];
   const channelConf = channelConfigData.data;
   const channelStates = channelConf
     ? MESSAGING_CHANNELS.map((ch) => ({
         ...ch,
-        state: getChannelState(ch.key, channelConf, allRoutes, isPremium),
+        state: getChannelState(ch.key, channelConf, allRoutes, isPremium, premiumData),
       }))
     : [];
   const hasAnyActive = channelStates.some((ch) => ch.state === 'active');
@@ -279,7 +296,7 @@ export default function DashboardPage() {
                       <div className="mt-1 space-y-0.5">
                         {enabledCalendars.map((cal) => {
                           const disabledCount = (cal.disabled_tools ?? []).length;
-                          const enabledCount = PER_CALENDAR_TOOLS.length - disabledCount;
+                          const enabledCount = Math.max(0, PER_CALENDAR_TOOLS.length - disabledCount);
                           return (
                             <div key={cal.calendar_id} className="flex items-center justify-between gap-2">
                               <span className="text-xs text-muted-foreground truncate">{cal.display_name}</span>
