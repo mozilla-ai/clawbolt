@@ -5,7 +5,7 @@ import Card from '@/components/ui/card';
 import { Switch } from '@heroui/switch';
 import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
-import { useChannelRoutes, useChannelConfig, useToolConfig, useUpdateToolConfig, useOAuthStatus, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
+import { useChannelRoutes, useChannelConfig, useToolConfig, useUpdateToolConfig, useOAuthStatus, useCalendarConfig, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { MESSAGING_CHANNELS, getChannelState, getChannelStatusDisplay } from '@/lib/channel-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
@@ -28,6 +28,14 @@ const TOOL_OAUTH_MAP: Record<string, string> = {
   quickbooks: 'quickbooks',
   calendar: 'google_calendar',
 };
+
+// Per-calendar tools that can be individually toggled (matches ToolsPage).
+const PER_CALENDAR_TOOLS = [
+  'calendar_list_events',
+  'calendar_create_event',
+  'calendar_update_event',
+  'calendar_delete_event',
+] as const;
 
 function toolDisplayName(name: string): string {
   return TOOL_DISPLAY_NAMES[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
@@ -115,6 +123,7 @@ export default function DashboardPage() {
   const tools = useToolConfig();
   const updateToolConfig = useUpdateToolConfig();
   const oauth = useOAuthStatus();
+  const calendarConfig = useCalendarConfig();
   const memory = useMemory();
   const modelConfig = useModelConfig();
   const updateProfile = useUpdateProfile();
@@ -137,13 +146,11 @@ export default function DashboardPage() {
 
   // --- Tools ---
   const allTools = tools.data?.tools ?? [];
-  const enabledTools = allTools.filter((t) => t.enabled);
   const domainTools = allTools.filter((t) => t.category === 'domain');
-  const coreToolCount = allTools.filter((t) => t.category === 'core' && t.enabled).length;
   const integrations = oauth.data?.integrations ?? [];
   const oauthMap = Object.fromEntries(integrations.map((i) => [i.integration, i]));
-  const connectedIntegrations = integrations.filter((i) => i.connected);
-  const toolsConfigured = enabledTools.length > 0;
+  const enabledCalendars = calendarConfig.data?.calendars ?? [];
+  const toolsConfigured = domainTools.some((t) => t.enabled);
 
   // --- Memory ---
   const memoryContent = memory.data?.content ?? '';
@@ -241,40 +248,60 @@ export default function DashboardPage() {
                 const oauthEntry = oauthKey ? oauthMap[oauthKey] : undefined;
                 const isConnected = oauthEntry?.connected ?? false;
                 const isConfigured = oauthEntry?.configured ?? false;
+                const enabledSubTools = (tool.sub_tools ?? []).filter((st) => st.enabled).length;
+                const totalSubTools = (tool.sub_tools ?? []).length;
                 return (
-                  <div key={tool.name} className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <span className="text-xs text-foreground">{toolDisplayName(tool.name)}</span>
-                      {isConfigured && (
-                        <span className={`inline-flex items-center gap-1 text-[11px] ${isConnected ? 'text-success' : 'text-warning'}`}>
-                          <span className={`size-1.5 rounded-full ${isConnected ? 'bg-success' : 'bg-warning'}`} />
-                          {isConnected ? 'Connected' : 'Not connected'}
-                        </span>
+                  <div key={tool.name}>
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <span className="text-xs text-foreground">{toolDisplayName(tool.name)}</span>
+                        {isConfigured && (
+                          <span className={`inline-flex items-center gap-1 text-[11px] ${isConnected ? 'text-success' : 'text-warning'}`}>
+                            <span className={`size-1.5 rounded-full ${isConnected ? 'bg-success' : 'bg-warning'}`} />
+                            {isConnected ? 'Connected' : 'Not connected'}
+                          </span>
+                        )}
+                      </div>
+                      {isConnected && (
+                        /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
+                        <div onClick={stopCardPress}>
+                          <Switch
+                            isSelected={tool.enabled}
+                            isDisabled={updateToolConfig.isPending}
+                            onValueChange={(val) => handleToolToggle(tool.name, val)}
+                            size="sm"
+                            aria-label={`Toggle ${toolDisplayName(tool.name)}`}
+                          />
+                        </div>
                       )}
                     </div>
-                    {isConnected && (
-                      /* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */
-                      <div onClick={stopCardPress}>
-                        <Switch
-                          isSelected={tool.enabled}
-                          isDisabled={updateToolConfig.isPending}
-                          onValueChange={(val) => handleToolToggle(tool.name, val)}
-                          size="sm"
-                          aria-label={`Toggle ${toolDisplayName(tool.name)}`}
-                        />
+                    {isConnected && tool.enabled && tool.name === 'calendar' && enabledCalendars.length > 0 && (
+                      <div className="mt-1 space-y-0.5">
+                        {enabledCalendars.map((cal) => {
+                          const disabledCount = (cal.disabled_tools ?? []).length;
+                          const enabledCount = PER_CALENDAR_TOOLS.length - disabledCount;
+                          return (
+                            <div key={cal.calendar_id} className="flex items-center justify-between gap-2">
+                              <span className="text-[11px] text-muted-foreground truncate">{cal.display_name}</span>
+                              <span className="text-[11px] text-muted-foreground shrink-0">{enabledCount}/{PER_CALENDAR_TOOLS.length}</span>
+                            </div>
+                          );
+                        })}
                       </div>
+                    )}
+                    {isConnected && tool.enabled && tool.name !== 'calendar' && totalSubTools > 0 && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5 ml-0">
+                        {enabledSubTools}/{totalSubTools} capabilities enabled
+                      </p>
+                    )}
+                    {isConfigured && !isConnected && (
+                      <p className="text-[11px] text-muted-foreground mt-0.5 ml-0">
+                        Reconnect to enable
+                      </p>
                     )}
                   </div>
                 );
               })}
-              {coreToolCount > 0 && (
-                <p className="text-xs text-muted-foreground">{coreToolCount} core {coreToolCount === 1 ? 'tool' : 'tools'} active</p>
-              )}
-              {connectedIntegrations.length > 0 && (
-                <p className="text-xs text-muted-foreground">
-                  {connectedIntegrations.length} {connectedIntegrations.length === 1 ? 'integration' : 'integrations'} connected
-                </p>
-              )}
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">Enable tools to let your assistant take actions on your behalf.</p>

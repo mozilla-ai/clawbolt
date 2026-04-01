@@ -11,6 +11,7 @@ const mockGetChannelConfig = vi.fn();
 const mockGetToolConfig = vi.fn();
 const mockUpdateToolConfig = vi.fn();
 const mockGetOAuthStatus = vi.fn();
+const mockGetCalendarConfig = vi.fn();
 const mockGetMemory = vi.fn();
 const mockGetModelConfig = vi.fn();
 const mockUpdateProfile = vi.fn();
@@ -23,6 +24,7 @@ vi.mock('@/api', () => ({
     getToolConfig: (...args: unknown[]) => mockGetToolConfig(...args),
     updateToolConfig: (...args: unknown[]) => mockUpdateToolConfig(...args),
     getOAuthStatus: (...args: unknown[]) => mockGetOAuthStatus(...args),
+    getCalendarConfig: (...args: unknown[]) => mockGetCalendarConfig(...args),
     getMemory: (...args: unknown[]) => mockGetMemory(...args),
     getModelConfig: (...args: unknown[]) => mockGetModelConfig(...args),
     updateProfile: (...args: unknown[]) => mockUpdateProfile(...args),
@@ -73,6 +75,7 @@ function setupMocks(overrides?: {
   channelConfig?: unknown;
   tools?: unknown;
   oauth?: unknown;
+  calendarConfig?: unknown;
   memory?: unknown;
   modelConfig?: unknown;
 }) {
@@ -97,13 +100,28 @@ function setupMocks(overrides?: {
     overrides?.tools ?? {
       tools: [
         { name: 'workspace', description: '', category: 'core', enabled: true, domain_group: '', domain_group_order: 0 },
-        { name: 'calendar', description: '', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0 },
+        {
+          name: 'calendar', description: '', category: 'domain', enabled: true, domain_group: '', domain_group_order: 0,
+          sub_tools: [
+            { name: 'calendar_list_events', description: '', enabled: true, permission_level: 'auto' },
+            { name: 'calendar_create_event', description: '', enabled: true, permission_level: 'ask' },
+            { name: 'calendar_update_event', description: '', enabled: false, permission_level: 'ask' },
+          ],
+        },
       ],
     },
   );
   mockGetOAuthStatus.mockResolvedValue(
     overrides?.oauth ?? {
       integrations: [{ integration: 'google_calendar', connected: true, configured: true }],
+    },
+  );
+  mockGetCalendarConfig.mockResolvedValue(
+    overrides?.calendarConfig ?? {
+      calendars: [
+        { calendar_id: 'primary', display_name: 'Work', disabled_tools: ['calendar_delete_event'], access_role: 'owner' },
+        { calendar_id: 'secondary', display_name: 'Personal', disabled_tools: [], access_role: 'owner' },
+      ],
     },
   );
   mockGetMemory.mockResolvedValue(
@@ -281,22 +299,18 @@ describe('DashboardPage', () => {
     expect(screen.getByLabelText('Toggle Google Calendar')).toBeInTheDocument();
   });
 
-  it('shows connected integration count', async () => {
+  it('shows per-calendar names and capability counts for connected calendar', async () => {
     setupMocks();
     renderWithRouter(<DashboardPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('1 integration connected')).toBeInTheDocument();
+      expect(screen.getByText('Work')).toBeInTheDocument();
     });
-  });
-
-  it('shows core tool count', async () => {
-    setupMocks();
-    renderWithRouter(<DashboardPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText('1 core tool active')).toBeInTheDocument();
-    });
+    expect(screen.getByText('Personal')).toBeInTheDocument();
+    // Work has 1 disabled tool out of 4 per-calendar tools → 3/4
+    expect(screen.getByText('3/4')).toBeInTheDocument();
+    // Personal has 0 disabled → 4/4
+    expect(screen.getByText('4/4')).toBeInTheDocument();
   });
 
   it('shows memory content preview and word count', async () => {
