@@ -190,9 +190,10 @@ export default function ToolsPage() {
           <div className="grid gap-3">
             {domainTools.map((tool) => {
               const oauthIntegration = TOOL_OAUTH_MAP[tool.name];
+              const needsOAuth = !!oauthIntegration;
               const oauthEntry = oauthIntegration ? oauthMap[oauthIntegration] : undefined;
-              const isConnected = oauthEntry?.connected ?? false;
-              const isConfigured = oauthEntry?.configured ?? false;
+              const isConnected = needsOAuth ? (oauthEntry?.connected ?? false) : true;
+              const isConfigured = needsOAuth ? (oauthEntry?.configured ?? false) : true;
 
               return (
                 <Card key={tool.name} className={!isConfigured ? 'opacity-50' : undefined}>
@@ -205,7 +206,7 @@ export default function ToolsPage() {
                             <span className={`size-1.5 rounded-full inline-block shrink-0 ${
                               isConnected ? 'bg-success' : 'bg-warning'
                             }`} />
-                            {isConnected ? 'Connected' : 'Not connected'}
+                            {needsOAuth ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -219,7 +220,7 @@ export default function ToolsPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      {isConfigured && (
+                      {isConfigured && needsOAuth && (
                         isConnected ? (
                           <Button
                             variant="secondary"
@@ -243,7 +244,7 @@ export default function ToolsPage() {
                     </div>
                   </div>
 
-                  {/* Enable/disable toggle, only when connected */}
+                  {/* Enable/disable toggle: show when connected (OAuth) or always (non-OAuth) */}
                   {isConnected && (
                     <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
                       <span className="text-xs text-muted-foreground">
