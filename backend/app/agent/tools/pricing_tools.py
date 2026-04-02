@@ -82,13 +82,17 @@ def _create_pricing_tools(
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
-        resolved_zip = zip_code.strip() or settings.default_zip_code
+        resolved_zip = zip_code.strip()
         if not resolved_zip:
             return ToolResult(
-                content="I need a zip code to look up local pricing.",
+                content="A zip code is required to look up local pricing.",
                 is_error=True,
                 error_kind=ToolErrorKind.VALIDATION,
-                hint="Ask the user for their zip code, then call this tool again.",
+                hint=(
+                    "Ask the user for their zip code. Once they provide it, "
+                    "save it to their USER.md file for future lookups, "
+                    "then call this tool again with the zip_code parameter."
+                ),
             )
 
         supplier = suppliers[store]
@@ -146,7 +150,9 @@ def _create_pricing_tools(
             description=(
                 "Search for products at Home Depot or Lowe's by keyword. "
                 "Returns product names, prices, stock levels, and store locations. "
-                "The user must specify which store to search."
+                "The user must specify which store to search. "
+                "A zip_code is required for local pricing. Check the user's profile "
+                "(USER.md) for a stored zip code before asking."
             ),
             function=supplier_search_products,
             params_model=SupplierSearchParams,

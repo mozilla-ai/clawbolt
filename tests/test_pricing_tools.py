@@ -418,7 +418,6 @@ class TestSupplierSearchTool:
 
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = ""
             result = await tool_fn(query="plywood", store="homedepot", zip_code="15213")
 
         assert not result.is_error
@@ -436,7 +435,6 @@ class TestSupplierSearchTool:
 
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = ""
             # First call fills cache
             await tool_fn(query="test", store="homedepot", zip_code="15213")
             # Second call should hit cache
@@ -447,30 +445,17 @@ class TestSupplierSearchTool:
         assert mock_supplier.search_products.call_count == 1  # Only called once
 
     @pytest.mark.asyncio
-    async def test_zip_fallback_to_default(self) -> None:
-        tool_fn, mock_supplier, _ = self._make_tool(results=[])
-
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = "90210"
-            result = await tool_fn(query="test", store="homedepot", zip_code="")
-
-        assert not result.is_error
-        call_args = mock_supplier.search_products.call_args
-        assert call_args[0][1].zip_code == "90210"
-
-    @pytest.mark.asyncio
-    async def test_missing_zip_no_default(self) -> None:
+    async def test_missing_zip_returns_hint(self) -> None:
         tool_fn, _, _ = self._make_tool()
 
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = ""
             result = await tool_fn(query="test", store="homedepot", zip_code="")
 
         assert result.is_error
         assert result.error_kind.value == "validation"
         assert "zip code" in result.content.lower()
+        assert "USER.md" in result.hint
 
     @pytest.mark.asyncio
     async def test_invalid_store(self) -> None:
@@ -478,7 +463,6 @@ class TestSupplierSearchTool:
 
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = ""
             result = await tool_fn(query="test", store="walmart", zip_code="15213")
 
         assert result.is_error
@@ -491,7 +475,6 @@ class TestSupplierSearchTool:
 
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = ""
             result = await tool_fn(query="test", store="homedepot", zip_code="15213")
 
         assert result.is_error
@@ -509,7 +492,6 @@ class TestSupplierSearchTool:
 
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = ""
             result = await tool_fn(query="test", store="homedepot", zip_code="15213")
 
         assert result.is_error
@@ -526,7 +508,6 @@ class TestSupplierSearchTool:
 
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = ""
             result = await tool_fn(query="test", store="homedepot", zip_code="15213")
 
         assert result.is_error
@@ -538,7 +519,6 @@ class TestSupplierSearchTool:
 
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "key"
-            mock_settings.default_zip_code = ""
             result = await tool_fn(query="nonexistent", store="homedepot", zip_code="15213")
 
         assert not result.is_error
@@ -567,7 +547,6 @@ class TestPricingFactory:
         ctx = MagicMock()
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.backyard_api_key = "test-key"
-            mock_settings.default_zip_code = ""
             result = _pricing_factory(ctx)
 
         assert len(result) == 1
