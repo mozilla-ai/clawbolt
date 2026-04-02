@@ -86,6 +86,28 @@ def test_inbound_webhook_publishes_media(linq_client: TestClient) -> None:
     assert inbound.media_refs[0][1] == "image/jpeg"
 
 
+def test_non_utf8_body_does_not_crash(linq_client: TestClient) -> None:
+    """Non-UTF-8 webhook body should return 200 without crashing (not raise UnicodeDecodeError)."""
+    with (
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
+        patch(
+            "backend.app.channels.linq.settings.linq_webhook_signing_secret",
+            LINQ_TEST_SIGNING_SECRET,
+        ),
+    ):
+        raw_body = b"\x80\x81\x82"  # invalid UTF-8
+        headers = {
+            "X-Webhook-Signature": "anything",
+            "X-Webhook-Timestamp": str(int(time.time())),
+            "Content-Type": "application/json",
+        }
+        resp = linq_client.post("/api/webhooks/linq", content=raw_body, headers=headers)
+
+    assert resp.status_code == 200
+    assert resp.json() == {"ok": True}
+    mock_pub.assert_not_called()
+
+
 def test_invalid_hmac_does_not_publish(linq_client: TestClient) -> None:
     """Invalid HMAC signature should return 200 but not publish to bus."""
     with (
@@ -240,6 +262,25 @@ def test_allowlist_non_matching_number_denies(linq_client: TestClient) -> None:
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# is_allowed() unit tests (no HTTP)
+# ---------------------------------------------------------------------------
+
+
+# ---------------------------------------------------------------------------
+# verify_signature() unit tests (no HTTP)
+# ---------------------------------------------------------------------------
+
+
+def test_verify_signature_rejects_non_utf8_body() -> None:
+    """Non-UTF-8 bytes must not crash verify_signature."""
+    with patch(
+        "backend.app.channels.linq.settings.linq_webhook_signing_secret",
+        LINQ_TEST_SIGNING_SECRET,
+    ):
+        assert LinqChannel.verify_signature(b"\x80\x81\x82", str(int(time.time())), "fake") is False
 
 
 # ---------------------------------------------------------------------------
