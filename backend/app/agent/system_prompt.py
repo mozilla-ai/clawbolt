@@ -11,8 +11,7 @@ import datetime
 import logging
 import zoneinfo
 
-from backend.app.agent.memory import build_memory_context
-from backend.app.agent.profile import build_soul_prompt
+from backend.app.agent.memory_db import build_memory_context
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.tools.base import Tool
@@ -61,6 +60,15 @@ class SystemPromptBuilder:
 # -----------------------------------------------------------------------
 # Reusable section builders
 # -----------------------------------------------------------------------
+
+
+def build_soul_prompt(user: User) -> str:
+    """Build the 'soul' section of the system prompt from user profile.
+
+    Returns the SOUL.md content directly. Identity info (name, personality)
+    lives in the markdown, written by the agent during onboarding.
+    """
+    return user.soul_text or ""
 
 
 def build_identity_section(user: User) -> str:

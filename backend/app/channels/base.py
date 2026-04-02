@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from backend.app.agent.file_store import get_idempotency_store
+from backend.app.agent.stores import get_idempotency_store
 from backend.app.bus import message_bus
 from backend.app.media.download import DownloadedMedia
 

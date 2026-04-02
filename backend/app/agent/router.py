@@ -17,16 +17,12 @@ from any_llm import AuthenticationError, ContentFilterError
 
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, ClawboltAgent
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentEvent,
     ToolExecutionStartEvent,
     TurnStartEvent,
-)
-from backend.app.agent.file_store import (
-    SessionState,
-    StoredMessage,
-    ToolConfigStore,
 )
 from backend.app.agent.messages import AgentMessage
 from backend.app.agent.onboarding import (
@@ -36,6 +32,7 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.skills.loader import load_all_skills
+from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
 from backend.app.agent.tools.registry import (

@@ -24,10 +24,7 @@ from backend.app.agent.approval import (
 )
 from backend.app.agent.concurrency import user_locks
 from backend.app.agent.context import get_or_create_conversation
-from backend.app.agent.file_store import (
-    SessionState,
-    StoredMessage,
-)
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.router import handle_inbound_message
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.user_db import provision_user

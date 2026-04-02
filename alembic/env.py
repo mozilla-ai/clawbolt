@@ -6,6 +6,7 @@ from alembic import context
 from backend.app.config import settings
 from backend.app.database import Base
 from backend.app.models import (  # noqa: F401
+    CalendarConfig,
     ChannelRoute,
     ChatSession,
     HeartbeatLog,
@@ -14,6 +15,7 @@ from backend.app.models import (  # noqa: F401
     MediaFile,
     MemoryDocument,
     Message,
+    OAuthToken,
     ToolConfig,
     User,
 )

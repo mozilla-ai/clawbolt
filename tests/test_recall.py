@@ -5,8 +5,7 @@ from unittest.mock import patch
 import pytest
 
 from backend.app.agent.file_store import SessionState, StoredMessage
-from backend.app.agent.memory import build_memory_context
-from backend.app.agent.memory_db import get_memory_store
+from backend.app.agent.memory_db import build_memory_context, get_memory_store
 from backend.app.agent.router import handle_inbound_message
 from backend.app.models import User
 from tests.mocks.llm import extract_system_text, make_text_response

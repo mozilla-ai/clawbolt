@@ -9,12 +9,8 @@ from typing import NamedTuple
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.agent.approval import ApprovalStore, PermissionLevel, get_approval_store
-from backend.app.agent.dto import SubToolEntry
-from backend.app.agent.file_store import (
-    ToolConfigEntry,
-    ToolConfigStore,
-    UserData,
-)
+from backend.app.agent.dto import SubToolEntry, ToolConfigEntry, UserData
+from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.registry import (
     default_registry,
     ensure_tool_modules_imported,
