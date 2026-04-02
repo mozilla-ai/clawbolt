@@ -50,7 +50,7 @@ async def _delete_tool(text: str) -> ToolResult:
 
 
 def _auto_tool(name: str = "reader") -> Tool:
-    """Tool with no approval policy (AUTO by default)."""
+    """Tool with no approval policy (ALWAYS by default)."""
     return Tool(
         name=name,
         description="Read-only tool",
@@ -100,7 +100,7 @@ class TestFormatPlanMessage:
 
     def test_single_ask_with_auto(self) -> None:
         """Single ask step with auto steps: natural language format."""
-        auto = [PlanStep("reader", "Read config", PermissionLevel.AUTO)]
+        auto = [PlanStep("reader", "Read config", PermissionLevel.ALWAYS)]
         ask = [PlanStep("writer", "Write USER.md", PermissionLevel.ASK)]
         msg = format_plan_message("Plan:", auto, ask)
         assert "read config" in msg.lower()
@@ -110,7 +110,7 @@ class TestFormatPlanMessage:
 
     def test_multiple_ask_steps(self) -> None:
         """Multiple ask steps: lists items needing approval."""
-        auto = [PlanStep("reader", "Read config", PermissionLevel.AUTO)]
+        auto = [PlanStep("reader", "Read config", PermissionLevel.ALWAYS)]
         ask = [
             PlanStep("writer", "Write USER.md", PermissionLevel.ASK),
             PlanStep("sender", "Send message", PermissionLevel.ASK),
@@ -130,8 +130,8 @@ class TestFormatPlanMessage:
     def test_multiple_auto_grouped(self) -> None:
         """Multiple auto steps are combined in a single sentence."""
         auto = [
-            PlanStep("reader1", "Read file A", PermissionLevel.AUTO),
-            PlanStep("reader2", "Read file B", PermissionLevel.AUTO),
+            PlanStep("reader1", "Read file A", PermissionLevel.ALWAYS),
+            PlanStep("reader2", "Read file B", PermissionLevel.ALWAYS),
         ]
         ask = [
             PlanStep("writer", "Write result", PermissionLevel.ASK),
@@ -153,7 +153,7 @@ class TestBatchApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_all_auto_no_plan(self, mock_amessages: object, test_user: User) -> None:
-        """All AUTO tools execute without prompting."""
+        """All ALWAYS tools execute without prompting."""
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response([{"name": "reader", "arguments": {"text": "hello"}}]),
             make_text_response("Done!"),
@@ -179,7 +179,7 @@ class TestBatchApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_mixed_plan_approved(self, mock_amessages: object, test_user: User) -> None:
-        """Mixed AUTO+ASK tools: user approves plan, all execute."""
+        """Mixed ALWAYS+ASK tools: user approves plan, all execute."""
         mock_publish = AsyncMock()
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
@@ -269,7 +269,7 @@ class TestBatchApproval:
     async def test_always_persists_auto_for_all_ask_tools(
         self, mock_amessages: object, test_user: User
     ) -> None:
-        """'always' on a batch plan persists AUTO for ALL ask tools."""
+        """'always' on a batch plan persists ALWAYS for ALL ask tools."""
         mock_publish = AsyncMock()
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
@@ -306,10 +306,10 @@ class TestBatchApproval:
         await agent.process_message("write and send")
         await task
 
-        # Both should now be AUTO in the store
+        # Both should now be ALWAYS in the store
         store = get_approval_store()
-        assert store.check_permission(test_user.id, "writer") == PermissionLevel.AUTO
-        assert store.check_permission(test_user.id, "sender") == PermissionLevel.AUTO
+        assert store.check_permission(test_user.id, "writer") == PermissionLevel.ALWAYS
+        assert store.check_permission(test_user.id, "sender") == PermissionLevel.ALWAYS
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -474,11 +474,11 @@ class TestBatchApproval:
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
     async def test_stored_auto_skips_plan(self, mock_amessages: object, test_user: User) -> None:
-        """Tools already set to AUTO in store skip the plan prompt."""
+        """Tools already set to ALWAYS in store skip the plan prompt."""
         mock_publish = AsyncMock()
 
         store = get_approval_store()
-        store.set_permission(test_user.id, "writer", PermissionLevel.AUTO)
+        store.set_permission(test_user.id, "writer", PermissionLevel.ALWAYS)
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response(
@@ -556,7 +556,7 @@ class TestBatchApproval:
     async def test_always_persists_per_resource(
         self, mock_amessages: object, test_user: User
     ) -> None:
-        """'always' with resource_extractor persists AUTO for the specific resource only."""
+        """'always' with resource_extractor persists ALWAYS for the specific resource only."""
         mock_publish = AsyncMock()
 
         def _extractor(args: dict[str, object]) -> str | None:
@@ -598,11 +598,11 @@ class TestBatchApproval:
         await agent.process_message("fetch invoices")
         await task
 
-        # "invoices" resource should be AUTO
+        # "invoices" resource should be ALWAYS
         store = get_approval_store()
         assert (
             store.check_permission(test_user.id, "fetcher", resource="invoices")
-            == PermissionLevel.AUTO
+            == PermissionLevel.ALWAYS
         )
         # Different resource should still be ASK (the default)
         assert (

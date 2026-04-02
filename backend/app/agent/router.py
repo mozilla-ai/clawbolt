@@ -313,7 +313,7 @@ async def run_agent(
     # During onboarding the agent must delete BOOTSTRAP.md and send
     # replies without prompting.  Pre-approve these tools so the
     # approval gate doesn't block the bootstrap flow.  (write_file and
-    # edit_file already default to AUTO.)
+    # edit_file already default to ALWAYS.)
     if is_onboarding:
         from backend.app.agent.approval import PermissionLevel, get_approval_store
         from backend.app.agent.tools.names import ToolName
@@ -325,7 +325,7 @@ async def run_agent(
         )
         store = get_approval_store()
         for tool_name in _onboarding_auto_tools:
-            store.set_permission(user.id, tool_name, PermissionLevel.AUTO)
+            store.set_permission(user.id, tool_name, PermissionLevel.ALWAYS)
 
     logger.debug(
         "Agent initialized for user %s, message seq=%d with %d core tools, "

@@ -73,7 +73,7 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
                 "Do not restore items that were previously deleted."
             ),
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.AUTO,
+                default_level=PermissionLevel.ALWAYS,
                 description_builder=lambda args: "Update heartbeat notes",
             ),
         ),

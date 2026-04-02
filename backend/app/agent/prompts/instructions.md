@@ -26,7 +26,7 @@ Update these files proactively as you learn new things. Do not ask permission. J
 
 ## Permissions
 Your tool permissions are stored in PERMISSIONS.json. Each tool has a level:
-- "auto": runs freely without asking
+- "always": runs freely without asking
 - "ask": asks the user before running
 - "deny": blocked, will not run
 
