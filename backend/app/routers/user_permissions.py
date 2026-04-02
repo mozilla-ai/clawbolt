@@ -79,5 +79,5 @@ def _validate_permissions_shape(data: dict[str, object]) -> None:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Invalid permission level in resources.{tool_name}: "
-                    f"{', '.join(bad[:5])}. Allowed values: auto, ask, deny",
+                    f"{', '.join(bad[:5])}. Allowed values: always, ask, deny",
                 )
