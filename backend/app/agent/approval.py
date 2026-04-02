@@ -85,6 +85,7 @@ class ApprovalDecision(StrEnum):
     DENIED = "denied"
     ALWAYS_ALLOW = "always_allow"
     ALWAYS_DENY = "always_deny"
+    INTERRUPTED = "interrupted"
 
 
 # ---------------------------------------------------------------------------
@@ -196,7 +197,7 @@ class ApprovalStore:
     """
 
     def _permissions_path(self, user_id: str) -> Path:
-        return _user_dir(user_id) / "permissions.json"
+        return _user_dir(user_id) / "PERMISSIONS.json"
 
     def _load(self, user_id: str) -> dict[str, Any]:
         data = _read_json(self._permissions_path(user_id), default=None)
@@ -256,6 +257,37 @@ class ApprovalStore:
         data = self._load(user_id)
         return self.resolve_permission(data, tool_name, resource, default)
 
+    def generate_defaults(self, user_id: str) -> dict[str, Any]:
+        """Build a complete permissions dict with all tools at their default levels."""
+        from backend.app.agent.tools.registry import (
+            default_registry,
+            ensure_tool_modules_imported,
+        )
+
+        ensure_tool_modules_imported()
+        tools: dict[str, str] = {}
+        for factory_name in sorted(default_registry.factory_names):
+            for st in default_registry.get_factory_sub_tools(factory_name):
+                tools[st.name] = st.default_permission
+        return {"version": _PERMISSIONS_VERSION, "tools": tools, "resources": {}}
+
+    def ensure_complete(self, user_id: str) -> dict[str, Any]:
+        """Load permissions, backfilling any missing tools with defaults."""
+        data = self._load(user_id)
+        defaults = self.generate_defaults(user_id)
+        changed = False
+        for tool_name, default_level in defaults["tools"].items():
+            if tool_name not in data.get("tools", {}):
+                data.setdefault("tools", {})[tool_name] = default_level
+                changed = True
+        if changed:
+            self._save(user_id, data)
+        return data
+
+    def reset_permissions(self, user_id: str) -> None:
+        """Reset all permissions to defaults."""
+        self._save(user_id, self.generate_defaults(user_id))
+
     def set_permission(
         self,
         user_id: str,
@@ -263,8 +295,12 @@ class ApprovalStore:
         level: PermissionLevel,
         resource: str | None = None,
     ) -> None:
-        """Store a permission override for a tool or resource."""
-        data = self._load(user_id)
+        """Store a permission override for a tool or resource.
+
+        Backfills the complete tool list first so that setting one
+        permission does not lose other entries.
+        """
+        data = self.ensure_complete(user_id)
         if resource is not None:
             resources = data.setdefault("resources", {})
             tool_resources = resources.setdefault(tool_name, {})

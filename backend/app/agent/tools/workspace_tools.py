@@ -32,10 +32,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Only allow markdown files to be read/written by the agent.
-_ALLOWED_EXTENSIONS = {".md"}
+_ALLOWED_EXTENSIONS = {".md", ".json"}
 
 # Files that cannot be deleted by the agent.
-_PROTECTED_FILES = {"USER.md", "SOUL.md", "HEARTBEAT.md", "MEMORY.md", "HISTORY.md"}
+_PROTECTED_FILES = {
+    "USER.md",
+    "SOUL.md",
+    "HEARTBEAT.md",
+    "MEMORY.md",
+    "HISTORY.md",
+    "PERMISSIONS.json",
+}
 
 # Files stored as DB columns on User rather than on disk.
 _DB_FILE_COLUMN: dict[str, str] = {
@@ -104,7 +111,7 @@ def _resolve_path(user_id: str, relative_path: str) -> tuple[Path, str | None]:
     if resolved.suffix not in _ALLOWED_EXTENSIONS:
         return (
             resolved,
-            f"Only markdown (.md) files are supported, got: {resolved.suffix or '(none)'}",
+            f"Only markdown (.md) and JSON (.json) files are supported, got: {resolved.suffix or '(none)'}",
         )
 
     return resolved, None
@@ -353,29 +360,32 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         Tool(
             name=ToolName.READ_FILE,
             description=(
-                "Read a markdown file from your workspace. "
-                "Use to check USER.md, SOUL.md, or memory files."
+                "Read a markdown or JSON file from your workspace. "
+                "Use to check USER.md, SOUL.md, memory files, or PERMISSIONS.json."
             ),
             function=read_file,
             params_model=ReadFileParams,
             usage_hint=(
                 "Read USER.md to see what you know about the user. "
                 "Read SOUL.md to check your personality. "
-                "Read memory/MEMORY.md to review long-term facts."
+                "Read memory/MEMORY.md to review long-term facts. "
+                "Read PERMISSIONS.json to see current tool permission levels."
             ),
         ),
         Tool(
             name=ToolName.WRITE_FILE,
             description=(
-                "Write or overwrite a markdown file in your workspace. "
-                "Use to update USER.md with user info, SOUL.md with your personality, etc."
+                "Write or overwrite a markdown or JSON file in your workspace. "
+                "Use to update USER.md with user info, SOUL.md with your personality, "
+                "or PERMISSIONS.json to reset permissions."
             ),
             function=write_file,
             params_model=WriteFileParams,
             tags={ToolTags.MODIFIES_PROFILE},
             usage_hint=(
                 "Write to USER.md when you learn about the user (rates, hours, preferences, etc.). "
-                "Write to SOUL.md when the user defines your personality."
+                "Write to SOUL.md when the user defines your personality. "
+                "Write to PERMISSIONS.json to reset all permissions to defaults."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.AUTO,
@@ -386,8 +396,8 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         Tool(
             name=ToolName.EDIT_FILE,
             description=(
-                "Replace exact text in a markdown file. "
-                "Use for targeted updates to USER.md, SOUL.md, etc. "
+                "Replace exact text in a markdown or JSON file. "
+                "Use for targeted updates to USER.md, SOUL.md, PERMISSIONS.json, etc. "
                 "Read the file first to see current contents."
             ),
             function=edit_file,
@@ -402,8 +412,8 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         Tool(
             name=ToolName.DELETE_FILE,
             description=(
-                "Delete a markdown file from your workspace. "
-                "Cannot delete protected files (USER.md, SOUL.md, HEARTBEAT.md)."
+                "Delete a file from your workspace. "
+                "Cannot delete protected files (USER.md, SOUL.md, HEARTBEAT.md, PERMISSIONS.json)."
             ),
             function=delete_file,
             params_model=DeleteFileParams,
@@ -429,10 +439,12 @@ def _register() -> None:
         "workspace",
         _workspace_factory,
         sub_tools=[
-            SubToolInfo(ToolName.READ_FILE, "Read markdown files from workspace"),
-            SubToolInfo(ToolName.WRITE_FILE, "Write or overwrite markdown files"),
-            SubToolInfo(ToolName.EDIT_FILE, "Replace text in markdown files"),
-            SubToolInfo(ToolName.DELETE_FILE, "Delete markdown files", default_permission="ask"),
+            SubToolInfo(ToolName.READ_FILE, "Read markdown and JSON files from workspace"),
+            SubToolInfo(ToolName.WRITE_FILE, "Write or overwrite markdown and JSON files"),
+            SubToolInfo(ToolName.EDIT_FILE, "Replace text in markdown and JSON files"),
+            SubToolInfo(
+                ToolName.DELETE_FILE, "Delete files from workspace", default_permission="ask"
+            ),
         ],
     )
 

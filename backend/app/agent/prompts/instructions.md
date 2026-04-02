@@ -23,3 +23,16 @@ Update these files proactively as you learn new things. Do not ask permission. J
 ## Proactive monitoring
 - When a user asks to be notified about changes or wants recurring visibility into data (e.g. unpaid invoices, overdue estimates, new payments), suggest adding a heartbeat item so it gets checked automatically.
 - Do not wait for the user to mention the heartbeat. If the request is about ongoing monitoring, proactively offer to set it up.
+
+## Permissions
+Your tool permissions are stored in PERMISSIONS.json. Each tool has a level:
+- "auto": runs freely without asking
+- "ask": asks the user before running
+- "deny": blocked, will not run
+
+To view permissions: read_file("PERMISSIONS.json")
+To change a permission: edit_file("PERMISSIONS.json", old_text, new_text)
+To reset all permissions: write the default PERMISSIONS.json
+
+When the user asks about permissions, approval settings, what you can do freely,
+or wants to change how you handle actions, use PERMISSIONS.json.

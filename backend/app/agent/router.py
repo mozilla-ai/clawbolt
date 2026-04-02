@@ -251,6 +251,12 @@ async def run_agent(
     disabled_groups = await tool_config_store.get_disabled_tool_names()
     disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
 
+    # Ensure PERMISSIONS.json exists with all tools backfilled so the
+    # agent can read/edit it and the approval store resolves from it.
+    from backend.app.agent.approval import get_approval_store
+
+    get_approval_store().ensure_complete(user.id)
+
     # Shared mutable set so the list_capabilities tool closure and the
     # agent loop both see the same activation state.  This prevents the
     # tool from returning the full SKILL.md instructions a second time

@@ -18,8 +18,13 @@ from backend.app.agent.approval import (
     get_approval_store,
     reset_approval_gate,
 )
+from backend.app.agent.concurrency import user_locks
 from backend.app.agent.core import ClawboltAgent
-from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
+from backend.app.agent.ingestion import (
+    InboundMessage,
+    _dispatch_to_pipeline,
+    process_inbound_from_bus,
+)
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.bus import OutboundMessage
 from backend.app.models import User
@@ -118,6 +123,83 @@ class TestApprovalStore:
         assert (
             store2.check_permission("1", "web_fetch", resource="evil.com") == PermissionLevel.DENY
         )
+
+
+# ---------------------------------------------------------------------------
+# ApprovalStore: generate_defaults / ensure_complete / reset_permissions
+# ---------------------------------------------------------------------------
+
+
+class TestApprovalStoreComplete:
+    def test_generate_defaults_includes_all_tools(self, tmp_path: object) -> None:
+        """generate_defaults returns a dict with all registered tools."""
+        from backend.app.agent.tools.registry import (
+            default_registry,
+            ensure_tool_modules_imported,
+        )
+
+        ensure_tool_modules_imported()
+        store = ApprovalStore()
+        defaults = store.generate_defaults("gen-user")
+        assert defaults["version"] == 1
+        assert isinstance(defaults["tools"], dict)
+        assert len(defaults["tools"]) > 0
+        # Every registered sub-tool should be present
+        for factory_name in default_registry.factory_names:
+            for st in default_registry.get_factory_sub_tools(factory_name):
+                assert st.name in defaults["tools"]
+
+    def test_ensure_complete_backfills_missing(self, tmp_path: object) -> None:
+        """ensure_complete adds new tools to an existing file."""
+        store = ApprovalStore()
+        # Start with a partial file
+        store._save(
+            "backfill-user", {"version": 1, "tools": {"send_reply": "deny"}, "resources": {}}
+        )
+        data = store.ensure_complete("backfill-user")
+        # send_reply should keep its override
+        assert data["tools"]["send_reply"] == "deny"
+        # Other tools should have been backfilled
+        assert len(data["tools"]) > 1
+
+    def test_ensure_complete_preserves_overrides(self, tmp_path: object) -> None:
+        """ensure_complete does not overwrite user customizations."""
+        store = ApprovalStore()
+        store._save(
+            "preserve-user",
+            {
+                "version": 1,
+                "tools": {"send_reply": "deny", "read_file": "ask"},
+                "resources": {"web_fetch": {"evil.com": "deny"}},
+            },
+        )
+        data = store.ensure_complete("preserve-user")
+        assert data["tools"]["send_reply"] == "deny"
+        assert data["tools"]["read_file"] == "ask"
+        assert data["resources"]["web_fetch"]["evil.com"] == "deny"
+
+    def test_reset_permissions_writes_defaults(self, tmp_path: object) -> None:
+        """reset_permissions replaces everything with defaults."""
+        store = ApprovalStore()
+        store.set_permission("reset-user", "send_reply", PermissionLevel.DENY)
+        store.reset_permissions("reset-user")
+        data = store._load("reset-user")
+        # send_reply should be back to its default, not deny
+        defaults = store.generate_defaults("reset-user")
+        assert data["tools"]["send_reply"] == defaults["tools"]["send_reply"]
+
+    def test_set_permission_preserves_complete_file(self, tmp_path: object) -> None:
+        """set_permission does not lose other entries."""
+        store = ApprovalStore()
+        store.ensure_complete("set-perm-user")
+        defaults = store.generate_defaults("set-perm-user")
+        original_count = len(defaults["tools"])
+
+        store.set_permission("set-perm-user", "send_reply", PermissionLevel.DENY)
+        data = store._load("set-perm-user")
+        # All tools should still be present
+        assert len(data["tools"]) >= original_count
+        assert data["tools"]["send_reply"] == "deny"
 
 
 # ---------------------------------------------------------------------------
@@ -495,6 +577,107 @@ class TestAgentApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
+    async def test_tool_with_ask_interrupted_returns_error(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """Tool with ASK that gets INTERRUPTED returns an error with no permission persisted."""
+        mock_publish = AsyncMock()
+
+        tool = Tool(
+            name="fetcher",
+            description="Fetch URL",
+            function=_fetch_tool,
+            params_model=_UrlParams,
+            approval_policy=ApprovalPolicy(default_level=PermissionLevel.ASK),
+        )
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [{"name": "fetcher", "arguments": {"url": "https://example.com"}}]
+            ),
+            make_text_response("OK, moving on."),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _interrupt_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            gate.resolve(test_user.id, ApprovalDecision.INTERRUPTED)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools([tool])
+
+        task = asyncio.create_task(_interrupt_soon())
+        response = await agent.process_message("fetch example.com")
+        await task
+
+        # Tool result should be an error with "interrupted" in the message
+        assert any(
+            tc.name == "fetcher" and tc.is_error and "interrupted" in tc.result.lower()
+            for tc in response.tool_calls
+        )
+        # No permission should have been persisted
+        store = get_approval_store()
+        level = store.check_permission(test_user.id, "fetcher")
+        assert level == PermissionLevel.ASK  # unchanged from default
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
+    async def test_interrupted_does_not_persist_permission(
+        self, mock_amessages: object, test_user: User
+    ) -> None:
+        """INTERRUPTED decision does not persist any permission override."""
+        mock_publish = AsyncMock()
+
+        tool = Tool(
+            name="fetcher",
+            description="Fetch URL",
+            function=_fetch_tool,
+            params_model=_UrlParams,
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                resource_extractor=_extract_domain,
+            ),
+        )
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [{"name": "fetcher", "arguments": {"url": "https://example.com"}}]
+            ),
+            make_text_response("Sure, what's up?"),
+        ]
+
+        gate = get_approval_gate()
+
+        async def _interrupt_soon() -> None:
+            while not gate.has_pending(test_user.id):
+                await asyncio.sleep(0.005)
+            gate.resolve(test_user.id, ApprovalDecision.INTERRUPTED)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools([tool])
+
+        task = asyncio.create_task(_interrupt_soon())
+        await agent.process_message("fetch example.com")
+        await task
+
+        # Neither tool-level nor resource-level permission should be stored
+        store = get_approval_store()
+        data = store.load_user_permissions(test_user.id)
+        assert "fetcher" not in data.get("tools", {})
+        assert "fetcher" not in data.get("resources", {})
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
     async def test_stored_auto_skips_prompt(self, mock_amessages: object, test_user: User) -> None:
         """A stored AUTO permission skips the approval prompt entirely."""
         mock_publish = AsyncMock()
@@ -581,13 +764,12 @@ class TestIngestionIntercept:
         assert not gate.has_pending(test_user.id)
 
     @pytest.mark.asyncio()
-    async def test_non_approval_text_sends_clarification(self, test_user: User) -> None:
-        """Unrecognized text while pending sends a clarification prompt."""
+    async def test_non_approval_text_interrupts_gate(self, test_user: User) -> None:
+        """Unrelated text while pending resolves the gate as INTERRUPTED."""
         gate = get_approval_gate()
 
         mock_publish = AsyncMock()
 
-        # Start a pending approval
         async def _start_approval() -> ApprovalDecision:
             return await gate.request_approval(
                 user_id=test_user.id,
@@ -609,6 +791,7 @@ class TestIngestionIntercept:
             text="what is the weather?",
         )
 
+        mock_batcher = AsyncMock()
         with (
             patch(
                 "backend.app.agent.ingestion._get_or_create_user",
@@ -620,15 +803,65 @@ class TestIngestionIntercept:
                 new_callable=AsyncMock,
                 return_value=None,
             ),
+            patch(
+                "backend.app.agent.ingestion.message_batcher",
+                mock_batcher,
+            ),
         ):
             await process_inbound_from_bus(inbound)
 
-        # The gate should still be pending (text was not a valid response)
-        assert gate.has_pending(test_user.id)
+        decision = await approval_task
+        assert decision == ApprovalDecision.INTERRUPTED
+        assert not gate.has_pending(test_user.id)
 
-        # Resolve the gate so the task completes
-        gate.resolve(test_user.id, ApprovalDecision.DENIED)
+    @pytest.mark.asyncio()
+    async def test_interrupted_message_dispatched_to_pipeline(self, test_user: User) -> None:
+        """Unrelated message during approval is dispatched to the pipeline."""
+        gate = get_approval_gate()
+        mock_publish = AsyncMock()
+
+        async def _start_approval() -> ApprovalDecision:
+            return await gate.request_approval(
+                user_id=test_user.id,
+                tool_name="test_tool",
+                description="test",
+                publish_outbound=mock_publish,
+                channel="telegram",
+                chat_id="chat_1",
+                timeout=5.0,
+            )
+
+        approval_task = asyncio.create_task(_start_approval())
+        await asyncio.sleep(0.01)
+
+        inbound = InboundMessage(
+            channel="telegram",
+            sender_id=str(test_user.id),
+            text="what is my schedule?",
+        )
+
+        mock_batcher = AsyncMock()
+        with (
+            patch(
+                "backend.app.agent.ingestion._get_or_create_user",
+                new_callable=AsyncMock,
+                return_value=test_user,
+            ),
+            patch(
+                "backend.app.agent.ingestion.classify_approval_response",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "backend.app.agent.ingestion.message_batcher",
+                mock_batcher,
+            ),
+        ):
+            await process_inbound_from_bus(inbound)
+
         await approval_task
+        # The message should have been enqueued for pipeline processing
+        mock_batcher.enqueue.assert_called_once()
 
     @pytest.mark.asyncio()
     async def test_llm_classified_approval_resolves_gate(self, test_user: User) -> None:
@@ -676,6 +909,107 @@ class TestIngestionIntercept:
         decision = await approval_task
         assert decision == ApprovalDecision.APPROVED
         assert not gate.has_pending(test_user.id)
+
+    @pytest.mark.asyncio()
+    async def test_dispatch_resolves_stale_gate_while_waiting_for_lock(
+        self, test_user: User
+    ) -> None:
+        """_dispatch_to_pipeline resolves a stale approval gate set up after the lock was taken."""
+        from backend.app.agent.dto import SessionState, StoredMessage
+
+        gate = get_approval_gate()
+        mock_publish = AsyncMock()
+
+        # Simulate pipeline 1 holding the lock and setting up a gate
+        lock = user_locks.acquire(test_user.id)
+        await lock.acquire()
+
+        async def _setup_gate_then_release() -> ApprovalDecision:
+            """Mimic pipeline 1: set up approval gate while holding the lock."""
+            await asyncio.sleep(0.1)
+            decision = await gate.request_approval(
+                user_id=test_user.id,
+                tool_name="calendar_read",
+                description="Read calendar events",
+                publish_outbound=mock_publish,
+                channel="telegram",
+                chat_id="chat_1",
+                timeout=30.0,
+            )
+            # Pipeline 1 finishes after gate resolves
+            lock.release()
+            return decision
+
+        gate_task = asyncio.create_task(_setup_gate_then_release())
+
+        # Pipeline 2: dispatch a new message. The background poller should
+        # resolve the gate so pipeline 1 releases the lock.
+        session = SessionState(session_id="test", user_id=test_user.id)
+        message = StoredMessage(direction="inbound", body="what's in quickbooks", seq=2)
+
+        with patch("backend.app.agent.ingestion.handle_inbound_message", new_callable=AsyncMock):
+            await asyncio.wait_for(
+                _dispatch_to_pipeline(
+                    user=test_user,
+                    session=session,
+                    message=message,
+                    media_urls=[],
+                    channel="telegram",
+                ),
+                timeout=5.0,
+            )
+
+        decision = await gate_task
+        assert decision == ApprovalDecision.INTERRUPTED
+
+    @pytest.mark.asyncio()
+    async def test_dispatch_reloads_session_after_lock(self, test_user: User) -> None:
+        """_dispatch_to_pipeline reloads session from DB after acquiring the user lock."""
+        from backend.app.agent.dto import SessionState, StoredMessage
+
+        session = SessionState(session_id="test-sess", user_id=test_user.id)
+        message = StoredMessage(direction="inbound", body="hello", seq=1)
+
+        fresh_session = SessionState(session_id="test-sess", user_id=test_user.id)
+        fresh_session.messages = [
+            StoredMessage(direction="inbound", body="hello", seq=1),
+            StoredMessage(direction="outbound", body="tool result from pipeline 1", seq=2),
+        ]
+
+        from unittest.mock import MagicMock
+
+        mock_store = MagicMock()
+        mock_store.load_session.return_value = fresh_session
+
+        mock_handle = AsyncMock()
+
+        with (
+            patch(
+                "backend.app.agent.ingestion.handle_inbound_message",
+                mock_handle,
+            ),
+            patch(
+                "backend.app.agent.ingestion.get_session_store",
+                return_value=mock_store,
+            ),
+        ):
+            await _dispatch_to_pipeline(
+                user=test_user,
+                session=session,
+                message=message,
+                media_urls=[],
+                channel="telegram",
+            )
+
+        # Session store should have been called to reload
+        mock_store.load_session.assert_called_once_with("test-sess")
+
+        # handle_inbound_message should have received the fresh session
+        mock_handle.assert_called_once()
+        call_kwargs = mock_handle.call_args.kwargs
+        passed_session = call_kwargs["session"]
+        assert len(passed_session.messages) == 2
+        assert passed_session.messages[1].body == "tool result from pipeline 1"
 
 
 # ---------------------------------------------------------------------------

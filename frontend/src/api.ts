@@ -7,6 +7,8 @@ import type {
   UserProfileUpdate,
   MemoryResponse,
   MemoryUpdate,
+  PermissionsResponse,
+  PermissionsUpdate,
   ChannelConfigResponse,
   ChannelConfigUpdate,
   ChannelRouteListResponse,
@@ -108,6 +110,20 @@ const api = {
     });
     if (error) _throwApiError(error, 'Failed to update memory');
     return data as MemoryResponse;
+  },
+
+  // Permissions
+  getPermissions: async () => {
+    const { data, error } = await client.GET('/api/user/permissions');
+    if (error) _throwApiError(error, 'Failed to get permissions');
+    return data as PermissionsResponse;
+  },
+  updatePermissions: async (body: PermissionsUpdate) => {
+    const { data, error } = await client.PUT('/api/user/permissions', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to update permissions');
+    return data as PermissionsResponse;
   },
 
   // Channel config
