@@ -19,7 +19,7 @@ export const TOOL_OAUTH_MAP: Record<string, string> = {
 };
 
 /** Human-readable display names for tool factories. */
-export const DISPLAY_NAMES: Record<string, string> = {
+const DISPLAY_NAMES: Record<string, string> = {
   quickbooks: 'QuickBooks',
   calendar: 'Google Calendar',
   supplier_pricing: 'Pricing Tools',
@@ -33,7 +33,7 @@ export const DISPLAY_NAMES: Record<string, string> = {
 };
 
 /** Human-readable sub-tool display names. */
-export const SUB_TOOL_NAMES: Record<string, string> = {
+const SUB_TOOL_NAMES: Record<string, string> = {
   qb_query: 'Query entities',
   qb_create: 'Create entities',
   qb_update: 'Update entities',

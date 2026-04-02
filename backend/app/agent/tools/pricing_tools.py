@@ -3,7 +3,10 @@
 Phase 1a: supplier_search_products for Home Depot via SerpApi.
 """
 
+from __future__ import annotations
+
 import logging
+from typing import TYPE_CHECKING
 
 import httpx
 from pydantic import BaseModel, Field
@@ -15,6 +18,9 @@ from backend.app.config import settings
 from backend.app.services.suppliers.cache import SupplierCache
 from backend.app.services.suppliers.homedepot import HomeDepotSupplier
 from backend.app.services.suppliers.protocol import Location, ProductResult
+
+if TYPE_CHECKING:
+    from backend.app.agent.tools.registry import ToolContext
 
 logger = logging.getLogger(__name__)
 
@@ -147,7 +153,7 @@ def _create_pricing_tools(
     ]
 
 
-def _pricing_factory(ctx: "ToolContext") -> list[Tool]:  # noqa: F821
+def _pricing_factory(ctx: ToolContext) -> list[Tool]:
     """Factory called by the tool registry."""
     if not settings.serpapi_api_key:
         logger.info("supplier_pricing factory: SERPAPI_API_KEY not set, returning no tools")
@@ -157,7 +163,7 @@ def _pricing_factory(ctx: "ToolContext") -> list[Tool]:  # noqa: F821
     return _create_pricing_tools(supplier, _cache)
 
 
-def _pricing_auth_check(ctx: "ToolContext") -> str | None:  # noqa: F821
+def _pricing_auth_check(ctx: ToolContext) -> str | None:
     """Auth check for the registry.
 
     Returns None when ready, or a reason string when SERPAPI_API_KEY is missing.
