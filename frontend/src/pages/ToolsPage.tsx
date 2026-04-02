@@ -137,7 +137,7 @@ export default function ToolsPage() {
           <div className="grid gap-3">
             {domainTools.map((tool) => {
               const oauthIntegration = TOOL_OAUTH_MAP[tool.name];
-              const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap);
+              const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap, tool.configured);
 
               return (
                 <Card key={tool.name} className={!isConfigured ? 'opacity-50' : undefined}>

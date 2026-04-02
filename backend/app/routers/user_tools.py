@@ -138,8 +138,33 @@ def _build_tool_list(
     return entries
 
 
-def _entry_to_response(e: ToolConfigEntry) -> ToolConfigEntryResponse:
+def _get_auth_status() -> dict[str, str]:
+    """Check auth_check for each specialist factory.
+
+    Returns a mapping of factory_name -> reason for factories that are
+    not configured or not authenticated. Empty dict means all configured.
+    """
+    from backend.app.agent.tools.registry import ToolContext
+
+    # Build a minimal context (no user needed for config-level checks).
+    dummy_ctx = ToolContext(user=None)  # type: ignore[arg-type]
+    status: dict[str, str] = {}
+    for name in default_registry.specialist_factory_names:
+        factory = default_registry._factories.get(name)
+        if factory and factory.auth_check:
+            reason = factory.auth_check(dummy_ctx)
+            if reason:
+                status[name] = reason
+    return status
+
+
+def _entry_to_response(
+    e: ToolConfigEntry,
+    auth_issues: dict[str, str] | None = None,
+) -> ToolConfigEntryResponse:
     """Convert a ToolConfigEntry DTO to an API response model."""
+    issues = auth_issues or {}
+    auth_reason = issues.get(e.name, "")
     return ToolConfigEntryResponse(
         name=e.name,
         description=e.description,
@@ -147,6 +172,8 @@ def _entry_to_response(e: ToolConfigEntry) -> ToolConfigEntryResponse:
         domain_group=e.domain_group,
         domain_group_order=e.domain_group_order,
         enabled=e.enabled,
+        configured=not bool(auth_reason),
+        auth_message=auth_reason,
         sub_tools=[
             SubToolEntryResponse(
                 name=st.name,
@@ -169,7 +196,8 @@ async def get_tool_config(
     disabled_names = {e.name for e in saved if not e.enabled}
     disabled_sub_map = {e.name: e.disabled_sub_tools for e in saved if e.disabled_sub_tools}
     entries = _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
-    return ToolConfigResponse(tools=[_entry_to_response(e) for e in entries])
+    auth_issues = _get_auth_status()
+    return ToolConfigResponse(tools=[_entry_to_response(e, auth_issues) for e in entries])
 
 
 @router.put("/user/tools", response_model=ToolConfigResponse)
@@ -225,4 +253,5 @@ async def update_tool_config(
     entries = _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
     await store.save(entries)
 
-    return ToolConfigResponse(tools=[_entry_to_response(e) for e in entries])
+    auth_issues = _get_auth_status()
+    return ToolConfigResponse(tools=[_entry_to_response(e, auth_issues) for e in entries])

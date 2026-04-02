@@ -160,10 +160,10 @@ def _pricing_factory(ctx: "ToolContext") -> list[Tool]:  # noqa: F821
 def _pricing_auth_check(ctx: "ToolContext") -> str | None:  # noqa: F821
     """Auth check for the registry.
 
-    Returns None when ready (key is set) or when unconfigured (hides the specialist).
+    Returns None when ready, or a reason string when SERPAPI_API_KEY is missing.
     """
     if not settings.serpapi_api_key:
-        return None
+        return "SERPAPI_API_KEY not set. Set it in the environment to enable Home Depot pricing."
     return None
 
 

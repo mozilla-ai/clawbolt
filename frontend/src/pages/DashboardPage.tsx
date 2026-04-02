@@ -239,7 +239,7 @@ export default function DashboardPage() {
           {domainTools.length > 0 ? (
             <div className="space-y-2.5">
               {domainTools.map((tool) => {
-                const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap);
+                const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap, tool.configured);
                 const enabledSubTools = (tool.sub_tools ?? []).filter((st) => st.enabled).length;
                 const totalSubTools = (tool.sub_tools ?? []).length;
                 return (

@@ -217,6 +217,8 @@ class ToolConfigEntryResponse(BaseModel):
     domain_group: str = ""
     domain_group_order: int = 0
     enabled: bool
+    configured: bool = True
+    auth_message: str = ""
     sub_tools: list[SubToolEntryResponse] = Field(default_factory=list)
 
 

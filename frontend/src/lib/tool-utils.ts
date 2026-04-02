@@ -67,17 +67,23 @@ export function subToolDisplayName(name: string): string {
 }
 
 /**
- * Determine whether a tool needs OAuth and its connection status.
- * Non-OAuth tools are always considered configured and connected.
+ * Determine whether a tool needs OAuth and its connection/config status.
+ *
+ * For OAuth tools: checks TOOL_OAUTH_MAP + oauthMap for configured/connected.
+ * For non-OAuth tools: uses the `configured` field from the backend API response
+ * (populated from the tool's auth_check). If the backend says configured=false,
+ * the tool shows as "Not configured" (e.g. missing SERPAPI_API_KEY).
  */
 export function getToolOAuthStatus(
   toolName: string,
   oauthMap: Record<string, { configured?: boolean; connected?: boolean }>,
+  backendConfigured?: boolean,
 ): { needsOAuth: boolean; isConfigured: boolean; isConnected: boolean } {
   const oauthIntegration = TOOL_OAUTH_MAP[toolName];
   const needsOAuth = !!oauthIntegration;
   if (!needsOAuth) {
-    return { needsOAuth: false, isConfigured: true, isConnected: true };
+    const configured = backendConfigured ?? true;
+    return { needsOAuth: false, isConfigured: configured, isConnected: configured };
   }
   const entry = oauthMap[oauthIntegration];
   return {

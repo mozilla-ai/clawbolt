@@ -442,13 +442,20 @@ class TestPricingFactory:
         assert len(result) == 1
         assert result[0].name == "supplier_search_products"
 
-    def test_auth_check_returns_none_always(self) -> None:
+    def test_auth_check_returns_reason_when_no_key(self) -> None:
         from backend.app.agent.tools.pricing_tools import _pricing_auth_check
 
         ctx = MagicMock()
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.serpapi_api_key = ""
-            assert _pricing_auth_check(ctx) is None
+            result = _pricing_auth_check(ctx)
+            assert result is not None
+            assert "SERPAPI_API_KEY" in result
 
+    def test_auth_check_returns_none_when_key_set(self) -> None:
+        from backend.app.agent.tools.pricing_tools import _pricing_auth_check
+
+        ctx = MagicMock()
+        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
             mock_settings.serpapi_api_key = "key"
             assert _pricing_auth_check(ctx) is None
