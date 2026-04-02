@@ -30,20 +30,21 @@ _SEARCH_QUERY = """
 query searchModel(
   $keyword: String!
   $storeId: String
-  $zipCode: String
   $pageSize: Int
   $startIndex: Int
+  $channel: Channel
+  $additionalSearchParams: AdditionalParams
 ) {
   searchModel(
     keyword: $keyword
     storeId: $storeId
     pageSize: $pageSize
     startIndex: $startIndex
-    additionalSearchParams: { deliveryZip: $zipCode }
+    channel: $channel
+    additionalSearchParams: $additionalSearchParams
   ) {
     products {
       itemId
-      dataSources
       identifiers {
         brandName
         modelNumber
@@ -122,16 +123,36 @@ class HomeDepotSupplier:
             "operationName": "searchModel",
             "variables": {
                 "keyword": query,
-                "zipCode": location.zip_code,
                 "storeId": self.store_id or "",
                 "pageSize": max_results,
                 "startIndex": 0,
+                "channel": "DESKTOP",
+                "additionalSearchParams": {
+                    "deliveryZip": location.zip_code,
+                },
             },
             "query": _SEARCH_QUERY,
         }
         data = await self._request(payload)
 
+        # Check for GraphQL-level errors (HD returns these as {"error": [...]} or {"errors": [...]})
+        gql_errors = data.get("error") or data.get("errors")
+        if gql_errors:
+            logger.warning(
+                "Home Depot GraphQL error for query=%r zip=%s: %s",
+                query,
+                location.zip_code,
+                gql_errors,
+            )
+
         products_raw = data.get("data", {}).get("searchModel", {}).get("products") or []
+        if not products_raw:
+            logger.info(
+                "Home Depot returned 0 products for query=%r zip=%s (response keys: %s)",
+                query,
+                location.zip_code,
+                list(data.get("data", {}).keys()) if data.get("data") else "no data",
+            )
 
         results: list[ProductResult] = []
         for product in products_raw[:max_results]:
