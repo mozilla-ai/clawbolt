@@ -170,7 +170,11 @@ def _create_pricing_tools(
 def _pricing_factory(ctx: "ToolContext") -> list[Tool]:  # noqa: F821
     """Factory called by the tool registry."""
     if not settings.backyard_api_key:
+        logger.info("supplier_pricing factory: BACKYARD_API_KEY not set, returning no tools")
         return []
+    logger.info(
+        "supplier_pricing factory: creating tools (key length=%d)", len(settings.backyard_api_key)
+    )
     hd = BackyardSupplier(settings.backyard_api_key, engine="homedepot")
     lowes = BackyardSupplier(settings.backyard_api_key, engine="lowes")
     return _create_pricing_tools({"homedepot": hd, "lowes": lowes}, _cache)
@@ -183,6 +187,7 @@ def _pricing_auth_check(ctx: "ToolContext") -> str | None:  # noqa: F821
     There is no per-user auth in Phase 1, so this always returns None.
     """
     if not settings.backyard_api_key:
+        logger.debug("supplier_pricing auth_check: BACKYARD_API_KEY not set")
         return None
     return None
 
@@ -190,6 +195,7 @@ def _pricing_auth_check(ctx: "ToolContext") -> str | None:  # noqa: F821
 def _register() -> None:
     from backend.app.agent.tools.registry import SubToolInfo, default_registry
 
+    logger.info("Registering supplier_pricing tool factory")
     default_registry.register(
         "supplier_pricing",
         _pricing_factory,
