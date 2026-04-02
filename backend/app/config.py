@@ -111,8 +111,9 @@ class Settings(BaseSettings):
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
 
-    # Supplier pricing (Traject Data Backyard API)
-    backyard_api_key: str = ""
+    # Supplier pricing
+    homedepot_pricing_enabled: bool = True
+    homedepot_store_id: str = ""  # Optional: default HD store ID for inventory lookups
 
     # OAuth
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks

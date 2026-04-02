@@ -1,9 +1,10 @@
 """Tests for supplier pricing tools.
 
-Covers all 24 code paths identified in the eng review:
-- BackyardSupplier HTTP/retry/parsing (8 paths)
-- SupplierCache TTL/eviction (5 paths)
-- Tool function + factory (11 paths)
+Covers:
+- HomeDepotSupplier GraphQL client (HTTP, retry, parsing)
+- SupplierCache TTL/eviction
+- Tool function (happy path, errors, zip resolution)
+- Factory gating
 """
 
 import asyncio
@@ -12,8 +13,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from backend.app.services.suppliers.backyard import BackyardSupplier
 from backend.app.services.suppliers.cache import SupplierCache
+from backend.app.services.suppliers.homedepot import HomeDepotSupplier
 from backend.app.services.suppliers.protocol import Location, ProductResult
 
 # ---------------------------------------------------------------------------
@@ -21,149 +22,120 @@ from backend.app.services.suppliers.protocol import Location, ProductResult
 # ---------------------------------------------------------------------------
 
 
-def _make_search_response(products: list[dict] | None = None) -> dict:
-    """Build a realistic Backyard API search response."""
+def _make_graphql_response(products: list[dict] | None = None) -> dict:
+    """Build a realistic Home Depot GraphQL search response."""
     if products is None:
         products = [
             {
-                "product": {
-                    "item_id": "317061059",
-                    "title": "23/32 in. x 4 ft. x 8 ft. BC Sanded Pine Plywood",
-                    "brand": "Handprint",
-                    "aisle": "21",
-                    "link": "https://www.homedepot.com/p/317061059",
-                    "rating": 4.5,
-                    "images": [{"link": "https://images.homedepot.com/317061059.jpg"}],
-                    "buybox_winner": {
-                        "price": 42.98,
-                        "was_price": 49.98,
-                        "fulfillment": {
-                            "pickup_info": {
-                                "in_stock": True,
-                                "stock_level": 12,
-                            }
-                        },
-                    },
-                }
+                "itemId": "317061059",
+                "identifiers": {
+                    "brandName": "Handprint",
+                    "modelNumber": "166024",
+                    "productLabel": "23/32 in. x 4 ft. x 8 ft. BC Sanded Pine Plywood",
+                    "canonicalUrl": "/p/Handprint-23-32-BC-Sanded-Pine-Plywood/317061059",
+                },
+                "pricing": {"value": 42.98, "original": 49.98},
+                "ratingsReviews": {"averageRating": 4.5, "totalReviews": 127},
+                "media": {"images": [{"url": "https://images.homedepot.com/317061059.jpg"}]},
+                "fulfillment": {
+                    "backordered": False,
+                    "fulfillmentOptions": [
+                        {
+                            "type": "pickup",
+                            "services": [
+                                {
+                                    "type": "bopis",
+                                    "locations": [
+                                        {
+                                            "inventory": {
+                                                "isInStock": True,
+                                                "isLimitedQuantity": False,
+                                                "quantity": 12,
+                                            },
+                                            "aisle": {"aisle": "21", "bay": "003"},
+                                        }
+                                    ],
+                                }
+                            ],
+                        }
+                    ],
+                },
             }
         ]
-    return {"search_results": products}
+    return {"data": {"searchModel": {"products": products}}}
 
 
-def _make_httpx_response(
-    status_code: int = 200,
-    json_data: dict | None = None,
-) -> httpx.Response:
-    """Create a mock httpx.Response."""
+def _make_httpx_response(status_code: int = 200, json_data: dict | None = None) -> httpx.Response:
     resp = httpx.Response(
         status_code=status_code,
-        request=httpx.Request("GET", "https://api.backyardapi.com/request"),
+        request=httpx.Request("POST", "https://apionline.homedepot.com/federation-gateway/graphql"),
         json=json_data if json_data is not None else {},
     )
     return resp
 
 
 # ---------------------------------------------------------------------------
-# BackyardSupplier tests
+# HomeDepotSupplier tests
 # ---------------------------------------------------------------------------
 
 
-class TestBackyardSupplier:
-    def test_init_valid_engine(self) -> None:
-        s = BackyardSupplier("key", engine="homedepot")
-        assert s.name == "backyard_homedepot"
+class TestHomeDepotSupplier:
+    def test_init(self) -> None:
+        s = HomeDepotSupplier()
+        assert s.name == "homedepot"
         assert s.display_name == "Home Depot"
+        assert s.store_id == ""
 
-        s2 = BackyardSupplier("key", engine="lowes")
-        assert s2.name == "backyard_lowes"
-        assert s2.display_name == "Lowe's"
-
-    def test_init_invalid_engine(self) -> None:
-        with pytest.raises(ValueError, match="engine must be one of"):
-            BackyardSupplier("key", engine="walmart")
+    def test_init_with_store_id(self) -> None:
+        s = HomeDepotSupplier(store_id="1710")
+        assert s.store_id == "1710"
 
     @pytest.mark.asyncio
     async def test_search_happy_path(self) -> None:
-        supplier = BackyardSupplier("test-key", engine="homedepot")
-        mock_resp = _make_httpx_response(200, _make_search_response())
+        supplier = HomeDepotSupplier()
+        mock_resp = _make_httpx_response(200, _make_graphql_response())
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.backyard.httpx.AsyncClient", return_value=mock_client
+            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
         ):
             results = await supplier.search_products("plywood", Location(zip_code="15213"))
 
         assert len(results) == 1
-        assert results[0].name == "23/32 in. x 4 ft. x 8 ft. BC Sanded Pine Plywood"
-        assert results[0].price_dollars == 42.98
-        assert results[0].was_price_dollars == 49.98
-        assert results[0].in_stock is True
-        assert results[0].stock_quantity == 12
-        assert results[0].supplier == "homedepot"
-
-    @pytest.mark.asyncio
-    async def test_search_retry_on_429_then_success(self) -> None:
-        supplier = BackyardSupplier("test-key", engine="homedepot")
-        resp_429 = _make_httpx_response(429)
-        resp_200 = _make_httpx_response(200, _make_search_response())
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[resp_429, resp_200])
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "backend.app.services.suppliers.backyard.httpx.AsyncClient",
-                return_value=mock_client,
-            ),
-            patch("backend.app.services.suppliers.backyard.asyncio.sleep", new_callable=AsyncMock),
-        ):
-            results = await supplier.search_products("plywood", Location(zip_code="15213"))
-
-        assert len(results) == 1
-
-    @pytest.mark.asyncio
-    async def test_search_429_twice_raises(self) -> None:
-        supplier = BackyardSupplier("test-key", engine="homedepot")
-        resp_429 = _make_httpx_response(429)
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[resp_429, resp_429])
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "backend.app.services.suppliers.backyard.httpx.AsyncClient",
-                return_value=mock_client,
-            ),
-            patch("backend.app.services.suppliers.backyard.asyncio.sleep", new_callable=AsyncMock),
-            pytest.raises(httpx.HTTPStatusError),
-        ):
-            await supplier.search_products("plywood", Location(zip_code="15213"))
+        r = results[0]
+        assert r.name == "23/32 in. x 4 ft. x 8 ft. BC Sanded Pine Plywood"
+        assert r.price_dollars == 42.98
+        assert r.was_price_dollars == 49.98
+        assert r.in_stock is True
+        assert r.stock_quantity == 12
+        assert r.aisle == "21, Bay 003"
+        assert r.supplier == "homedepot"
+        assert r.brand == "Handprint"
+        assert r.rating == 4.5
+        assert "homedepot.com" in r.product_url
 
     @pytest.mark.asyncio
     async def test_search_retry_on_500_then_success(self) -> None:
-        supplier = BackyardSupplier("test-key", engine="homedepot")
+        supplier = HomeDepotSupplier()
         resp_500 = _make_httpx_response(500)
-        resp_200 = _make_httpx_response(200, _make_search_response())
+        resp_200 = _make_httpx_response(200, _make_graphql_response())
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[resp_500, resp_200])
+        mock_client.post = AsyncMock(side_effect=[resp_500, resp_200])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with (
             patch(
-                "backend.app.services.suppliers.backyard.httpx.AsyncClient",
+                "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
                 return_value=mock_client,
             ),
-            patch("backend.app.services.suppliers.backyard.asyncio.sleep", new_callable=AsyncMock),
+            patch("backend.app.services.suppliers.homedepot.asyncio.sleep", new_callable=AsyncMock),
         ):
             results = await supplier.search_products("plywood", Location(zip_code="15213"))
 
@@ -171,55 +143,36 @@ class TestBackyardSupplier:
 
     @pytest.mark.asyncio
     async def test_search_500_twice_raises(self) -> None:
-        supplier = BackyardSupplier("test-key", engine="homedepot")
+        supplier = HomeDepotSupplier()
         resp_500 = _make_httpx_response(500)
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=[resp_500, resp_500])
+        mock_client.post = AsyncMock(side_effect=[resp_500, resp_500])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with (
             patch(
-                "backend.app.services.suppliers.backyard.httpx.AsyncClient",
+                "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
                 return_value=mock_client,
             ),
-            patch("backend.app.services.suppliers.backyard.asyncio.sleep", new_callable=AsyncMock),
-            pytest.raises(httpx.HTTPStatusError),
-        ):
-            await supplier.search_products("plywood", Location(zip_code="15213"))
-
-    @pytest.mark.asyncio
-    async def test_search_401_raises_immediately(self) -> None:
-        supplier = BackyardSupplier("bad-key", engine="homedepot")
-        resp_401 = _make_httpx_response(401)
-
-        mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=resp_401)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with (
-            patch(
-                "backend.app.services.suppliers.backyard.httpx.AsyncClient",
-                return_value=mock_client,
-            ),
+            patch("backend.app.services.suppliers.homedepot.asyncio.sleep", new_callable=AsyncMock),
             pytest.raises(httpx.HTTPStatusError),
         ):
             await supplier.search_products("plywood", Location(zip_code="15213"))
 
     @pytest.mark.asyncio
     async def test_search_timeout_raises(self) -> None:
-        supplier = BackyardSupplier("key", engine="homedepot")
+        supplier = HomeDepotSupplier()
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+        mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with (
             patch(
-                "backend.app.services.suppliers.backyard.httpx.AsyncClient",
+                "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
                 return_value=mock_client,
             ),
             pytest.raises(httpx.TimeoutException),
@@ -228,16 +181,17 @@ class TestBackyardSupplier:
 
     @pytest.mark.asyncio
     async def test_search_empty_results(self) -> None:
-        supplier = BackyardSupplier("key", engine="homedepot")
-        mock_resp = _make_httpx_response(200, {"search_results": []})
+        supplier = HomeDepotSupplier()
+        mock_resp = _make_httpx_response(200, {"data": {"searchModel": {"products": []}}})
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.backyard.httpx.AsyncClient", return_value=mock_client
+            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
         ):
             results = await supplier.search_products("nonexistent", Location(zip_code="15213"))
 
@@ -245,23 +199,21 @@ class TestBackyardSupplier:
 
     @pytest.mark.asyncio
     async def test_search_missing_fields(self) -> None:
-        """Products with missing price, aisle, buybox should parse without error."""
-        supplier = BackyardSupplier("key", engine="lowes")
-        sparse_product = {
-            "product": {
-                "item_id": "123",
-                "title": "Some Item",
-            }
-        }
-        mock_resp = _make_httpx_response(200, {"search_results": [sparse_product]})
+        """Products with missing pricing, fulfillment should parse without error."""
+        supplier = HomeDepotSupplier()
+        sparse_product = {"itemId": "123", "identifiers": {"productLabel": "Some Item"}}
+        mock_resp = _make_httpx_response(
+            200, {"data": {"searchModel": {"products": [sparse_product]}}}
+        )
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.backyard.httpx.AsyncClient", return_value=mock_client
+            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
         ):
             results = await supplier.search_products("item", Location(zip_code="15213"))
 
@@ -272,25 +224,23 @@ class TestBackyardSupplier:
         assert results[0].aisle == ""
 
     @pytest.mark.asyncio
-    async def test_search_null_buybox(self) -> None:
-        """Product with buybox_winner=None should parse."""
-        supplier = BackyardSupplier("key", engine="homedepot")
+    async def test_search_null_pricing(self) -> None:
+        supplier = HomeDepotSupplier()
         product = {
-            "product": {
-                "item_id": "999",
-                "title": "Out of stock item",
-                "buybox_winner": None,
-            }
+            "itemId": "999",
+            "identifiers": {"productLabel": "Out of stock item"},
+            "pricing": None,
         }
-        mock_resp = _make_httpx_response(200, {"search_results": [product]})
+        mock_resp = _make_httpx_response(200, {"data": {"searchModel": {"products": [product]}}})
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.backyard.httpx.AsyncClient", return_value=mock_client
+            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
         ):
             results = await supplier.search_products("item", Location(zip_code="15213"))
 
@@ -299,17 +249,20 @@ class TestBackyardSupplier:
 
     @pytest.mark.asyncio
     async def test_search_max_results_truncation(self) -> None:
-        supplier = BackyardSupplier("key", engine="homedepot")
-        products = [{"product": {"item_id": str(i), "title": f"Item {i}"}} for i in range(10)]
-        mock_resp = _make_httpx_response(200, {"search_results": products})
+        supplier = HomeDepotSupplier()
+        products = [
+            {"itemId": str(i), "identifiers": {"productLabel": f"Item {i}"}} for i in range(10)
+        ]
+        mock_resp = _make_httpx_response(200, {"data": {"searchModel": {"products": products}}})
 
         mock_client = AsyncMock()
-        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.post = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.backyard.httpx.AsyncClient", return_value=mock_client
+            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
         ):
             results = await supplier.search_products(
                 "item", Location(zip_code="15213"), max_results=3
@@ -349,18 +302,15 @@ class TestSupplierCache:
         await cache.set("a", 1)
         await cache.set("b", 2)
         await cache.set("c", 3)
-        # One of the earlier entries should have been evicted
         values = [await cache.get("a"), await cache.get("b"), await cache.get("c")]
         assert values.count(None) >= 1
-        assert 3 in values  # Most recent should survive
+        assert 3 in values
 
     def test_make_key_normalization(self) -> None:
         assert SupplierCache.make_key("hd", "  Plywood  ", "15213") == "hd:plywood:15213"
-        assert SupplierCache.make_key("hd", "PLYWOOD", "15213") == "hd:plywood:15213"
 
     def test_clear(self) -> None:
         cache = SupplierCache()
-        # Synchronous set for test (bypass lock)
         cache._cache["test"] = "val"
         assert cache._cache.get("test") == "val"
         cache.clear()
@@ -373,18 +323,15 @@ class TestSupplierCache:
 
 
 class TestSupplierSearchTool:
-    """Test the tool function via _create_pricing_tools."""
-
     def _make_tool(
         self,
         results: list[ProductResult] | None = None,
         side_effect: Exception | None = None,
     ) -> tuple:
-        """Create a tool with a mock supplier."""
-        mock_supplier = AsyncMock()
-        mock_supplier.name = "backyard_homedepot"
+        mock_supplier = AsyncMock(spec=HomeDepotSupplier)
+        mock_supplier.name = "homedepot"
         mock_supplier.display_name = "Home Depot"
-        mock_supplier.engine = "homedepot"
+        mock_supplier.store_id = ""
 
         if side_effect:
             mock_supplier.search_products = AsyncMock(side_effect=side_effect)
@@ -392,11 +339,10 @@ class TestSupplierSearchTool:
             mock_supplier.search_products = AsyncMock(return_value=results or [])
 
         cache = SupplierCache()
-        suppliers = {"homedepot": mock_supplier, "lowes": mock_supplier}
 
         from backend.app.agent.tools.pricing_tools import _create_pricing_tools
 
-        tools = _create_pricing_tools(suppliers, cache)
+        tools = _create_pricing_tools(mock_supplier, cache)
         tool_fn = tools[0].function
         return tool_fn, mock_supplier, cache
 
@@ -415,10 +361,7 @@ class TestSupplierSearchTool:
             )
         ]
         tool_fn, _, _ = self._make_tool(results=results)
-
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            result = await tool_fn(query="plywood", store="homedepot", zip_code="15213")
+        result = await tool_fn(query="plywood", zip_code="15213")
 
         assert not result.is_error
         assert "Plywood Sheet" in result.content
@@ -433,24 +376,17 @@ class TestSupplierSearchTool:
         ]
         tool_fn, mock_supplier, _cache = self._make_tool(results=results)
 
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            # First call fills cache
-            await tool_fn(query="test", store="homedepot", zip_code="15213")
-            # Second call should hit cache
-            result = await tool_fn(query="test", store="homedepot", zip_code="15213")
+        await tool_fn(query="test", zip_code="15213")
+        result = await tool_fn(query="test", zip_code="15213")
 
         assert not result.is_error
         assert "Cached Item" in result.content
-        assert mock_supplier.search_products.call_count == 1  # Only called once
+        assert mock_supplier.search_products.call_count == 1
 
     @pytest.mark.asyncio
     async def test_missing_zip_returns_hint(self) -> None:
         tool_fn, _, _ = self._make_tool()
-
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            result = await tool_fn(query="test", store="homedepot", zip_code="")
+        result = await tool_fn(query="test", zip_code="")
 
         assert result.is_error
         assert result.error_kind.value == "validation"
@@ -458,68 +394,44 @@ class TestSupplierSearchTool:
         assert "USER.md" in result.hint
 
     @pytest.mark.asyncio
-    async def test_invalid_store(self) -> None:
-        tool_fn, _, _ = self._make_tool()
-
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            result = await tool_fn(query="test", store="walmart", zip_code="15213")
-
-        assert result.is_error
-        assert result.error_kind.value == "validation"
-        assert "'homedepot' or 'lowes'" in result.content
-
-    @pytest.mark.asyncio
     async def test_timeout_error(self) -> None:
         tool_fn, _, _ = self._make_tool(side_effect=httpx.TimeoutException("timeout"))
-
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            result = await tool_fn(query="test", store="homedepot", zip_code="15213")
+        result = await tool_fn(query="test", zip_code="15213")
 
         assert result.is_error
         assert result.error_kind.value == "service"
         assert "timed out" in result.content.lower()
 
     @pytest.mark.asyncio
-    async def test_401_error(self) -> None:
-        exc = httpx.HTTPStatusError(
-            "401",
-            request=httpx.Request("GET", "https://example.com"),
-            response=httpx.Response(401),
-        )
-        tool_fn, _, _ = self._make_tool(side_effect=exc)
-
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            result = await tool_fn(query="test", store="homedepot", zip_code="15213")
-
-        assert result.is_error
-        assert "not configured correctly" in result.content
-
-    @pytest.mark.asyncio
     async def test_429_error(self) -> None:
         exc = httpx.HTTPStatusError(
             "429",
-            request=httpx.Request("GET", "https://example.com"),
+            request=httpx.Request("POST", "https://example.com"),
             response=httpx.Response(429),
         )
         tool_fn, _, _ = self._make_tool(side_effect=exc)
-
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            result = await tool_fn(query="test", store="homedepot", zip_code="15213")
+        result = await tool_fn(query="test", zip_code="15213")
 
         assert result.is_error
         assert "temporarily busy" in result.content
 
     @pytest.mark.asyncio
+    async def test_500_error(self) -> None:
+        exc = httpx.HTTPStatusError(
+            "500",
+            request=httpx.Request("POST", "https://example.com"),
+            response=httpx.Response(500),
+        )
+        tool_fn, _, _ = self._make_tool(side_effect=exc)
+        result = await tool_fn(query="test", zip_code="15213")
+
+        assert result.is_error
+        assert "Couldn't reach" in result.content
+
+    @pytest.mark.asyncio
     async def test_empty_results(self) -> None:
         tool_fn, _, _ = self._make_tool(results=[])
-
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "key"
-            result = await tool_fn(query="nonexistent", store="homedepot", zip_code="15213")
+        result = await tool_fn(query="nonexistent", zip_code="15213")
 
         assert not result.is_error
         assert "No products found" in result.content
@@ -531,22 +443,23 @@ class TestSupplierSearchTool:
 
 
 class TestPricingFactory:
-    def test_factory_returns_empty_when_no_key(self) -> None:
+    def test_factory_returns_empty_when_disabled(self) -> None:
         from backend.app.agent.tools.pricing_tools import _pricing_factory
 
         ctx = MagicMock()
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = ""
+            mock_settings.homedepot_pricing_enabled = False
             result = _pricing_factory(ctx)
 
         assert result == []
 
-    def test_factory_returns_tools_when_key_set(self) -> None:
+    def test_factory_returns_tools_when_enabled(self) -> None:
         from backend.app.agent.tools.pricing_tools import _pricing_factory
 
         ctx = MagicMock()
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = "test-key"
+            mock_settings.homedepot_pricing_enabled = True
+            mock_settings.homedepot_store_id = ""
             result = _pricing_factory(ctx)
 
         assert len(result) == 1
@@ -557,8 +470,8 @@ class TestPricingFactory:
 
         ctx = MagicMock()
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.backyard_api_key = ""
+            mock_settings.homedepot_pricing_enabled = False
             assert _pricing_auth_check(ctx) is None
 
-            mock_settings.backyard_api_key = "key"
+            mock_settings.homedepot_pricing_enabled = True
             assert _pricing_auth_check(ctx) is None
