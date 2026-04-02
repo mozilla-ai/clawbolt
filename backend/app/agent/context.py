@@ -8,7 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from backend.app.agent.compaction import compact_session
-from backend.app.agent.file_store import SessionState
+from backend.app.agent.dto import SessionState
 from backend.app.agent.messages import (
     AgentMessage,
     AssistantMessage,

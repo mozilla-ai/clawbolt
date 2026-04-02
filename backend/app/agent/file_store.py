@@ -12,8 +12,6 @@ This module re-exports everything for backward compatibility.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 # Re-export all DTOs
 from backend.app.agent.dto import (  # noqa: F401
     HeartbeatLogEntry,
@@ -26,6 +24,10 @@ from backend.app.agent.dto import (  # noqa: F401
     UserData,
     slugify,
 )
+
+# Re-export session/memory stores and cached factory functions
+from backend.app.agent.memory_db import MemoryStore, get_memory_store  # noqa: F401
+from backend.app.agent.session_db import SessionStore, get_session_store  # noqa: F401
 
 # Re-export stores
 from backend.app.agent.stores import (  # noqa: F401
@@ -40,24 +42,3 @@ from backend.app.agent.stores import (  # noqa: F401
 
 # Re-export user store
 from backend.app.agent.user_db import UserStore, get_user_store  # noqa: F401
-
-if TYPE_CHECKING:
-    from backend.app.agent.memory_db import MemoryStore
-    from backend.app.agent.session_db import SessionStore
-
-
-# Re-export session/memory store factories for premium backward compat
-
-
-def get_session_store(user_id: str | int) -> SessionStore:
-    """Lazy import to avoid circular deps."""
-    from backend.app.agent.session_db import SessionStore as _SessionStore
-
-    return _SessionStore(str(user_id))
-
-
-def get_memory_store(user_id: str | int) -> MemoryStore:
-    """Lazy import to avoid circular deps."""
-    from backend.app.agent.memory_db import MemoryStore as _MemoryStore
-
-    return _MemoryStore(str(user_id))

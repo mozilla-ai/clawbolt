@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.file_store import HeartbeatStore
+from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
 
