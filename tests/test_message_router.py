@@ -711,7 +711,7 @@ async def test_send_media_reply_suppresses_duplicate_text(
     """When agent calls send_media_reply, the router should NOT also dispatch text."""
     # Pre-approve messaging tools so the approval gate doesn't block
     store = get_approval_store()
-    store.set_permission(test_user.id, "send_media_reply", PermissionLevel.AUTO)
+    store.set_permission(test_user.id, "send_media_reply", PermissionLevel.ALWAYS)
     # LLM calls send_media_reply tool
     tool_response = make_tool_call_response(
         tool_calls=[

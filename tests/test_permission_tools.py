@@ -72,9 +72,9 @@ def test_edit_permissions_json(tmp_path: object) -> None:
     assert not result.is_error
     assert '"send_reply": "ask"' in result.content
 
-    # Edit send_reply from ask to auto
+    # Edit send_reply from ask to always
     result = asyncio.get_event_loop().run_until_complete(
-        edit_tool.function("PERMISSIONS.json", '"send_reply": "ask"', '"send_reply": "auto"')
+        edit_tool.function("PERMISSIONS.json", '"send_reply": "ask"', '"send_reply": "always"')
     )
     assert not result.is_error
     assert "Updated" in result.content
@@ -82,7 +82,7 @@ def test_edit_permissions_json(tmp_path: object) -> None:
     # Verify the change
     result = asyncio.get_event_loop().run_until_complete(read_tool.function("PERMISSIONS.json"))
     data = json.loads(result.content)
-    assert data["tools"]["send_reply"] == "auto"
+    assert data["tools"]["send_reply"] == "always"
 
 
 def test_write_permissions_json(tmp_path: object) -> None:

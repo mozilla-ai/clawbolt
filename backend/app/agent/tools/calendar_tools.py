@@ -724,7 +724,7 @@ def create_calendar_tools(
             params_model=CalendarListCalendarsParams,
             usage_hint=("List enabled calendars to help the user pick the right one."),
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.AUTO,
+                default_level=PermissionLevel.ALWAYS,
             ),
         ),
         Tool(

@@ -1132,7 +1132,7 @@ export interface components {
             enabled: boolean;
             /**
              * Permission Level
-             * @default auto
+             * @default always
              */
             permission_level: string;
         };

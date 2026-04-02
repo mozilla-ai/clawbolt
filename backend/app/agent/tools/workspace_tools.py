@@ -388,7 +388,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 "Write to PERMISSIONS.json to reset all permissions to defaults."
             ),
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.AUTO,
+                default_level=PermissionLevel.ALWAYS,
                 resource_extractor=_extract_path,
                 description_builder=lambda args: f"Write to {args.get('path', 'file')}",
             ),
@@ -404,7 +404,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             params_model=EditFileParams,
             tags={ToolTags.MODIFIES_PROFILE},
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.AUTO,
+                default_level=PermissionLevel.ALWAYS,
                 resource_extractor=_extract_path,
                 description_builder=lambda args: f"Edit {args.get('path', 'file')}",
             ),

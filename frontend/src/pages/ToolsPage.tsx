@@ -10,7 +10,7 @@ import api from '@/api';
 import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
 const PERMISSION_LABELS: Record<string, { label: string; className: string; tooltip: string }> = {
-  auto: {
+  always: {
     label: 'Runs freely',
     className: 'text-success',
     tooltip: 'Used automatically, no approval needed. To change, just tell your assistant in chat.',
