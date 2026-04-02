@@ -66,7 +66,7 @@ def make_linq_webhook_headers(
     ts = str(timestamp if timestamp is not None else int(time.time()))
     signature = hmac.new(
         key=signing_secret.encode(),
-        msg=f"{ts}.{payload_bytes.decode()}".encode(),
+        msg=f"{ts}.{payload_bytes.decode('utf-8')}".encode(),
         digestmod=hashlib.sha256,
     ).hexdigest()
     return {
