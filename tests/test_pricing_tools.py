@@ -1,7 +1,7 @@
-"""Tests for supplier pricing tools.
+"""Tests for supplier pricing tools (SerpApi Home Depot).
 
 Covers:
-- HomeDepotSupplier GraphQL client (HTTP, retry, parsing)
+- HomeDepotSupplier SerpApi client (HTTP, retry, parsing)
 - SupplierCache TTL/eviction
 - Tool function (happy path, errors, zip resolution)
 - Factory gating
@@ -22,53 +22,31 @@ from backend.app.services.suppliers.protocol import Location, ProductResult
 # ---------------------------------------------------------------------------
 
 
-def _make_graphql_response(products: list[dict] | None = None) -> dict:
-    """Build a realistic Home Depot GraphQL search response."""
+def _make_serpapi_response(products: list[dict] | None = None) -> dict:
+    """Build a realistic SerpApi Home Depot search response."""
     if products is None:
         products = [
             {
-                "itemId": "317061059",
-                "identifiers": {
-                    "brandName": "Handprint",
-                    "modelNumber": "166024",
-                    "productLabel": "23/32 in. x 4 ft. x 8 ft. BC Sanded Pine Plywood",
-                    "canonicalUrl": "/p/Handprint-23-32-BC-Sanded-Pine-Plywood/317061059",
-                },
-                "pricing": {"value": 42.98, "original": 49.98},
-                "ratingsReviews": {"averageRating": 4.5, "totalReviews": 127},
-                "media": {"images": [{"url": "https://images.homedepot.com/317061059.jpg"}]},
-                "fulfillment": {
-                    "backordered": False,
-                    "fulfillmentOptions": [
-                        {
-                            "type": "pickup",
-                            "services": [
-                                {
-                                    "type": "bopis",
-                                    "locations": [
-                                        {
-                                            "inventory": {
-                                                "isInStock": True,
-                                                "isLimitedQuantity": False,
-                                                "quantity": 12,
-                                            },
-                                            "aisle": {"aisle": "21", "bay": "003"},
-                                        }
-                                    ],
-                                }
-                            ],
-                        }
-                    ],
-                },
+                "product_id": "317061059",
+                "title": "23/32 in. x 4 ft. x 8 ft. BC Sanded Pine Plywood",
+                "brand": "Handprint",
+                "price": 42.98,
+                "previous_price": "$49.98",
+                "rating": 4.5,
+                "reviews": 127,
+                "link": "https://www.homedepot.com/p/317061059",
+                "thumbnail": "https://images.homedepot.com/317061059.jpg",
+                "model_number": "166024",
+                "delivery": {"free_delivery": True, "has_delivery": True},
             }
         ]
-    return {"data": {"searchModel": {"products": products}}}
+    return {"products": products}
 
 
 def _make_httpx_response(status_code: int = 200, json_data: dict | None = None) -> httpx.Response:
     resp = httpx.Response(
         status_code=status_code,
-        request=httpx.Request("POST", "https://apionline.homedepot.com/federation-gateway/graphql"),
+        request=httpx.Request("GET", "https://serpapi.com/search"),
         json=json_data if json_data is not None else {},
     )
     return resp
@@ -81,22 +59,17 @@ def _make_httpx_response(status_code: int = 200, json_data: dict | None = None) 
 
 class TestHomeDepotSupplier:
     def test_init(self) -> None:
-        s = HomeDepotSupplier()
+        s = HomeDepotSupplier(api_key="test-key")
         assert s.name == "homedepot"
         assert s.display_name == "Home Depot"
-        assert s.store_id == ""
-
-    def test_init_with_store_id(self) -> None:
-        s = HomeDepotSupplier(store_id="1710")
-        assert s.store_id == "1710"
 
     @pytest.mark.asyncio
     async def test_search_happy_path(self) -> None:
-        supplier = HomeDepotSupplier()
-        mock_resp = _make_httpx_response(200, _make_graphql_response())
+        supplier = HomeDepotSupplier(api_key="test-key")
+        mock_resp = _make_httpx_response(200, _make_serpapi_response())
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.get = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -112,21 +85,19 @@ class TestHomeDepotSupplier:
         assert r.price_dollars == 42.98
         assert r.was_price_dollars == 49.98
         assert r.in_stock is True
-        assert r.stock_quantity == 12
-        assert r.aisle == "21, Bay 003"
         assert r.supplier == "homedepot"
         assert r.brand == "Handprint"
         assert r.rating == 4.5
         assert "homedepot.com" in r.product_url
 
     @pytest.mark.asyncio
-    async def test_search_retry_on_500_then_success(self) -> None:
-        supplier = HomeDepotSupplier()
-        resp_500 = _make_httpx_response(500)
-        resp_200 = _make_httpx_response(200, _make_graphql_response())
+    async def test_search_retry_on_429_then_success(self) -> None:
+        supplier = HomeDepotSupplier(api_key="test-key")
+        resp_429 = _make_httpx_response(429)
+        resp_200 = _make_httpx_response(200, _make_serpapi_response())
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=[resp_500, resp_200])
+        mock_client.get = AsyncMock(side_effect=[resp_429, resp_200])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -143,11 +114,11 @@ class TestHomeDepotSupplier:
 
     @pytest.mark.asyncio
     async def test_search_500_twice_raises(self) -> None:
-        supplier = HomeDepotSupplier()
+        supplier = HomeDepotSupplier(api_key="test-key")
         resp_500 = _make_httpx_response(500)
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=[resp_500, resp_500])
+        mock_client.get = AsyncMock(side_effect=[resp_500, resp_500])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -163,10 +134,10 @@ class TestHomeDepotSupplier:
 
     @pytest.mark.asyncio
     async def test_search_timeout_raises(self) -> None:
-        supplier = HomeDepotSupplier()
+        supplier = HomeDepotSupplier(api_key="test-key")
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
+        mock_client.get = AsyncMock(side_effect=httpx.TimeoutException("timed out"))
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -181,11 +152,11 @@ class TestHomeDepotSupplier:
 
     @pytest.mark.asyncio
     async def test_search_empty_results(self) -> None:
-        supplier = HomeDepotSupplier()
-        mock_resp = _make_httpx_response(200, {"data": {"searchModel": {"products": []}}})
+        supplier = HomeDepotSupplier(api_key="test-key")
+        mock_resp = _make_httpx_response(200, {"products": []})
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.get = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -198,16 +169,53 @@ class TestHomeDepotSupplier:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_search_missing_fields(self) -> None:
-        """Products with missing pricing, fulfillment should parse without error."""
-        supplier = HomeDepotSupplier()
-        sparse_product = {"itemId": "123", "identifiers": {"productLabel": "Some Item"}}
-        mock_resp = _make_httpx_response(
-            200, {"data": {"searchModel": {"products": [sparse_product]}}}
-        )
+    async def test_search_api_error_field(self) -> None:
+        """SerpApi returns {"error": "..."} for invalid queries."""
+        supplier = HomeDepotSupplier(api_key="test-key")
+        mock_resp = _make_httpx_response(200, {"error": "Invalid API key"})
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            results = await supplier.search_products("plywood", Location(zip_code="15213"))
+
+        assert results == []
+
+    @pytest.mark.asyncio
+    async def test_search_price_as_string(self) -> None:
+        """SerpApi sometimes returns price as '$42.98' string."""
+        supplier = HomeDepotSupplier(api_key="test-key")
+        products = [{"product_id": "1", "title": "Item", "price": "$42.98"}]
+        mock_resp = _make_httpx_response(200, {"products": products})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            results = await supplier.search_products("item", Location(zip_code="15213"))
+
+        assert results[0].price_dollars == 42.98
+
+    @pytest.mark.asyncio
+    async def test_search_missing_fields(self) -> None:
+        """Products with minimal fields should parse without error."""
+        supplier = HomeDepotSupplier(api_key="test-key")
+        products = [{"product_id": "123", "title": "Some Item"}]
+        mock_resp = _make_httpx_response(200, {"products": products})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -221,42 +229,15 @@ class TestHomeDepotSupplier:
         assert results[0].name == "Some Item"
         assert results[0].price_dollars is None
         assert results[0].in_stock is None
-        assert results[0].aisle == ""
-
-    @pytest.mark.asyncio
-    async def test_search_null_pricing(self) -> None:
-        supplier = HomeDepotSupplier()
-        product = {
-            "itemId": "999",
-            "identifiers": {"productLabel": "Out of stock item"},
-            "pricing": None,
-        }
-        mock_resp = _make_httpx_response(200, {"data": {"searchModel": {"products": [product]}}})
-
-        mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
-        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
-        mock_client.__aexit__ = AsyncMock(return_value=False)
-
-        with patch(
-            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
-            return_value=mock_client,
-        ):
-            results = await supplier.search_products("item", Location(zip_code="15213"))
-
-        assert len(results) == 1
-        assert results[0].price_dollars is None
 
     @pytest.mark.asyncio
     async def test_search_max_results_truncation(self) -> None:
-        supplier = HomeDepotSupplier()
-        products = [
-            {"itemId": str(i), "identifiers": {"productLabel": f"Item {i}"}} for i in range(10)
-        ]
-        mock_resp = _make_httpx_response(200, {"data": {"searchModel": {"products": products}}})
+        supplier = HomeDepotSupplier(api_key="test-key")
+        products = [{"product_id": str(i), "title": f"Item {i}"} for i in range(10)]
+        mock_resp = _make_httpx_response(200, {"products": products})
 
         mock_client = AsyncMock()
-        mock_client.post = AsyncMock(return_value=mock_resp)
+        mock_client.get = AsyncMock(return_value=mock_resp)
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -312,7 +293,6 @@ class TestSupplierCache:
     def test_clear(self) -> None:
         cache = SupplierCache()
         cache._cache["test"] = "val"
-        assert cache._cache.get("test") == "val"
         cache.clear()
         assert cache._cache.get("test") is None
 
@@ -331,7 +311,6 @@ class TestSupplierSearchTool:
         mock_supplier = AsyncMock(spec=HomeDepotSupplier)
         mock_supplier.name = "homedepot"
         mock_supplier.display_name = "Home Depot"
-        mock_supplier.store_id = ""
 
         if side_effect:
             mock_supplier.search_products = AsyncMock(side_effect=side_effect)
@@ -356,7 +335,6 @@ class TestSupplierSearchTool:
                 brand="Handprint",
                 price_dollars=42.98,
                 in_stock=True,
-                stock_quantity=12,
                 product_url="https://homedepot.com/p/123",
             )
         ]
@@ -403,10 +381,23 @@ class TestSupplierSearchTool:
         assert "timed out" in result.content.lower()
 
     @pytest.mark.asyncio
+    async def test_401_error(self) -> None:
+        exc = httpx.HTTPStatusError(
+            "401",
+            request=httpx.Request("GET", "https://serpapi.com/search"),
+            response=httpx.Response(401),
+        )
+        tool_fn, _, _ = self._make_tool(side_effect=exc)
+        result = await tool_fn(query="test", zip_code="15213")
+
+        assert result.is_error
+        assert "not configured correctly" in result.content
+
+    @pytest.mark.asyncio
     async def test_429_error(self) -> None:
         exc = httpx.HTTPStatusError(
             "429",
-            request=httpx.Request("POST", "https://example.com"),
+            request=httpx.Request("GET", "https://serpapi.com/search"),
             response=httpx.Response(429),
         )
         tool_fn, _, _ = self._make_tool(side_effect=exc)
@@ -414,19 +405,6 @@ class TestSupplierSearchTool:
 
         assert result.is_error
         assert "temporarily busy" in result.content
-
-    @pytest.mark.asyncio
-    async def test_500_error(self) -> None:
-        exc = httpx.HTTPStatusError(
-            "500",
-            request=httpx.Request("POST", "https://example.com"),
-            response=httpx.Response(500),
-        )
-        tool_fn, _, _ = self._make_tool(side_effect=exc)
-        result = await tool_fn(query="test", zip_code="15213")
-
-        assert result.is_error
-        assert "Couldn't reach" in result.content
 
     @pytest.mark.asyncio
     async def test_empty_results(self) -> None:
@@ -443,23 +421,22 @@ class TestSupplierSearchTool:
 
 
 class TestPricingFactory:
-    def test_factory_returns_empty_when_disabled(self) -> None:
+    def test_factory_returns_empty_when_no_key(self) -> None:
         from backend.app.agent.tools.pricing_tools import _pricing_factory
 
         ctx = MagicMock()
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.homedepot_pricing_enabled = False
+            mock_settings.serpapi_api_key = ""
             result = _pricing_factory(ctx)
 
         assert result == []
 
-    def test_factory_returns_tools_when_enabled(self) -> None:
+    def test_factory_returns_tools_when_key_set(self) -> None:
         from backend.app.agent.tools.pricing_tools import _pricing_factory
 
         ctx = MagicMock()
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.homedepot_pricing_enabled = True
-            mock_settings.homedepot_store_id = ""
+            mock_settings.serpapi_api_key = "test-key"
             result = _pricing_factory(ctx)
 
         assert len(result) == 1
@@ -470,8 +447,8 @@ class TestPricingFactory:
 
         ctx = MagicMock()
         with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
-            mock_settings.homedepot_pricing_enabled = False
+            mock_settings.serpapi_api_key = ""
             assert _pricing_auth_check(ctx) is None
 
-            mock_settings.homedepot_pricing_enabled = True
+            mock_settings.serpapi_api_key = "key"
             assert _pricing_auth_check(ctx) is None

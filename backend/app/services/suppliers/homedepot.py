@@ -1,6 +1,7 @@
-"""Home Depot product search via their public-facing GraphQL API."""
+"""Home Depot product search via SerpApi."""
 
 import asyncio
+import contextlib
 import logging
 
 import httpx
@@ -9,107 +10,36 @@ from backend.app.services.suppliers.protocol import Location, ProductResult
 
 logger = logging.getLogger(__name__)
 
-_GRAPHQL_URL = "https://apionline.homedepot.com/federation-gateway/graphql"
-
-_HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
-    ),
-    "Accept": "*/*",
-    "Accept-Language": "en-US,en;q=0.9",
-    "Content-Type": "application/json",
-    "Origin": "https://www.homedepot.com",
-    "Referer": "https://www.homedepot.com/",
-    "x-experience-name": "general-merchandise",
-    "x-hd-dc": "origin",
-    "x-debug": "false",
-}
-
-_SEARCH_QUERY = """
-query searchModel(
-  $keyword: String!
-  $storeId: String
-  $pageSize: Int
-  $startIndex: Int
-  $channel: Channel
-  $additionalSearchParams: AdditionalParams
-) {
-  searchModel(
-    keyword: $keyword
-    storeId: $storeId
-    pageSize: $pageSize
-    startIndex: $startIndex
-    channel: $channel
-    additionalSearchParams: $additionalSearchParams
-  ) {
-    products {
-      itemId
-      identifiers {
-        brandName
-        modelNumber
-        productLabel
-        canonicalUrl
-      }
-      pricing {
-        value
-        original
-      }
-      ratingsReviews {
-        averageRating
-        totalReviews
-      }
-      media {
-        images {
-          url
-        }
-      }
-      fulfillment {
-        backordered
-        fulfillmentOptions {
-          type
-          services {
-            type
-            locations {
-              inventory {
-                isInStock
-                isLimitedQuantity
-                quantity
-              }
-              aisle {
-                bay
-                aisle
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-}
-""".strip()
+_SERPAPI_BASE = "https://serpapi.com/search"
 
 
 class HomeDepotSupplier:
-    """Home Depot product search via their public GraphQL API."""
+    """Home Depot product search via SerpApi's dedicated HD engine.
 
-    def __init__(self, store_id: str = "") -> None:
-        self.store_id = store_id
+    Requires a SERPAPI_API_KEY. Free tier: 250 searches/month.
+    https://serpapi.com/home-depot-search-api
+    """
+
+    def __init__(self, api_key: str) -> None:
+        self.api_key = api_key
         self.name = "homedepot"
         self.display_name = "Home Depot"
 
-    async def _request(self, payload: dict) -> dict:
-        """POST to the GraphQL endpoint with retry on 5xx."""
+    async def _request(self, params: dict[str, str]) -> dict:
+        """GET from SerpApi with one retry on 5xx.
+
+        API key is a query param but we never log the full URL.
+        """
+        full_params = {"api_key": self.api_key, "engine": "home_depot", **params}
         async with httpx.AsyncClient(timeout=20.0) as client:
             for attempt in range(2):
-                resp = await client.post(
-                    _GRAPHQL_URL,
-                    headers=_HEADERS,
-                    json=payload,
-                    params={"opname": payload.get("operationName", "")},
-                )
+                resp = await client.get(_SERPAPI_BASE, params=full_params)
+                if resp.status_code == 429 and attempt == 0:
+                    logger.warning("SerpApi rate limited, retrying")
+                    await asyncio.sleep(2.0)
+                    continue
                 if resp.status_code >= 500 and attempt == 0:
-                    logger.warning("Home Depot API server error %d, retrying", resp.status_code)
+                    logger.warning("SerpApi server error %d, retrying", resp.status_code)
                     await asyncio.sleep(1.0)
                     continue
                 resp.raise_for_status()
@@ -119,84 +49,56 @@ class HomeDepotSupplier:
     async def search_products(
         self, query: str, location: Location, *, max_results: int = 5
     ) -> list[ProductResult]:
-        payload = {
-            "operationName": "searchModel",
-            "variables": {
-                "keyword": query,
-                "storeId": self.store_id or "",
-                "pageSize": max_results,
-                "startIndex": 0,
-                "channel": "DESKTOP",
-                "additionalSearchParams": {
-                    "deliveryZip": location.zip_code,
-                },
-            },
-            "query": _SEARCH_QUERY,
-        }
-        data = await self._request(payload)
+        data = await self._request(
+            {
+                "q": query,
+                "delivery_zip": location.zip_code,
+                "ps": str(max_results),
+            }
+        )
 
-        # Check for GraphQL-level errors (HD returns these as {"error": [...]} or {"errors": [...]})
-        gql_errors = data.get("error") or data.get("errors")
-        if gql_errors:
-            logger.warning(
-                "Home Depot GraphQL error for query=%r zip=%s: %s",
-                query,
-                location.zip_code,
-                gql_errors,
-            )
-
-        products_raw = data.get("data", {}).get("searchModel", {}).get("products") or []
-        if not products_raw:
-            logger.info(
-                "Home Depot returned 0 products for query=%r zip=%s (response keys: %s)",
-                query,
-                location.zip_code,
-                list(data.get("data", {}).keys()) if data.get("data") else "no data",
-            )
+        if data.get("error"):
+            logger.warning("SerpApi error for query=%r: %s", query, data["error"])
+            return []
 
         results: list[ProductResult] = []
-        for product in products_raw[:max_results]:
-            ids = product.get("identifiers") or {}
-            pricing = product.get("pricing") or {}
-            reviews = product.get("ratingsReviews") or {}
-            images = (product.get("media") or {}).get("images") or []
-            fulfillment = product.get("fulfillment") or {}
+        for product in (data.get("products") or [])[:max_results]:
+            price = product.get("price")
+            price_dollars = None
+            if isinstance(price, (int, float)):
+                price_dollars = float(price)
+            elif isinstance(price, str):
+                cleaned = price.replace("$", "").replace(",", "").strip()
+                with contextlib.suppress(ValueError):
+                    price_dollars = float(cleaned)
 
-            # Extract inventory from the first pickup service location
+            was_price = product.get("previous_price") or product.get("old_price")
+            was_dollars = None
+            if isinstance(was_price, (int, float)):
+                was_dollars = float(was_price)
+            elif isinstance(was_price, str):
+                cleaned = was_price.replace("$", "").replace(",", "").strip()
+                with contextlib.suppress(ValueError):
+                    was_dollars = float(cleaned)
+
+            delivery = product.get("delivery") or {}
             in_stock = None
-            stock_qty = None
-            aisle_str = ""
-            for opt in fulfillment.get("fulfillmentOptions") or []:
-                for svc in opt.get("services") or []:
-                    for loc in svc.get("locations") or []:
-                        inv = loc.get("inventory") or {}
-                        if in_stock is None:
-                            in_stock = inv.get("isInStock")
-                            stock_qty = inv.get("quantity")
-                        aisle_info = loc.get("aisle") or {}
-                        if aisle_info.get("aisle") and not aisle_str:
-                            bay = aisle_info.get("bay", "")
-                            aisle_str = aisle_info["aisle"]
-                            if bay:
-                                aisle_str += f", Bay {bay}"
-
-            canonical = ids.get("canonicalUrl", "")
-            product_url = f"https://www.homedepot.com{canonical}" if canonical else ""
+            if delivery.get("free_delivery") is not None or delivery.get("has_delivery"):
+                in_stock = True
 
             results.append(
                 ProductResult(
                     supplier="homedepot",
-                    product_id=str(product.get("itemId", "")),
-                    name=ids.get("productLabel", "Unknown product"),
-                    brand=ids.get("brandName", ""),
-                    price_dollars=pricing.get("value"),
-                    was_price_dollars=pricing.get("original"),
+                    product_id=str(product.get("product_id", "")),
+                    name=product.get("title", "Unknown product"),
+                    brand=product.get("brand", ""),
+                    price_dollars=price_dollars,
+                    was_price_dollars=was_dollars,
                     in_stock=in_stock,
-                    stock_quantity=stock_qty,
-                    aisle=aisle_str,
-                    product_url=product_url,
-                    image_url=images[0].get("url", "") if images else "",
-                    rating=reviews.get("averageRating"),
+                    aisle="",
+                    product_url=product.get("link", ""),
+                    image_url=product.get("thumbnail", ""),
+                    rating=product.get("rating"),
                 )
             )
         return results

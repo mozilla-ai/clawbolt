@@ -1,6 +1,6 @@
 """Supplier pricing specialist tools.
 
-Phase 1a: supplier_search_products for Home Depot product lookups.
+Phase 1a: supplier_search_products for Home Depot via SerpApi.
 """
 
 import logging
@@ -48,14 +48,8 @@ def _format_results(results: list[ProductResult], query: str, zip_code: str) -> 
         if p.brand:
             parts.append(f"Brand: {p.brand}")
         if p.in_stock is not None:
-            stock = "In stock"
-            if p.stock_quantity is not None:
-                stock += f" ({p.stock_quantity})"
-            if not p.in_stock:
-                stock = "Out of stock"
+            stock = "In stock" if p.in_stock else "Out of stock"
             parts.append(stock)
-        if p.aisle:
-            parts.append(f"Aisle {p.aisle}")
 
         lines.append(f"{i}. {p.name} | {price_str}")
         if parts:
@@ -104,13 +98,20 @@ def _create_pricing_tools(
             )
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
-            logger.error("Home Depot API error %d for query=%r", status, query)
+            if status == 401:
+                logger.error("SerpApi auth failed (401)")
+                return ToolResult(
+                    content="Supplier pricing is not configured correctly. Contact admin.",
+                    is_error=True,
+                    error_kind=ToolErrorKind.SERVICE,
+                )
             if status == 429:
                 return ToolResult(
                     content="Home Depot pricing is temporarily busy. Try again in a moment.",
                     is_error=True,
                     error_kind=ToolErrorKind.SERVICE,
                 )
+            logger.error("SerpApi error %d for query=%r", status, query)
             return ToolResult(
                 content="Couldn't reach Home Depot pricing. Try again shortly.",
                 is_error=True,
@@ -132,7 +133,7 @@ def _create_pricing_tools(
             name=ToolName.SUPPLIER_SEARCH_PRODUCTS,
             description=(
                 "Search for products at Home Depot by keyword. "
-                "Returns product names, prices, stock levels, and store locations. "
+                "Returns product names, prices, and links. "
                 "A zip_code is required for local pricing. Check the user's profile "
                 "(USER.md) for a stored zip code before asking."
             ),
@@ -148,21 +149,20 @@ def _create_pricing_tools(
 
 def _pricing_factory(ctx: "ToolContext") -> list[Tool]:  # noqa: F821
     """Factory called by the tool registry."""
-    if not settings.homedepot_pricing_enabled:
-        logger.info("supplier_pricing factory: HOMEDEPOT_PRICING_ENABLED is false")
+    if not settings.serpapi_api_key:
+        logger.info("supplier_pricing factory: SERPAPI_API_KEY not set, returning no tools")
         return []
     logger.info("supplier_pricing factory: creating Home Depot pricing tools")
-    supplier = HomeDepotSupplier(store_id=settings.homedepot_store_id)
+    supplier = HomeDepotSupplier(api_key=settings.serpapi_api_key)
     return _create_pricing_tools(supplier, _cache)
 
 
 def _pricing_auth_check(ctx: "ToolContext") -> str | None:  # noqa: F821
     """Auth check for the registry.
 
-    Returns None in all cases. No per-user auth needed: HD pricing uses
-    their public product API with no API key.
+    Returns None when ready (key is set) or when unconfigured (hides the specialist).
     """
-    if not settings.homedepot_pricing_enabled:
+    if not settings.serpapi_api_key:
         return None
     return None
 
