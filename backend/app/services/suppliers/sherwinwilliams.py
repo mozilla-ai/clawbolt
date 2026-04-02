@@ -43,7 +43,7 @@ class _PriceHTMLParser(HTMLParser):
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         attr_dict = dict(attrs)
-        el_id = attr_dict.get("id", "")
+        el_id = attr_dict.get("id") or ""
 
         # <input type="hidden" id="ProductInfoPrice_{skuId}" value="$80.99"/>
         if tag == "input" and el_id.startswith("ProductInfoPrice_"):
@@ -115,7 +115,7 @@ class SherwinWilliamsSupplier:
                     continue
                 resp.raise_for_status()
                 return resp
-        return resp  # type: ignore[possibly-undefined]
+        return resp
 
     async def _search_catalog(self, query: str, max_results: int) -> list[dict]:
         """Step 1: Search products via WCS REST search API."""

@@ -24,7 +24,7 @@ def migrate_file() -> Callable[[Path, str, str], bool]:
     mod = importlib.util.module_from_spec(spec)
     sys.modules["migration_014"] = mod
     spec.loader.exec_module(mod)
-    return mod._migrate_file  # type: ignore[no-any-return]
+    return mod._migrate_file
 
 
 def test_migrate_auto_to_always_in_tools(
