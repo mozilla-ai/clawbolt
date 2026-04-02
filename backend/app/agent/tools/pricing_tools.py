@@ -194,6 +194,11 @@ def _create_paint_tools(
             )
         except httpx.HTTPStatusError as exc:
             status = exc.response.status_code
+            if status == 404:
+                return ToolResult(
+                    content=f'No products found for "{query}" at Sherwin-Williams. '
+                    "Try a different search term.",
+                )
             if status == 429:
                 return ToolResult(
                     content=(
