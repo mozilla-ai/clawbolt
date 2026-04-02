@@ -244,13 +244,10 @@ class TestSherwinWilliamsSupplier:
 
         search_resp = _make_httpx_response(200, _make_search_response())
         product_resp = _make_httpx_response(200, _make_product_response())
-        pricing_resp = _make_httpx_response(
-            200, text=_make_pricing_html({"16329": "$80.99", "16332": "$30.99", "16331": "$399.95"})
-        )
 
         mock_client = AsyncMock()
-        # Calls: search, product detail, pricing
-        mock_client.get = AsyncMock(side_effect=[search_resp, product_resp, pricing_resp])
+        # Calls: search, product detail (no pricing call -- prices not available)
+        mock_client.get = AsyncMock(side_effect=[search_resp, product_resp])
         mock_client.__aenter__ = AsyncMock(return_value=mock_client)
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
@@ -265,15 +262,17 @@ class TestSherwinWilliamsSupplier:
         assert all(r.supplier == "sherwinwilliams" for r in results)
         assert all(r.brand == "Sherwin-Williams" for r in results)
 
-        # Find the 1 Gallon result
+        # Prices are not available via the public API
+        assert all(r.price_dollars is None for r in results)
+
+        # Sizes should be populated
         gallon = [r for r in results if "1 Gallon" in r.name]
         assert len(gallon) == 1
-        assert gallon[0].price_dollars == 80.99
+        assert gallon[0].unit == "1 gallon"
 
-        # Find the 1 Quart result
         quart = [r for r in results if "1 Quart" in r.name]
         assert len(quart) == 1
-        assert quart[0].price_dollars == 30.99
+        assert quart[0].unit == "1 quart"
 
     @pytest.mark.asyncio
     async def test_search_empty_results(self) -> None:

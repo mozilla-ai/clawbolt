@@ -189,9 +189,13 @@ class SherwinWilliamsSupplier:
     async def search_products(
         self, query: str, location: Location, *, max_results: int = 5
     ) -> list[ProductResult]:
-        """Search Sherwin-Williams for products, returning priced results.
+        """Search Sherwin-Williams for products with available sizes.
 
-        Pipeline: search catalog -> fetch SKUs -> batch price lookup -> combine.
+        Pipeline: search catalog -> fetch SKU details (size, sheen) -> combine.
+
+        Note: SW does not expose pricing to unauthenticated API consumers.
+        The GetPricingService returns empty responses for guest users.
+        Results include product name, available sizes, and links but not prices.
         """
         catalog_entries = await self._search_catalog(query, max_results)
         if not catalog_entries:
@@ -212,7 +216,6 @@ class SherwinWilliamsSupplier:
                 skus = []
 
             if not skus:
-                # No SKUs: return product-level entry without per-SKU pricing
                 results.append(
                     ProductResult(
                         supplier="sherwinwilliams",
@@ -224,27 +227,15 @@ class SherwinWilliamsSupplier:
                 )
                 continue
 
-            # Fetch prices for all SKUs of this product
-            sku_ids = [s["SKUUniqueID"] for s in skus if "SKUUniqueID" in s]
-            try:
-                prices = await self._fetch_prices(sku_ids)
-            except (httpx.HTTPStatusError, httpx.TimeoutException):
-                logger.warning("Failed to fetch prices for product %s", product_id)
-                prices = {}
-
-            # Group SKUs by size to find representative prices
+            # One result per unique size
             seen_sizes: set[str] = set()
             for sku in skus:
                 sku_id = sku.get("SKUUniqueID", "")
                 size = self._extract_sku_attr(sku, "ATT_calc_size__volume_or_weight_+_item_")
 
-                # Skip if we already have this size (one per size is enough for search)
                 if size in seen_sizes:
                     continue
                 seen_sizes.add(size)
-
-                price_str = prices.get(sku_id, "")
-                price_dollars = _parse_price(price_str)
 
                 unit = "each"
                 if "gallon" in size.lower() or "quart" in size.lower():
@@ -260,7 +251,6 @@ class SherwinWilliamsSupplier:
                         product_id=sku_id or product_id,
                         name=sku_name,
                         brand="Sherwin-Williams",
-                        price_dollars=price_dollars,
                         unit=unit,
                         product_url=product_url,
                     )

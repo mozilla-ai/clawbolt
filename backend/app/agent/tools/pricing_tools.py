@@ -51,21 +51,25 @@ def _format_results(
     header = f'Found {len(results)} result(s) for "{query}" at {supplier_name}'
     if zip_code:
         header += f" (zip {zip_code})"
+    has_any_price = any(p.price_dollars is not None for p in results)
+    if not has_any_price:
+        header += " (pricing not available online, check link or call store)"
     lines = [f"{header}:\n"]
 
     for i, p in enumerate(results, 1):
-        price_str = (
-            f"${p.price_dollars:.2f}" if p.price_dollars is not None else "Price unavailable"
-        )
-        if (
-            p.was_price_dollars is not None
-            and p.price_dollars is not None
-            and p.was_price_dollars > p.price_dollars
-        ):
-            price_str += f" (was ${p.was_price_dollars:.2f})"
-
+        # Build the price/size suffix
+        size_parts: list[str] = []
+        if p.price_dollars is not None:
+            price_str = f"${p.price_dollars:.2f}"
+            if p.was_price_dollars is not None and p.was_price_dollars > p.price_dollars:
+                price_str += f" (was ${p.was_price_dollars:.2f})"
+            size_parts.append(price_str)
         if p.unit and p.unit != "each":
-            price_str += f" / {p.unit}"
+            size_parts.append(p.unit)
+
+        name_line = f"{i}. {p.name}"
+        if size_parts:
+            name_line += f" | {' / '.join(size_parts)}"
 
         parts = []
         if p.brand:
@@ -74,7 +78,7 @@ def _format_results(
             stock = "In stock" if p.in_stock else "Out of stock"
             parts.append(stock)
 
-        lines.append(f"{i}. {p.name} | {price_str}")
+        lines.append(name_line)
         if parts:
             lines.append(f"   {' | '.join(parts)}")
         if p.product_url:
@@ -229,8 +233,9 @@ def _create_paint_tools(
             name=ToolName.SUPPLIER_SEARCH_PAINT,
             description=(
                 "Search for paint products at Sherwin-Williams by keyword. "
-                "Returns paint names, prices per size (quart/gallon/5-gallon), and links. "
-                "No zip code required; Sherwin-Williams uses national list pricing."
+                "Returns paint names, available sizes, and links. "
+                "Pricing is not available through this tool. "
+                "Tell the user to check the link or call their local store for pricing."
             ),
             function=supplier_search_paint,
             params_model=PaintSearchParams,
