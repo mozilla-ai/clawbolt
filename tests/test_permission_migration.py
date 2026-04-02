@@ -2,13 +2,14 @@
 
 import json
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 
 @pytest.fixture()
-def migrate_file() -> object:
+def migrate_file() -> Callable[[Path, str, str], bool]:
     """Import the _migrate_file helper from the alembic migration."""
     import importlib.util
 
@@ -23,10 +24,12 @@ def migrate_file() -> object:
     mod = importlib.util.module_from_spec(spec)
     sys.modules["migration_014"] = mod
     spec.loader.exec_module(mod)
-    return mod._migrate_file
+    return mod._migrate_file  # type: ignore[no-any-return]
 
 
-def test_migrate_auto_to_always_in_tools(tmp_path: Path, migrate_file: object) -> None:
+def test_migrate_auto_to_always_in_tools(
+    tmp_path: Path, migrate_file: Callable[[Path, str, str], bool]
+) -> None:
     """Migration rewrites 'auto' -> 'always' in the tools section."""
     perm_file = tmp_path / "PERMISSIONS.json"
     data = {"version": 1, "tools": {"send_reply": "auto", "read_file": "auto"}, "resources": {}}
@@ -39,7 +42,9 @@ def test_migrate_auto_to_always_in_tools(tmp_path: Path, migrate_file: object) -
     assert result["tools"]["read_file"] == "always"
 
 
-def test_migrate_auto_to_always_in_resources(tmp_path: Path, migrate_file: object) -> None:
+def test_migrate_auto_to_always_in_resources(
+    tmp_path: Path, migrate_file: Callable[[Path, str, str], bool]
+) -> None:
     """Migration rewrites 'auto' -> 'always' in the resources section."""
     perm_file = tmp_path / "PERMISSIONS.json"
     data = {
@@ -57,7 +62,9 @@ def test_migrate_auto_to_always_in_resources(tmp_path: Path, migrate_file: objec
     assert result["tools"]["web_fetch"] == "ask"
 
 
-def test_migrate_no_change_when_already_always(tmp_path: Path, migrate_file: object) -> None:
+def test_migrate_no_change_when_already_always(
+    tmp_path: Path, migrate_file: Callable[[Path, str, str], bool]
+) -> None:
     """Migration is a no-op when all values are already 'always'."""
     perm_file = tmp_path / "PERMISSIONS.json"
     data = {"version": 1, "tools": {"read_file": "always", "send_reply": "ask"}, "resources": {}}
@@ -66,7 +73,9 @@ def test_migrate_no_change_when_already_always(tmp_path: Path, migrate_file: obj
     assert migrate_file(perm_file, "auto", "always") is False
 
 
-def test_migrate_preserves_ask_and_deny(tmp_path: Path, migrate_file: object) -> None:
+def test_migrate_preserves_ask_and_deny(
+    tmp_path: Path, migrate_file: Callable[[Path, str, str], bool]
+) -> None:
     """Migration does not touch 'ask' or 'deny' values."""
     perm_file = tmp_path / "PERMISSIONS.json"
     data = {
@@ -84,7 +93,9 @@ def test_migrate_preserves_ask_and_deny(tmp_path: Path, migrate_file: object) ->
     assert result["tools"]["read_file"] == "always"
 
 
-def test_downgrade_always_to_auto(tmp_path: Path, migrate_file: object) -> None:
+def test_downgrade_always_to_auto(
+    tmp_path: Path, migrate_file: Callable[[Path, str, str], bool]
+) -> None:
     """Downgrade rewrites 'always' -> 'auto'."""
     perm_file = tmp_path / "PERMISSIONS.json"
     data = {"version": 1, "tools": {"read_file": "always"}, "resources": {}}
