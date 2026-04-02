@@ -64,6 +64,11 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         domain_group="Integrations",
         domain_group_order=2,
     ),
+    "supplier_pricing": _FactoryMeta(
+        "Search product prices at Home Depot and Lowe's",
+        domain_group="Integrations",
+        domain_group_order=3,
+    ),
 }
 
 

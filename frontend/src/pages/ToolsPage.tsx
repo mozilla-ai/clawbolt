@@ -18,6 +18,7 @@ const TOOL_OAUTH_MAP: Record<string, string> = {
 const DISPLAY_NAMES: Record<string, string> = {
   quickbooks: 'QuickBooks',
   calendar: 'Google Calendar',
+  supplier_pricing: 'Pricing Tools',
   workspace: 'Workspace',
   profile: 'Profile',
   memory: 'Memory',
@@ -50,6 +51,7 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   send_reply: 'Send replies',
   send_media_reply: 'Send media',
   update_permission: 'Change permissions',
+  supplier_search_products: 'Search products',
 };
 
 function displayName(name: string): string {
