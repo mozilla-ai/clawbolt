@@ -2403,7 +2403,7 @@
           "permission_level": {
             "type": "string",
             "title": "Permission Level",
-            "default": "auto"
+            "default": "always"
           }
         },
         "type": "object",

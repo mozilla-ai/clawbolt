@@ -152,10 +152,10 @@ def test_calendar_tools_names(cal_tools: list[Tool]) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_list_calendars_is_auto(cal_tools: list[Tool]) -> None:
+def test_list_calendars_is_always(cal_tools: list[Tool]) -> None:
     tool = _get_tool(cal_tools, ToolName.CALENDAR_LIST_CALENDARS)
     assert tool.approval_policy is not None
-    assert tool.approval_policy.default_level == PermissionLevel.AUTO
+    assert tool.approval_policy.default_level == PermissionLevel.ALWAYS
 
 
 def test_list_events_is_ask(cal_tools: list[Tool]) -> None:

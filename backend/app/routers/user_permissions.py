@@ -43,7 +43,7 @@ async def update_permissions(
     return PermissionsResponse(content=json.dumps(data, indent=2))
 
 
-_VALID_LEVELS = {"auto", "ask", "deny"}
+_VALID_LEVELS = {"always", "ask", "deny"}
 
 
 def _validate_permissions_shape(data: dict[str, object]) -> None:
@@ -57,7 +57,7 @@ def _validate_permissions_shape(data: dict[str, object]) -> None:
             raise HTTPException(
                 status_code=400,
                 detail=f"Invalid permission level for: {', '.join(bad[:5])}. "
-                f"Allowed values: auto, ask, deny",
+                f"Allowed values: always, ask, deny",
             )
 
     resources = data.get("resources")
@@ -79,5 +79,5 @@ def _validate_permissions_shape(data: dict[str, object]) -> None:
                 raise HTTPException(
                     status_code=400,
                     detail=f"Invalid permission level in resources.{tool_name}: "
-                    f"{', '.join(bad[:5])}. Allowed values: auto, ask, deny",
+                    f"{', '.join(bad[:5])}. Allowed values: always, ask, deny",
                 )

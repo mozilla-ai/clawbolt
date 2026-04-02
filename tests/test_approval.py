@@ -76,34 +76,34 @@ class TestApprovalStore:
 
     def test_tool_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission("1", "web_search", PermissionLevel.AUTO)
+        store.set_permission("1", "web_search", PermissionLevel.ALWAYS)
         level = store.check_permission("1", "web_search", default=PermissionLevel.ASK)
-        assert level == PermissionLevel.AUTO
+        assert level == PermissionLevel.ALWAYS
 
     def test_resource_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="homedepot.com")
+        store.set_permission("1", "web_fetch", PermissionLevel.ALWAYS, resource="homedepot.com")
         level = store.check_permission(
             "1", "web_fetch", resource="homedepot.com", default=PermissionLevel.ASK
         )
-        assert level == PermissionLevel.AUTO
+        assert level == PermissionLevel.ALWAYS
 
     def test_glob_matching(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="*.gov")
+        store.set_permission("1", "web_fetch", PermissionLevel.ALWAYS, resource="*.gov")
         level = store.check_permission(
             "1", "web_fetch", resource="permits.gov", default=PermissionLevel.ASK
         )
-        assert level == PermissionLevel.AUTO
+        assert level == PermissionLevel.ALWAYS
 
     def test_resource_priority_over_tool(self, tmp_path: object) -> None:
         store = ApprovalStore()
         store.set_permission("1", "web_fetch", PermissionLevel.DENY)
-        store.set_permission("1", "web_fetch", PermissionLevel.AUTO, resource="safe.com")
+        store.set_permission("1", "web_fetch", PermissionLevel.ALWAYS, resource="safe.com")
         level = store.check_permission(
             "1", "web_fetch", resource="safe.com", default=PermissionLevel.ASK
         )
-        assert level == PermissionLevel.AUTO
+        assert level == PermissionLevel.ALWAYS
 
     def test_falls_through_to_tool_when_no_resource_match(self, tmp_path: object) -> None:
         store = ApprovalStore()
@@ -115,11 +115,11 @@ class TestApprovalStore:
 
     def test_persistence_round_trip(self, tmp_path: object) -> None:
         store1 = ApprovalStore()
-        store1.set_permission("1", "web_search", PermissionLevel.AUTO)
+        store1.set_permission("1", "web_search", PermissionLevel.ALWAYS)
         store1.set_permission("1", "web_fetch", PermissionLevel.DENY, resource="evil.com")
 
         store2 = ApprovalStore()
-        assert store2.check_permission("1", "web_search") == PermissionLevel.AUTO
+        assert store2.check_permission("1", "web_search") == PermissionLevel.ALWAYS
         assert (
             store2.check_permission("1", "web_fetch", resource="evil.com") == PermissionLevel.DENY
         )
@@ -362,7 +362,7 @@ class TestAgentApproval:
             description="Echo text",
             function=_echo_tool,
             params_model=_EchoParams,
-            approval_policy=ApprovalPolicy(default_level=PermissionLevel.AUTO),
+            approval_policy=ApprovalPolicy(default_level=PermissionLevel.ALWAYS),
         )
         mock_amessages.side_effect = [  # type: ignore[union-attr]
             make_tool_call_response([{"name": "echo", "arguments": {"text": "hello"}}]),
@@ -528,7 +528,7 @@ class TestAgentApproval:
 
         store = get_approval_store()
         level = store.check_permission(test_user.id, "fetcher")
-        assert level == PermissionLevel.AUTO
+        assert level == PermissionLevel.ALWAYS
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -683,7 +683,7 @@ class TestAgentApproval:
         mock_publish = AsyncMock()
 
         store = get_approval_store()
-        store.set_permission(test_user.id, "fetcher", PermissionLevel.AUTO)
+        store.set_permission(test_user.id, "fetcher", PermissionLevel.ALWAYS)
 
         tool = Tool(
             name="fetcher",

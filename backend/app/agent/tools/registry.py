@@ -53,7 +53,7 @@ class SubToolInfo:
 
     name: str
     description: str
-    default_permission: str = "auto"
+    default_permission: str = "always"
 
     def __post_init__(self) -> None:
         PermissionLevel(self.default_permission)  # validates at registration time

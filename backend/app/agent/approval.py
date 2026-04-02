@@ -4,7 +4,7 @@ Provides a permission layer that lets users control what the agent can do
 autonomously vs. what requires explicit approval. Tools opt in by setting
 an ``approval_policy`` on their ``Tool`` definition.
 
-Three permission levels: AUTO (execute freely), ASK (prompt user first),
+Three permission levels: ALWAYS (execute freely), ASK (prompt user first),
 DENY (never execute). Users can respond with yes/always/no/never to
 control both immediate and future behavior.
 
@@ -73,7 +73,7 @@ def _write_json(path: Path, data: Any) -> None:
 class PermissionLevel(StrEnum):
     """Permission level for a tool or resource."""
 
-    AUTO = "auto"
+    ALWAYS = "always"
     ASK = "ask"
     DENY = "deny"
 
@@ -187,9 +187,9 @@ class ApprovalStore:
 
         {
             "version": 1,
-            "tools": {"web_search": "auto", "bash_exec": "deny"},
+            "tools": {"web_search": "always", "bash_exec": "deny"},
             "resources": {
-                "web_fetch": {"homedepot.com": "auto", "*.gov": "auto"}
+                "web_fetch": {"homedepot.com": "always", "*.gov": "always"}
             }
         }
 
