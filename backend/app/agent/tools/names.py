@@ -39,6 +39,9 @@ class ToolName:
     CALENDAR_DELETE_EVENT = "calendar_delete_event"
     CALENDAR_CHECK_AVAILABILITY = "calendar_check_availability"
 
+    # Supplier pricing
+    SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
+
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
 

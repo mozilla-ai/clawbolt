@@ -111,6 +111,10 @@ class Settings(BaseSettings):
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
 
+    # Supplier pricing (Traject Data Backyard API)
+    backyard_api_key: str = ""
+    default_zip_code: str = ""
+
     # OAuth
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks
 
