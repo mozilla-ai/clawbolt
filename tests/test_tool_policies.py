@@ -18,10 +18,10 @@ def _find_tool(tools: list[Tool], name: str) -> Tool:
 
 
 class TestWorkspaceToolPolicies:
-    def test_read_file_is_auto(self) -> None:
+    def test_read_file_is_always(self) -> None:
         tools = create_workspace_tools("test-user")
         tool = _find_tool(tools, ToolName.READ_FILE)
-        assert tool.approval_policy is None  # No policy = AUTO
+        assert tool.approval_policy is None  # No policy = ALWAYS
 
     def test_write_file_is_always(self) -> None:
         tools = create_workspace_tools("test-user")
