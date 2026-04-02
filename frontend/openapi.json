@@ -2460,6 +2460,16 @@
             "type": "boolean",
             "title": "Enabled"
           },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "default": true
+          },
+          "auth_message": {
+            "type": "string",
+            "title": "Auth Message",
+            "default": ""
+          },
           "sub_tools": {
             "items": {
               "$ref": "#/components/schemas/SubToolEntryResponse"

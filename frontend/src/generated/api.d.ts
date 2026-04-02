@@ -1163,6 +1163,16 @@ export interface components {
             domain_group_order: number;
             /** Enabled */
             enabled: boolean;
+            /**
+             * Configured
+             * @default true
+             */
+            configured: boolean;
+            /**
+             * Auth Message
+             * @default
+             */
+            auth_message: string;
             /** Sub Tools */
             sub_tools?: components["schemas"]["SubToolEntryResponse"][];
         };

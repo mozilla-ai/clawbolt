@@ -19,6 +19,7 @@ dependencies = [
     "psycopg2-binary>=2.9",
     "alembic>=1.13",
     "cryptography>=42.0",
+    "cachetools>=5.3",
 ]
 
 [project.optional-dependencies]
