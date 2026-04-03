@@ -100,6 +100,7 @@ class MessageBus:
             await asyncio.sleep(ttl)
             stale = self._response_futures.pop(request_id, None)
             self._request_owners.pop(request_id, None)
+            self._event_queues.pop(request_id, None)
             if stale is not None and not stale.done():
                 stale.cancel()
                 logger.debug("Cleaned up stale response future for request %s", request_id)

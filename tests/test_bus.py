@@ -127,3 +127,25 @@ async def test_resolve_cleans_up_future() -> None:
     bus.resolve_response(request_id, msg)
     # Second resolve should return False (already cleaned up)
     assert bus.resolve_response(request_id, msg) is False
+
+
+@pytest.mark.asyncio
+async def test_ttl_cleanup_removes_event_queue() -> None:
+    """TTL cleanup should remove orphaned event queues when SSE is never opened."""
+    bus = MessageBus()
+    request_id = "req-leak"
+
+    bus.set_request_owner(request_id, "user-1")
+    bus.register_response_future(request_id, ttl=0.05)
+    bus.register_event_queue(request_id)
+
+    assert request_id in bus._event_queues
+    assert request_id in bus._response_futures
+    assert request_id in bus._request_owners
+
+    # Wait for TTL cleanup to fire
+    await asyncio.sleep(0.15)
+
+    assert request_id not in bus._response_futures
+    assert request_id not in bus._request_owners
+    assert request_id not in bus._event_queues
