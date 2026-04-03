@@ -7,7 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.file_store import HeartbeatStore
+from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
 
@@ -73,7 +73,7 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
                 "Do not restore items that were previously deleted."
             ),
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.AUTO,
+                default_level=PermissionLevel.ALWAYS,
                 description_builder=lambda args: "Update heartbeat notes",
             ),
         ),

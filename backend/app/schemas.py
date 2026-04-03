@@ -207,7 +207,7 @@ class SubToolEntryResponse(BaseModel):
     name: str
     description: str
     enabled: bool
-    permission_level: str = "auto"
+    permission_level: str = "always"
 
 
 class ToolConfigEntryResponse(BaseModel):
@@ -217,6 +217,8 @@ class ToolConfigEntryResponse(BaseModel):
     domain_group: str = ""
     domain_group_order: int = 0
     enabled: bool
+    configured: bool = True
+    auth_message: str = ""
     sub_tools: list[SubToolEntryResponse] = Field(default_factory=list)
 
 
@@ -354,3 +356,16 @@ class CalendarConfigResponse(BaseModel):
 
 class CalendarConfigUpdate(BaseModel):
     calendars: list[CalendarConfigEntry]
+
+
+# ---------------------------------------------------------------------------
+# Permissions (PERMISSIONS.json via API)
+# ---------------------------------------------------------------------------
+
+
+class PermissionsResponse(BaseModel):
+    content: str
+
+
+class PermissionsUpdate(BaseModel):
+    content: str

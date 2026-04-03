@@ -9,39 +9,17 @@ import { toast } from '@/lib/toast';
 import { useChannelRoutes, useChannelConfig, useToolConfig, useUpdateToolConfig, useOAuthStatus, useCalendarConfig, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { MESSAGING_CHANNELS, getChannelState, getChannelStatusDisplay } from '@/lib/channel-utils';
+import { displayName as toolDisplayName, getToolOAuthStatus } from '@/lib/tool-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
 import api from '@/api';
 
-// Human-readable display names for tool factories (matches ToolsPage).
-const TOOL_DISPLAY_NAMES: Record<string, string> = {
-  quickbooks: 'QuickBooks',
-  calendar: 'Google Calendar',
-  workspace: 'Workspace',
-  profile: 'Profile',
-  memory: 'Memory',
-  messaging: 'Messaging',
-  file: 'File Storage',
-  heartbeat: 'Heartbeat',
-  permissions: 'Permissions',
-};
-
-// Maps domain tool names to their OAuth integration identifiers (matches ToolsPage).
-const TOOL_OAUTH_MAP: Record<string, string> = {
-  quickbooks: 'quickbooks',
-  calendar: 'google_calendar',
-};
-
-// Per-calendar tools that can be individually toggled (matches ToolsPage).
+// Per-calendar tools that can be individually toggled.
 const PER_CALENDAR_TOOLS = [
   'calendar_list_events',
   'calendar_create_event',
   'calendar_update_event',
   'calendar_delete_event',
 ] as const;
-
-function toolDisplayName(name: string): string {
-  return TOOL_DISPLAY_NAMES[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
-}
 
 /** Truncate text to maxLen characters, appending ellipsis if trimmed. */
 function truncate(text: string, maxLen: number): string {
@@ -261,10 +239,7 @@ export default function DashboardPage() {
           {domainTools.length > 0 ? (
             <div className="space-y-2.5">
               {domainTools.map((tool) => {
-                const oauthKey = TOOL_OAUTH_MAP[tool.name];
-                const oauthEntry = oauthKey ? oauthMap[oauthKey] : undefined;
-                const isConnected = oauthEntry?.connected ?? false;
-                const isConfigured = oauthEntry?.configured ?? false;
+                const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap, tool.configured);
                 const enabledSubTools = (tool.sub_tools ?? []).filter((st) => st.enabled).length;
                 const totalSubTools = (tool.sub_tools ?? []).length;
                 return (
@@ -275,7 +250,7 @@ export default function DashboardPage() {
                         {isConfigured ? (
                           <span className={`inline-flex items-center gap-1 text-xs ${isConnected ? 'text-success' : 'text-warning'}`}>
                             <span className={`size-1.5 rounded-full ${isConnected ? 'bg-success' : 'bg-warning'}`} />
-                            {isConnected ? 'Connected' : 'Not connected'}
+                            {needsOAuth ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1 text-xs text-muted-foreground">

@@ -222,9 +222,13 @@ class LinqChannel(BaseChannel):
         if abs(time.time() - ts) > REPLAY_WINDOW_SECONDS:
             return False
 
+        try:
+            signed_payload = raw_body.decode("utf-8")
+        except UnicodeDecodeError:
+            return False
         expected = hmac.new(
             key=secret.encode(),
-            msg=f"{timestamp}.{raw_body.decode()}".encode(),
+            msg=f"{timestamp}.{signed_payload}".encode(),
             digestmod=hashlib.sha256,
         ).hexdigest()
         return hmac.compare_digest(expected, signature)

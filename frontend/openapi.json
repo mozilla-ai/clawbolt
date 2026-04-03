@@ -1080,6 +1080,62 @@
         }
       }
     },
+    "/api/user/permissions": {
+      "get": {
+        "summary": "Get Permissions",
+        "description": "Return the current PERMISSIONS.json content.",
+        "operationId": "get_permissions_api_user_permissions_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionsResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Permissions",
+        "description": "Overwrite PERMISSIONS.json with new content.",
+        "operationId": "update_permissions_api_user_permissions_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PermissionsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PermissionsResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/tools": {
       "get": {
         "summary": "Get Tool Config",
@@ -2057,6 +2113,32 @@
         ],
         "title": "OAuthStatusResponse"
       },
+      "PermissionsResponse": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "PermissionsResponse"
+      },
+      "PermissionsUpdate": {
+        "properties": {
+          "content": {
+            "type": "string",
+            "title": "Content"
+          }
+        },
+        "type": "object",
+        "required": [
+          "content"
+        ],
+        "title": "PermissionsUpdate"
+      },
       "ProviderInfo": {
         "properties": {
           "name": {
@@ -2321,7 +2403,7 @@
           "permission_level": {
             "type": "string",
             "title": "Permission Level",
-            "default": "auto"
+            "default": "always"
           }
         },
         "type": "object",
@@ -2377,6 +2459,16 @@
           "enabled": {
             "type": "boolean",
             "title": "Enabled"
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "default": true
+          },
+          "auth_message": {
+            "type": "string",
+            "title": "Auth Message",
+            "default": ""
           },
           "sub_tools": {
             "items": {

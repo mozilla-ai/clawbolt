@@ -1,4 +1,4 @@
-from backend.app.agent.profile import build_soul_prompt
+from backend.app.agent.system_prompt import build_soul_prompt
 from backend.app.models import User
 
 

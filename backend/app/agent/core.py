@@ -200,7 +200,7 @@ class ClawboltAgent:
         """
         policy = tool_obj.approval_policy
         if policy is None:
-            return PermissionLevel.AUTO, None, tool_obj.name
+            return PermissionLevel.ALWAYS, None, tool_obj.name
 
         resource: str | None = None
         if policy.resource_extractor is not None:
@@ -531,7 +531,7 @@ class ClawboltAgent:
         for entry in pre_validated:
             _i, tool_obj, v_args = entry
             level, resource, description = self._get_tool_permission(tool_obj, v_args)
-            if level == PermissionLevel.AUTO:
+            if level == PermissionLevel.ALWAYS:
                 auto_entries.append(entry)
             elif level == PermissionLevel.DENY:
                 deny_entries.append(entry)
@@ -567,7 +567,7 @@ class ClawboltAgent:
                 PlanStep(
                     tool_name=t.name,
                     description=self._get_tool_permission(t, a)[2],
-                    level=PermissionLevel.AUTO,
+                    level=PermissionLevel.ALWAYS,
                 )
                 for _, t, a in auto_entries
             ]
@@ -616,10 +616,36 @@ class ClawboltAgent:
                     for (_, tool_obj, _a), resource, _desc in ask_entries:
                         try:
                             store.set_permission(
-                                self.user.id, tool_obj.name, PermissionLevel.AUTO, resource
+                                self.user.id, tool_obj.name, PermissionLevel.ALWAYS, resource
                             )
                         except Exception:
-                            logger.warning("Failed to persist AUTO for tool %s", tool_obj.name)
+                            logger.warning("Failed to persist ALWAYS for tool %s", tool_obj.name)
+            elif decision == ApprovalDecision.INTERRUPTED:
+                # User changed the subject. Don't persist any permission.
+                for (idx, _tool_obj, v_args), _resource, desc in ask_entries:
+                    tc_req = parsed_calls[idx]
+                    tool_tags = self._get_tool_tags(tc_req.name)
+                    hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERRUPTED]
+                    msg = (
+                        f"Tool request interrupted: the user moved on to a "
+                        f'different topic instead of approving "{desc}". '
+                        f"Do not proactively retry this tool; only call it "
+                        f"again if the user explicitly asks.\n\n{hint}"
+                    )
+                    actions_taken.append(f"Interrupted: {tc_req.name}")
+                    tool_call_records.append(
+                        StoredToolInteraction(
+                            tool_call_id=tc_req.id,
+                            name=tc_req.name,
+                            args=v_args,
+                            result=msg,
+                            is_error=True,
+                            tags=set(tool_tags),
+                        )
+                    )
+                    tool_results.append(
+                        ToolResultMessage(tool_call_id=tc_req.id, content=msg, is_error=True)
+                    )
             else:
                 if decision == ApprovalDecision.ALWAYS_DENY:
                     for (_, tool_obj, _a), resource, _desc in ask_entries:

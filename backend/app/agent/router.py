@@ -17,16 +17,12 @@ from any_llm import AuthenticationError, ContentFilterError
 
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, ClawboltAgent
+from backend.app.agent.dto import SessionState, StoredMessage
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentEvent,
     ToolExecutionStartEvent,
     TurnStartEvent,
-)
-from backend.app.agent.file_store import (
-    SessionState,
-    StoredMessage,
-    ToolConfigStore,
 )
 from backend.app.agent.messages import AgentMessage
 from backend.app.agent.onboarding import (
@@ -36,6 +32,7 @@ from backend.app.agent.onboarding import (
 )
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.skills.loader import load_all_skills
+from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
 from backend.app.agent.tools.registry import (
@@ -251,6 +248,12 @@ async def run_agent(
     disabled_groups = await tool_config_store.get_disabled_tool_names()
     disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
 
+    # Ensure PERMISSIONS.json exists with all tools backfilled so the
+    # agent can read/edit it and the approval store resolves from it.
+    from backend.app.agent.approval import get_approval_store
+
+    get_approval_store().ensure_complete(user.id)
+
     # Shared mutable set so the list_capabilities tool closure and the
     # agent loop both see the same activation state.  This prevents the
     # tool from returning the full SKILL.md instructions a second time
@@ -307,7 +310,7 @@ async def run_agent(
     # During onboarding the agent must delete BOOTSTRAP.md and send
     # replies without prompting.  Pre-approve these tools so the
     # approval gate doesn't block the bootstrap flow.  (write_file and
-    # edit_file already default to AUTO.)
+    # edit_file already default to ALWAYS.)
     if is_onboarding:
         from backend.app.agent.approval import PermissionLevel, get_approval_store
         from backend.app.agent.tools.names import ToolName
@@ -319,7 +322,7 @@ async def run_agent(
         )
         store = get_approval_store()
         for tool_name in _onboarding_auto_tools:
-            store.set_permission(user.id, tool_name, PermissionLevel.AUTO)
+            store.set_permission(user.id, tool_name, PermissionLevel.ALWAYS)
 
     logger.debug(
         "Agent initialized for user %s, message seq=%d with %d core tools, "

@@ -117,7 +117,7 @@ class SubToolEntry(BaseModel):
     name: str = ""
     description: str = ""
     enabled: bool = True
-    permission_level: str = "auto"
+    permission_level: str = "always"
 
 
 class ToolConfigEntry(BaseModel):

@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
 
+    # Supplier pricing (SerpApi Home Depot engine)
+    serpapi_api_key: str = ""  # https://serpapi.com — free tier: 250 searches/month
+
     # OAuth
     app_base_url: str = "http://localhost:8000"  # Public URL for OAuth callbacks
 

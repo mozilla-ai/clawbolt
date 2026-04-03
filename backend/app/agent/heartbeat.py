@@ -27,9 +27,9 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.dto import HeartbeatLogEntry
-from backend.app.agent.file_store import HeartbeatStore
 from backend.app.agent.llm_parsing import get_response_text, parse_tool_calls
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.system_prompt import (
     build_heartbeat_system_prompt,
     build_time_user_context,

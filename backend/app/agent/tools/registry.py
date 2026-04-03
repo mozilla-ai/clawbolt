@@ -53,7 +53,7 @@ class SubToolInfo:
 
     name: str
     description: str
-    default_permission: str = "auto"
+    default_permission: str = "always"
 
     def __post_init__(self) -> None:
         PermissionLevel(self.default_permission)  # validates at registration time
@@ -447,4 +447,13 @@ def ensure_tool_modules_imported() -> None:
     package = importlib.import_module("backend.app.agent.tools")
     for _, name, _ in pkgutil.iter_modules(package.__path__, package.__name__ + "."):
         if name.endswith("_tools"):
-            importlib.import_module(name)
+            try:
+                importlib.import_module(name)
+                logger.debug("Imported tool module: %s", name)
+            except Exception:
+                logger.exception("Failed to import tool module: %s", name)
+    logger.info(
+        "Tool registry: %d factories registered: %s",
+        len(default_registry.factory_names),
+        ", ".join(sorted(default_registry.factory_names)),
+    )

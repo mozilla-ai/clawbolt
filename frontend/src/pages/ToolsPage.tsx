@@ -4,64 +4,13 @@ import Button from '@/components/ui/button';
 import { Switch } from '@heroui/switch';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
+import { displayName, subToolDisplayName, TOOL_OAUTH_MAP, getToolOAuthStatus } from '@/lib/tool-utils';
 import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
 import api from '@/api';
 import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
-// Map tool factory names to OAuth integration names.
-const TOOL_OAUTH_MAP: Record<string, string> = {
-  quickbooks: 'quickbooks',
-  calendar: 'google_calendar',
-};
-
-// Human-readable display names for tool factories.
-const DISPLAY_NAMES: Record<string, string> = {
-  quickbooks: 'QuickBooks',
-  calendar: 'Google Calendar',
-  workspace: 'Workspace',
-  profile: 'Profile',
-  memory: 'Memory',
-  messaging: 'Messaging',
-  file: 'File Storage',
-  heartbeat: 'Heartbeat',
-  permissions: 'Permissions',
-};
-
-// Human-readable sub-tool display names.
-const SUB_TOOL_NAMES: Record<string, string> = {
-  qb_query: 'Query entities',
-  qb_create: 'Create entities',
-  qb_update: 'Update entities',
-  qb_send: 'Send documents',
-  calendar_list_calendars: 'List calendars',
-  calendar_list_events: 'List events',
-  calendar_create_event: 'Create events',
-  calendar_update_event: 'Update events',
-  calendar_delete_event: 'Delete events',
-  calendar_check_availability: 'Check availability',
-  read_file: 'Read files',
-  write_file: 'Write files',
-  edit_file: 'Edit files',
-  delete_file: 'Delete files',
-  upload_to_storage: 'Upload files',
-  organize_file: 'Organize files',
-  get_heartbeat: 'Read heartbeat',
-  update_heartbeat: 'Update heartbeat',
-  send_reply: 'Send replies',
-  send_media_reply: 'Send media',
-  update_permission: 'Change permissions',
-};
-
-function displayName(name: string): string {
-  return DISPLAY_NAMES[name] ?? name.charAt(0).toUpperCase() + name.slice(1);
-}
-
-function subToolDisplayName(name: string): string {
-  return SUB_TOOL_NAMES[name] ?? name.split('_').join(' ');
-}
-
 const PERMISSION_LABELS: Record<string, { label: string; className: string; tooltip: string }> = {
-  auto: {
+  always: {
     label: 'Runs freely',
     className: 'text-success',
     tooltip: 'Used automatically, no approval needed. To change, just tell your assistant in chat.',
@@ -188,9 +137,7 @@ export default function ToolsPage() {
           <div className="grid gap-3">
             {domainTools.map((tool) => {
               const oauthIntegration = TOOL_OAUTH_MAP[tool.name];
-              const oauthEntry = oauthIntegration ? oauthMap[oauthIntegration] : undefined;
-              const isConnected = oauthEntry?.connected ?? false;
-              const isConfigured = oauthEntry?.configured ?? false;
+              const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap, tool.configured);
 
               return (
                 <Card key={tool.name} className={!isConfigured ? 'opacity-50' : undefined}>
@@ -203,7 +150,7 @@ export default function ToolsPage() {
                             <span className={`size-1.5 rounded-full inline-block shrink-0 ${
                               isConnected ? 'bg-success' : 'bg-warning'
                             }`} />
-                            {isConnected ? 'Connected' : 'Not connected'}
+                            {needsOAuth ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
                           </span>
                         ) : (
                           <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
@@ -217,7 +164,7 @@ export default function ToolsPage() {
                       )}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      {isConfigured && (
+                      {isConfigured && needsOAuth && (
                         isConnected ? (
                           <Button
                             variant="secondary"
@@ -241,7 +188,7 @@ export default function ToolsPage() {
                     </div>
                   </div>
 
-                  {/* Enable/disable toggle, only when connected */}
+                  {/* Enable/disable toggle: show when connected (OAuth) or always (non-OAuth) */}
                   {isConnected && (
                     <div className="flex items-center justify-between mt-3 pt-3 border-t border-border">
                       <span className="text-xs text-muted-foreground">

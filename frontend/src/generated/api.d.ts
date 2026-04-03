@@ -586,6 +586,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/permissions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Permissions
+         * @description Return the current PERMISSIONS.json content.
+         */
+        get: operations["get_permissions_api_user_permissions_get"];
+        /**
+         * Update Permissions
+         * @description Overwrite PERMISSIONS.json with new content.
+         */
+        put: operations["update_permissions_api_user_permissions_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/tools": {
         parameters: {
             query?: never;
@@ -986,6 +1010,16 @@ export interface components {
             /** Integrations */
             integrations: components["schemas"]["OAuthStatusEntry"][];
         };
+        /** PermissionsResponse */
+        PermissionsResponse: {
+            /** Content */
+            content: string;
+        };
+        /** PermissionsUpdate */
+        PermissionsUpdate: {
+            /** Content */
+            content: string;
+        };
         /** ProviderInfo */
         ProviderInfo: {
             /** Name */
@@ -1098,7 +1132,7 @@ export interface components {
             enabled: boolean;
             /**
              * Permission Level
-             * @default auto
+             * @default always
              */
             permission_level: string;
         };
@@ -1129,6 +1163,16 @@ export interface components {
             domain_group_order: number;
             /** Enabled */
             enabled: boolean;
+            /**
+             * Configured
+             * @default true
+             */
+            configured: boolean;
+            /**
+             * Auth Message
+             * @default
+             */
+            auth_message: string;
             /** Sub Tools */
             sub_tools?: components["schemas"]["SubToolEntryResponse"][];
         };
@@ -2101,6 +2145,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["MemoryResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_permissions_api_user_permissions_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionsResponse"];
+                };
+            };
+        };
+    };
+    update_permissions_api_user_permissions_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["PermissionsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PermissionsResponse"];
                 };
             };
             /** @description Validation Error */

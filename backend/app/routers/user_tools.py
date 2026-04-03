@@ -9,12 +9,8 @@ from typing import NamedTuple
 from fastapi import APIRouter, Depends, HTTPException
 
 from backend.app.agent.approval import ApprovalStore, PermissionLevel, get_approval_store
-from backend.app.agent.dto import SubToolEntry
-from backend.app.agent.file_store import (
-    ToolConfigEntry,
-    ToolConfigStore,
-    UserData,
-)
+from backend.app.agent.dto import SubToolEntry, ToolConfigEntry, UserData
+from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.registry import (
     default_registry,
     ensure_tool_modules_imported,
@@ -34,7 +30,7 @@ ensure_tool_modules_imported()
 
 # Factories whose tools are always available and cannot be disabled.
 _CORE_FACTORIES: frozenset[str] = frozenset(
-    {"workspace", "profile", "memory", "messaging", "file", "heartbeat", "permissions"}
+    {"workspace", "profile", "memory", "messaging", "file", "heartbeat"}
 )
 
 # Consolidated metadata for each factory group: description, display group,
@@ -54,7 +50,6 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
     "messaging": _FactoryMeta("Send text and media replies to the user"),
     "file": _FactoryMeta("Upload and organize files in cloud storage"),
     "heartbeat": _FactoryMeta("View and edit heartbeat notes"),
-    "permissions": _FactoryMeta("Change tool permission levels (run freely, ask first, or block)"),
     "quickbooks": _FactoryMeta(
         "Query, create, and manage QuickBooks Online entities",
         domain_group="Integrations",
@@ -64,6 +59,11 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         "Read and manage Google Calendar events",
         domain_group="Integrations",
         domain_group_order=2,
+    ),
+    "supplier_pricing": _FactoryMeta(
+        "Search product prices at Home Depot",
+        domain_group="Integrations",
+        domain_group_order=3,
     ),
 }
 
@@ -134,8 +134,42 @@ def _build_tool_list(
     return entries
 
 
-def _entry_to_response(e: ToolConfigEntry) -> ToolConfigEntryResponse:
+def _get_auth_status(user: UserData | None = None) -> dict[str, str]:
+    """Check auth_check for each specialist factory.
+
+    Returns a mapping of factory_name -> reason for factories that are
+    not configured or not authenticated. Empty dict means all configured.
+
+    When *user* is provided, a stub ``User`` with the correct ``id`` is
+    passed to auth_check so it can verify per-user tokens (OAuth, etc.).
+    """
+    from backend.app.agent.tools.registry import ToolContext
+    from backend.app.models import User
+
+    orm_user: User | None = None
+    if user is not None:
+        orm_user = User(id=user.id, user_id=user.user_id)
+    ctx = ToolContext(user=orm_user)  # type: ignore[arg-type]
+    status: dict[str, str] = {}
+    for name in default_registry.specialist_factory_names:
+        factory = default_registry._factories.get(name)
+        if factory and factory.auth_check:
+            try:
+                reason = factory.auth_check(ctx)
+            except AttributeError:
+                reason = None
+            if reason:
+                status[name] = reason
+    return status
+
+
+def _entry_to_response(
+    e: ToolConfigEntry,
+    auth_issues: dict[str, str] | None = None,
+) -> ToolConfigEntryResponse:
     """Convert a ToolConfigEntry DTO to an API response model."""
+    issues = auth_issues or {}
+    auth_reason = issues.get(e.name, "")
     return ToolConfigEntryResponse(
         name=e.name,
         description=e.description,
@@ -143,6 +177,8 @@ def _entry_to_response(e: ToolConfigEntry) -> ToolConfigEntryResponse:
         domain_group=e.domain_group,
         domain_group_order=e.domain_group_order,
         enabled=e.enabled,
+        configured=not bool(auth_reason),
+        auth_message=auth_reason,
         sub_tools=[
             SubToolEntryResponse(
                 name=st.name,
@@ -165,7 +201,8 @@ async def get_tool_config(
     disabled_names = {e.name for e in saved if not e.enabled}
     disabled_sub_map = {e.name: e.disabled_sub_tools for e in saved if e.disabled_sub_tools}
     entries = _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
-    return ToolConfigResponse(tools=[_entry_to_response(e) for e in entries])
+    auth_issues = _get_auth_status(current_user)
+    return ToolConfigResponse(tools=[_entry_to_response(e, auth_issues) for e in entries])
 
 
 @router.put("/user/tools", response_model=ToolConfigResponse)
@@ -221,4 +258,5 @@ async def update_tool_config(
     entries = _build_tool_list(disabled_names, disabled_sub_map, user_id=current_user.id)
     await store.save(entries)
 
-    return ToolConfigResponse(tools=[_entry_to_response(e) for e in entries])
+    auth_issues = _get_auth_status(current_user)
+    return ToolConfigResponse(tools=[_entry_to_response(e, auth_issues) for e in entries])

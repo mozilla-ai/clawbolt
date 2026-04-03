@@ -137,7 +137,6 @@ See [Storage Providers](../deployment/storage/) for setup instructions.
 | `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per user per day |
 | `HEARTBEAT_QUIET_HOURS_START` | `20` | Hour (24h) to stop sending heartbeats |
 | `HEARTBEAT_QUIET_HOURS_END` | `7` | Hour (24h) to resume sending heartbeats |
-| `HEARTBEAT_IDLE_DAYS` | `3` | Days of inactivity before flagging a user |
 | `HEARTBEAT_MODEL` | (same as `LLM_MODEL`) | Model used for heartbeat messages |
 | `HEARTBEAT_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for heartbeat messages |
 | `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent user evaluations per tick |
@@ -174,6 +173,14 @@ When `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set, users can co
 | `GOOGLE_CALENDAR_CLIENT_SECRET` | | OAuth client secret from the Google Cloud console |
 
 When `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` are set, users can connect their Google Calendar via the web dashboard. Once connected, the agent gains specialist calendar tools (`calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_check_availability`).
+
+## Supplier pricing
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERPAPI_API_KEY` | | SerpApi API key for Home Depot product price lookups. Free tier: 250 searches/month at [serpapi.com](https://serpapi.com) |
+
+When `SERPAPI_API_KEY` is set, the agent gains a `supplier_search_products` specialist tool that looks up Home Depot product prices, ratings, and links by keyword and zip code.
 
 ## HTTP timeouts
 
