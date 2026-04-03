@@ -41,7 +41,6 @@ class ToolName:
 
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
-    SUPPLIER_SEARCH_PAINT = "supplier_search_paint"
 
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"

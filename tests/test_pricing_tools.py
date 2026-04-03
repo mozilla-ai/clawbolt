@@ -421,7 +421,7 @@ class TestSupplierSearchTool:
 
 
 class TestPricingFactory:
-    def test_factory_returns_sw_only_when_no_serpapi_key(self) -> None:
+    def test_factory_returns_empty_when_no_serpapi_key(self) -> None:
         from backend.app.agent.tools.pricing_tools import _pricing_factory
 
         ctx = MagicMock()
@@ -429,10 +429,9 @@ class TestPricingFactory:
             mock_settings.serpapi_api_key = ""
             result = _pricing_factory(ctx)
 
-        assert len(result) == 1
-        assert result[0].name == "supplier_search_paint"
+        assert len(result) == 0
 
-    def test_factory_returns_both_when_key_set(self) -> None:
+    def test_factory_returns_hd_when_key_set(self) -> None:
         from backend.app.agent.tools.pricing_tools import _pricing_factory
 
         ctx = MagicMock()
@@ -440,10 +439,8 @@ class TestPricingFactory:
             mock_settings.serpapi_api_key = "test-key"
             result = _pricing_factory(ctx)
 
-        assert len(result) == 2
-        names = {t.name for t in result}
-        assert "supplier_search_products" in names
-        assert "supplier_search_paint" in names
+        assert len(result) == 1
+        assert result[0].name == "supplier_search_products"
 
     def test_auth_check_always_passes(self) -> None:
         from backend.app.agent.tools.pricing_tools import _pricing_auth_check

@@ -1,7 +1,6 @@
 """Supplier pricing specialist tools.
 
-Phase 1a: supplier_search_products for Home Depot via SerpApi.
-Phase 1b: supplier_search_paint for Sherwin-Williams via public WCS REST API.
+Home Depot product search via SerpApi.
 """
 
 from __future__ import annotations
@@ -19,7 +18,6 @@ from backend.app.config import settings
 from backend.app.services.suppliers.cache import SupplierCache
 from backend.app.services.suppliers.homedepot import HomeDepotSupplier
 from backend.app.services.suppliers.protocol import Location, ProductResult
-from backend.app.services.suppliers.sherwinwilliams import SherwinWilliamsSupplier
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -33,12 +31,6 @@ _cache = SupplierCache()
 class SupplierSearchParams(BaseModel):
     query: str = Field(description="Product search term, e.g. '3/4 plywood' or 'Kilz primer'")
     zip_code: str = Field(default="", description="5-digit US zip code for local pricing")
-
-
-class PaintSearchParams(BaseModel):
-    query: str = Field(
-        description="Paint search term, e.g. 'superpaint interior' or 'emerald exterior'"
-    )
 
 
 def _format_results(
@@ -174,81 +166,6 @@ def _create_pricing_tools(
     ]
 
 
-def _create_paint_tools(
-    supplier: SherwinWilliamsSupplier,
-    cache: SupplierCache,
-) -> list[Tool]:
-    """Build Sherwin-Williams paint search tools."""
-
-    async def supplier_search_paint(query: str) -> ToolResult:
-        cache_key = SupplierCache.make_key("sherwinwilliams", query, "national")
-        cached = await cache.get(cache_key)
-        if cached is not None:
-            return ToolResult(content=_format_results(cached, query, "", "Sherwin-Williams"))
-
-        try:
-            location = Location(zip_code="00000")
-            results = await supplier.search_products(query, location, max_results=5)
-        except httpx.TimeoutException:
-            logger.warning("SW search timed out: query=%r", query)
-            return ToolResult(
-                content="The Sherwin-Williams price lookup timed out. Try a simpler search term.",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-        except httpx.HTTPStatusError as exc:
-            status = exc.response.status_code
-            if status == 404:
-                return ToolResult(
-                    content=f'No products found for "{query}" at Sherwin-Williams. '
-                    "Try a different search term.",
-                )
-            if status == 429:
-                return ToolResult(
-                    content=(
-                        "Sherwin-Williams pricing is temporarily busy. Try again in a moment."
-                    ),
-                    is_error=True,
-                    error_kind=ToolErrorKind.SERVICE,
-                )
-            logger.error("SW error %d for query=%r", status, query)
-            return ToolResult(
-                content="Couldn't reach Sherwin-Williams pricing. Try again shortly.",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-        except Exception:
-            logger.exception("Unexpected error in SW search: query=%r", query)
-            return ToolResult(
-                content="Got an unexpected error looking up paint pricing. Try again.",
-                is_error=True,
-                error_kind=ToolErrorKind.SERVICE,
-            )
-
-        await cache.set(cache_key, results)
-        return ToolResult(content=_format_results(results, query, "", "Sherwin-Williams"))
-
-    return [
-        Tool(
-            name=ToolName.SUPPLIER_SEARCH_PAINT,
-            description=(
-                "Search for paint products at Sherwin-Williams by keyword. "
-                "Returns paint names, available sizes, and links. "
-                "Pricing is not available through this tool. "
-                "Tell the user to check the link or call their local store for pricing."
-            ),
-            function=supplier_search_paint,
-            params_model=PaintSearchParams,
-            approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ALWAYS,
-                description_builder=lambda args: (
-                    f'Search Sherwin-Williams for "{args.get("query", "")}"'
-                ),
-            ),
-        ),
-    ]
-
-
 def _pricing_factory(ctx: ToolContext) -> list[Tool]:
     """Factory called by the tool registry."""
     tools: list[Tool] = []
@@ -260,19 +177,11 @@ def _pricing_factory(ctx: ToolContext) -> list[Tool]:
     else:
         logger.info("supplier_pricing factory: SERPAPI_API_KEY not set, skipping Home Depot")
 
-    logger.info("supplier_pricing factory: creating Sherwin-Williams pricing tools")
-    sw_supplier = SherwinWilliamsSupplier()
-    tools.extend(_create_paint_tools(sw_supplier, _cache))
-
     return tools
 
 
 def _pricing_auth_check(ctx: ToolContext) -> str | None:
-    """Auth check for the registry.
-
-    Returns None when ready. SW requires no key, so paint tools are always available.
-    HD requires SERPAPI_API_KEY but we don't gate the whole factory on it.
-    """
+    """Auth check for the registry. Returns None when ready."""
     return None
 
 
@@ -284,16 +193,11 @@ def _register() -> None:
         "supplier_pricing",
         _pricing_factory,
         core=False,
-        summary="Search product prices at Home Depot and Sherwin-Williams",
+        summary="Search product prices at Home Depot",
         sub_tools=[
             SubToolInfo(
                 ToolName.SUPPLIER_SEARCH_PRODUCTS,
                 "Search products by keyword at Home Depot",
-                default_permission="always",
-            ),
-            SubToolInfo(
-                ToolName.SUPPLIER_SEARCH_PAINT,
-                "Search paint products by keyword at Sherwin-Williams",
                 default_permission="always",
             ),
         ],
