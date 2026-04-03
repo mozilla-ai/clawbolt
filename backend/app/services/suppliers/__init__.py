@@ -8,14 +8,12 @@ from backend.app.services.suppliers.protocol import (
     ProductResult,
     SupplierBackend,
 )
-from backend.app.services.suppliers.sherwinwilliams import SherwinWilliamsSupplier
 
 __all__ = [
     "HomeDepotSupplier",
     "Location",
     "ProductDetails",
     "ProductResult",
-    "SherwinWilliamsSupplier",
     "SupplierBackend",
     "SupplierCache",
 ]
