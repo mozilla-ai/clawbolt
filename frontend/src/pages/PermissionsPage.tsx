@@ -21,7 +21,7 @@ const PERM_ACTIVE_STYLES: Record<PermLevel, string> = {
 };
 
 export default function PermissionsPage() {
-  const { data: toolData, isPending: toolsPending } = useToolConfig();
+  const { data: toolData, isPending: toolsPending, isError } = useToolConfig();
   const { data: permData } = usePermissions();
   const updateMutation = useUpdatePermissions();
   const [collapsedTools, setCollapsedTools] = useState<Set<string>>(new Set());
@@ -85,6 +85,10 @@ export default function PermissionsPage() {
         <Spinner color="primary" size="md" aria-label="Loading" />
       </div>
     );
+  }
+
+  if (isError && !toolData) {
+    return <p className="text-sm text-danger py-4">Failed to load permissions.</p>;
   }
 
   return (
@@ -206,6 +210,7 @@ function SubToolRow({
         )}
       </span>
       <PermissionSelector
+        toolName={subToolDisplayName(subTool.name)}
         level={subTool.permission_level as PermLevel}
         onChange={(level) => onPermissionChange(subTool.name, level)}
         disabled={isUpdating}
@@ -215,16 +220,18 @@ function SubToolRow({
 }
 
 function PermissionSelector({
+  toolName,
   level,
   onChange,
   disabled,
 }: {
+  toolName: string;
   level: PermLevel;
   onChange: (level: PermLevel) => void;
   disabled: boolean;
 }) {
   return (
-    <div className="inline-flex rounded-md border border-border overflow-hidden shrink-0">
+    <div className="inline-flex rounded-md border border-border overflow-hidden shrink-0" role="radiogroup" aria-label={`Permission for ${toolName}`}>
       {PERM_OPTIONS.map((opt, i) => {
         const isActive = level === opt.value;
         return (
