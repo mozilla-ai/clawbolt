@@ -12,9 +12,12 @@ from __future__ import annotations
 import datetime
 import json
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func
+from sqlalchemy import func, select
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
 
 from backend.app.agent.dto import (
     HeartbeatLogEntry,
@@ -342,10 +345,45 @@ class IdempotencyStore:
             db.add(key)
             try:
                 db.commit()
-                return True
             except IntegrityError:
                 db.rollback()
                 return False
+
+            # Prune in the same session; insert is already committed
+            try:
+                self._prune(db)
+            except Exception:
+                db.rollback()
+                logger.warning("IdempotencyStore prune failed", exc_info=True)
+        return True
+
+    def _prune(self, db: Session | None = None) -> None:
+        """Remove the oldest rows when the table exceeds ``_SEEN_MAX``.
+
+        When *db* is provided the caller's session is reused, avoiding
+        an extra connection checkout.  When called without a session
+        (e.g. from tests) a fresh session is created automatically.
+
+        Keeps the newest rows by ``id`` (autoincrement, so allocation
+        order is monotonic even if commit order isn't -- fine for dedup).
+        Uses a single DELETE with a NOT-IN subquery so the whole thing
+        runs in one snapshot under READ COMMITTED; concurrent prunes
+        just delete the same set of rows instead of cascading.
+        We order by ``id`` rather than ``created_at`` because
+        app-generated timestamps can drift across workers.
+        """
+        if db is None:
+            with db_session() as db:
+                self._prune(db)
+            return
+        count = db.query(func.count(IdempotencyKey.id)).scalar() or 0
+        if count <= _SEEN_MAX:
+            return
+        keep = select(IdempotencyKey.id).order_by(IdempotencyKey.id.desc()).limit(_SEEN_MAX)
+        db.query(IdempotencyKey).filter(IdempotencyKey.id.notin_(keep)).delete(
+            synchronize_session=False
+        )
+        db.commit()
 
     async def mark_seen(self, external_id: str) -> None:
         """Insert an IdempotencyKey row (ignore if it already exists).
