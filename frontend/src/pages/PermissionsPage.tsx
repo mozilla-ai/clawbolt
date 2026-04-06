@@ -22,7 +22,7 @@ const PERM_ACTIVE_STYLES: Record<PermLevel, string> = {
 
 export default function PermissionsPage() {
   const { data: toolData, isPending: toolsPending, isError } = useToolConfig();
-  const { data: permData } = usePermissions();
+  const { data: permData, isPending: permsPending } = usePermissions();
   const updateMutation = useUpdatePermissions();
   const [collapsedTools, setCollapsedTools] = useState<Set<string>>(new Set());
 
@@ -111,7 +111,7 @@ export default function PermissionsPage() {
                 isExpanded={!collapsedTools.has(tool.name)}
                 onToggleExpand={() => toggleCollapsed(tool.name)}
                 onPermissionChange={handlePermissionChange}
-                isUpdating={updateMutation.isPending}
+                isUpdating={updateMutation.isPending || permsPending}
               />
             ))}
           </div>
@@ -129,7 +129,7 @@ export default function PermissionsPage() {
                 isExpanded={!collapsedTools.has(tool.name)}
                 onToggleExpand={() => toggleCollapsed(tool.name)}
                 onPermissionChange={handlePermissionChange}
-                isUpdating={updateMutation.isPending}
+                isUpdating={updateMutation.isPending || permsPending}
               />
             ))}
           </div>
