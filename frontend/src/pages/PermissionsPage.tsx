@@ -1,58 +1,85 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { Spinner } from '@heroui/spinner';
+import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
-import { usePermissions, useUpdatePermissions } from '@/hooks/queries';
-import Textarea from '@/components/ui/textarea';
-import Button from '@/components/ui/button';
+import { useToolConfig, usePermissions, useUpdatePermissions } from '@/hooks/queries';
+import { displayName, subToolDisplayName } from '@/lib/tool-utils';
+import type { ToolConfigEntryResponse, SubToolEntryResponse } from '@/types';
+
+type PermLevel = 'always' | 'ask' | 'deny';
+
+const PERM_OPTIONS: { value: PermLevel; label: string }[] = [
+  { value: 'always', label: 'Runs freely' },
+  { value: 'ask', label: 'Asks first' },
+  { value: 'deny', label: 'Blocked' },
+];
+
+const PERM_ACTIVE_STYLES: Record<PermLevel, string> = {
+  always: 'bg-muted text-success font-medium',
+  ask: 'bg-muted text-warning font-medium',
+  deny: 'bg-muted text-danger font-medium',
+};
 
 export default function PermissionsPage() {
-  const { data, isPending, isError, error } = usePermissions();
+  const { data: toolData, isPending: toolsPending } = useToolConfig();
+  const { data: permData } = usePermissions();
   const updateMutation = useUpdatePermissions();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState('');
-  const [jsonError, setJsonError] = useState<string | null>(null);
+  const [collapsedTools, setCollapsedTools] = useState<Set<string>>(new Set());
 
-  const rawContent = data?.content ?? '';
+  const tools = toolData?.tools ?? [];
+  const rawContent = permData?.content ?? '';
 
-  useEffect(() => {
-    setDraft(rawContent);
-  }, [rawContent]);
+  const coreTools = useMemo(
+    () => tools.filter((t) => t.category === 'core' && (t.sub_tools?.length ?? 0) > 0),
+    [tools],
+  );
+  const domainTools = useMemo(
+    () => tools.filter((t) => t.category === 'domain' && (t.sub_tools?.length ?? 0) > 0),
+    [tools],
+  );
 
-  const handleEdit = useCallback(() => {
-    setDraft(rawContent);
-    setJsonError(null);
-    setEditing(true);
-  }, [rawContent]);
+  const toggleCollapsed = (name: string) => {
+    setCollapsedTools((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
 
-  const handleCancel = useCallback(() => {
-    setDraft(rawContent);
-    setJsonError(null);
-    setEditing(false);
-  }, [rawContent]);
+  const handlePermissionChange = useCallback(
+    async (subToolName: string, level: string) => {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(rawContent) as Record<string, unknown>;
+      } catch {
+        parsed = {};
+      }
 
-  const handleSave = useCallback(async () => {
-    try {
-      JSON.parse(draft);
-    } catch {
-      setJsonError('Invalid JSON. Fix the syntax before saving.');
-      return;
-    }
-    setJsonError(null);
-    try {
-      await updateMutation.mutateAsync(
-        { content: draft },
-        {
-          onSuccess: () => toast.success('Permissions updated'),
-          onError: (e) => toast.error(e.message),
-        },
-      );
-      setEditing(false);
-    } catch {
-      // Stay in edit mode
-    }
-  }, [draft, updateMutation]);
+      const toolPerms = { ...((parsed.tools as Record<string, string>) ?? {}) };
+      toolPerms[subToolName] = level;
+      parsed = { ...parsed, tools: toolPerms };
 
-  if (isPending && !data) {
+      const content = JSON.stringify(parsed, null, 2);
+      try {
+        await updateMutation.mutateAsync(
+          { content },
+          {
+            onSuccess: () => {
+              const label = PERM_OPTIONS.find((o) => o.value === level)?.label ?? level;
+              toast.success(`${subToolDisplayName(subToolName)}: ${label}`);
+            },
+            onError: (e) => toast.error(e.message),
+          },
+        );
+      } catch {
+        // handled by onError
+      }
+    },
+    [rawContent, updateMutation],
+  );
+
+  if (toolsPending && !toolData) {
     return (
       <div className="flex justify-center py-12">
         <Spinner color="primary" size="md" aria-label="Loading" />
@@ -60,93 +87,191 @@ export default function PermissionsPage() {
     );
   }
 
-  if (isError && !data) {
-    return (
-      <div className="text-center py-8">
-        <p className="text-sm text-danger">{error.message}</p>
-      </div>
-    );
-  }
-
-  // Pretty-print JSON for display
-  let displayJson = rawContent;
-  try {
-    displayJson = JSON.stringify(JSON.parse(rawContent), null, 2);
-  } catch {
-    // If it's not valid JSON, show as-is
-  }
-
   return (
     <div>
       <div className="mb-4">
         <h2 className="text-xl font-semibold font-display">Permissions</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Control which actions your assistant can take freely, which require approval, and which are blocked.
+          Control which actions your assistant can take freely, which require approval, and which
+          are blocked.
         </p>
       </div>
 
-      {editing ? (
-        <div>
-          <div className="flex justify-end gap-2 mb-3">
-            <Button variant="ghost" onClick={handleCancel} disabled={updateMutation.isPending}>
-              Cancel
-            </Button>
-            <Button onClick={handleSave} isLoading={updateMutation.isPending} disabled={updateMutation.isPending}>
-              Save
-            </Button>
+      {coreTools.length > 0 && (
+        <section className="mb-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {coreTools.map((tool) => (
+              <ToolPermissionCard
+                key={tool.name}
+                tool={tool}
+                isExpanded={!collapsedTools.has(tool.name)}
+                onToggleExpand={() => toggleCollapsed(tool.name)}
+                onPermissionChange={handlePermissionChange}
+                isUpdating={updateMutation.isPending}
+              />
+            ))}
           </div>
-          {jsonError && (
-            <p className="text-sm text-danger mb-2">{jsonError}</p>
-          )}
-          <Textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            rows={6}
-            classNames={{ input: '!min-h-[65vh] font-mono text-sm' }}
-            placeholder="No permissions configured yet."
-            autoFocus
-          />
+        </section>
+      )}
+
+      {domainTools.length > 0 && (
+        <section className="mb-4">
+          <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Integrations</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+            {domainTools.map((tool) => (
+              <ToolPermissionCard
+                key={tool.name}
+                tool={tool}
+                isExpanded={!collapsedTools.has(tool.name)}
+                onToggleExpand={() => toggleCollapsed(tool.name)}
+                onPermissionChange={handlePermissionChange}
+                isUpdating={updateMutation.isPending}
+              />
+            ))}
+          </div>
+        </section>
+      )}
+
+    </div>
+  );
+}
+
+function ToolPermissionCard({
+  tool,
+  isExpanded,
+  onToggleExpand,
+  onPermissionChange,
+  isUpdating,
+}: {
+  tool: ToolConfigEntryResponse;
+  isExpanded: boolean;
+  onToggleExpand: () => void;
+  onPermissionChange: (toolName: string, level: string) => void;
+  isUpdating: boolean;
+}) {
+  const subTools = tool.sub_tools ?? [];
+
+  return (
+    <div className="rounded-[var(--radius-lg)] border border-border bg-card p-3">
+      <button
+        type="button"
+        className="flex items-center justify-between w-full text-left gap-2"
+        onClick={onToggleExpand}
+        aria-expanded={isExpanded}
+      >
+        <span className="text-sm font-medium truncate">{displayName(tool.name)}</span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[11px] text-muted-foreground">
+            {subTools.length}
+          </span>
+          <ChevronIcon expanded={isExpanded} />
         </div>
-      ) : (
-        <div>
-          <div className="flex justify-end mb-3">
-            <Button variant="secondary" onClick={handleEdit}>
-              <EditIcon />
-              Edit
-            </Button>
-          </div>
-          <div
-            className="min-h-[65vh] rounded-[var(--radius-lg)] border border-border bg-card p-6 cursor-pointer overflow-auto"
-            onClick={handleEdit}
-            role="button"
-            tabIndex={0}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' || e.key === ' ') handleEdit();
-            }}
-          >
-            {displayJson.trim() ? (
-              <pre className="text-sm font-mono whitespace-pre-wrap text-foreground">{displayJson}</pre>
-            ) : (
-              <p className="text-muted-foreground italic">
-                No permissions configured yet. Permissions will be generated automatically when your assistant starts.
-              </p>
-            )}
-          </div>
+      </button>
+
+      {isExpanded && (
+        <div className="mt-2 pt-2 border-t border-border space-y-0.5">
+          {subTools.map((st) => (
+            <SubToolRow
+              key={st.name}
+              subTool={st}
+              onPermissionChange={onPermissionChange}
+              isUpdating={isUpdating}
+            />
+          ))}
         </div>
       )}
     </div>
   );
 }
 
-function EditIcon() {
+function SubToolRow({
+  subTool,
+  onPermissionChange,
+  isUpdating,
+}: {
+  subTool: SubToolEntryResponse;
+  onPermissionChange: (toolName: string, level: string) => void;
+  isUpdating: boolean;
+}) {
   return (
-    <svg className="w-4 h-4 mr-1.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth={2}
-        d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
+    <div className="flex items-center justify-between gap-2 py-0.5">
+      <span className="text-xs min-w-0 truncate flex items-center gap-1">
+        {subToolDisplayName(subTool.name)}
+        {subTool.description && (
+          <Tooltip content={subTool.description} delay={200} closeDelay={0}>
+            <span className="inline-flex text-muted-foreground cursor-help shrink-0">
+              <InfoIcon />
+            </span>
+          </Tooltip>
+        )}
+      </span>
+      <PermissionSelector
+        level={subTool.permission_level as PermLevel}
+        onChange={(level) => onPermissionChange(subTool.name, level)}
+        disabled={isUpdating}
       />
+    </div>
+  );
+}
+
+function PermissionSelector({
+  level,
+  onChange,
+  disabled,
+}: {
+  level: PermLevel;
+  onChange: (level: PermLevel) => void;
+  disabled: boolean;
+}) {
+  return (
+    <div className="inline-flex rounded-md border border-border overflow-hidden shrink-0">
+      {PERM_OPTIONS.map((opt, i) => {
+        const isActive = level === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            role="radio"
+            aria-checked={isActive}
+            disabled={disabled}
+            onClick={() => {
+              if (!isActive) onChange(opt.value);
+            }}
+            className={[
+              'px-1.5 py-0.5 text-[10px] transition-colors',
+              i < PERM_OPTIONS.length - 1 ? 'border-r border-border' : '',
+              isActive ? PERM_ACTIVE_STYLES[opt.value] : 'text-muted-foreground hover:bg-muted',
+              disabled ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer',
+            ].join(' ')}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function InfoIcon() {
+  return (
+    <svg className="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+      <circle cx="12" cy="12" r="10" />
+      <path strokeLinecap="round" d="M12 16v-4M12 8h.01" />
     </svg>
   );
 }
+
+function ChevronIcon({ expanded }: { expanded: boolean }) {
+  return (
+    <svg
+      className={`w-3.5 h-3.5 text-muted-foreground transition-transform ${expanded ? 'rotate-90' : ''}`}
+      fill="none"
+      viewBox="0 0 24 24"
+      stroke="currentColor"
+      strokeWidth={2}
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+

@@ -91,8 +91,9 @@ export function useUpdatePermissions() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (body: PermissionsUpdate) => api.updatePermissions(body),
-    onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.permissions.all });
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.permissions.all, data);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     },
   });
 }
