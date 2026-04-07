@@ -351,17 +351,20 @@ class OAuthService:
             return True
 
     def is_connected(self, user_id: str, integration: str) -> bool:
-        """Check if a token row exists for this user/integration."""
-        from backend.app.models import OAuthToken
+        """Check if a valid (non-expired) token exists for this user/integration.
 
-        with db_session() as db:
-            row = db.execute(
-                select(OAuthToken.id).where(
-                    OAuthToken.user_id == user_id,
-                    OAuthToken.integration == integration,
-                )
-            ).scalar_one_or_none()
-            return row is not None
+        Returns True when a token row exists and is either not expired or
+        has a refresh token that could renew it. Returns False when no
+        token exists or the token is expired without a refresh token.
+        """
+        token = self.load_token(user_id, integration)
+        if token is None:
+            return False
+        if not token.is_expired():
+            return True
+        # Expired but has a refresh token: still considered "connected"
+        # because get_valid_token() will refresh it on next use.
+        return bool(token.refresh_token)
 
     # -- Token refresh with error classification --------------------------------
 
@@ -376,8 +379,22 @@ class OAuthService:
         if isinstance(error, httpx.HTTPStatusError):
             try:
                 body = error.response.json()
-                return body.get("error") in _PERMANENT_OAUTH_ERROR_CODES
+                error_code = body.get("error")
+                is_permanent = error_code in _PERMANENT_OAUTH_ERROR_CODES
+                logger.debug(
+                    "OAuth error classification: status=%s error_code=%s permanent=%s body=%s",
+                    error.response.status_code,
+                    error_code,
+                    is_permanent,
+                    body,
+                )
+                return is_permanent
             except Exception:
+                logger.debug(
+                    "OAuth error response not JSON: status=%s body=%r",
+                    error.response.status_code,
+                    error.response.text[:200],
+                )
                 return False
         return False
 
@@ -394,12 +411,30 @@ class OAuthService:
         """
         token = self.load_token(user_id, integration)
         if not token or not token.refresh_token:
+            logger.debug(
+                "Cannot refresh token (missing): user=%s integration=%s has_token=%s has_refresh=%s",
+                user_id,
+                integration,
+                token is not None,
+                bool(token and token.refresh_token),
+            )
             return None
 
         config = get_oauth_config(integration)
         if config is None:
+            logger.debug(
+                "Cannot refresh token (no config): user=%s integration=%s",
+                user_id,
+                integration,
+            )
             return None
 
+        logger.debug(
+            "Attempting token refresh: user=%s integration=%s token_url=%s",
+            user_id,
+            integration,
+            config.token_url,
+        )
         http = self._get_http()
         resp = await http.post(
             config.token_url,
@@ -450,13 +485,27 @@ class OAuthService:
         """
         token = self.load_token(user_id, integration)
         if not token:
+            logger.debug("No token found: user=%s integration=%s", user_id, integration)
             return None
 
         if not token.is_expired():
+            logger.debug(
+                "Token valid (not expired): user=%s integration=%s expires_at=%s",
+                user_id,
+                integration,
+                token.expires_at,
+            )
             return token
 
+        logger.info(
+            "Token expired: user=%s integration=%s expires_at=%s",
+            user_id,
+            integration,
+            token.expires_at,
+        )
+
         if not token.refresh_token:
-            logger.info(
+            logger.warning(
                 "Token expired with no refresh token: user=%s integration=%s",
                 user_id,
                 integration,
@@ -473,8 +522,19 @@ class OAuthService:
                 exc,
             )
             if self._is_permanent_refresh_failure(exc):
+                logger.warning(
+                    "Permanent OAuth failure, deleting token: user=%s integration=%s",
+                    user_id,
+                    integration,
+                )
                 self.delete_token(user_id, integration)
                 await self._notify_reauth_needed(user_id, integration)
+            else:
+                logger.info(
+                    "Transient OAuth failure, keeping token for retry: user=%s integration=%s",
+                    user_id,
+                    integration,
+                )
             return None
 
     async def _notify_reauth_needed(
