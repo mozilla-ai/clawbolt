@@ -386,7 +386,6 @@ function ChannelCard({
             isPremium={isPremium}
             channelConfig={channelConfig}
             telegramLinkData={telegramLinkData}
-
             premiumLinkData={premiumLinkData}
             onSaved={onConfigSaved}
           />
@@ -412,7 +411,6 @@ function ChannelCard({
                 isPremium={isPremium}
                 channelConfig={channelConfig}
                 telegramLinkData={telegramLinkData}
-    
                 premiumLinkData={premiumLinkData}
                 onSaved={onConfigSaved}
               />

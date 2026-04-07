@@ -26,11 +26,20 @@ export default function GetStartedPage() {
 
   // Premium link data (fetched once, same pattern as ChannelsPage)
   const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
-  const [premiumLinkData] = useState<PremiumLinkData | null>(null);
+  const [linkDataMap, setLinkDataMap] = useState<Partial<Record<ChannelKey, PremiumLinkData | null>>>({});
 
   useEffect(() => {
     if (isPremium) {
       api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
+      const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
+        linq: () => api.getLinqLink(),
+        bluebubbles: () => api.getBlueBubblesLink(),
+      };
+      for (const [key, fetcher] of Object.entries(fetchers)) {
+        fetcher().then((data) => {
+          setLinkDataMap((prev) => ({ ...prev, [key]: { identifier: data.phone_number, connected: data.connected } }));
+        }).catch(() => {});
+      }
     }
   }, [isPremium]);
 
@@ -100,6 +109,16 @@ export default function GetStartedPage() {
     // Refresh premium link data after save
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
+      const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
+        linq: () => api.getLinqLink(),
+        bluebubbles: () => api.getBlueBubblesLink(),
+      };
+      const fetcher = fetchers[key];
+      if (fetcher) {
+        fetcher().then((data) => {
+          setLinkDataMap((prev) => ({ ...prev, [key]: { identifier: data.phone_number, connected: data.connected } }));
+        }).catch(() => {});
+      }
     }
   };
 
@@ -207,8 +226,7 @@ export default function GetStartedPage() {
                     isPremium={isPremium}
                     channelConfig={channelConfig}
                     telegramLinkData={telegramLinkData}
-
-                    premiumLinkData={premiumLinkData}
+                    premiumLinkData={linkDataMap[selectedChannel] ?? null}
                     onSaved={() => handleConfigSaved(selectedChannel)}
                   />
                 </div>

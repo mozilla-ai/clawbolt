@@ -51,6 +51,7 @@ export function ChannelConfigForm({ channelKey, isPremium, ...rest }: ChannelCon
 
 interface PremiumLinkConfig {
   channelKey: ChannelKey;
+  displayName: string;
   label: string;
   placeholder: string;
   helpText: string;
@@ -64,6 +65,7 @@ interface PremiumLinkConfig {
 const PREMIUM_LINK_CONFIGS: Partial<Record<ChannelKey, PremiumLinkConfig>> = {
   linq: {
     channelKey: 'linq',
+    displayName: 'Text Messaging',
     label: 'Your Phone Number',
     placeholder: 'e.g. +15551234567',
     helpText: "E.164 format phone number. This is the number you'll text from.",
@@ -73,6 +75,7 @@ const PREMIUM_LINK_CONFIGS: Partial<Record<ChannelKey, PremiumLinkConfig>> = {
   },
   bluebubbles: {
     channelKey: 'bluebubbles',
+    displayName: 'BlueBubbles',
     label: 'Your Phone Number or iCloud Email',
     placeholder: 'e.g. +15551234567 or user@icloud.com',
     helpText: 'The phone number or iCloud email you send iMessages from.',
@@ -103,7 +106,7 @@ function PremiumChannelLinkForm({
     try {
       await config.setLink(displayedValue);
       setIdentifier(null);
-      toast.success(`${config.channelKey} settings updated`);
+      toast.success(`${config.displayName} settings updated`);
       onSaved();
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save');
