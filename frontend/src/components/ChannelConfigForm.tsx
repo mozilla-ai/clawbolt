@@ -13,14 +13,16 @@ import api from '@/api';
 
 // Types derived from API return types, exported for consumers
 export type TelegramLinkData = Awaited<ReturnType<typeof api.getTelegramLink>>;
-export type LinqLinkData = Awaited<ReturnType<typeof api.getLinqLink>>;
+
+// Generic premium link data shape (all premium link endpoints share this structure)
+export type PremiumLinkData = { identifier: string | null; connected: boolean };
 
 interface ChannelConfigFormProps {
   channelKey: ChannelKey;
   isPremium: boolean;
   channelConfig: ChannelConfigResponse | undefined;
   telegramLinkData: TelegramLinkData | null;
-  linqLinkData: LinqLinkData | null;
+  premiumLinkData: PremiumLinkData | null;
   onSaved: () => void;
 }
 
@@ -28,8 +30,14 @@ export function ChannelConfigForm({ channelKey, isPremium, ...rest }: ChannelCon
   if (channelKey === 'telegram') {
     return isPremium ? <PremiumTelegramForm {...rest} /> : <OssTelegramForm {...rest} />;
   }
+  if (isPremium) {
+    const config = PREMIUM_LINK_CONFIGS[channelKey];
+    if (config) {
+      return <PremiumChannelLinkForm config={config} {...rest} />;
+    }
+  }
   if (channelKey === 'linq') {
-    return isPremium ? <PremiumLinqForm {...rest} /> : <OssLinqForm {...rest} />;
+    return <OssLinqForm {...rest} />;
   }
   if (channelKey === 'bluebubbles') {
     return <BlueBubblesForm {...rest} />;
@@ -37,7 +45,104 @@ export function ChannelConfigForm({ channelKey, isPremium, ...rest }: ChannelCon
   return null;
 }
 
-// --- Telegram forms ---
+// ---------------------------------------------------------------------------
+// Generic premium link form (data-driven)
+// ---------------------------------------------------------------------------
+
+interface PremiumLinkConfig {
+  channelKey: ChannelKey;
+  label: string;
+  placeholder: string;
+  helpText: string;
+  inputMode?: 'tel' | 'text';
+  /** Return the display address for the TextAssistantCard, or empty to hide it. */
+  getAssistantAddress: (config: ChannelConfigResponse | undefined) => string;
+  assistantSubtitle?: string;
+  setLink: (identifier: string) => Promise<unknown>;
+}
+
+const PREMIUM_LINK_CONFIGS: Partial<Record<ChannelKey, PremiumLinkConfig>> = {
+  linq: {
+    channelKey: 'linq',
+    label: 'Your Phone Number',
+    placeholder: 'e.g. +15551234567',
+    helpText: "E.164 format phone number. This is the number you'll text from.",
+    inputMode: 'tel',
+    getAssistantAddress: (config) => config?.linq_from_number ?? '',
+    setLink: (id) => api.setLinqLink(id),
+  },
+  bluebubbles: {
+    channelKey: 'bluebubbles',
+    label: 'Your Phone Number or iCloud Email',
+    placeholder: 'e.g. +15551234567 or user@icloud.com',
+    helpText: 'The phone number or iCloud email you send iMessages from.',
+    getAssistantAddress: (config) => config?.bluebubbles_imessage_address ?? '',
+    assistantSubtitle: 'Send an iMessage to this address to reach your assistant.',
+    setLink: (id) => api.setBlueBubblesLink(id),
+  },
+};
+
+function PremiumChannelLinkForm({
+  config,
+  premiumLinkData,
+  channelConfig,
+  onSaved,
+}: { config: PremiumLinkConfig } & Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
+  const [identifier, setIdentifier] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const displayedValue = identifier ?? premiumLinkData?.identifier ?? '';
+  const assistantAddress = config.getAssistantAddress(channelConfig);
+
+  const handleSave = async () => {
+    if (premiumLinkData && displayedValue === (premiumLinkData.identifier ?? '')) {
+      toast.error('No changes to save');
+      return;
+    }
+    setSaving(true);
+    try {
+      await config.setLink(displayedValue);
+      setIdentifier(null);
+      toast.success(`${config.channelKey} settings updated`);
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-4">
+      {assistantAddress && (
+        <TextAssistantCard
+          fromNumber={assistantAddress}
+          subtitle={config.assistantSubtitle}
+        />
+      )}
+      <Field label={config.label}>
+        <Input
+          value={displayedValue}
+          onChange={(e) => setIdentifier(e.target.value)}
+          placeholder={config.placeholder}
+          inputMode={config.inputMode}
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          {config.helpText}
+        </p>
+      </Field>
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={saving || premiumLinkData === null} isLoading={saving}>
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Telegram forms (Telegram is special: has its own field type + tooltip)
+// ---------------------------------------------------------------------------
 
 type SubFormProps = Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>;
 
@@ -116,55 +221,7 @@ function OssTelegramForm({ channelConfig, onSaved }: SubFormProps) {
   );
 }
 
-// --- Linq forms ---
-
-function PremiumLinqForm({ linqLinkData, onSaved }: SubFormProps) {
-  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
-  const [saving, setSaving] = useState(false);
-
-  const displayedNumber = phoneNumber ?? linqLinkData?.phone_number ?? '';
-  const fromNumber = linqLinkData?.linq_from_number ?? '';
-
-  const handleSave = async () => {
-    if (linqLinkData && displayedNumber === (linqLinkData.phone_number ?? '')) {
-      toast.error('No changes to save');
-      return;
-    }
-    setSaving(true);
-    try {
-      await api.setLinqLink(displayedNumber);
-      setPhoneNumber(null);
-      toast.success('Text messaging settings updated');
-      onSaved();
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : 'Failed to save');
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <div className="grid gap-4">
-      {fromNumber && <TextAssistantCard fromNumber={fromNumber} />}
-      <Field label="Your Phone Number">
-        <Input
-          value={displayedNumber}
-          onChange={(e) => setPhoneNumber(e.target.value)}
-          placeholder="e.g. +15551234567"
-          inputMode="tel"
-        />
-        <p className="text-xs text-muted-foreground mt-1">
-          E.164 format phone number. This is the number you'll text from.
-        </p>
-      </Field>
-      <div className="flex justify-end">
-        <Button onClick={handleSave} disabled={saving || linqLinkData === null} isLoading={saving}>
-          Save
-        </Button>
-      </div>
-    </div>
-  );
-}
+// --- OSS Linq form ---
 
 const LINQ_SERVICES = ['iMessage', 'SMS', 'RCS'] as const;
 
@@ -234,7 +291,7 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
   );
 }
 
-// --- BlueBubbles form ---
+// --- OSS BlueBubbles form ---
 
 function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
   const updateMutation = useUpdateChannelConfig();

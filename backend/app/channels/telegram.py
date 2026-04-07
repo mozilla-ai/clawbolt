@@ -257,6 +257,17 @@ class TelegramChannel(BaseChannel):
         else:
             logger.warning("Failed to auto-register Telegram webhook")
 
+    async def register_paas_webhook(self, base_url: str) -> bool | None:
+        """Register Telegram webhook using a stable PaaS base URL."""
+        if not settings.telegram_bot_token:
+            return None
+        webhook_url = f"{base_url}/api/webhooks/telegram"
+        secret = get_effective_webhook_secret(settings) or None
+        ok = await register_telegram_webhook(
+            settings.telegram_bot_token, webhook_url, secret=secret
+        )
+        return ok
+
     # -- Inbound ---------------------------------------------------------------
 
     @staticmethod

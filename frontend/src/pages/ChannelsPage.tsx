@@ -10,17 +10,24 @@ import {
   getChannelStatusDisplay,
   type ChannelKey,
   type ChannelState,
+  type PremiumChannelData,
 } from '@/lib/channel-utils';
-import { ChannelConfigForm, type TelegramLinkData, type LinqLinkData } from '@/components/ChannelConfigForm';
+import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
 import api from '@/api';
 
 // Types for premium linking responses
 type TelegramBotInfo = NonNullable<Awaited<ReturnType<typeof api.getTelegramBotInfo>>>;
 
-// Premium data used for state derivation
-interface PremiumChannelData {
-  telegram_user_id?: string | null;
-  phone_number?: string | null;
+// Registry of premium link fetchers. Adding a channel here is all that's needed
+// for ChannelsPage to fetch, store, pass, and refresh its link data.
+const PREMIUM_LINK_FETCHERS: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
+  linq: () => api.getLinqLink(),
+  bluebubbles: () => api.getBlueBubblesLink(),
+};
+
+/** Normalize a premium link response into the generic PremiumLinkData shape. */
+function normalizeLinkData(data: { phone_number: string | null; connected: boolean }): PremiumLinkData {
+  return { identifier: data.phone_number, connected: data.connected };
 }
 
 export default function ChannelsPage() {
@@ -29,16 +36,22 @@ export default function ChannelsPage() {
   const { data: channelConfig } = useChannelConfig();
   const toggleMutation = useToggleChannelRoute();
 
-  // Premium link data (fetched once for state derivation)
+  // Telegram is special (different API shape), so it stays separate
   const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
-  const [linqLinkData, setLinqLinkData] = useState<LinqLinkData | null>(null);
   const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
+
+  // Generic premium link data map for all other channels
+  const [linkDataMap, setLinkDataMap] = useState<Partial<Record<ChannelKey, PremiumLinkData | null>>>({});
 
   useEffect(() => {
     if (isPremium) {
       api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
       api.getTelegramBotInfo().then(setBotInfo).catch(() => {});
-      api.getLinqLink().then(setLinqLinkData).catch(() => {});
+      for (const [key, fetcher] of Object.entries(PREMIUM_LINK_FETCHERS)) {
+        fetcher().then((data) => {
+          setLinkDataMap((prev) => ({ ...prev, [key]: normalizeLinkData(data) }));
+        }).catch(() => {});
+      }
     }
   }, [isPremium]);
 
@@ -52,7 +65,7 @@ export default function ChannelsPage() {
   // Build premium data for state derivation
   const premiumData: PremiumChannelData = {
     telegram_user_id: telegramLinkData?.telegram_user_id,
-    phone_number: linqLinkData?.phone_number,
+    linkData: linkDataMap,
   };
 
   // Compute states for each channel (memoized to prevent useEffect churn)
@@ -71,7 +84,7 @@ export default function ChannelsPage() {
     }
     return states;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelConfig, routesData, isPremium, telegramLinkData, linqLinkData]);
+  }, [channelConfig, routesData, isPremium, telegramLinkData, linkDataMap]);
 
   // Auto-expand the first "available" channel on initial load only
   const hasAutoExpanded = useRef(false);
@@ -130,12 +143,16 @@ export default function ChannelsPage() {
     setExpandedChannel(expandedChannel === key ? null : key);
   };
 
-  // Callback after config save: collapse form (channel becomes configured)
+  // Callback after config save: refresh premium link data and collapse form
   const handleConfigSaved = (key: ChannelKey) => {
-    // Refresh premium link data after save
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      if (key === 'linq') api.getLinqLink().then(setLinqLinkData).catch(() => {});
+      const fetcher = PREMIUM_LINK_FETCHERS[key];
+      if (fetcher) {
+        fetcher().then((data) => {
+          setLinkDataMap((prev) => ({ ...prev, [key]: normalizeLinkData(data) }));
+        }).catch(() => {});
+      }
     }
     setExpandedChannel(null);
   };
@@ -199,7 +216,7 @@ export default function ChannelsPage() {
                     channelConfig={channelConfig}
                     botInfo={key === 'telegram' ? botInfo : null}
                     telegramLinkData={key === 'telegram' ? telegramLinkData : null}
-                    linqLinkData={key === 'linq' ? linqLinkData : null}
+                    premiumLinkData={linkDataMap[key] ?? null}
                     onConfigSaved={() => handleConfigSaved(key)}
                     selectable
                   />
@@ -224,7 +241,7 @@ export default function ChannelsPage() {
               channelConfig={channelConfig}
               botInfo={key === 'telegram' ? botInfo : null}
               telegramLinkData={key === 'telegram' ? telegramLinkData : null}
-              linqLinkData={key === 'linq' ? linqLinkData : null}
+              premiumLinkData={linkDataMap[key] ?? null}
               onConfigSaved={() => handleConfigSaved(key)}
               selectable={false}
             />
@@ -254,7 +271,7 @@ interface ChannelCardProps {
   channelConfig: ReturnType<typeof useChannelConfig>['data'];
   botInfo: TelegramBotInfo | null;
   telegramLinkData: TelegramLinkData | null;
-  linqLinkData: LinqLinkData | null;
+  premiumLinkData: PremiumLinkData | null;
   onConfigSaved: () => void;
   selectable: boolean;
 }
@@ -272,7 +289,7 @@ function ChannelCard({
   channelConfig,
   botInfo,
   telegramLinkData,
-  linqLinkData,
+  premiumLinkData,
   onConfigSaved,
   selectable,
 }: ChannelCardProps) {
@@ -369,7 +386,8 @@ function ChannelCard({
             isPremium={isPremium}
             channelConfig={channelConfig}
             telegramLinkData={telegramLinkData}
-            linqLinkData={linqLinkData}
+
+            premiumLinkData={premiumLinkData}
             onSaved={onConfigSaved}
           />
         </div>
@@ -394,7 +412,8 @@ function ChannelCard({
                 isPremium={isPremium}
                 channelConfig={channelConfig}
                 telegramLinkData={telegramLinkData}
-                linqLinkData={linqLinkData}
+    
+                premiumLinkData={premiumLinkData}
                 onSaved={onConfigSaved}
               />
             </div>
@@ -510,4 +529,3 @@ function ChannelIcon({ channelKey }: { channelKey: ChannelKey }) {
     </svg>
   );
 }
-

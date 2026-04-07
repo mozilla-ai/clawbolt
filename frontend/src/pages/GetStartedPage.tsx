@@ -7,7 +7,7 @@ import { toast } from '@/lib/toast';
 import { useUpdateProfile, useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { MESSAGING_CHANNELS, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
-import { ChannelConfigForm, type TelegramLinkData, type LinqLinkData } from '@/components/ChannelConfigForm';
+import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
 import api from '@/api';
 import type { AppShellContext } from '@/layouts/AppShell';
 
@@ -26,12 +26,11 @@ export default function GetStartedPage() {
 
   // Premium link data (fetched once, same pattern as ChannelsPage)
   const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
-  const [linqLinkData, setLinqLinkData] = useState<LinqLinkData | null>(null);
+  const [premiumLinkData] = useState<PremiumLinkData | null>(null);
 
   useEffect(() => {
     if (isPremium) {
       api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      api.getLinqLink().then(setLinqLinkData).catch(() => {});
     }
   }, [isPremium]);
 
@@ -101,7 +100,6 @@ export default function GetStartedPage() {
     // Refresh premium link data after save
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      if (key === 'linq') api.getLinqLink().then(setLinqLinkData).catch(() => {});
     }
   };
 
@@ -209,7 +207,8 @@ export default function GetStartedPage() {
                     isPremium={isPremium}
                     channelConfig={channelConfig}
                     telegramLinkData={telegramLinkData}
-                    linqLinkData={linqLinkData}
+
+                    premiumLinkData={premiumLinkData}
                     onSaved={() => handleConfigSaved(selectedChannel)}
                   />
                 </div>

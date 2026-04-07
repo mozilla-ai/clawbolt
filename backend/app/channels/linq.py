@@ -199,6 +199,13 @@ class LinqChannel(BaseChannel):
         else:
             logger.warning("Failed to auto-register Linq webhook")
 
+    async def register_paas_webhook(self, base_url: str) -> bool | None:
+        """Register Linq webhook using a stable PaaS base URL."""
+        if not settings.linq_api_token:
+            return None
+        webhook_url = f"{base_url}/api/webhooks/linq"
+        return await register_linq_webhook(webhook_url)
+
     async def stop(self) -> None:
         """Close the httpx client on shutdown."""
         if self._client is not None:

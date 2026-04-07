@@ -134,6 +134,20 @@ class BaseChannel(ABC):
     async def download_media(self, file_id: str) -> DownloadedMedia:
         """Download media by channel-specific file identifier."""
 
+    # -- PaaS webhook registration ---------------------------------------------
+
+    async def register_paas_webhook(self, base_url: str) -> bool | None:
+        """Register inbound webhook for PaaS deployments (Railway, Render, etc.).
+
+        Called by the premium lifespan with the stable public ``APP_BASE_URL``.
+        Channels that need webhook registration override this method.
+
+        Returns ``True`` on success, ``False`` on failure, or ``None`` if this
+        channel doesn't need PaaS webhook registration (the default).  New
+        channels only need to implement this method to be auto-registered.
+        """
+        return None
+
 
 async def handle_webhook_inbound(
     channel: BaseChannel,
