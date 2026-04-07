@@ -193,7 +193,7 @@ def _parse_dt(value: str, default_tz: tzinfo = UTC) -> datetime:
 
 
 def _make_token_refresh_callback(user_id: str) -> Any:
-    """Return a callback that persists refreshed tokens to disk."""
+    """Return a callback that persists refreshed tokens to the database."""
 
     def _persist_refreshed_tokens(access_token: str, refresh_token: str) -> None:
         try:
@@ -206,7 +206,9 @@ def _make_token_refresh_callback(user_id: str) -> Any:
             else:
                 token.access_token = access_token
                 token.refresh_token = refresh_token
-                token.expires_at = time.time() + 3600
+            # Google access tokens typically last 1 hour; use the default
+            # buffer so proactive refresh fires before actual expiry.
+            token.expires_at = time.time() + 3600
             oauth_service.save_token(user_id, "google_calendar", token)
         except Exception:
             logger.exception(

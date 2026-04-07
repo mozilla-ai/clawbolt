@@ -32,6 +32,16 @@ _EXPIRY_BUFFER_SECONDS = 300
 # OAuth state entries expire after 10 minutes.
 _STATE_TTL_SECONDS = 600
 
+# RFC 6749 Section 5.2 error codes indicating a permanently invalid token.
+# These mean the user must re-authenticate; retrying will not help.
+_PERMANENT_OAUTH_ERROR_CODES = frozenset(
+    {
+        "invalid_grant",
+        "invalid_client",
+        "unauthorized_client",
+    }
+)
+
 
 @dataclass
 class OAuthConfig:
@@ -352,6 +362,160 @@ class OAuthService:
                 )
             ).scalar_one_or_none()
             return row is not None
+
+    # -- Token refresh with error classification --------------------------------
+
+    @staticmethod
+    def _is_permanent_refresh_failure(error: Exception) -> bool:
+        """Return True when the refresh error is permanent (user must re-auth).
+
+        Permanent errors (e.g. ``invalid_grant`` from a revoked token) mean
+        re-authentication is required. Transient errors (network timeouts,
+        provider 5xx) leave the token intact for a later retry.
+        """
+        if isinstance(error, httpx.HTTPStatusError):
+            try:
+                body = error.response.json()
+                return body.get("error") in _PERMANENT_OAUTH_ERROR_CODES
+            except Exception:
+                return False
+        return False
+
+    async def refresh_token(
+        self,
+        user_id: str,
+        integration: str,
+    ) -> OAuthTokenData | None:
+        """Refresh an expired OAuth token via the provider's token endpoint.
+
+        Returns the updated token data on success, or None if no token or
+        refresh token exists. Raises on HTTP errors so the caller can
+        classify them via ``_is_permanent_refresh_failure``.
+        """
+        token = self.load_token(user_id, integration)
+        if not token or not token.refresh_token:
+            return None
+
+        config = get_oauth_config(integration)
+        if config is None:
+            return None
+
+        http = self._get_http()
+        resp = await http.post(
+            config.token_url,
+            data={
+                "grant_type": "refresh_token",
+                "refresh_token": token.refresh_token,
+            },
+            auth=(config.client_id, config.client_secret),
+        )
+        resp.raise_for_status()
+        data = resp.json()
+
+        token.access_token = data["access_token"]
+        if "refresh_token" in data:
+            token.refresh_token = data["refresh_token"]
+        if "expires_in" in data:
+            token.expires_at = time.time() + data["expires_in"]
+
+        self.save_token(user_id, integration, token)
+        logger.info(
+            "Refreshed OAuth token: user=%s integration=%s",
+            user_id,
+            integration,
+        )
+        return token
+
+    async def get_valid_token(
+        self,
+        user_id: str,
+        integration: str,
+    ) -> OAuthTokenData | None:
+        """Return a valid token, refreshing automatically if expired.
+
+        On permanent refresh failure (e.g. revoked grant), deletes the
+        stale token and sends a re-auth notification to the user.
+        On transient failure (e.g. network error), keeps the token for
+        a later retry and returns None.
+        """
+        token = self.load_token(user_id, integration)
+        if not token:
+            return None
+
+        if not token.is_expired():
+            return token
+
+        if not token.refresh_token:
+            logger.info(
+                "Token expired with no refresh token: user=%s integration=%s",
+                user_id,
+                integration,
+            )
+            return None
+
+        try:
+            return await self.refresh_token(user_id, integration)
+        except Exception as exc:
+            logger.warning(
+                "Token refresh failed: user=%s integration=%s error=%s",
+                user_id,
+                integration,
+                exc,
+            )
+            if self._is_permanent_refresh_failure(exc):
+                self.delete_token(user_id, integration)
+                await self._notify_reauth_needed(user_id, integration)
+            return None
+
+    async def _notify_reauth_needed(
+        self,
+        user_id: str,
+        integration: str,
+    ) -> None:
+        """Best-effort notification that an OAuth integration has disconnected.
+
+        Looks up the user's active channel route and sends a message via
+        the bus. Failures are logged and swallowed so token cleanup is
+        never blocked by a notification error.
+        """
+        try:
+            from backend.app.bus import OutboundMessage, message_bus
+            from backend.app.models import ChannelRoute
+
+            with db_session() as db:
+                route = db.execute(
+                    select(ChannelRoute).where(
+                        ChannelRoute.user_id == user_id,
+                        ChannelRoute.enabled.is_(True),
+                    )
+                ).scalar_one_or_none()
+
+            if route is None:
+                logger.debug(
+                    "No active channel route for reauth notification: user=%s",
+                    user_id,
+                )
+                return
+
+            friendly = integration.replace("_", " ").title()
+            text = (
+                f"Your {friendly} connection has expired. "
+                "Please reconnect it in Settings > Integrations."
+            )
+
+            await message_bus.publish_outbound(
+                OutboundMessage(
+                    channel=route.channel,
+                    chat_id=route.channel_identifier,
+                    content=text,
+                )
+            )
+        except Exception:
+            logger.warning(
+                "Failed to notify user about disconnected integration: user=%s integration=%s",
+                user_id,
+                integration,
+            )
 
     # -- State management helpers ----------------------------------------------
 

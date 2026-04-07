@@ -169,7 +169,7 @@ def _format_results(rows: list[dict[str, Any]]) -> str:
 
 
 def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
-    """Return a callback that persists refreshed tokens to disk."""
+    """Return a callback that persists refreshed tokens to the database."""
 
     def _persist_refreshed_tokens(access_token: str, refresh_token: str) -> None:
         try:
@@ -183,7 +183,8 @@ def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
             else:
                 token.access_token = access_token
                 token.refresh_token = refresh_token
-                token.expires_at = time.time() + 3600
+            # QuickBooks access tokens typically last 1 hour.
+            token.expires_at = time.time() + 3600
             oauth_service.save_token(user_id, "quickbooks", token)
         except Exception:
             logger.exception("Failed to persist refreshed QuickBooks tokens for user %s", user_id)
