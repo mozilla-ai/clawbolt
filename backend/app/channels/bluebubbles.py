@@ -4,6 +4,7 @@ import asyncio
 import hmac
 import logging
 import uuid
+from urllib.parse import quote
 
 import httpx
 from fastapi import APIRouter, Depends, Request
@@ -206,8 +207,6 @@ class BlueBubblesChannel(BaseChannel):
         """Register BlueBubbles webhook using a stable PaaS base URL."""
         if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
             return None
-        from urllib.parse import quote
-
         webhook_url = (
             f"{base_url}/api/webhooks/bluebubbles"
             f"?password={quote(settings.bluebubbles_password, safe='')}"
