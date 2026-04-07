@@ -26,19 +26,6 @@ def oauth_svc() -> OAuthService:
     return OAuthService()
 
 
-@pytest.fixture()
-def google_config() -> OAuthConfig:
-    return OAuthConfig(
-        integration="google_calendar",
-        client_id="test-client-id",
-        client_secret="test-client-secret",
-        authorize_url="https://accounts.google.com/o/oauth2/v2/auth",
-        token_url="https://oauth2.googleapis.com/token",
-        scopes=["https://www.googleapis.com/auth/calendar.events"],
-        use_pkce=False,
-    )
-
-
 def _make_http_error(
     status_code: int,
     body: dict | None = None,
@@ -383,7 +370,7 @@ class TestNotifyReauthNeeded:
         mock_db = MagicMock()
         mock_db.__enter__ = MagicMock(return_value=mock_db)
         mock_db.__exit__ = MagicMock(return_value=False)
-        mock_db.execute.return_value.scalar_one_or_none.return_value = mock_route
+        mock_db.execute.return_value.scalars.return_value.first.return_value = mock_route
 
         mock_bus = AsyncMock()
 

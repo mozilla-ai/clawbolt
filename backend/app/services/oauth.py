@@ -417,6 +417,11 @@ class OAuthService:
             token.refresh_token = data["refresh_token"]
         if "expires_in" in data:
             token.expires_at = time.time() + data["expires_in"]
+        elif token.is_expired():
+            # Provider omitted expires_in (allowed by RFC 6749 Section 5.1).
+            # Default to 1 hour to avoid an infinite refresh loop where the
+            # old expired value triggers another refresh on every request.
+            token.expires_at = time.time() + 3600
 
         self.save_token(user_id, integration, token)
         logger.info(
@@ -483,12 +488,16 @@ class OAuthService:
             from backend.app.models import ChannelRoute
 
             with db_session() as db:
-                route = db.execute(
-                    select(ChannelRoute).where(
-                        ChannelRoute.user_id == user_id,
-                        ChannelRoute.enabled.is_(True),
+                route = (
+                    db.execute(
+                        select(ChannelRoute).where(
+                            ChannelRoute.user_id == user_id,
+                            ChannelRoute.enabled.is_(True),
+                        )
                     )
-                ).scalar_one_or_none()
+                    .scalars()
+                    .first()
+                )
 
             if route is None:
                 logger.debug(
