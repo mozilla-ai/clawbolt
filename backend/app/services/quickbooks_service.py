@@ -7,6 +7,7 @@ that calls the QBO REST API via httpx.
 from __future__ import annotations
 
 import logging
+import time
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
@@ -53,7 +54,7 @@ class QuickBooksOnlineService(QuickBooksService):
         access_token: str,
         refresh_token: str,
         environment: str = "sandbox",
-        on_token_refresh: Callable[[str, str], None] | None = None,
+        on_token_refresh: Callable[[str, str, float], None] | None = None,
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
@@ -61,6 +62,7 @@ class QuickBooksOnlineService(QuickBooksService):
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._on_token_refresh = on_token_refresh
+        self._token_expires_at = 0.0
         base = QBO_PRODUCTION_BASE if environment == "production" else QBO_SANDBOX_BASE
         self._api_base = f"{base}/v3/company/{realm_id}"
 
@@ -80,8 +82,10 @@ class QuickBooksOnlineService(QuickBooksService):
         self._access_token = data["access_token"]
         if "refresh_token" in data:
             self._refresh_token = data["refresh_token"]
+        if "expires_in" in data:
+            self._token_expires_at = time.time() + data["expires_in"]
         if self._on_token_refresh:
-            self._on_token_refresh(self._access_token, self._refresh_token)
+            self._on_token_refresh(self._access_token, self._refresh_token, self._token_expires_at)
 
     async def _request(
         self,

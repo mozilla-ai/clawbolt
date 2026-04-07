@@ -1569,7 +1569,8 @@ async def test_unhandled_exception_uses_internal_hint(
 class TestToolRegistry:
     """Tests for the ToolRegistry and related helpers."""
 
-    def test_register_and_create_tools(self, test_user: User) -> None:
+    @pytest.mark.asyncio()
+    async def test_register_and_create_tools(self, test_user: User) -> None:
         """Registry should create tools from registered factories."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
@@ -1590,11 +1591,12 @@ class TestToolRegistry:
 
         registry.register("dummy", dummy_factory)
         ctx = ToolContext(user=test_user)
-        tools = registry.create_tools(ctx)
+        tools = await registry.create_tools(ctx)
         assert len(tools) == 1
         assert tools[0].name == "dummy"
 
-    def test_skips_factory_when_storage_missing(self, test_user: User) -> None:
+    @pytest.mark.asyncio()
+    async def test_skips_factory_when_storage_missing(self, test_user: User) -> None:
         """Factories requiring storage should be skipped when storage is None."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
@@ -1612,10 +1614,11 @@ class TestToolRegistry:
 
         registry.register("storage_tool", storage_factory, requires_storage=True)
         ctx = ToolContext(user=test_user, storage=None)
-        tools = registry.create_tools(ctx)
+        tools = await registry.create_tools(ctx)
         assert len(tools) == 0
 
-    def test_skips_factory_when_outbound_missing(self, test_user: User) -> None:
+    @pytest.mark.asyncio()
+    async def test_skips_factory_when_outbound_missing(self, test_user: User) -> None:
         """Factories requiring outbound should be skipped when publish_outbound is None."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
@@ -1633,10 +1636,11 @@ class TestToolRegistry:
 
         registry.register("msg_tool", msg_factory, requires_outbound=True)
         ctx = ToolContext(user=test_user, publish_outbound=None)
-        tools = registry.create_tools(ctx)
+        tools = await registry.create_tools(ctx)
         assert len(tools) == 0
 
-    def test_includes_factory_when_deps_satisfied(
+    @pytest.mark.asyncio()
+    async def test_includes_factory_when_deps_satisfied(
         self,
         test_user: User,
     ) -> None:
@@ -1677,7 +1681,7 @@ class TestToolRegistry:
             storage=mock_storage,
             publish_outbound=mock_publish,
         )
-        tools = registry.create_tools(ctx)
+        tools = await registry.create_tools(ctx)
         names = {t.name for t in tools}
         assert "with_storage" in names
         assert "with_msg" in names
@@ -1713,7 +1717,8 @@ class TestToolRegistry:
         count2 = len(default_registry.factory_names)
         assert count1 == count2
 
-    def test_overwrite_warns(self, test_user: User) -> None:
+    @pytest.mark.asyncio()
+    async def test_overwrite_warns(self, test_user: User) -> None:
         """Registering the same name twice should overwrite (with a warning)."""
         from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
@@ -1743,7 +1748,7 @@ class TestToolRegistry:
         registry.register("same_name", factory_b)
 
         ctx = ToolContext(user=test_user)
-        tools = registry.create_tools(ctx)
+        tools = await registry.create_tools(ctx)
         # The second factory should win
         assert len(tools) == 1
         assert tools[0].name == "b"

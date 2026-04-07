@@ -31,12 +31,12 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def _get_calendar_service(user: User) -> GoogleCalendarService:
+async def _get_calendar_service(user: User) -> GoogleCalendarService:
     """Build a GoogleCalendarService for the current user or raise 400."""
     if not settings.google_calendar_client_id or not settings.google_calendar_client_secret:
         raise HTTPException(status_code=400, detail="Google Calendar not configured")
 
-    token = oauth_service.load_token(user.id, "google_calendar")
+    token = await oauth_service.get_valid_token(user.id, "google_calendar")
     if token is None or not token.access_token:
         raise HTTPException(status_code=400, detail="Google Calendar not connected")
 
@@ -54,7 +54,7 @@ async def list_calendars(
     current_user: User = Depends(get_current_user),
 ) -> CalendarListResponse:
     """Fetch the user's Google Calendar list from the Google API."""
-    service = _get_calendar_service(current_user)
+    service = await _get_calendar_service(current_user)
     try:
         calendars = await service.list_calendars()
     except Exception as exc:

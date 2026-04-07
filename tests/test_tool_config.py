@@ -76,13 +76,14 @@ async def test_tool_config_store_get_disabled_tool_names(
 # ---------------------------------------------------------------------------
 
 
-def test_create_core_tools_excludes_disabled_factories() -> None:
+@pytest.mark.asyncio()
+async def test_create_core_tools_excludes_disabled_factories() -> None:
     """create_core_tools should skip excluded factories."""
     user = User(id="999", user_id="test")
     ctx = ToolContext(user=user)
 
-    all_core = default_registry.create_core_tools(ctx)
-    excluded = default_registry.create_core_tools(ctx, excluded_factories={"workspace"})
+    all_core = await default_registry.create_core_tools(ctx)
+    excluded = await default_registry.create_core_tools(ctx, excluded_factories={"workspace"})
     # Excluding workspace should remove read_file, write_file, etc.
     all_names = {t.name for t in all_core}
     excluded_names = {t.name for t in excluded}
@@ -282,13 +283,14 @@ async def test_tool_config_store_get_disabled_sub_tool_names(
 # ---------------------------------------------------------------------------
 
 
-def test_create_core_tools_excludes_individual_tools() -> None:
+@pytest.mark.asyncio()
+async def test_create_core_tools_excludes_individual_tools() -> None:
     """excluded_tool_names filters individual tools after factory creation."""
     user = User(id="999", user_id="test")
     ctx = ToolContext(user=user)
 
-    all_core = default_registry.create_core_tools(ctx)
-    excluded = default_registry.create_core_tools(
+    all_core = await default_registry.create_core_tools(ctx)
+    excluded = await default_registry.create_core_tools(
         ctx, excluded_tool_names={"write_file", "delete_file"}
     )
 

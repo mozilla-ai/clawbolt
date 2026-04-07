@@ -277,7 +277,7 @@ async def run_agent(
     # Start with core tools only; specialist tools are discovered on demand
     # via the list_capabilities meta-tool. Exclude user-disabled groups and
     # individual sub-tools.
-    tools = default_registry.create_core_tools(
+    tools = await default_registry.create_core_tools(
         tool_context,
         excluded_factories=disabled_groups or None,
         excluded_tool_names=disabled_sub_tools or None,
