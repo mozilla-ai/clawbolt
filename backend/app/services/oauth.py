@@ -415,13 +415,18 @@ class OAuthService:
         token.access_token = data["access_token"]
         if "refresh_token" in data:
             token.refresh_token = data["refresh_token"]
-        if "expires_in" in data:
-            token.expires_at = time.time() + data["expires_in"]
-        elif token.is_expired():
-            # Provider omitted expires_in (allowed by RFC 6749 Section 5.1).
-            # Default to 1 hour to avoid an infinite refresh loop where the
-            # old expired value triggers another refresh on every request.
-            token.expires_at = time.time() + 3600
+
+        # Compute absolute expiry from the provider's response.
+        # RFC 6749 Section 5.1: expires_in is RECOMMENDED, not REQUIRED.
+        # Some providers return an absolute expires_at timestamp instead.
+        # When neither is present the token is treated as non-expiring
+        # (expires_at stays 0, and is_expired() returns False).
+        if data.get("expires_in"):
+            token.expires_at = time.time() + int(data["expires_in"])
+        elif data.get("expires_at"):
+            token.expires_at = float(data["expires_at"])
+        else:
+            token.expires_at = 0.0
 
         self.save_token(user_id, integration, token)
         logger.info(

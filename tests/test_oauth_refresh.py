@@ -241,6 +241,82 @@ class TestRefreshToken:
         assert result is not None
         assert result.expires_at >= before + 7200
 
+    @pytest.mark.asyncio()
+    async def test_uses_absolute_expires_at(self, oauth_svc: OAuthService) -> None:
+        """When provider returns expires_at (absolute timestamp), use it directly."""
+        stored = OAuthTokenData(access_token="old-at", refresh_token="rt", expires_at=0)
+        absolute_ts = time.time() + 86400  # 24 hours from now
+        refreshed_body = {"access_token": "new-at", "expires_at": absolute_ts}
+
+        mock_response = httpx.Response(
+            200,
+            json=refreshed_body,
+            request=httpx.Request("POST", "https://example.com/token"),
+        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with (
+            patch.object(oauth_svc, "load_token", return_value=stored),
+            patch.object(oauth_svc, "save_token"),
+            patch.object(oauth_svc, "_get_http", return_value=mock_client),
+            patch(
+                "backend.app.services.oauth.get_oauth_config",
+                return_value=OAuthConfig(
+                    integration="google_calendar",
+                    client_id="cid",
+                    client_secret="csecret",
+                    authorize_url="https://example.com/auth",
+                    token_url="https://example.com/token",
+                    scopes=[],
+                ),
+            ),
+        ):
+            result = await oauth_svc.refresh_token("user-1", "google_calendar")
+
+        assert result is not None
+        assert result.expires_at == pytest.approx(absolute_ts, abs=1)
+
+    @pytest.mark.asyncio()
+    async def test_missing_expiry_treated_as_non_expiring(self, oauth_svc: OAuthService) -> None:
+        """When provider omits both expires_in and expires_at, token never expires."""
+        stored = OAuthTokenData(
+            access_token="old-at",
+            refresh_token="rt",
+            expires_at=time.time() - 100,  # was expired
+        )
+        refreshed_body = {"access_token": "new-at"}  # no expiry fields
+
+        mock_response = httpx.Response(
+            200,
+            json=refreshed_body,
+            request=httpx.Request("POST", "https://example.com/token"),
+        )
+        mock_client = AsyncMock()
+        mock_client.post = AsyncMock(return_value=mock_response)
+
+        with (
+            patch.object(oauth_svc, "load_token", return_value=stored),
+            patch.object(oauth_svc, "save_token"),
+            patch.object(oauth_svc, "_get_http", return_value=mock_client),
+            patch(
+                "backend.app.services.oauth.get_oauth_config",
+                return_value=OAuthConfig(
+                    integration="google_calendar",
+                    client_id="cid",
+                    client_secret="csecret",
+                    authorize_url="https://example.com/auth",
+                    token_url="https://example.com/token",
+                    scopes=[],
+                ),
+            ),
+        ):
+            result = await oauth_svc.refresh_token("user-1", "google_calendar")
+
+        assert result is not None
+        assert result.expires_at == 0.0
+        assert result.is_expired() is False
+
 
 # ---------------------------------------------------------------------------
 # get_valid_token
