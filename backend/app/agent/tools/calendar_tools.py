@@ -24,7 +24,6 @@ from backend.app.services.calendar_provider import (
 )
 from backend.app.services.google_calendar import GoogleCalendarService
 from backend.app.services.oauth import (
-    OAuthTokenData,
     oauth_service,
 )
 
@@ -184,36 +183,6 @@ def _parse_dt(value: str, default_tz: tzinfo = UTC) -> datetime:
     if dt.tzinfo is None:
         dt = dt.replace(tzinfo=default_tz)
     return dt
-
-
-# ---------------------------------------------------------------------------
-# Token refresh callback
-# ---------------------------------------------------------------------------
-
-
-def _make_token_refresh_callback(user_id: str) -> Any:
-    """Return a callback that persists refreshed tokens to the database."""
-
-    def _persist_refreshed_tokens(access_token: str, refresh_token: str, expires_at: float) -> None:
-        try:
-            token = oauth_service.load_token(user_id, "google_calendar")
-            if token is None:
-                token = OAuthTokenData(
-                    access_token=access_token,
-                    refresh_token=refresh_token,
-                )
-            else:
-                token.access_token = access_token
-                token.refresh_token = refresh_token
-            token.expires_at = expires_at
-            oauth_service.save_token(user_id, "google_calendar", token)
-        except Exception:
-            logger.exception(
-                "Failed to persist refreshed Google Calendar tokens for user %s",
-                user_id,
-            )
-
-    return _persist_refreshed_tokens
 
 
 # ---------------------------------------------------------------------------
@@ -957,11 +926,11 @@ def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str], str]
     return [("primary", "Primary", [], "owner")]
 
 
-def _calendar_factory(ctx: ToolContext) -> list[Tool]:
+async def _calendar_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for calendar tools, used by the registry."""
     if not settings.google_calendar_client_id or not settings.google_calendar_client_secret:
         return []
-    token = oauth_service.load_token(ctx.user.id, "google_calendar")
+    token = await oauth_service.get_valid_token(ctx.user.id, "google_calendar")
     if token is None or not token.access_token:
         return []
     service = GoogleCalendarService(
@@ -969,8 +938,7 @@ def _calendar_factory(ctx: ToolContext) -> list[Tool]:
         refresh_token=token.refresh_token,
         client_id=settings.google_calendar_client_id,
         client_secret=settings.google_calendar_client_secret,
-        on_token_refresh=_make_token_refresh_callback(ctx.user.id),
-        token_expires_at=token.expires_at,
+        token_expires_at=token.expires_at or 0.0,
     )
     enabled_calendars = _get_enabled_calendars(ctx.user.id)
     return create_calendar_tools(

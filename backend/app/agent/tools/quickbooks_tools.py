@@ -14,7 +14,6 @@ from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.services.oauth import (
-    OAuthTokenData,
     oauth_service,
 )
 from backend.app.services.quickbooks_service import (
@@ -165,29 +164,6 @@ def _format_results(rows: list[dict[str, Any]]) -> str:
         lines.append(f"... and {len(rows) - _MAX_ROWS} more (add MAXRESULTS to narrow)")
 
     return "\n".join(lines)
-
-
-def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
-    """Return a callback that persists refreshed tokens to the database."""
-
-    def _persist_refreshed_tokens(access_token: str, refresh_token: str, expires_at: float) -> None:
-        try:
-            token = oauth_service.load_token(user_id, "quickbooks")
-            if token is None:
-                token = OAuthTokenData(
-                    access_token=access_token,
-                    refresh_token=refresh_token,
-                    realm_id=realm_id,
-                )
-            else:
-                token.access_token = access_token
-                token.refresh_token = refresh_token
-            token.expires_at = expires_at
-            oauth_service.save_token(user_id, "quickbooks", token)
-        except Exception:
-            logger.exception("Failed to persist refreshed QuickBooks tokens for user %s", user_id)
-
-    return _persist_refreshed_tokens
 
 
 def _extract_query_entity(args: dict[str, Any]) -> str | None:
@@ -463,9 +439,9 @@ def create_quickbooks_tools(
     ]
 
 
-def _get_quickbooks_service_for_user(user_id: str) -> QuickBooksService | None:
+async def _get_quickbooks_service_for_user(user_id: str) -> QuickBooksService | None:
     """Build a QuickBooks service using OAuth tokens for the given user."""
-    token = oauth_service.load_token(user_id, "quickbooks")
+    token = await oauth_service.get_valid_token(user_id, "quickbooks")
     if token and token.access_token and token.realm_id:
         return QuickBooksOnlineService(
             client_id=settings.quickbooks_client_id,
@@ -474,7 +450,6 @@ def _get_quickbooks_service_for_user(user_id: str) -> QuickBooksService | None:
             access_token=token.access_token,
             refresh_token=token.refresh_token,
             environment=settings.quickbooks_environment,
-            on_token_refresh=_make_token_refresh_callback(user_id, token.realm_id),
         )
     return None
 
@@ -497,11 +472,11 @@ def _quickbooks_auth_check(ctx: ToolContext) -> str | None:
     )
 
 
-def _quickbooks_factory(ctx: ToolContext) -> list[Tool]:
+async def _quickbooks_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for QuickBooks tools, used by the registry."""
     if not settings.quickbooks_client_id or not settings.quickbooks_client_secret:
         return []
-    qb_service = _get_quickbooks_service_for_user(ctx.user.id)
+    qb_service = await _get_quickbooks_service_for_user(ctx.user.id)
     if qb_service is None:
         return []
     return create_quickbooks_tools(qb_service)

@@ -14,6 +14,7 @@ and enabling progressive disclosure as tool count grows.
 from __future__ import annotations
 
 import importlib
+import inspect
 import logging
 import pkgutil
 from collections.abc import Awaitable, Callable
@@ -63,7 +64,7 @@ class SubToolInfo:
 class ToolFactory:
     """Metadata for a registered tool factory."""
 
-    create: Callable[[ToolContext], list[Tool]]
+    create: Callable[[ToolContext], list[Tool]] | Callable[[ToolContext], Awaitable[list[Tool]]]
     requires_storage: bool = False
     requires_outbound: bool = False
     core: bool = True
@@ -222,7 +223,8 @@ class ToolRegistry:
     def register(
         self,
         name: str,
-        create: Callable[[ToolContext], list[Tool]],
+        create: Callable[[ToolContext], list[Tool]]
+        | Callable[[ToolContext], Awaitable[list[Tool]]],
         *,
         requires_storage: bool = False,
         requires_outbound: bool = False,
@@ -262,7 +264,7 @@ class ToolRegistry:
             auth_check=auth_check,
         )
 
-    def create_tools(
+    async def create_tools(
         self,
         context: ToolContext,
         *,
@@ -277,8 +279,7 @@ class ToolRegistry:
         When *excluded_tool_names* is provided, individual tools whose names
         appear in the set are filtered out after creation.
 
-        Every tool must have a ``params_model`` set so that Pydantic
-        validation runs on all arguments before execution.
+        Factories may be sync or async callables.
         """
         tools: list[Tool] = []
         for name, factory in self._factories.items():
@@ -291,13 +292,14 @@ class ToolRegistry:
             if factory.requires_outbound and context.publish_outbound is None:
                 logger.debug("Skipping %s: no publish_outbound callback", name)
                 continue
-            created = factory.create(context)
+            result = factory.create(context)
+            created = await result if inspect.isawaitable(result) else result
             if excluded_tool_names:
                 created = [t for t in created if t.name not in excluded_tool_names]
             tools.extend(created)
         return tools
 
-    def create_core_tools(
+    async def create_core_tools(
         self,
         context: ToolContext,
         *,
@@ -315,7 +317,7 @@ class ToolRegistry:
         selected = self.core_factory_names
         if excluded_factories:
             selected = selected - excluded_factories
-        return self.create_tools(
+        return await self.create_tools(
             context, selected_factories=selected, excluded_tool_names=excluded_tool_names
         )
 

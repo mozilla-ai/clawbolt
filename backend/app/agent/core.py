@@ -232,7 +232,7 @@ class ClawboltAgent:
             ", ".join(sorted(self._tools_by_name.keys())),
         )
 
-    def _activate_specialist(self, factory_name: str) -> None:
+    async def _activate_specialist(self, factory_name: str) -> None:
         """Activate a specialist tool factory, injecting its tools for the next round.
 
         Only marks the factory as activated if at least one tool was
@@ -242,7 +242,7 @@ class ClawboltAgent:
             return
         if self._registry is None or self._tool_context is None:
             return
-        new_tools = self._registry.create_tools(
+        new_tools = await self._registry.create_tools(
             self._tool_context,
             selected_factories={factory_name},
             excluded_tool_names=self._excluded_tool_names,
@@ -265,7 +265,7 @@ class ClawboltAgent:
             ", ".join(new_names) or "(none new)",
         )
 
-    def _check_specialist_activations(
+    async def _check_specialist_activations(
         self,
         parsed_calls: list[ToolCallRequest],
     ) -> bool:
@@ -287,7 +287,7 @@ class ClawboltAgent:
                 and category in specialist_names
                 and category not in self._activated_specialists
             ):
-                self._activate_specialist(category)
+                await self._activate_specialist(category)
                 activated_any = True
         return activated_any
 
@@ -941,7 +941,7 @@ class ClawboltAgent:
             # still returns the full SKILL.md instructions during execution
             # (it skips instructions for categories already in the set).
             pre_activated = set(self._activated_specialists)
-            self._check_specialist_activations(parsed_calls)
+            await self._check_specialist_activations(parsed_calls)
             newly_activated = self._activated_specialists - pre_activated
             self._activated_specialists -= newly_activated
 
