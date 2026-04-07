@@ -520,10 +520,10 @@ async def test_reactive_token_refresh_on_401() -> None:
 @pytest.mark.asyncio()
 async def test_token_refresh_callback() -> None:
     """Should call on_token_refresh when tokens are refreshed."""
-    callback_calls: list[tuple[str, str]] = []
+    callback_calls: list[tuple[str, str, float]] = []
 
-    def on_refresh(access: str, refresh: str) -> None:
-        callback_calls.append((access, refresh))
+    def on_refresh(access: str, refresh: str, expires_at: float) -> None:
+        callback_calls.append((access, refresh, expires_at))
 
     svc = GoogleCalendarService(
         access_token="old",
@@ -566,7 +566,9 @@ async def test_token_refresh_callback() -> None:
         )
 
     assert len(callback_calls) == 1
-    assert callback_calls[0] == ("new-access", "new-refresh")
+    assert callback_calls[0][0] == "new-access"
+    assert callback_calls[0][1] == "new-refresh"
+    assert callback_calls[0][2] > time.time()  # actual expires_at from response
 
 
 @pytest.mark.asyncio()

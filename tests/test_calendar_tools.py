@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -56,7 +56,8 @@ def _get_tool(tools: list[Tool], name: str) -> Tool:
 # ---------------------------------------------------------------------------
 
 
-def test_factory_returns_empty_when_not_configured() -> None:
+@pytest.mark.asyncio()
+async def test_factory_returns_empty_when_not_configured() -> None:
     """_calendar_factory should return [] when client_id/secret are empty."""
     ctx = MagicMock(spec=ToolContext)
     user = MagicMock(spec=User)
@@ -66,10 +67,11 @@ def test_factory_returns_empty_when_not_configured() -> None:
     with patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings:
         mock_settings.google_calendar_client_id = ""
         mock_settings.google_calendar_client_secret = ""
-        assert _calendar_factory(ctx) == []
+        assert await _calendar_factory(ctx) == []
 
 
-def test_factory_returns_empty_when_not_connected() -> None:
+@pytest.mark.asyncio()
+async def test_factory_returns_empty_when_not_connected() -> None:
     """_calendar_factory should return [] when user has no OAuth token."""
     ctx = MagicMock(spec=ToolContext)
     user = MagicMock(spec=User)
@@ -82,14 +84,15 @@ def test_factory_returns_empty_when_not_connected() -> None:
     ):
         mock_settings.google_calendar_client_id = "test-id"
         mock_settings.google_calendar_client_secret = "test-secret"
-        mock_oauth.load_token.return_value = None
+        mock_oauth.get_valid_token = AsyncMock(return_value=None)
 
-        tools = _calendar_factory(ctx)
+        tools = await _calendar_factory(ctx)
 
     assert tools == []
 
 
-def test_factory_returns_6_tools_when_configured() -> None:
+@pytest.mark.asyncio()
+async def test_factory_returns_6_tools_when_configured() -> None:
     """_calendar_factory should return 6 tools when configured and connected."""
     ctx = MagicMock(spec=ToolContext)
     user = MagicMock(spec=User)
@@ -111,9 +114,9 @@ def test_factory_returns_6_tools_when_configured() -> None:
     ):
         mock_settings.google_calendar_client_id = "test-id"
         mock_settings.google_calendar_client_secret = "test-secret"
-        mock_oauth.load_token.return_value = mock_token
+        mock_oauth.get_valid_token = AsyncMock(return_value=mock_token)
 
-        tools = _calendar_factory(ctx)
+        tools = await _calendar_factory(ctx)
 
     assert len(tools) == 6
 
@@ -786,9 +789,9 @@ async def test_factory_passes_enabled_calendars() -> None:
     ):
         mock_settings.google_calendar_client_id = "test-id"
         mock_settings.google_calendar_client_secret = "test-secret"
-        mock_oauth.load_token.return_value = mock_token
+        mock_oauth.get_valid_token = AsyncMock(return_value=mock_token)
 
-        _calendar_factory(ctx)
+        await _calendar_factory(ctx)
 
     mock_create.assert_called_once()
     assert mock_create.call_args.kwargs["user_timezone"] == "America/New_York"

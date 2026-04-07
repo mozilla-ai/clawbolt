@@ -80,17 +80,19 @@ class TestCoreSpecialistClassification:
 class TestCreateCoreTools:
     """create_core_tools only returns tools from core factories."""
 
-    def test_only_core_tools_returned(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_only_core_tools_returned(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"))
-        tools = registry.create_core_tools(ctx)
+        tools = await registry.create_core_tools(ctx)
         names = {t.name for t in tools}
         assert names == {"send_reply", "read_file", "write_file"}
 
-    def test_specialist_tools_excluded(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_specialist_tools_excluded(self) -> None:
         registry = _build_test_registry()
         ctx = ToolContext(user=User(id="1"))
-        tools = registry.create_core_tools(ctx)
+        tools = await registry.create_core_tools(ctx)
         names = {t.name for t in tools}
         assert "generate_estimate" not in names
         assert "get_heartbeat" not in names
@@ -237,7 +239,8 @@ class TestDefaultRegistryCoreSpecialistSplit:
 class TestDynamicToolActivation:
     """The agent activates specialist tools when list_capabilities is called."""
 
-    def test_activate_specialist_adds_tools(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_activate_specialist_adds_tools(self) -> None:
         from backend.app.agent.core import ClawboltAgent
         from backend.app.agent.messages import ToolCallRequest
 
@@ -248,7 +251,7 @@ class TestDynamicToolActivation:
             tool_context=ctx,
             registry=registry,
         )
-        core_tools = registry.create_core_tools(ctx)
+        core_tools = await registry.create_core_tools(ctx)
         agent.register_tools(core_tools)
 
         # Before activation, no estimate tools
@@ -262,11 +265,12 @@ class TestDynamicToolActivation:
                 arguments={"category": "estimate"},
             )
         ]
-        activated = agent._check_specialist_activations(calls)
+        activated = await agent._check_specialist_activations(calls)
         assert activated
         assert "generate_estimate" in agent._tools_by_name
 
-    def test_activation_is_idempotent(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_activation_is_idempotent(self) -> None:
         from backend.app.agent.core import ClawboltAgent
         from backend.app.agent.messages import ToolCallRequest
 
@@ -277,7 +281,7 @@ class TestDynamicToolActivation:
             tool_context=ctx,
             registry=registry,
         )
-        agent.register_tools(registry.create_core_tools(ctx))
+        agent.register_tools(await registry.create_core_tools(ctx))
 
         calls = [
             ToolCallRequest(
@@ -286,15 +290,16 @@ class TestDynamicToolActivation:
                 arguments={"category": "estimate"},
             )
         ]
-        agent._check_specialist_activations(calls)
+        await agent._check_specialist_activations(calls)
         tool_count_after_first = len(agent.tools)
 
         # Second activation should not add duplicate tools
-        activated = agent._check_specialist_activations(calls)
+        activated = await agent._check_specialist_activations(calls)
         assert not activated
         assert len(agent.tools) == tool_count_after_first
 
-    def test_non_list_capabilities_call_ignored(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_non_list_capabilities_call_ignored(self) -> None:
         from backend.app.agent.core import ClawboltAgent
         from backend.app.agent.messages import ToolCallRequest
 
@@ -305,13 +310,14 @@ class TestDynamicToolActivation:
             tool_context=ctx,
             registry=registry,
         )
-        agent.register_tools(registry.create_core_tools(ctx))
+        agent.register_tools(await registry.create_core_tools(ctx))
 
         calls = [ToolCallRequest(id="call_1", name="send_reply", arguments={"message": "hello"})]
-        activated = agent._check_specialist_activations(calls)
+        activated = await agent._check_specialist_activations(calls)
         assert not activated
 
-    def test_unknown_category_not_activated(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_unknown_category_not_activated(self) -> None:
         from backend.app.agent.core import ClawboltAgent
         from backend.app.agent.messages import ToolCallRequest
 
@@ -322,7 +328,7 @@ class TestDynamicToolActivation:
             tool_context=ctx,
             registry=registry,
         )
-        agent.register_tools(registry.create_core_tools(ctx))
+        agent.register_tools(await registry.create_core_tools(ctx))
         initial_count = len(agent.tools)
 
         calls = [
@@ -332,11 +338,12 @@ class TestDynamicToolActivation:
                 arguments={"category": "nonexistent"},
             )
         ]
-        activated = agent._check_specialist_activations(calls)
+        activated = await agent._check_specialist_activations(calls)
         assert not activated
         assert len(agent.tools) == initial_count
 
-    def test_no_registry_returns_false(self) -> None:
+    @pytest.mark.asyncio()
+    async def test_no_registry_returns_false(self) -> None:
         from backend.app.agent.core import ClawboltAgent
         from backend.app.agent.messages import ToolCallRequest
 
@@ -350,7 +357,7 @@ class TestDynamicToolActivation:
                 arguments={"category": "estimate"},
             )
         ]
-        activated = agent._check_specialist_activations(calls)
+        activated = await agent._check_specialist_activations(calls)
         assert not activated
 
     @pytest.mark.asyncio
@@ -387,7 +394,7 @@ class TestDynamicToolActivation:
             specialist_summaries,
             activated_specialists=activated_set,
         )
-        core_tools = registry.create_core_tools(ctx)
+        core_tools = await registry.create_core_tools(ctx)
         core_tools.append(list_cap_tool)
         agent.register_tools(core_tools)
 
@@ -420,7 +427,7 @@ class TestDynamicToolActivation:
         # Replicate the agent loop's activation pattern: pre-activate, then
         # temporarily hide from the shared set during execution.
         pre_activated = set(agent._activated_specialists)
-        agent._check_specialist_activations(parsed_calls)
+        await agent._check_specialist_activations(parsed_calls)
         newly_activated = agent._activated_specialists - pre_activated
         agent._activated_specialists -= newly_activated
 

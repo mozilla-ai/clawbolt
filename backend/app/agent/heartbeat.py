@@ -542,7 +542,7 @@ async def execute_heartbeat_tasks(
     # 1. Core tools (always available, respects disabled groups/sub-tools)
     # 2. list_capabilities meta-tool for on-demand specialist activation
     #    (QuickBooks, Calendar, etc.)
-    tools = default_registry.create_core_tools(
+    tools = await default_registry.create_core_tools(
         tool_context,
         excluded_factories=excluded,
         excluded_tool_names=disabled_sub_tools or None,
