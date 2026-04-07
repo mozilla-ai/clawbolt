@@ -7,7 +7,7 @@ import { toast } from '@/lib/toast';
 import { useUpdateProfile, useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { MESSAGING_CHANNELS, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
-import { ChannelConfigForm, type TelegramLinkData, type LinqLinkData } from '@/components/ChannelConfigForm';
+import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
 import api from '@/api';
 import type { AppShellContext } from '@/layouts/AppShell';
 
@@ -26,12 +26,20 @@ export default function GetStartedPage() {
 
   // Premium link data (fetched once, same pattern as ChannelsPage)
   const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
-  const [linqLinkData, setLinqLinkData] = useState<LinqLinkData | null>(null);
+  const [linkDataMap, setLinkDataMap] = useState<Partial<Record<ChannelKey, PremiumLinkData | null>>>({});
 
   useEffect(() => {
     if (isPremium) {
       api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      api.getLinqLink().then(setLinqLinkData).catch(() => {});
+      const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
+        linq: () => api.getLinqLink(),
+        bluebubbles: () => api.getBlueBubblesLink(),
+      };
+      for (const [key, fetcher] of Object.entries(fetchers)) {
+        fetcher().then((data) => {
+          setLinkDataMap((prev) => ({ ...prev, [key]: { identifier: data.phone_number, connected: data.connected } }));
+        }).catch(() => {});
+      }
     }
   }, [isPremium]);
 
@@ -101,7 +109,16 @@ export default function GetStartedPage() {
     // Refresh premium link data after save
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      if (key === 'linq') api.getLinqLink().then(setLinqLinkData).catch(() => {});
+      const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
+        linq: () => api.getLinqLink(),
+        bluebubbles: () => api.getBlueBubblesLink(),
+      };
+      const fetcher = fetchers[key];
+      if (fetcher) {
+        fetcher().then((data) => {
+          setLinkDataMap((prev) => ({ ...prev, [key]: { identifier: data.phone_number, connected: data.connected } }));
+        }).catch(() => {});
+      }
     }
   };
 
@@ -209,7 +226,7 @@ export default function GetStartedPage() {
                     isPremium={isPremium}
                     channelConfig={channelConfig}
                     telegramLinkData={telegramLinkData}
-                    linqLinkData={linqLinkData}
+                    premiumLinkData={linkDataMap[selectedChannel] ?? null}
                     onSaved={() => handleConfigSaved(selectedChannel)}
                   />
                 </div>

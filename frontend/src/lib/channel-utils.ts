@@ -1,4 +1,5 @@
 import type { ChannelConfigResponse, ChannelRouteResponse } from '@/types';
+import type { PremiumLinkData } from '@/components/ChannelConfigForm';
 
 export type ChannelState = 'unavailable' | 'available' | 'configured' | 'active';
 
@@ -9,6 +10,12 @@ export const MESSAGING_CHANNELS = [
   { key: 'linq', label: 'Text Messaging (iMessage / RCS / SMS)' },
   { key: 'bluebubbles', label: 'BlueBubbles (iMessage)' },
 ] as const;
+
+/** Premium link data keyed by channel. Adding a channel here is all that's needed. */
+export type PremiumChannelData = {
+  telegram_user_id?: string | null;
+  linkData: Partial<Record<ChannelKey, PremiumLinkData | null>>;
+};
 
 /** Whether the server has the necessary credentials/config for this channel. */
 export function isServerAvailable(key: ChannelKey, config: ChannelConfigResponse): boolean {
@@ -23,14 +30,18 @@ function isUserConfigured(
   key: ChannelKey,
   config: ChannelConfigResponse,
   isPremium: boolean,
-  premiumData?: { telegram_user_id?: string | null; phone_number?: string | null },
+  premiumData?: PremiumChannelData,
 ): boolean {
   if (key === 'telegram') {
     if (isPremium) return !!(premiumData?.telegram_user_id);
     return config.telegram_allowed_chat_id !== '';
   }
+  // Generic premium link check: if premium and linkData exists, use it
+  if (isPremium) {
+    const link = premiumData?.linkData[key];
+    if (link !== undefined) return !!(link?.identifier);
+  }
   if (key === 'linq') {
-    if (isPremium) return !!(premiumData?.phone_number);
     return config.linq_allowed_numbers !== '';
   }
   if (key === 'bluebubbles') {
@@ -45,7 +56,7 @@ export function getChannelState(
   config: ChannelConfigResponse,
   routes: ChannelRouteResponse[],
   isPremium: boolean,
-  premiumData?: { telegram_user_id?: string | null; phone_number?: string | null },
+  premiumData?: PremiumChannelData,
 ): ChannelState {
   if (!isServerAvailable(key, config)) return 'unavailable';
 

@@ -110,17 +110,15 @@ export default function DashboardPage() {
 
   // --- Premium channel link data (needed for correct state derivation) ---
   const [telegramLinkData, setTelegramLinkData] = useState<{ telegram_user_id?: string | null } | null>(null);
-  const [linqLinkData, setLinqLinkData] = useState<{ phone_number?: string | null } | null>(null);
 
   useEffect(() => {
     if (isPremium) {
       api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      api.getLinqLink().then(setLinqLinkData).catch(() => {});
     }
   }, [isPremium]);
 
   const premiumData = isPremium
-    ? { telegram_user_id: telegramLinkData?.telegram_user_id, phone_number: linqLinkData?.phone_number }
+    ? { telegram_user_id: telegramLinkData?.telegram_user_id, linkData: {} }
     : undefined;
 
   // --- Channels ---
