@@ -754,3 +754,72 @@ async def test_check_server_reachable_connect_error() -> None:
         result = await channel._check_server_reachable()
 
     assert result is False
+
+
+# ---------------------------------------------------------------------------
+# register_paas_webhook
+# ---------------------------------------------------------------------------
+
+
+class TestRegisterPaasWebhook:
+    @pytest.mark.asyncio
+    async def test_returns_none_when_server_url_missing(self) -> None:
+        """register_paas_webhook returns None when server URL is not set."""
+        channel = BlueBubblesChannel()
+        with patch("backend.app.channels.bluebubbles.settings") as s:
+            s.bluebubbles_server_url = ""
+            s.bluebubbles_password = "pw"
+            assert await channel.register_paas_webhook("https://app.example.com") is None
+
+    @pytest.mark.asyncio
+    async def test_returns_none_when_password_missing(self) -> None:
+        """register_paas_webhook returns None when password is not set."""
+        channel = BlueBubblesChannel()
+        with patch("backend.app.channels.bluebubbles.settings") as s:
+            s.bluebubbles_server_url = "http://mac:1234"
+            s.bluebubbles_password = ""
+            assert await channel.register_paas_webhook("https://app.example.com") is None
+
+    @pytest.mark.asyncio
+    async def test_url_encodes_password(self) -> None:
+        """register_paas_webhook URL-encodes special chars in the password."""
+        channel = BlueBubblesChannel()
+        mock_register = AsyncMock(return_value=True)
+        with (
+            patch("backend.app.channels.bluebubbles.settings") as s,
+            patch(
+                "backend.app.channels.bluebubbles.register_bluebubbles_webhook",
+                mock_register,
+            ),
+        ):
+            s.bluebubbles_server_url = "http://mac:1234"
+            s.bluebubbles_password = "foo&bar=baz"
+            result = await channel.register_paas_webhook("https://app.example.com")
+
+        assert result is True
+        mock_register.assert_called_once_with(
+            "http://mac:1234",
+            "https://app.example.com/api/webhooks/bluebubbles?password=foo%26bar%3Dbaz",
+        )
+
+    @pytest.mark.asyncio
+    async def test_delegates_to_register_function(self) -> None:
+        """register_paas_webhook calls register_bluebubbles_webhook with correct args."""
+        channel = BlueBubblesChannel()
+        mock_register = AsyncMock(return_value=True)
+        with (
+            patch("backend.app.channels.bluebubbles.settings") as s,
+            patch(
+                "backend.app.channels.bluebubbles.register_bluebubbles_webhook",
+                mock_register,
+            ),
+        ):
+            s.bluebubbles_server_url = "http://mac:1234"
+            s.bluebubbles_password = "simple"
+            result = await channel.register_paas_webhook("https://app.clawbolt.ai")
+
+        assert result is True
+        mock_register.assert_called_once_with(
+            "http://mac:1234",
+            "https://app.clawbolt.ai/api/webhooks/bluebubbles?password=simple",
+        )
