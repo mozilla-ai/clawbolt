@@ -5,7 +5,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import BaseModel, Field
@@ -171,7 +170,7 @@ def _format_results(rows: list[dict[str, Any]]) -> str:
 def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
     """Return a callback that persists refreshed tokens to the database."""
 
-    def _persist_refreshed_tokens(access_token: str, refresh_token: str) -> None:
+    def _persist_refreshed_tokens(access_token: str, refresh_token: str, expires_at: float) -> None:
         try:
             token = oauth_service.load_token(user_id, "quickbooks")
             if token is None:
@@ -183,8 +182,7 @@ def _make_token_refresh_callback(user_id: str, realm_id: str) -> Any:
             else:
                 token.access_token = access_token
                 token.refresh_token = refresh_token
-            # QuickBooks access tokens typically last 1 hour.
-            token.expires_at = time.time() + 3600
+            token.expires_at = expires_at
             oauth_service.save_token(user_id, "quickbooks", token)
         except Exception:
             logger.exception("Failed to persist refreshed QuickBooks tokens for user %s", user_id)

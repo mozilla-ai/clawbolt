@@ -5,7 +5,6 @@ from __future__ import annotations
 import contextlib
 import json
 import logging
-import time
 import zoneinfo
 from datetime import UTC, datetime, tzinfo
 from typing import TYPE_CHECKING, Any
@@ -195,7 +194,7 @@ def _parse_dt(value: str, default_tz: tzinfo = UTC) -> datetime:
 def _make_token_refresh_callback(user_id: str) -> Any:
     """Return a callback that persists refreshed tokens to the database."""
 
-    def _persist_refreshed_tokens(access_token: str, refresh_token: str) -> None:
+    def _persist_refreshed_tokens(access_token: str, refresh_token: str, expires_at: float) -> None:
         try:
             token = oauth_service.load_token(user_id, "google_calendar")
             if token is None:
@@ -206,9 +205,7 @@ def _make_token_refresh_callback(user_id: str) -> Any:
             else:
                 token.access_token = access_token
                 token.refresh_token = refresh_token
-            # Google access tokens typically last 1 hour; use the default
-            # buffer so proactive refresh fires before actual expiry.
-            token.expires_at = time.time() + 3600
+            token.expires_at = expires_at
             oauth_service.save_token(user_id, "google_calendar", token)
         except Exception:
             logger.exception(
