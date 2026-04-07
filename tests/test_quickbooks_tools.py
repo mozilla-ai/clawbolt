@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -166,7 +166,8 @@ def test_quickbooks_tools_count(qb_service: MockQuickBooksService) -> None:
     assert len(tools) == 4
 
 
-def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
+@pytest.mark.asyncio()
+async def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
     """_quickbooks_factory should return [] when client_id/secret are empty."""
     ctx = MagicMock(spec=ToolContext)
     user = MagicMock(spec=User)
@@ -178,10 +179,11 @@ def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
     ):
         mock_settings.quickbooks_client_id = ""
         mock_settings.quickbooks_client_secret = ""
-        assert _quickbooks_factory(ctx) == []
+        assert await _quickbooks_factory(ctx) == []
 
 
-def test_quickbooks_factory_returns_empty_when_not_connected() -> None:
+@pytest.mark.asyncio()
+async def test_quickbooks_factory_returns_empty_when_not_connected() -> None:
     """_quickbooks_factory should return [] when user has no OAuth token."""
     ctx = MagicMock(spec=ToolContext)
     user = MagicMock(spec=User)
@@ -194,9 +196,9 @@ def test_quickbooks_factory_returns_empty_when_not_connected() -> None:
     ):
         mock_settings.quickbooks_client_id = "test-id"
         mock_settings.quickbooks_client_secret = "test-secret"
-        mock_oauth.load_token.return_value = None
+        mock_oauth.get_valid_token = AsyncMock(return_value=None)
 
-        tools = _quickbooks_factory(ctx)
+        tools = await _quickbooks_factory(ctx)
 
     assert tools == []
 

@@ -293,7 +293,7 @@ class ToolRegistry:
                 logger.debug("Skipping %s: no publish_outbound callback", name)
                 continue
             result = factory.create(context)
-            created = await result if inspect.isawaitable(result) else result
+            created: list[Tool] = await result if inspect.isawaitable(result) else result  # type: ignore[assignment]
             if excluded_tool_names:
                 created = [t for t in created if t.name not in excluded_tool_names]
             tools.extend(created)
