@@ -14,6 +14,7 @@ import api from '@/api';
 // Types derived from API return types, exported for consumers
 export type TelegramLinkData = Awaited<ReturnType<typeof api.getTelegramLink>>;
 export type LinqLinkData = Awaited<ReturnType<typeof api.getLinqLink>>;
+export type BlueBubblesLinkData = Awaited<ReturnType<typeof api.getBlueBubblesLink>>;
 
 interface ChannelConfigFormProps {
   channelKey: ChannelKey;
@@ -21,6 +22,7 @@ interface ChannelConfigFormProps {
   channelConfig: ChannelConfigResponse | undefined;
   telegramLinkData: TelegramLinkData | null;
   linqLinkData: LinqLinkData | null;
+  blueBubblesLinkData: BlueBubblesLinkData | null;
   onSaved: () => void;
 }
 
@@ -32,7 +34,7 @@ export function ChannelConfigForm({ channelKey, isPremium, ...rest }: ChannelCon
     return isPremium ? <PremiumLinqForm {...rest} /> : <OssLinqForm {...rest} />;
   }
   if (channelKey === 'bluebubbles') {
-    return <BlueBubblesForm {...rest} />;
+    return isPremium ? <PremiumBlueBubblesForm {...rest} /> : <BlueBubblesForm {...rest} />;
   }
   return null;
 }
@@ -234,7 +236,59 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
   );
 }
 
-// --- BlueBubbles form ---
+// --- BlueBubbles forms ---
+
+function PremiumBlueBubblesForm({ blueBubblesLinkData, channelConfig, onSaved }: SubFormProps) {
+  const [phoneNumber, setPhoneNumber] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const displayedNumber = phoneNumber ?? blueBubblesLinkData?.phone_number ?? '';
+  const imessageAddress = channelConfig?.bluebubbles_imessage_address ?? '';
+
+  const handleSave = async () => {
+    if (blueBubblesLinkData && displayedNumber === (blueBubblesLinkData.phone_number ?? '')) {
+      toast.error('No changes to save');
+      return;
+    }
+    setSaving(true);
+    try {
+      await api.setBlueBubblesLink(displayedNumber);
+      setPhoneNumber(null);
+      toast.success('BlueBubbles settings updated');
+      onSaved();
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="grid gap-4">
+      {imessageAddress && (
+        <TextAssistantCard
+          fromNumber={imessageAddress}
+          subtitle="Send an iMessage to this address to reach your assistant."
+        />
+      )}
+      <Field label="Your Phone Number or iCloud Email">
+        <Input
+          value={displayedNumber}
+          onChange={(e) => setPhoneNumber(e.target.value)}
+          placeholder="e.g. +15551234567 or user@icloud.com"
+        />
+        <p className="text-xs text-muted-foreground mt-1">
+          The phone number or iCloud email you send iMessages from.
+        </p>
+      </Field>
+      <div className="flex justify-end">
+        <Button onClick={handleSave} disabled={saving || blueBubblesLinkData === null} isLoading={saving}>
+          Save
+        </Button>
+      </div>
+    </div>
+  );
+}
 
 function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
   const updateMutation = useUpdateChannelConfig();

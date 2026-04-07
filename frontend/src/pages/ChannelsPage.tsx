@@ -11,7 +11,7 @@ import {
   type ChannelKey,
   type ChannelState,
 } from '@/lib/channel-utils';
-import { ChannelConfigForm, type TelegramLinkData, type LinqLinkData } from '@/components/ChannelConfigForm';
+import { ChannelConfigForm, type TelegramLinkData, type LinqLinkData, type BlueBubblesLinkData } from '@/components/ChannelConfigForm';
 import api from '@/api';
 
 // Types for premium linking responses
@@ -21,6 +21,7 @@ type TelegramBotInfo = NonNullable<Awaited<ReturnType<typeof api.getTelegramBotI
 interface PremiumChannelData {
   telegram_user_id?: string | null;
   phone_number?: string | null;
+  bb_phone_number?: string | null;
 }
 
 export default function ChannelsPage() {
@@ -32,6 +33,7 @@ export default function ChannelsPage() {
   // Premium link data (fetched once for state derivation)
   const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
   const [linqLinkData, setLinqLinkData] = useState<LinqLinkData | null>(null);
+  const [blueBubblesLinkData, setBlueBubblesLinkData] = useState<BlueBubblesLinkData | null>(null);
   const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
 
   useEffect(() => {
@@ -39,6 +41,7 @@ export default function ChannelsPage() {
       api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
       api.getTelegramBotInfo().then(setBotInfo).catch(() => {});
       api.getLinqLink().then(setLinqLinkData).catch(() => {});
+      api.getBlueBubblesLink().then(setBlueBubblesLinkData).catch(() => {});
     }
   }, [isPremium]);
 
@@ -53,6 +56,7 @@ export default function ChannelsPage() {
   const premiumData: PremiumChannelData = {
     telegram_user_id: telegramLinkData?.telegram_user_id,
     phone_number: linqLinkData?.phone_number,
+    bb_phone_number: blueBubblesLinkData?.phone_number,
   };
 
   // Compute states for each channel (memoized to prevent useEffect churn)
@@ -71,7 +75,7 @@ export default function ChannelsPage() {
     }
     return states;
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelConfig, routesData, isPremium, telegramLinkData, linqLinkData]);
+  }, [channelConfig, routesData, isPremium, telegramLinkData, linqLinkData, blueBubblesLinkData]);
 
   // Auto-expand the first "available" channel on initial load only
   const hasAutoExpanded = useRef(false);
@@ -136,6 +140,7 @@ export default function ChannelsPage() {
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
       if (key === 'linq') api.getLinqLink().then(setLinqLinkData).catch(() => {});
+      if (key === 'bluebubbles') api.getBlueBubblesLink().then(setBlueBubblesLinkData).catch(() => {});
     }
     setExpandedChannel(null);
   };
@@ -200,6 +205,7 @@ export default function ChannelsPage() {
                     botInfo={key === 'telegram' ? botInfo : null}
                     telegramLinkData={key === 'telegram' ? telegramLinkData : null}
                     linqLinkData={key === 'linq' ? linqLinkData : null}
+                    blueBubblesLinkData={key === 'bluebubbles' ? blueBubblesLinkData : null}
                     onConfigSaved={() => handleConfigSaved(key)}
                     selectable
                   />
@@ -225,6 +231,7 @@ export default function ChannelsPage() {
               botInfo={key === 'telegram' ? botInfo : null}
               telegramLinkData={key === 'telegram' ? telegramLinkData : null}
               linqLinkData={key === 'linq' ? linqLinkData : null}
+              blueBubblesLinkData={key === 'bluebubbles' ? blueBubblesLinkData : null}
               onConfigSaved={() => handleConfigSaved(key)}
               selectable={false}
             />
@@ -255,6 +262,7 @@ interface ChannelCardProps {
   botInfo: TelegramBotInfo | null;
   telegramLinkData: TelegramLinkData | null;
   linqLinkData: LinqLinkData | null;
+  blueBubblesLinkData: BlueBubblesLinkData | null;
   onConfigSaved: () => void;
   selectable: boolean;
 }
@@ -273,6 +281,7 @@ function ChannelCard({
   botInfo,
   telegramLinkData,
   linqLinkData,
+  blueBubblesLinkData,
   onConfigSaved,
   selectable,
 }: ChannelCardProps) {
@@ -370,6 +379,7 @@ function ChannelCard({
             channelConfig={channelConfig}
             telegramLinkData={telegramLinkData}
             linqLinkData={linqLinkData}
+            blueBubblesLinkData={blueBubblesLinkData}
             onSaved={onConfigSaved}
           />
         </div>
@@ -395,6 +405,7 @@ function ChannelCard({
                 channelConfig={channelConfig}
                 telegramLinkData={telegramLinkData}
                 linqLinkData={linqLinkData}
+                blueBubblesLinkData={blueBubblesLinkData}
                 onSaved={onConfigSaved}
               />
             </div>

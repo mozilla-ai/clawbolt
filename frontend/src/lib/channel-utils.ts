@@ -23,7 +23,7 @@ function isUserConfigured(
   key: ChannelKey,
   config: ChannelConfigResponse,
   isPremium: boolean,
-  premiumData?: { telegram_user_id?: string | null; phone_number?: string | null },
+  premiumData?: { telegram_user_id?: string | null; phone_number?: string | null; bb_phone_number?: string | null },
 ): boolean {
   if (key === 'telegram') {
     if (isPremium) return !!(premiumData?.telegram_user_id);
@@ -34,6 +34,7 @@ function isUserConfigured(
     return config.linq_allowed_numbers !== '';
   }
   if (key === 'bluebubbles') {
+    if (isPremium) return !!(premiumData?.bb_phone_number);
     return config.bluebubbles_allowed_numbers !== '';
   }
   return false;
@@ -45,7 +46,7 @@ export function getChannelState(
   config: ChannelConfigResponse,
   routes: ChannelRouteResponse[],
   isPremium: boolean,
-  premiumData?: { telegram_user_id?: string | null; phone_number?: string | null },
+  premiumData?: { telegram_user_id?: string | null; phone_number?: string | null; bb_phone_number?: string | null },
 ): ChannelState {
   if (!isServerAvailable(key, config)) return 'unavailable';
 

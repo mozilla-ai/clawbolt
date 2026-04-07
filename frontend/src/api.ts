@@ -292,6 +292,24 @@ const api = {
     return res.json() as Promise<{ phone_number: string | null; connected: boolean; linq_from_number?: string }>;
   },
 
+  getBlueBubblesLink: async () => {
+    const res = await fetch('/api/channels/bluebubbles', { headers: _getAuthHeaders() });
+    if (!res.ok) throw new Error('Failed to fetch BlueBubbles link');
+    return res.json() as Promise<{ phone_number: string | null; connected: boolean }>;
+  },
+  setBlueBubblesLink: async (phoneNumber: string) => {
+    const res = await fetch('/api/channels/bluebubbles', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ..._getAuthHeaders() },
+      body: JSON.stringify({ phone_number: phoneNumber }),
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({})) as { detail?: string };
+      throw new Error(body.detail || `Failed to save: ${res.status}`);
+    }
+    return res.json() as Promise<{ phone_number: string | null; connected: boolean }>;
+  },
+
   // Activity stream: real-time agent status from any channel.
   // Auto-reconnects on disconnect so transient drops (proxy timeout,
   // network glitch) don't permanently kill the spinner updates.

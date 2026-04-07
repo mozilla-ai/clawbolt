@@ -7,7 +7,7 @@ import { toast } from '@/lib/toast';
 import { useUpdateProfile, useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { MESSAGING_CHANNELS, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
-import { ChannelConfigForm, type TelegramLinkData, type LinqLinkData } from '@/components/ChannelConfigForm';
+import { ChannelConfigForm, type TelegramLinkData, type LinqLinkData, type BlueBubblesLinkData } from '@/components/ChannelConfigForm';
 import api from '@/api';
 import type { AppShellContext } from '@/layouts/AppShell';
 
@@ -27,11 +27,13 @@ export default function GetStartedPage() {
   // Premium link data (fetched once, same pattern as ChannelsPage)
   const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
   const [linqLinkData, setLinqLinkData] = useState<LinqLinkData | null>(null);
+  const [blueBubblesLinkData, setBlueBubblesLinkData] = useState<BlueBubblesLinkData | null>(null);
 
   useEffect(() => {
     if (isPremium) {
       api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
       api.getLinqLink().then(setLinqLinkData).catch(() => {});
+      api.getBlueBubblesLink().then(setBlueBubblesLinkData).catch(() => {});
     }
   }, [isPremium]);
 
@@ -210,6 +212,7 @@ export default function GetStartedPage() {
                     channelConfig={channelConfig}
                     telegramLinkData={telegramLinkData}
                     linqLinkData={linqLinkData}
+                    blueBubblesLinkData={blueBubblesLinkData}
                     onSaved={() => handleConfigSaved(selectedChannel)}
                   />
                 </div>
