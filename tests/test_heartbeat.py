@@ -821,7 +821,11 @@ class TestRunHeartbeatForUser:
             tasks="Check QuickBooks for unpaid invoices",
             reasoning="Heartbeat item due",
         )
-        mock_execute.return_value = "You have 2 unpaid invoices totaling $1,500."
+        from backend.app.agent.core import AgentResponse
+
+        mock_execute.return_value = AgentResponse(
+            reply_text="You have 2 unpaid invoices totaling $1,500.",
+        )
         mock_bus.publish_outbound = AsyncMock()
 
         mock_session = MagicMock()
@@ -847,7 +851,7 @@ class TestRunHeartbeatForUser:
             channel="telegram",
             chat_id="+15559990000",
         )
-        # Outbound message was published
+        # Outbound message was published (no send_reply tool call, so fallback delivery)
         mock_bus.publish_outbound.assert_awaited_once()
         mock_outbound_msg.assert_called_once_with(
             channel="telegram",
@@ -881,7 +885,7 @@ class TestRunHeartbeatForUser:
         mock_eval.return_value = HeartbeatDecision(
             action="run", tasks="Check something", reasoning="test"
         )
-        mock_execute.return_value = ""
+        mock_execute.return_value = None
         mock_hb_store = MagicMock()
         mock_hb_store.read_heartbeat_md.return_value = "- Check something"
         mock_heartbeat_store_cls.return_value = mock_hb_store
@@ -910,7 +914,9 @@ class TestRunHeartbeatForUser:
         mock_eval.return_value = HeartbeatDecision(
             action="run", tasks="Check something", reasoning="test"
         )
-        mock_execute.return_value = "Here is an update."
+        from backend.app.agent.core import AgentResponse
+
+        mock_execute.return_value = AgentResponse(reply_text="Here is an update.")
         mock_bus.publish_outbound = AsyncMock(side_effect=Exception("Bus down"))
         mock_hb_store = MagicMock()
         mock_hb_store.read_heartbeat_md.return_value = "- Check something"
@@ -1039,7 +1045,8 @@ class TestExecuteHeartbeatTasks:
             mock_bus.publish_outbound = AsyncMock()
 
             result = await execute_heartbeat_tasks(user, "Check QuickBooks for unpaid invoices")
-            assert result == "You have 3 unpaid invoices."
+            assert result is not None
+            assert result.reply_text == "You have 3 unpaid invoices."
             mock_agent_instance.process_message.assert_awaited_once()
 
     @pytest.mark.asyncio
@@ -1069,11 +1076,11 @@ class TestExecuteHeartbeatTasks:
             mock_bus.publish_outbound = AsyncMock()
 
             result = await execute_heartbeat_tasks(user, "Check something")
-            assert result == ""
+            assert result is None
 
     @pytest.mark.asyncio
-    async def test_returns_empty_on_error_fallback(self, user: User) -> None:
-        """Phase 2 should return empty string if agent returns error fallback."""
+    async def test_returns_none_on_error_fallback(self, user: User) -> None:
+        """Phase 2 should return None if agent returns error fallback."""
         from backend.app.agent.core import AgentResponse
 
         mock_response = AgentResponse(reply_text="I'm having trouble.", is_error_fallback=True)
@@ -1102,11 +1109,11 @@ class TestExecuteHeartbeatTasks:
             mock_bus.publish_outbound = AsyncMock()
 
             result = await execute_heartbeat_tasks(user, "Check something")
-            assert result == ""
+            assert result is None
 
     @pytest.mark.asyncio
-    async def test_excludes_messaging_and_uses_list_capabilities(self, user: User) -> None:
-        """Phase 2 should use core tools + list_capabilities, excluding messaging."""
+    async def test_includes_messaging_and_uses_list_capabilities(self, user: User) -> None:
+        """Phase 2 should use core tools (including messaging) + list_capabilities."""
         from backend.app.agent.core import AgentResponse
 
         mock_response = AgentResponse(reply_text="Report")
@@ -1140,11 +1147,11 @@ class TestExecuteHeartbeatTasks:
 
             await execute_heartbeat_tasks(user, "Check QB", channel="telegram", chat_id="123")
 
-            # Should use create_core_tools with messaging excluded
+            # Should use create_core_tools without messaging excluded (#921)
             mock_registry.create_core_tools.assert_called_once()
             call_kwargs = mock_registry.create_core_tools.call_args
-            excluded: set[str] = call_kwargs.kwargs.get("excluded_factories")  # type: ignore[assignment]
-            assert "messaging" in excluded
+            excluded: set[str] = call_kwargs.kwargs.get("excluded_factories") or set()  # type: ignore[assignment]
+            assert "messaging" not in excluded
 
             # Should create list_capabilities since specialists are available
             mock_list_cap.assert_called_once()
@@ -2545,12 +2552,10 @@ async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: Use
     # Should have created list_capabilities meta-tool
     mock_list_cap.assert_called_once()
 
-    # "messaging" should be in the excluded factories
+    # "messaging" should NOT be excluded (#921) — the agent needs it to send
     call_kwargs = mock_registry.create_core_tools.call_args
-    excluded = call_kwargs.kwargs.get("excluded_factories") or call_kwargs[1].get(
-        "excluded_factories"
-    )
-    assert "messaging" in excluded
+    excluded = call_kwargs.kwargs.get("excluded_factories") or set()
+    assert "messaging" not in excluded
 
 
 @pytest.mark.asyncio()
@@ -2589,16 +2594,128 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
 
         await execute_heartbeat_tasks(user, "Check something")
 
-    # Disabled groups should be excluded (along with messaging)
+    # Disabled groups should be excluded, but messaging should not be (#921)
     call_kwargs = mock_registry.create_core_tools.call_args
-    excluded = call_kwargs.kwargs.get("excluded_factories") or call_kwargs[1].get(
-        "excluded_factories"
-    )
+    excluded = call_kwargs.kwargs.get("excluded_factories") or set()
     assert "quickbooks" in excluded
-    assert "messaging" in excluded
+    assert "messaging" not in excluded
 
     # Disabled sub-tools should be passed through
     excluded_tools = call_kwargs.kwargs.get("excluded_tool_names") or call_kwargs[1].get(
         "excluded_tool_names"
     )
     assert "qb_query" in excluded_tools
+
+
+@pytest.mark.asyncio()
+async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User) -> None:
+    """When the agent already sent via send_reply, the heartbeat runner should
+    not publish the reply_text again (regression test for #921)."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.core import AgentResponse
+    from backend.app.agent.tools.base import ToolTags
+
+    mock_response = AgentResponse(
+        reply_text="Sent!",
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id="tc_1",
+                name="send_reply",
+                args={"message": "Here is your joke."},
+                result="Sent message",
+                is_error=False,
+                tags={ToolTags.SENDS_REPLY},
+            )
+        ],
+    )
+
+    with (
+        patch("backend.app.agent.heartbeat.execute_heartbeat_tasks") as mock_execute,
+        patch("backend.app.agent.heartbeat.evaluate_heartbeat_need") as mock_eval,
+        patch("backend.app.agent.heartbeat.get_daily_heartbeat_count") as mock_count,
+        patch("backend.app.agent.heartbeat.HeartbeatStore") as mock_hb_cls,
+        patch("backend.app.agent.heartbeat.get_or_create_conversation") as mock_get_conv,
+        patch("backend.app.agent.heartbeat.get_session_store") as mock_get_ss,
+        patch("backend.app.bus.message_bus") as mock_bus,
+    ):
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run", tasks="Send a joke", reasoning="morning joke"
+        )
+        mock_execute.return_value = mock_response
+        mock_bus.publish_outbound = AsyncMock()
+
+        mock_get_conv.return_value = (MagicMock(), True)
+        mock_ss = MagicMock()
+        mock_ss.add_message = AsyncMock()
+        mock_get_ss.return_value = mock_ss
+
+        mock_hb = MagicMock()
+        mock_hb.log_heartbeat = AsyncMock()
+        mock_hb_cls.return_value = mock_hb
+
+        result = await run_heartbeat_for_user(user, "bluebubbles", "+1555", 5)
+
+    assert result is not None
+    assert result.action_type == "send_message"
+    # Agent already sent via tool, so no manual publish_outbound call
+    mock_bus.publish_outbound.assert_not_awaited()
+    # But heartbeat log should still be recorded
+    mock_hb.log_heartbeat.assert_awaited_once()
+
+
+@pytest.mark.asyncio()
+async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -> None:
+    """When the agent sent via send_reply but produced no reply_text,
+    the runner should still log the heartbeat (#921)."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.core import AgentResponse
+    from backend.app.agent.tools.base import ToolTags
+
+    mock_response = AgentResponse(
+        reply_text="",
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id="tc_1",
+                name="send_reply",
+                args={"message": "Here is your joke."},
+                result="Sent message",
+                is_error=False,
+                tags={ToolTags.SENDS_REPLY},
+            )
+        ],
+    )
+
+    with (
+        patch("backend.app.agent.heartbeat.execute_heartbeat_tasks") as mock_execute,
+        patch("backend.app.agent.heartbeat.evaluate_heartbeat_need") as mock_eval,
+        patch("backend.app.agent.heartbeat.get_daily_heartbeat_count") as mock_count,
+        patch("backend.app.agent.heartbeat.HeartbeatStore") as mock_hb_cls,
+        patch("backend.app.agent.heartbeat.get_or_create_conversation") as mock_get_conv,
+        patch("backend.app.agent.heartbeat.get_session_store") as mock_get_ss,
+        patch("backend.app.bus.message_bus") as mock_bus,
+    ):
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run", tasks="Send a joke", reasoning="morning joke"
+        )
+        mock_execute.return_value = mock_response
+        mock_bus.publish_outbound = AsyncMock()
+
+        mock_get_conv.return_value = (MagicMock(), True)
+        mock_ss = MagicMock()
+        mock_ss.add_message = AsyncMock()
+        mock_get_ss.return_value = mock_ss
+
+        mock_hb = MagicMock()
+        mock_hb.log_heartbeat = AsyncMock()
+        mock_hb_cls.return_value = mock_hb
+
+        result = await run_heartbeat_for_user(user, "bluebubbles", "+1555", 5)
+
+    assert result is not None
+    assert result.action_type == "send_message"
+    # No manual delivery and no duplicate
+    mock_bus.publish_outbound.assert_not_awaited()
+    # Heartbeat log still recorded for rate limiting
+    mock_hb.log_heartbeat.assert_awaited_once()

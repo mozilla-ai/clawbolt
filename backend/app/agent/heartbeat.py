@@ -18,7 +18,7 @@ import datetime
 import logging
 import re
 from dataclasses import dataclass
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from any_llm import amessages
 from any_llm.types.messages import MessageResponse
@@ -35,6 +35,7 @@ from backend.app.agent.system_prompt import (
     build_time_user_context,
     to_local_time,
 )
+from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.names import ToolName
 from backend.app.channels import get_channel
 from backend.app.config import settings
@@ -46,6 +47,9 @@ from backend.app.services.llm_service import (
     reasoning_effort_to_thinking,
 )
 from backend.app.services.llm_usage import log_llm_usage
+
+if TYPE_CHECKING:
+    from backend.app.agent.core import AgentResponse
 
 logger = logging.getLogger(__name__)
 
@@ -473,14 +477,14 @@ async def execute_heartbeat_tasks(
     tasks: str,
     channel: str = "",
     chat_id: str = "",
-) -> str:
+) -> AgentResponse | None:
     """Phase 2: run the task description through the full agent loop.
 
     Creates a ``ClawboltAgent`` with all registered tools and processes the
-    task description as if it were a user message.  Returns the agent's
-    reply text, or an empty string if the agent produced no output.
+    task description as if it were a user message.  Returns the full
+    ``AgentResponse``, or *None* if the agent failed or produced no output.
     """
-    from backend.app.agent.core import AgentResponse, ClawboltAgent
+    from backend.app.agent.core import ClawboltAgent
     from backend.app.agent.stores import ToolConfigStore
     from backend.app.agent.tools.registry import (
         ToolContext,
@@ -520,10 +524,7 @@ async def execute_heartbeat_tasks(
     disabled_groups = await tool_config_store.get_disabled_tool_names()
     disabled_sub_tools = await tool_config_store.get_disabled_sub_tool_names()
 
-    # Always exclude the messaging factory: the heartbeat system delivers
-    # the agent's final reply text, so the agent should not try to message
-    # the user directly.
-    excluded = (disabled_groups or set()) | {"messaging"}
+    excluded = disabled_groups or set()
 
     activated_specialists: set[str] = set()
 
@@ -579,18 +580,25 @@ async def execute_heartbeat_tasks(
     # compose detailed reports (the default agent max_tokens may be lower).
     heartbeat_max_tokens = max(settings.llm_max_tokens_agent, 1024)
 
+    # Prefix the task so the agent knows to execute it rather than
+    # treating it as a user conversation message.
+    task_context = (
+        "Execute this scheduled task now. Use send_reply to deliver "
+        "the result to the user.\n\n" + tasks
+    )
+
     try:
         response: AgentResponse = await agent.process_message(
-            message_context=tasks,
+            message_context=task_context,
             max_tokens=heartbeat_max_tokens,
         )
     except Exception:
         logger.exception("Heartbeat Phase 2 agent failed for user %s", user.id)
-        return ""
+        return None
 
     if response.is_error_fallback:
         logger.warning("Heartbeat Phase 2 agent returned error fallback for user %s", user.id)
-        return ""
+        return None
 
     logger.info(
         "Heartbeat Phase 2 completed for user %s: reply_length=%d, actions=%s",
@@ -599,7 +607,7 @@ async def execute_heartbeat_tasks(
         response.actions_taken or "(none)",
     )
 
-    return response.reply_text
+    return response
 
 
 # ---------------------------------------------------------------------------
@@ -696,11 +704,16 @@ async def run_heartbeat_for_user(
         )
 
     # -- Phase 2: execute tasks via full agent loop --
-    reply_text = await execute_heartbeat_tasks(
-        user, decision.tasks, channel=channel, chat_id=chat_id
+    response = await execute_heartbeat_tasks(user, decision.tasks, channel=channel, chat_id=chat_id)
+
+    # Check if the agent already delivered via send_reply before checking
+    # reply_text, so tool-based sends are still logged even when the LLM
+    # produces no trailing text.
+    sent_reply = response is not None and any(
+        ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in response.tool_calls
     )
 
-    if not reply_text:
+    if not response or (not response.reply_text and not sent_reply):
         logger.debug("Heartbeat Phase 2 produced no output for user %s", user.id)
         return HeartbeatAction(
             action_type="no_action",
@@ -709,30 +722,32 @@ async def run_heartbeat_for_user(
             priority=0,
         )
 
-    # -- Deliver the agent's reply to the user --
-    logger.info(
-        "Heartbeat sending message to user %s: %.100s",
-        user.id,
-        reply_text,
-    )
-    try:
-        from backend.app.bus import OutboundMessage, message_bus
+    reply_text = response.reply_text
 
-        await message_bus.publish_outbound(
-            OutboundMessage(
-                channel=channel,
-                chat_id=chat_id,
-                content=reply_text,
+    if not sent_reply:
+        logger.info(
+            "Heartbeat sending message to user %s: %.100s",
+            user.id,
+            reply_text,
+        )
+        try:
+            from backend.app.bus import OutboundMessage, message_bus
+
+            await message_bus.publish_outbound(
+                OutboundMessage(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content=reply_text,
+                )
             )
-        )
-    except Exception:
-        logger.exception("Heartbeat message failed for user %s", user.id)
-        return HeartbeatAction(
-            action_type="send_message",
-            message=reply_text,
-            reasoning=decision.reasoning,
-            priority=3,
-        )
+        except Exception:
+            logger.exception("Heartbeat message failed for user %s", user.id)
+            return HeartbeatAction(
+                action_type="send_message",
+                message=reply_text,
+                reasoning=decision.reasoning,
+                priority=3,
+            )
 
     # Record outbound message in session history
     session, _ = await get_or_create_conversation(user.id)
