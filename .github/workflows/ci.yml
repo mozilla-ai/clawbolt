@@ -72,6 +72,48 @@ jobs:
       - run: uv sync --all-extras
       - run: uv run pytest -m e2e -v --timeout=60
 
+  e2e-playwright:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: clawbolt
+          POSTGRES_PASSWORD: clawbolt
+          POSTGRES_DB: clawbolt_e2e
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - run: uv sync --all-extras
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run build
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run e2e
+        env:
+          DATABASE_URL: postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_e2e
+          CI: true
+      - uses: actions/upload-artifact@v4
+        if: ${{ !cancelled() }}
+        with:
+          name: playwright-report
+          path: playwright-report/
+          retention-days: 14
+
   frontend-lint:
     runs-on: ubuntu-latest
     steps:
