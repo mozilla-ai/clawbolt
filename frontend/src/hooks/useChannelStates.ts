@@ -15,17 +15,20 @@ import {
   type ChannelState,
   type PremiumChannelData,
 } from '@/lib/channel-utils';
+import type { ChannelConfigResponse } from '@/types';
 import type { PremiumLinkData, TelegramLinkData } from '@/components/ChannelConfigForm';
 
 type TelegramBotInfo = NonNullable<Awaited<ReturnType<typeof useTelegramBotInfo>>['data']>;
 
 export interface ChannelStatesResult {
-  /** Per-channel derived state. */
-  states: Record<ChannelKey, ChannelState>;
+  /** Per-channel derived state (keys absent until config loads). */
+  states: Partial<Record<ChannelKey, ChannelState>>;
   /** True while any core query is still loading for the first time. */
   isLoading: boolean;
   /** True if any core query errored and has no cached data. */
   isError: boolean;
+  /** Server-level channel configuration. */
+  channelConfig: ChannelConfigResponse | undefined;
   /** Premium link data map for linq/bluebubbles (for ChannelConfigForm). */
   linkDataMap: Partial<Record<ChannelKey, PremiumLinkData | null>>;
   /** Telegram-specific premium link data (for ChannelConfigForm). */
@@ -73,15 +76,14 @@ export function useChannelStates(): ChannelStatesResult {
   const botInfo = telegramBotInfoQuery.data ?? null;
 
   // Derive states (deps are all primitives or memoized objects for stable identity)
-  const states = useMemo(() => {
+  const states = useMemo<Partial<Record<ChannelKey, ChannelState>>>(() => {
+    if (!channelConfig) return {};
     const premiumData: PremiumChannelData | undefined = isPremium
       ? { telegram_user_id: telegramUserId, linkData: linkDataMap }
       : undefined;
-    const result = {} as Record<ChannelKey, ChannelState>;
-    if (channelConfig) {
-      for (const ch of MESSAGING_CHANNELS) {
-        result[ch.key] = getChannelState(ch.key, channelConfig, routes, isPremium, premiumData);
-      }
+    const result: Partial<Record<ChannelKey, ChannelState>> = {};
+    for (const ch of MESSAGING_CHANNELS) {
+      result[ch.key] = getChannelState(ch.key, channelConfig, routes, isPremium, premiumData);
     }
     return result;
   }, [channelConfig, routes, isPremium, telegramUserId, linkDataMap]);
@@ -102,6 +104,7 @@ export function useChannelStates(): ChannelStatesResult {
     isError:
       (routesQuery.isError && !routesQuery.data) ||
       (configQuery.isError && !configQuery.data),
+    channelConfig,
     linkDataMap,
     telegramLinkData,
     botInfo,

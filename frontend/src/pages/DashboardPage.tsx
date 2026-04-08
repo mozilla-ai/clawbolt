@@ -105,10 +105,10 @@ export default function DashboardPage() {
   const updateProfile = useUpdateProfile();
 
   // --- Channels ---
-  const channelStates = MESSAGING_CHANNELS.map((ch) => ({
-    ...ch,
-    state: channelData.states[ch.key],
-  }));
+  const channelStates = MESSAGING_CHANNELS.flatMap((ch) => {
+    const state = channelData.states[ch.key];
+    return state ? [{ ...ch, state }] : [];
+  });
   const hasAnyActive = channelStates.some((ch) => ch.state === 'active');
   const hasAnyAvailable = channelStates.some(
     (ch) => ch.state === 'available' || ch.state === 'configured' || ch.state === 'active',

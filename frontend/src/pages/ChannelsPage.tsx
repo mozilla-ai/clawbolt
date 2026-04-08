@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import { toast } from '@/lib/toast';
-import { useChannelConfig, useToggleChannelRoute } from '@/hooks/queries';
+import { useToggleChannelRoute } from '@/hooks/queries';
 import { useChannelStates } from '@/hooks/useChannelStates';
 import { useAuth } from '@/contexts/AuthContext';
 import {
@@ -18,9 +18,8 @@ type TelegramBotInfo = ChannelStatesResult['botInfo'];
 
 export default function ChannelsPage() {
   const { isPremium } = useAuth();
-  const { data: channelConfig } = useChannelConfig();
   const toggleMutation = useToggleChannelRoute();
-  const { states: channelStates, telegramLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
+  const { states: channelStates, channelConfig, telegramLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
 
   // Track which config form is expanded
   const [expandedChannel, setExpandedChannel] = useState<ChannelKey | null>(null);
@@ -139,7 +138,7 @@ export default function ChannelsPage() {
                     key={key}
                     channelKey={key}
                     label={label}
-                    state={channelStates[key]}
+                    state={channelStates[key] ?? 'unavailable'}
                     isExpanded={expandedChannel === key}
                     isSwitching={switchingChannel === key}
                     isMutating={toggleMutation.isPending}
@@ -164,7 +163,7 @@ export default function ChannelsPage() {
               key={key}
               channelKey={key}
               label={label}
-              state={channelStates[key]}
+              state={channelStates[key] ?? 'unavailable'}
               isExpanded={expandedChannel === key}
               isSwitching={false}
               isMutating={toggleMutation.isPending}
@@ -201,7 +200,7 @@ interface ChannelCardProps {
   onActivate: () => void;
   onToggleExpand: () => void;
   isPremium: boolean;
-  channelConfig: ReturnType<typeof useChannelConfig>['data'];
+  channelConfig: ChannelStatesResult['channelConfig'];
   botInfo: TelegramBotInfo | null;
   telegramLinkData: TelegramLinkData | null;
   premiumLinkData: PremiumLinkData | null;
