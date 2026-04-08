@@ -116,7 +116,7 @@ async def register_bluebubbles_webhook(server_url: str, webhook_url: str) -> boo
                 )
                 return False
 
-            # Log without the password query param
+            # Log without the token query param
             safe_url = webhook_url.split("?")[0]
             logger.info("BlueBubbles webhook registered: %s", safe_url)
             return True
