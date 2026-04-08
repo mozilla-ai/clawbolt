@@ -1,4 +1,3 @@
-import { useState, useEffect } from 'react';
 import type { MouseEvent } from 'react';
 import { useNavigate, useOutletContext } from 'react-router-dom';
 import Markdown from 'react-markdown';
@@ -6,12 +5,11 @@ import Card from '@/components/ui/card';
 import { Switch } from '@heroui/switch';
 import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
-import { useChannelRoutes, useChannelConfig, useToolConfig, useUpdateToolConfig, useOAuthStatus, useCalendarConfig, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
-import { useAuth } from '@/contexts/AuthContext';
-import { MESSAGING_CHANNELS, getChannelState, getChannelStatusDisplay } from '@/lib/channel-utils';
+import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useCalendarConfig, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
+import { useChannelStates } from '@/hooks/useChannelStates';
+import { MESSAGING_CHANNELS, getChannelStatusDisplay } from '@/lib/channel-utils';
 import { displayName as toolDisplayName, getToolOAuthStatus } from '@/lib/tool-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
-import api from '@/api';
 
 // Per-calendar tools that can be individually toggled.
 const PER_CALENDAR_TOOLS = [
@@ -96,10 +94,8 @@ function DashboardCard({ title, description, configured, icon, onClick, isLoadin
 export default function DashboardPage() {
   const navigate = useNavigate();
   const { profile, reloadProfile } = useOutletContext<AppShellContext>();
-  const { isPremium } = useAuth();
 
-  const channels = useChannelRoutes();
-  const channelConfigData = useChannelConfig();
+  const channelData = useChannelStates();
   const tools = useToolConfig();
   const updateToolConfig = useUpdateToolConfig();
   const oauth = useOAuthStatus();
@@ -108,33 +104,15 @@ export default function DashboardPage() {
   const modelConfig = useModelConfig();
   const updateProfile = useUpdateProfile();
 
-  // --- Premium channel link data (needed for correct state derivation) ---
-  const [telegramLinkData, setTelegramLinkData] = useState<{ telegram_user_id?: string | null } | null>(null);
-
-  useEffect(() => {
-    if (isPremium) {
-      api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-    }
-  }, [isPremium]);
-
-  const premiumData = isPremium
-    ? { telegram_user_id: telegramLinkData?.telegram_user_id, linkData: {} }
-    : undefined;
-
   // --- Channels ---
-  const allRoutes = channels.data?.routes ?? [];
-  const channelConf = channelConfigData.data;
-  const channelStates = channelConf
-    ? MESSAGING_CHANNELS.map((ch) => ({
-        ...ch,
-        state: getChannelState(ch.key, channelConf, allRoutes, isPremium, premiumData),
-      }))
-    : [];
+  const channelStates = MESSAGING_CHANNELS.map((ch) => ({
+    ...ch,
+    state: channelData.states[ch.key],
+  }));
   const hasAnyActive = channelStates.some((ch) => ch.state === 'active');
   const hasAnyAvailable = channelStates.some(
     (ch) => ch.state === 'available' || ch.state === 'configured' || ch.state === 'active',
   );
-  // Overall card dot: green if any active, amber if any available, gray otherwise
   const channelConfigured = hasAnyActive;
 
   // --- Tools ---
@@ -201,8 +179,8 @@ export default function DashboardPage() {
           configured={channelConfigured}
           icon={<ChannelsIcon />}
           onClick={() => navigate('/app/channels')}
-          isLoading={(channels.isPending && !channels.data) || (channelConfigData.isPending && !channelConfigData.data)}
-          isError={(channels.isError && !channels.data) || (channelConfigData.isError && !channelConfigData.data)}
+          isLoading={channelData.isLoading}
+          isError={channelData.isError}
         >
           {hasAnyAvailable ? (
             <div className="space-y-2">

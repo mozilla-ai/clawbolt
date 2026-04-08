@@ -1,90 +1,31 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import { toast } from '@/lib/toast';
-import { useChannelConfig, useChannelRoutes, useToggleChannelRoute } from '@/hooks/queries';
+import { useChannelConfig, useToggleChannelRoute } from '@/hooks/queries';
+import { useChannelStates } from '@/hooks/useChannelStates';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   MESSAGING_CHANNELS,
-  getChannelState,
   getChannelStatusDisplay,
   type ChannelKey,
   type ChannelState,
-  type PremiumChannelData,
 } from '@/lib/channel-utils';
 import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
-import api from '@/api';
+import type { ChannelStatesResult } from '@/hooks/useChannelStates';
 
-// Types for premium linking responses
-type TelegramBotInfo = NonNullable<Awaited<ReturnType<typeof api.getTelegramBotInfo>>>;
-
-// Registry of premium link fetchers. Adding a channel here is all that's needed
-// for ChannelsPage to fetch, store, pass, and refresh its link data.
-const PREMIUM_LINK_FETCHERS: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
-  linq: () => api.getLinqLink(),
-  bluebubbles: () => api.getBlueBubblesLink(),
-};
-
-/** Normalize a premium link response into the generic PremiumLinkData shape. */
-function normalizeLinkData(data: { phone_number: string | null; connected: boolean }): PremiumLinkData {
-  return { identifier: data.phone_number, connected: data.connected };
-}
+type TelegramBotInfo = ChannelStatesResult['botInfo'];
 
 export default function ChannelsPage() {
   const { isPremium } = useAuth();
-  const { data: routesData } = useChannelRoutes();
   const { data: channelConfig } = useChannelConfig();
   const toggleMutation = useToggleChannelRoute();
-
-  // Telegram is special (different API shape), so it stays separate
-  const [telegramLinkData, setTelegramLinkData] = useState<TelegramLinkData | null>(null);
-  const [botInfo, setBotInfo] = useState<TelegramBotInfo | null>(null);
-
-  // Generic premium link data map for all other channels
-  const [linkDataMap, setLinkDataMap] = useState<Partial<Record<ChannelKey, PremiumLinkData | null>>>({});
-
-  useEffect(() => {
-    if (isPremium) {
-      api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      api.getTelegramBotInfo().then(setBotInfo).catch(() => {});
-      for (const [key, fetcher] of Object.entries(PREMIUM_LINK_FETCHERS)) {
-        fetcher().then((data) => {
-          setLinkDataMap((prev) => ({ ...prev, [key]: normalizeLinkData(data) }));
-        }).catch(() => {});
-      }
-    }
-  }, [isPremium]);
+  const { states: channelStates, telegramLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
 
   // Track which config form is expanded
   const [expandedChannel, setExpandedChannel] = useState<ChannelKey | null>(null);
   // Track which channel is switching (optimistic)
   const [switchingChannel, setSwitchingChannel] = useState<ChannelKey | null>(null);
-
-  const routes = routesData?.routes ?? [];
-
-  // Build premium data for state derivation
-  const premiumData: PremiumChannelData = {
-    telegram_user_id: telegramLinkData?.telegram_user_id,
-    linkData: linkDataMap,
-  };
-
-  // Compute states for each channel (memoized to prevent useEffect churn)
-  const channelStates = useMemo(() => {
-    const states: Record<ChannelKey, ChannelState> = {} as Record<ChannelKey, ChannelState>;
-    if (channelConfig) {
-      for (const ch of MESSAGING_CHANNELS) {
-        states[ch.key] = getChannelState(
-          ch.key,
-          channelConfig,
-          routes,
-          isPremium,
-          premiumData,
-        );
-      }
-    }
-    return states;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelConfig, routesData, isPremium, telegramLinkData, linkDataMap]);
 
   // Auto-expand the first "available" channel on initial load only
   const hasAutoExpanded = useRef(false);
@@ -145,15 +86,7 @@ export default function ChannelsPage() {
 
   // Callback after config save: refresh premium link data and collapse form
   const handleConfigSaved = (key: ChannelKey) => {
-    if (isPremium) {
-      if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
-      const fetcher = PREMIUM_LINK_FETCHERS[key];
-      if (fetcher) {
-        fetcher().then((data) => {
-          setLinkDataMap((prev) => ({ ...prev, [key]: normalizeLinkData(data) }));
-        }).catch(() => {});
-      }
-    }
+    invalidateLink(key);
     setExpandedChannel(null);
   };
 

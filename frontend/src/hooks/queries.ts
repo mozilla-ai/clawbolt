@@ -201,6 +201,40 @@ export function useUpdateModelConfig() {
   });
 }
 
+// --- Premium channel links ---
+
+export function useTelegramLink(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.telegramLink,
+    queryFn: () => api.getTelegramLink(),
+    enabled,
+  });
+}
+
+export function useTelegramBotInfo(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.telegramBotInfo,
+    queryFn: () => api.getTelegramBotInfo(),
+    enabled,
+  });
+}
+
+export function useLinqLink(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.linqLink,
+    queryFn: () => api.getLinqLink(),
+    enabled,
+  });
+}
+
+export function useBlueBubblesLink(enabled: boolean) {
+  return useQuery({
+    queryKey: queryKeys.blueBubblesLink,
+    queryFn: () => api.getBlueBubblesLink(),
+    enabled,
+  });
+}
+
 // --- Channel routes ---
 
 export function useChannelRoutes() {
