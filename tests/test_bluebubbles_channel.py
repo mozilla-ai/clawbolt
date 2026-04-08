@@ -11,7 +11,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.channels.bluebubbles import BlueBubblesChannel
+from backend.app.channels.bluebubbles import BlueBubblesChannel, _derive_webhook_token
 from tests.mocks.bluebubbles import make_bluebubbles_webhook_payload
 
 _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
@@ -25,12 +25,12 @@ _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
 def _post_webhook(
     client: TestClient,
     payload: dict,
-    password: str = "",
+    token: str = "",
 ) -> httpx.Response:
-    """Post a BlueBubbles webhook with optional password query param."""
+    """Post a BlueBubbles webhook with optional token query param."""
     url = "/api/webhooks/bluebubbles"
-    if password:
-        url = f"{url}?password={password}"
+    if token:
+        url = f"{url}?token={token}"
     return client.post(url, json=payload)
 
 
@@ -127,8 +127,8 @@ def test_duplicate_message_skipped(bluebubbles_client: TestClient) -> None:
     mock_pub.assert_called_once()
 
 
-def test_invalid_password_does_not_publish(bluebubbles_client: TestClient) -> None:
-    """Invalid password should return 200 but not publish to bus."""
+def test_invalid_token_does_not_publish(bluebubbles_client: TestClient) -> None:
+    """Invalid webhook token should return 200 but not publish to bus."""
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
@@ -137,26 +137,36 @@ def test_invalid_password_does_not_publish(bluebubbles_client: TestClient) -> No
         ),
     ):
         payload = make_bluebubbles_webhook_payload(text="Hi")
-        resp = _post_webhook(bluebubbles_client, payload, password="wrong-password")
+        resp = _post_webhook(bluebubbles_client, payload, token="wrong-token")
 
     assert resp.status_code == 200
     mock_pub.assert_not_called()
 
 
-def test_correct_password_publishes(bluebubbles_client: TestClient) -> None:
-    """Correct password should publish to bus."""
+def test_correct_token_publishes(bluebubbles_client: TestClient) -> None:
+    """Correct derived webhook token should publish to bus."""
+    password = "correct-password"
     with (
         patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
         patch(
             "backend.app.channels.bluebubbles.settings.bluebubbles_password",
-            "correct-password",
+            password,
         ),
     ):
         payload = make_bluebubbles_webhook_payload(text="Hi")
-        resp = _post_webhook(bluebubbles_client, payload, password="correct-password")
+        token = _derive_webhook_token(password)
+        resp = _post_webhook(bluebubbles_client, payload, token=token)
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
+
+
+def test_raw_password_never_in_webhook_url() -> None:
+    """Regression: webhook URL must use a derived token, not the raw password (#920)."""
+    password = "my-secret-bb-password"
+    token = _derive_webhook_token(password)
+    assert password not in token
+    assert len(token) == 64  # SHA-256 hex digest
 
 
 # ---------------------------------------------------------------------------
@@ -677,9 +687,10 @@ async def test_start_registers_webhook_on_success() -> None:
         await channel.start()
 
     assert channel.server_reachable is True
+    expected_token = _derive_webhook_token("test-pw")
     mock_register.assert_called_once_with(
         "https://my-mac.example.com",
-        "https://tunnel.example.com/api/webhooks/bluebubbles?password=test-pw",
+        f"https://tunnel.example.com/api/webhooks/bluebubbles?token={expected_token}",
     )
 
 
@@ -781,8 +792,8 @@ class TestRegisterPaasWebhook:
             assert await channel.register_paas_webhook("https://app.example.com") is None
 
     @pytest.mark.asyncio
-    async def test_url_encodes_password(self) -> None:
-        """register_paas_webhook URL-encodes special chars in the password."""
+    async def test_uses_derived_token(self) -> None:
+        """register_paas_webhook uses a derived token, not the raw password."""
         channel = BlueBubblesChannel()
         mock_register = AsyncMock(return_value=True)
         with (
@@ -797,9 +808,10 @@ class TestRegisterPaasWebhook:
             result = await channel.register_paas_webhook("https://app.example.com")
 
         assert result is True
+        expected_token = _derive_webhook_token("foo&bar=baz")
         mock_register.assert_called_once_with(
             "http://mac:1234",
-            "https://app.example.com/api/webhooks/bluebubbles?password=foo%26bar%3Dbaz",
+            f"https://app.example.com/api/webhooks/bluebubbles?token={expected_token}",
         )
 
     @pytest.mark.asyncio
@@ -819,7 +831,8 @@ class TestRegisterPaasWebhook:
             result = await channel.register_paas_webhook("https://app.clawbolt.ai")
 
         assert result is True
+        expected_token = _derive_webhook_token("simple")
         mock_register.assert_called_once_with(
             "http://mac:1234",
-            "https://app.clawbolt.ai/api/webhooks/bluebubbles?password=simple",
+            f"https://app.clawbolt.ai/api/webhooks/bluebubbles?token={expected_token}",
         )
