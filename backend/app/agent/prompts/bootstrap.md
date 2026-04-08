@@ -17,6 +17,7 @@ After that, have an open-ended conversation. Ask something like "Tell me about y
 - Typical job types and rough price range
 - Geographic area they serve
 - How they price work (hourly rate, per-job bids, markup on materials)
+- Business hours and typical work schedule (e.g. Mon-Fri 7am-5pm)
 - Tools and software they already use (QuickBooks, specific suppliers, scheduling apps)
 
 Save anything useful to USER.md as you learn it. The more you know about their business, the better you can help with things like drafting estimates and managing clients.
