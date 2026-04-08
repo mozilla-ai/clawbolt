@@ -32,10 +32,11 @@ export DATABASE_URL="${DATABASE_URL:-postgresql://clawbolt:clawbolt@localhost:54
 echo "[e2e] DATABASE_URL=$DATABASE_URL"
 
 # Create the e2e database if it doesn't exist.
-# Try su (sandbox) first, fall back to PGPASSWORD + createdb (CI service containers).
+# Try su (sandbox/root) first, fall back to PGPASSWORD + createdb (CI service containers).
+# The < /dev/null prevents su from hanging on password prompt when not running as root.
 DB_NAME="${DATABASE_URL##*/}"
-if ! su - postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='$DB_NAME'\" | grep -q 1 || psql -c \"CREATE DATABASE $DB_NAME OWNER clawbolt;\"" 2>/dev/null; then
-  echo "[e2e] su - postgres failed, trying PGPASSWORD + createdb..."
+if ! su - postgres -c "psql -tc \"SELECT 1 FROM pg_database WHERE datname='$DB_NAME'\" | grep -q 1 || psql -c \"CREATE DATABASE $DB_NAME OWNER clawbolt;\"" < /dev/null 2>/dev/null; then
+  echo "[e2e] su - postgres unavailable, trying createdb..."
   PGPASSWORD=clawbolt createdb -h localhost -U clawbolt "$DB_NAME" 2>/dev/null || true
 fi
 
