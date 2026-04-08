@@ -1,6 +1,7 @@
 """BlueBubbles channel: inbound webhook + outbound messaging (iMessage via self-hosted Mac bridge)."""
 
 import asyncio
+import hashlib
 import hmac
 import logging
 import uuid
@@ -21,6 +22,20 @@ from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 logger = logging.getLogger(__name__)
 
 STARTUP_DELAY_SECONDS = 3
+
+
+def _derive_webhook_token(password: str) -> str:
+    """Derive a webhook authentication token from the BlueBubbles server password.
+
+    The raw password is used for API calls to the BlueBubbles server, but the
+    webhook callback URL uses this derived token instead so the actual password
+    never appears in request URLs or server access logs.
+    """
+    return hmac.new(
+        key=b"clawbolt-bluebubbles-webhook-token",
+        msg=password.encode(),
+        digestmod=hashlib.sha256,
+    ).hexdigest()
 
 
 # ---------------------------------------------------------------------------
@@ -184,9 +199,8 @@ class BlueBubblesChannel(BaseChannel):
             )
             return
 
-        webhook_url = (
-            f"{tunnel_url}/api/webhooks/bluebubbles?password={settings.bluebubbles_password}"
-        )
+        token = _derive_webhook_token(settings.bluebubbles_password)
+        webhook_url = f"{tunnel_url}/api/webhooks/bluebubbles?token={token}"
 
         if not await wait_for_dns(tunnel_url):
             logger.warning(
@@ -207,10 +221,8 @@ class BlueBubblesChannel(BaseChannel):
         """Register BlueBubbles webhook using a stable PaaS base URL."""
         if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
             return None
-        webhook_url = (
-            f"{base_url}/api/webhooks/bluebubbles"
-            f"?password={quote(settings.bluebubbles_password, safe='')}"
-        )
+        token = _derive_webhook_token(settings.bluebubbles_password)
+        webhook_url = f"{base_url}/api/webhooks/bluebubbles?token={quote(token, safe='')}"
         return await register_bluebubbles_webhook(settings.bluebubbles_server_url, webhook_url)
 
     async def stop(self) -> None:
@@ -281,12 +293,11 @@ class BlueBubblesChannel(BaseChannel):
             _rate_limit: None = Depends(check_webhook_rate_limit),
         ) -> JSONResponse:
             """Receive inbound messages from BlueBubbles."""
-            # Validate password query param
-            password = request.query_params.get("password", "")
-            if settings.bluebubbles_password and not hmac.compare_digest(
-                password, settings.bluebubbles_password
-            ):
-                logger.warning("Invalid BlueBubbles webhook password")
+            # Validate webhook token (derived from password; never log the raw password)
+            token = request.query_params.get("token", "")
+            expected = _derive_webhook_token(settings.bluebubbles_password)
+            if settings.bluebubbles_password and not hmac.compare_digest(token, expected):
+                logger.warning("Invalid BlueBubbles webhook token")
                 return JSONResponse(content={"ok": True})
 
             try:
