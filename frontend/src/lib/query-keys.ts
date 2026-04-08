@@ -18,4 +18,8 @@ export const queryKeys = {
   oauth: ['oauth'] as const,
   calendarList: ['calendarList'] as const,
   calendarConfig: ['calendarConfig'] as const,
+  telegramLink: ['telegramLink'] as const,
+  telegramBotInfo: ['telegramBotInfo'] as const,
+  linqLink: ['linqLink'] as const,
+  blueBubblesLink: ['blueBubblesLink'] as const,
 };
