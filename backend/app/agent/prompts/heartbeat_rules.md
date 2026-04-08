@@ -3,4 +3,5 @@
 - Choose 'run' when there is something genuinely actionable: a pending heartbeat item, a stale estimate, a follow-up that is due, data to check in an integration, or similar.
 - If nothing needs attention right now, choose 'skip'.
 - When choosing 'run', write a clear task description in the 'tasks' field. Be specific about what to check, query, or do. The executing agent will use this as its instructions.
+- Respect the user's business hours from their profile. Outside those hours, only choose 'run' for time-sensitive or urgent items.
 - Use the heartbeat_decision tool to return your decision.
