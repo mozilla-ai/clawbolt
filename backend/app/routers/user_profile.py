@@ -7,6 +7,7 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from backend.app.auth.dependencies import get_current_user
+from backend.app.channels import is_bluebubbles_configured, reset_channel_clients
 from backend.app.config import save_persistent_config, settings, update_settings
 from backend.app.database import get_db
 from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
@@ -91,22 +92,6 @@ async def update_profile(
 # ---------------------------------------------------------------------------
 
 
-def _is_bluebubbles_configured() -> bool:
-    """Check if BlueBubbles is configured AND the server is reachable."""
-    if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
-        return False
-    try:
-        from backend.app.channels import get_channel
-        from backend.app.channels.bluebubbles import BlueBubblesChannel
-
-        ch = get_channel("bluebubbles")
-        if isinstance(ch, BlueBubblesChannel):
-            return ch.server_reachable
-    except KeyError:
-        pass
-    return False
-
-
 def _build_channel_config_response() -> ChannelConfigResponse:
     return ChannelConfigResponse(
         telegram_bot_token_set=bool(settings.telegram_bot_token),
@@ -115,7 +100,7 @@ def _build_channel_config_response() -> ChannelConfigResponse:
         linq_from_number=settings.linq_from_number,
         linq_allowed_numbers=settings.linq_allowed_numbers,
         linq_preferred_service=settings.linq_preferred_service,
-        bluebubbles_configured=_is_bluebubbles_configured(),
+        bluebubbles_configured=is_bluebubbles_configured(),
         bluebubbles_allowed_numbers=settings.bluebubbles_allowed_numbers,
         bluebubbles_imessage_address=settings.bluebubbles_imessage_address,
     )
@@ -155,30 +140,7 @@ async def update_channel_config(
     # Persist to config.json inside the volume-mounted data directory.
     save_persistent_config(updates)
 
-    # If the bot token changed, reset the live TelegramChannel instance.
-    if "telegram_bot_token" in updates:
-        try:
-            from backend.app.channels import get_channel
-            from backend.app.channels.telegram import TelegramChannel
-
-            channel = get_channel("telegram")
-            if isinstance(channel, TelegramChannel):
-                channel._token = settings.telegram_bot_token
-                channel._bot = None
-        except KeyError:
-            pass
-
-    # If the Linq API token changed, reset the httpx client so it picks up the new token.
-    if "linq_api_token" in updates:
-        try:
-            from backend.app.channels import get_channel
-            from backend.app.channels.linq import LinqChannel
-
-            channel = get_channel("linq")
-            if isinstance(channel, LinqChannel):
-                channel._client = None
-        except KeyError:
-            pass
+    reset_channel_clients(updates)
 
     return _build_channel_config_response()
 
