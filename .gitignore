@@ -39,6 +39,11 @@ data/
 frontend/node_modules/
 frontend/dist/
 
+# E2E / Playwright
+node_modules/
+playwright-report/
+test-results/
+
 # Docs site
 docs/node_modules/
 docs/dist/
