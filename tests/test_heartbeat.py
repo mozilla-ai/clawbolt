@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from any_llm.types.messages import MessageResponse, MessageUsage, ToolUseBlock
+from pydantic import BaseModel
 
 import backend.app.database as _db_module
 from backend.app.agent.dto import HeartbeatLogEntry
@@ -2726,15 +2727,21 @@ async def test_heartbeat_auto_approves_messaging_tools(user: User) -> None:
     """Heartbeat Phase 2 should clear approval_policy on messaging tools so
     send_reply executes without prompting the user (regression test for #932)."""
     from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-    from backend.app.agent.tools.base import Tool, ToolTags
+    from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
     from backend.app.agent.tools.names import ToolName
+
+    class _EmptyParams(BaseModel):
+        pass
+
+    async def _noop(**kwargs: object) -> ToolResult:
+        return ToolResult(content="ok")
 
     # Create mock tools that mimic the real messaging tool definitions
     send_reply_tool = Tool(
         name=ToolName.SEND_REPLY,
         description="Send a text reply",
-        function=AsyncMock(),
-        params_model=MagicMock(),
+        function=_noop,
+        params_model=_EmptyParams,
         tags={ToolTags.SENDS_REPLY},
         approval_policy=ApprovalPolicy(
             default_level=PermissionLevel.ASK,
@@ -2744,8 +2751,8 @@ async def test_heartbeat_auto_approves_messaging_tools(user: User) -> None:
     send_media_tool = Tool(
         name=ToolName.SEND_MEDIA_REPLY,
         description="Send media reply",
-        function=AsyncMock(),
-        params_model=MagicMock(),
+        function=_noop,
+        params_model=_EmptyParams,
         tags={ToolTags.SENDS_REPLY},
         approval_policy=ApprovalPolicy(
             default_level=PermissionLevel.ASK,
@@ -2755,8 +2762,8 @@ async def test_heartbeat_auto_approves_messaging_tools(user: User) -> None:
     other_tool = Tool(
         name="read_file",
         description="Read a file",
-        function=AsyncMock(),
-        params_model=MagicMock(),
+        function=_noop,
+        params_model=_EmptyParams,
         approval_policy=ApprovalPolicy(default_level=PermissionLevel.ALWAYS),
     )
     core_tools = [send_reply_tool, send_media_tool, other_tool]
