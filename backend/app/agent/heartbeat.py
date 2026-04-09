@@ -548,6 +548,16 @@ async def execute_heartbeat_tasks(
         excluded_factories=excluded,
         excluded_tool_names=disabled_sub_tools or None,
     )
+
+    # Auto-approve messaging tools for heartbeat context (#932).
+    # Phase 1 already decided to send this message; asking the user for
+    # permission to deliver it sends a confusing approval prompt as the
+    # heartbeat message itself.
+    _HEARTBEAT_AUTO_APPROVE = {ToolName.SEND_REPLY, ToolName.SEND_MEDIA_REPLY}
+    for tool in tools:
+        if tool.name in _HEARTBEAT_AUTO_APPROVE:
+            tool.approval_policy = None
+
     specialist_summaries = default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=excluded
     )

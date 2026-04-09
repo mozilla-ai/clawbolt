@@ -2719,3 +2719,86 @@ async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -
     mock_bus.publish_outbound.assert_not_awaited()
     # Heartbeat log still recorded for rate limiting
     mock_hb.log_heartbeat.assert_awaited_once()
+
+
+@pytest.mark.asyncio()
+async def test_heartbeat_auto_approves_messaging_tools(user: User) -> None:
+    """Heartbeat Phase 2 should clear approval_policy on messaging tools so
+    send_reply executes without prompting the user (regression test for #932)."""
+    from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+    from backend.app.agent.tools.base import Tool, ToolTags
+    from backend.app.agent.tools.names import ToolName
+
+    # Create mock tools that mimic the real messaging tool definitions
+    send_reply_tool = Tool(
+        name=ToolName.SEND_REPLY,
+        description="Send a text reply",
+        function=AsyncMock(),
+        params_model=MagicMock(),
+        tags={ToolTags.SENDS_REPLY},
+        approval_policy=ApprovalPolicy(
+            default_level=PermissionLevel.ASK,
+            description_builder=lambda args: "Send a text message",
+        ),
+    )
+    send_media_tool = Tool(
+        name=ToolName.SEND_MEDIA_REPLY,
+        description="Send media reply",
+        function=AsyncMock(),
+        params_model=MagicMock(),
+        tags={ToolTags.SENDS_REPLY},
+        approval_policy=ApprovalPolicy(
+            default_level=PermissionLevel.ASK,
+            description_builder=lambda args: "Send a media message",
+        ),
+    )
+    other_tool = Tool(
+        name="read_file",
+        description="Read a file",
+        function=AsyncMock(),
+        params_model=MagicMock(),
+        approval_policy=ApprovalPolicy(default_level=PermissionLevel.ALWAYS),
+    )
+    core_tools = [send_reply_tool, send_media_tool, other_tool]
+
+    mock_agent_cls = MagicMock()
+    mock_agent = MagicMock()
+    mock_agent_cls.return_value = mock_agent
+    mock_agent.register_tools = MagicMock()
+    mock_agent.process_message = AsyncMock(
+        return_value=MagicMock(is_error_fallback=False, reply_text="done", actions_taken="")
+    )
+
+    mock_registry = MagicMock()
+    mock_registry.create_core_tools = AsyncMock(return_value=core_tools)
+    mock_registry.get_available_specialist_summaries.return_value = {}
+    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_disabled_specialist_sub_tools.return_value = {}
+
+    mock_tool_config = MagicMock()
+    mock_tool_config.get_disabled_tool_names = AsyncMock(return_value=set())
+    mock_tool_config.get_disabled_sub_tool_names = AsyncMock(return_value=set())
+
+    with (
+        patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
+        patch("backend.app.agent.tools.registry.default_registry", mock_registry),
+        patch("backend.app.agent.stores.ToolConfigStore", return_value=mock_tool_config),
+        patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+        patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        patch("backend.app.bus.message_bus"),
+    ):
+        from backend.app.agent.heartbeat import execute_heartbeat_tasks
+
+        await execute_heartbeat_tasks(user, "Send daily joke", channel="sms", chat_id="+1555")
+
+    # Messaging tools should have approval_policy cleared so they auto-execute
+    assert send_reply_tool.approval_policy is None, (
+        "send_reply should have approval_policy=None in heartbeat context"
+    )
+    assert send_media_tool.approval_policy is None, (
+        "send_media_reply should have approval_policy=None in heartbeat context"
+    )
+    # Non-messaging tools should keep their approval_policy unchanged
+    assert other_tool.approval_policy is not None, (
+        "non-messaging tools should retain their approval_policy"
+    )
