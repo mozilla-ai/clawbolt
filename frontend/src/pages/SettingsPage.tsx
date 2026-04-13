@@ -28,7 +28,6 @@ export default function SettingsPage() {
   }, [reloadProfile]);
 
   const extraTabs = getExtraSettingsTabs(isPremium, isAdmin);
-  const activeTab = tab || 'model';
 
   const handleTabChange = (value: string) => {
     navigate(`/app/settings/${value}`, { replace: true });
@@ -43,6 +42,7 @@ export default function SettingsPage() {
     { key: 'telegram', label: 'Telegram' },
   ].filter((t) => visibleOssKeys.includes(t.key));
   const allTabs = [...ossTabs, ...extraTabs.map((t) => ({ key: t.key, label: t.label }))];
+  const activeTab = (tab && allTabs.some((t) => t.key === tab)) ? tab : allTabs[0]?.key || 'model';
 
   // Premium-only tab
   const premiumContent = renderPremiumSettingsTab(activeTab, isAdmin);
