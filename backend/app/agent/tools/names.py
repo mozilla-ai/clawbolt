@@ -44,6 +44,7 @@ class ToolName:
 
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
+    MANAGE_INTEGRATION = "manage_integration"
 
     # Heartbeat (not registered in the main tool registry)
     COMPOSE_MESSAGE = "compose_message"

@@ -71,6 +71,7 @@ class _PendingState:
     code_verifier: str
     redirect_uri: str
     expires_at: float
+    source: str = "web"
 
 
 @dataclass
@@ -144,8 +145,15 @@ class OAuthService:
         self,
         config: OAuthConfig,
         user_id: str,
+        source: str = "web",
     ) -> str:
-        """Build an authorization URL with PKCE and state parameter."""
+        """Build an authorization URL with PKCE and state parameter.
+
+        *source* tracks where the flow was initiated from ("web" for the
+        frontend UI, "chat" for the manage_integration tool). The callback
+        uses this to decide whether to redirect to the SPA or render a
+        standalone confirmation page.
+        """
         self._cleanup_expired_states()
 
         state = secrets.token_urlsafe(32)
@@ -160,6 +168,7 @@ class OAuthService:
             code_verifier=verifier,
             redirect_uri=redirect_uri,
             expires_at=time.time() + _STATE_TTL_SECONDS,
+            source=source,
         )
 
         params: dict[str, str] = {
@@ -599,6 +608,13 @@ class OAuthService:
         if pending is None or time.time() > pending.expires_at:
             return None
         return pending.integration
+
+    def get_pending_state_source(self, state: str) -> str:
+        """Return the source ("web" or "chat") for a pending state."""
+        pending = self._pending_states.get(state)
+        if pending is None or time.time() > pending.expires_at:
+            return "web"
+        return pending.source
 
     def _cleanup_expired_states(self) -> None:
         """Remove expired pending states."""

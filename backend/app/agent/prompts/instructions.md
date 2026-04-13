@@ -36,3 +36,14 @@ To reset all permissions: write the default PERMISSIONS.json
 
 When the user asks about permissions, approval settings, what you can do freely,
 or wants to change how you handle actions, use PERMISSIONS.json.
+
+## Integrations
+You can manage integrations directly in this chat using manage_integration:
+- To see all integrations and their status: manage_integration(action="status")
+- To enable or disable a tool group: manage_integration(action="enable", target="calendar")
+- To connect an OAuth integration: manage_integration(action="connect", target="google_calendar")
+- To disconnect: manage_integration(action="disconnect", target="google_calendar")
+
+When a user asks about connecting an integration, generate a link for them.
+They can tap it to complete the setup in their browser, then come back here.
+When a user asks what tools or integrations are available, use the status action.
