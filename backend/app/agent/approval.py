@@ -8,9 +8,9 @@ Three permission levels: ALWAYS (execute freely), ASK (prompt user first),
 DENY (never execute). Users can respond with yes/always/no/never to
 control both immediate and future behavior.
 
-Batch plan approval: when a user request triggers multiple tools, the
-system presents a single plan message grouping auto and pending steps.
-The user approves or rejects the entire batch with one response.
+Sequential approval: when a user request triggers multiple tools, each
+tool that requires approval gets its own prompt. The user approves or
+rejects each tool independently.
 """
 
 from __future__ import annotations
@@ -366,7 +366,7 @@ class ApprovalGate:
         self._pending[user_id] = pending
 
         if prompt is None:
-            prompt = _format_approval_message(tool_name, description)
+            prompt = format_approval_message(tool_name, description)
         try:
             from backend.app.bus import OutboundMessage as OMsg
 
@@ -506,7 +506,7 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
     return result
 
 
-def _format_approval_message(tool_name: str, description: str) -> str:
+def format_approval_message(tool_name: str, description: str) -> str:
     """Build a plain-text approval prompt for the user."""
     return f"I'd like to: {description}\n\nReply yes or no (always/never to remember your choice)"
 

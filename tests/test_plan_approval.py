@@ -606,7 +606,7 @@ class TestBatchApproval:
         assert len(approval_msgs) == 1
         # "Reply yes or no" should appear exactly once (not double-wrapped)
         assert approval_msgs[0].count("Reply yes or no") == 1
-        # Should not contain the _format_approval_message wrapper
+        # Should not contain the format_approval_message wrapper
         assert "wants to use the tool" not in approval_msgs[0]
 
     @pytest.mark.asyncio()

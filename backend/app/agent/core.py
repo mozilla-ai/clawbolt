@@ -19,7 +19,7 @@ from pydantic import ValidationError
 from backend.app.agent.approval import (
     ApprovalDecision,
     PermissionLevel,
-    _format_approval_message,
+    format_approval_message,
     get_approval_gate,
     get_approval_store,
 )
@@ -570,7 +570,7 @@ class ClawboltAgent:
                 tc_req = parsed_calls[idx]
 
                 if self._publish_outbound is not None and self._chat_id is not None:
-                    prompt = _format_approval_message(tool_obj.name, description)
+                    prompt = format_approval_message(tool_obj.name, description)
 
                     if self._session_id:
                         await self._persist_approval_prompt(prompt)
