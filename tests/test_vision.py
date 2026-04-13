@@ -1,10 +1,23 @@
+import base64
+import io
+import os
 from unittest.mock import patch
 
 import pytest
 from any_llm.types.messages import MessageResponse, MessageUsage, TextBlock
+from PIL import Image
 
-from backend.app.media.vision import analyze_image
+from backend.app.media.vision import _MAX_RAW_BYTES, analyze_image, compress_image_for_api
 from tests.mocks.llm import make_vision_response
+
+
+def _make_noisy_jpeg(width: int = 100, height: int = 100, quality: int = 95) -> bytes:
+    """Create a JPEG with random pixel data (resists compression)."""
+    data = os.urandom(width * height * 3)
+    img = Image.frombytes("RGB", (width, height), data)
+    buf = io.BytesIO()
+    img.save(buf, format="JPEG", quality=quality)
+    return buf.getvalue()
 
 
 @pytest.mark.asyncio()
@@ -126,3 +139,73 @@ def test_build_vision_content_with_context() -> None:
     assert blocks[0] == {"type": "text", "text": "Describe this"}
     assert blocks[1]["type"] == "image"
     assert blocks[1]["source"]["data"] == "BBBB"
+
+
+# -- compress_image_for_api tests --
+
+
+def test_compress_small_image_unchanged() -> None:
+    """Images already under the size limit should be returned unchanged."""
+    small_jpeg = _make_noisy_jpeg(100, 100)
+    assert len(small_jpeg) < _MAX_RAW_BYTES
+
+    result_bytes, result_mime = compress_image_for_api(small_jpeg, "image/jpeg")
+    assert result_bytes is small_jpeg
+    assert result_mime == "image/jpeg"
+
+
+def test_compress_large_image_fits_under_limit() -> None:
+    """A large image should be compressed to fit under the API limit."""
+    # Random noise at high quality produces a large JPEG.
+    large_jpeg = _make_noisy_jpeg(4000, 3000, quality=98)
+    assert len(large_jpeg) > _MAX_RAW_BYTES, (
+        f"Test setup: need image > {_MAX_RAW_BYTES}, got {len(large_jpeg)}"
+    )
+
+    result_bytes, result_mime = compress_image_for_api(large_jpeg, "image/jpeg")
+    assert len(result_bytes) <= _MAX_RAW_BYTES
+    assert result_mime == "image/jpeg"
+    # Verify it's a valid JPEG
+    img = Image.open(io.BytesIO(result_bytes))
+    assert img.format == "JPEG"
+
+
+def test_compress_png_rgba_converts_to_jpeg() -> None:
+    """An oversized RGBA PNG should be converted to JPEG (RGB)."""
+    # Random noise in RGBA PNG is large and incompressible.
+    data = os.urandom(2000 * 2000 * 4)
+    img = Image.frombytes("RGBA", (2000, 2000), data)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    large_png = buf.getvalue()
+    assert len(large_png) > _MAX_RAW_BYTES, (
+        f"Test setup: need image > {_MAX_RAW_BYTES}, got {len(large_png)}"
+    )
+
+    result_bytes, result_mime = compress_image_for_api(large_png, "image/png")
+    assert len(result_bytes) <= _MAX_RAW_BYTES
+    assert result_mime == "image/jpeg"
+    result_img = Image.open(io.BytesIO(result_bytes))
+    assert result_img.mode == "RGB"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.media.vision.amessages")
+async def test_analyze_image_compresses_oversized_image(mock_amessages: object) -> None:
+    """analyze_image should compress oversized images before sending to the API."""
+    mock_amessages.return_value = make_vision_response("Noisy image.")  # type: ignore[union-attr]
+
+    large_jpeg = _make_noisy_jpeg(4000, 3000, quality=98)
+    assert len(large_jpeg) > _MAX_RAW_BYTES
+
+    result = await analyze_image(large_jpeg, "image/jpeg")
+    assert result == "Noisy image."
+
+    # Verify the image sent to the LLM was compressed
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    messages = call_args.kwargs["messages"]
+    user_content = messages[0]["content"]
+    image_parts = [p for p in user_content if p.get("type") == "image"]
+    assert len(image_parts) == 1
+    sent_bytes = base64.b64decode(image_parts[0]["source"]["data"])
+    assert len(sent_bytes) <= _MAX_RAW_BYTES

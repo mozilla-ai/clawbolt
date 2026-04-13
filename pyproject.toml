@@ -20,6 +20,7 @@ dependencies = [
     "alembic>=1.13",
     "cryptography>=42.0",
     "cachetools>=5.3",
+    "Pillow>=10.0",
 ]
 
 [project.optional-dependencies]
