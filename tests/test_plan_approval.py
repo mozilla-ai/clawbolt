@@ -1,4 +1,4 @@
-"""Tests for batch plan approval in the agent tool execution pipeline."""
+"""Tests for per-tool sequential approval in the agent tool execution pipeline."""
 
 import asyncio
 from unittest.mock import AsyncMock, patch
@@ -215,13 +215,13 @@ class TestBatchApproval:
         assert any(tc.name == "reader" and not tc.is_error for tc in response.tool_calls)
         assert any(tc.name == "writer" and not tc.is_error for tc in response.tool_calls)
 
-        # A plan message should have been sent
-        plan_sent = False
+        # An approval prompt should have been sent
+        prompt_sent = False
         for call in mock_publish.call_args_list:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
-            if isinstance(msg, OutboundMessage) and "approval" in msg.content.lower():
-                plan_sent = True
-        assert plan_sent
+            if isinstance(msg, OutboundMessage) and "reply yes or no" in msg.content.lower():
+                prompt_sent = True
+        assert prompt_sent
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -266,10 +266,8 @@ class TestBatchApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
-    async def test_always_persists_auto_for_all_ask_tools(
-        self, mock_amessages: object, test_user: User
-    ) -> None:
-        """'always' on a batch plan persists ALWAYS for ALL ask tools."""
+    async def test_always_persists_per_tool(self, mock_amessages: object, test_user: User) -> None:
+        """'always' persists ALWAYS for each tool individually."""
         mock_publish = AsyncMock()
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
@@ -284,10 +282,14 @@ class TestBatchApproval:
 
         gate = get_approval_gate()
 
-        async def _always_soon() -> None:
-            while not gate.has_pending(test_user.id):
-                await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
+        async def _always_each() -> None:
+            for _ in range(2):
+                while not gate.has_pending(test_user.id):
+                    await asyncio.sleep(0.005)
+                gate.resolve(test_user.id, ApprovalDecision.ALWAYS_ALLOW)
+                # Let the main loop process the resolution and move to
+                # the next entry before we check for it.
+                await asyncio.sleep(0.02)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -302,7 +304,7 @@ class TestBatchApproval:
             ]
         )
 
-        task = asyncio.create_task(_always_soon())
+        task = asyncio.create_task(_always_each())
         await agent.process_message("write and send")
         await task
 
@@ -313,10 +315,10 @@ class TestBatchApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
-    async def test_never_persists_deny_for_all_ask_tools(
+    async def test_never_persists_deny_per_tool(
         self, mock_amessages: object, test_user: User
     ) -> None:
-        """'never' on a batch plan persists DENY for ALL ask tools."""
+        """'never' persists DENY for each tool individually."""
         mock_publish = AsyncMock()
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
@@ -331,10 +333,12 @@ class TestBatchApproval:
 
         gate = get_approval_gate()
 
-        async def _never_soon() -> None:
-            while not gate.has_pending(test_user.id):
-                await asyncio.sleep(0.005)
-            gate.resolve(test_user.id, ApprovalDecision.ALWAYS_DENY)
+        async def _never_each() -> None:
+            for _ in range(2):
+                while not gate.has_pending(test_user.id):
+                    await asyncio.sleep(0.005)
+                gate.resolve(test_user.id, ApprovalDecision.ALWAYS_DENY)
+                await asyncio.sleep(0.02)
 
         agent = ClawboltAgent(
             user=test_user,
@@ -349,7 +353,7 @@ class TestBatchApproval:
             ]
         )
 
-        task = asyncio.create_task(_never_soon())
+        task = asyncio.create_task(_never_each())
         await agent.process_message("write and send")
         await task
 
@@ -359,10 +363,64 @@ class TestBatchApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
-    async def test_interrupted_returns_error_for_all_ask_tools(
+    async def test_selective_approval(self, mock_amessages: object, test_user: User) -> None:
+        """Sequential approval: approve some tools, deny others."""
+        mock_publish = AsyncMock()
+
+        mock_amessages.side_effect = [  # type: ignore[union-attr]
+            make_tool_call_response(
+                [
+                    {"name": "writer", "arguments": {"text": "data"}},
+                    {"name": "sender", "arguments": {"text": "msg"}},
+                    {"name": "deleter", "arguments": {"text": "old"}},
+                ]
+            ),
+            make_text_response("Partially done!"),
+        ]
+
+        gate = get_approval_gate()
+        decisions = [
+            ApprovalDecision.APPROVED,
+            ApprovalDecision.DENIED,
+            ApprovalDecision.APPROVED,
+        ]
+
+        async def _resolve_each() -> None:
+            for decision in decisions:
+                while not gate.has_pending(test_user.id):
+                    await asyncio.sleep(0.005)
+                gate.resolve(test_user.id, decision)
+                await asyncio.sleep(0.02)
+
+        agent = ClawboltAgent(
+            user=test_user,
+            channel="telegram",
+            publish_outbound=mock_publish,
+            chat_id="chat_1",
+        )
+        agent.register_tools(
+            [
+                _ask_tool("writer", "Write"),
+                _ask_tool("sender", "Send"),
+                _ask_tool("deleter", "Delete"),
+            ]
+        )
+
+        task = asyncio.create_task(_resolve_each())
+        response = await agent.process_message("write, send, and delete")
+        await task
+
+        # writer approved, sender denied, deleter approved
+        assert any(tc.name == "writer" and not tc.is_error for tc in response.tool_calls)
+        assert any(tc.name == "sender" and tc.is_error for tc in response.tool_calls)
+        assert any(tc.name == "deleter" and not tc.is_error for tc in response.tool_calls)
+
+    @pytest.mark.asyncio()
+    @patch("backend.app.agent.core.amessages")
+    async def test_interrupted_stops_remaining(
         self, mock_amessages: object, test_user: User
     ) -> None:
-        """INTERRUPTED on a batch plan returns errors for all ASK tools, no permission persisted."""
+        """INTERRUPTED on sequential approval errors current + all remaining ASK tools."""
         mock_publish = AsyncMock()
 
         mock_amessages.side_effect = [  # type: ignore[union-attr]
@@ -500,11 +558,11 @@ class TestBatchApproval:
 
         # Tool should execute without any plan prompt
         assert any(tc.name == "writer" and not tc.is_error for tc in response.tool_calls)
-        # No plan message sent (only typing indicators)
+        # No approval prompt sent (only typing indicators)
         for call in mock_publish.call_args_list:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
             if isinstance(msg, OutboundMessage):
-                assert "approval" not in msg.content.lower()
+                assert "reply yes or no" not in msg.content.lower()
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -548,7 +606,7 @@ class TestBatchApproval:
         assert len(approval_msgs) == 1
         # "Reply yes or no" should appear exactly once (not double-wrapped)
         assert approval_msgs[0].count("Reply yes or no") == 1
-        # Should not contain the _format_approval_message wrapper
+        # Should not contain the format_approval_message wrapper
         assert "wants to use the tool" not in approval_msgs[0]
 
     @pytest.mark.asyncio()
@@ -660,6 +718,6 @@ class TestBatchApproval:
         session = store.load_session(session_id)
         assert session is not None
         outbound_msgs = [m for m in session.messages if m.direction == "outbound"]
-        assert any("approval" in m.body.lower() for m in outbound_msgs), (
+        assert any("reply yes or no" in m.body.lower() for m in outbound_msgs), (
             "Approval prompt not found in session history"
         )

@@ -12,8 +12,8 @@ from backend.app.agent.approval import (
     ApprovalPolicy,
     ApprovalStore,
     PermissionLevel,
-    _format_approval_message,
     _parse_approval_response,
+    format_approval_message,
     get_approval_gate,
     get_approval_store,
     reset_approval_gate,
@@ -234,13 +234,13 @@ class TestParseApprovalResponse:
 
 
 # ---------------------------------------------------------------------------
-# _format_approval_message
+# format_approval_message
 # ---------------------------------------------------------------------------
 
 
 class TestFormatApprovalMessage:
     def test_output_format(self) -> None:
-        msg = _format_approval_message("web_fetch", "fetch content from https://example.com")
+        msg = format_approval_message("web_fetch", "fetch content from https://example.com")
         assert "fetch content from https://example.com" in msg
         assert "yes" in msg
         assert "no" in msg

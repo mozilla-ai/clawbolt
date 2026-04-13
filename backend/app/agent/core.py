@@ -19,8 +19,7 @@ from pydantic import ValidationError
 from backend.app.agent.approval import (
     ApprovalDecision,
     PermissionLevel,
-    PlanStep,
-    format_plan_message,
+    format_approval_message,
     get_approval_gate,
     get_approval_store,
 )
@@ -516,11 +515,11 @@ class ClawboltAgent:
 
             pre_validated.append((i, tool_obj, validated_args))
 
-        # -- Phase 2: batch approval then execute --------------------------
+        # -- Phase 2: approve then execute ------------------------------------
         #
         # Partition validated tools by permission level. Tools that need
-        # approval are batched into a single plan message so the user
-        # responds once (not once per tool).
+        # approval are prompted individually so the user can approve or
+        # deny each one independently.
 
         _ToolEntry = tuple[int, Tool, dict[str, Any]]
 
@@ -563,92 +562,81 @@ class ClawboltAgent:
         approved_entries: list[_ToolEntry] = list(auto_entries)
 
         if ask_entries:
-            auto_steps = [
-                PlanStep(
-                    tool_name=t.name,
-                    description=self._get_tool_permission(t, a)[2],
-                    level=PermissionLevel.ALWAYS,
-                )
-                for _, t, a in auto_entries
-            ]
-            ask_steps = [
-                PlanStep(tool_name=e[1].name, description=desc, level=PermissionLevel.ASK)
-                for e, _res, desc in ask_entries
-            ]
-
-            plan_msg = format_plan_message("Here's what I need to do:", auto_steps, ask_steps)
-
-            # Persist the approval prompt to session history so it is
-            # visible in the web UI regardless of which channel
-            # originated the conversation.
-            if self._session_id:
-                await self._persist_approval_prompt(plan_msg)
-
-            if self._publish_outbound is not None and self._chat_id is not None:
-                # Publish approval prompt as SSE event for webchat clients.
-                # The publish_outbound path works for Telegram but is a no-op
-                # for webchat (WebChatChannel.send_text returns "").
-                if self._request_id:
-                    from backend.app.bus import message_bus
-
-                    await message_bus.publish_event(
-                        self._request_id,
-                        {"type": "approval_request", "content": plan_msg},
-                    )
-
-                gate = get_approval_gate()
-                decision = await gate.request_approval(
-                    user_id=self.user.id,
-                    tool_name=ask_entries[0][0][1].name,
-                    description=plan_msg,
-                    publish_outbound=self._publish_outbound,
-                    channel=self._channel,
-                    chat_id=self._chat_id,
-                    prompt=plan_msg,
-                )
-            else:
-                decision = ApprovalDecision.DENIED
-
             store = get_approval_store()
-            if decision in (ApprovalDecision.APPROVED, ApprovalDecision.ALWAYS_ALLOW):
-                approved_entries.extend(e for e, _res, _desc in ask_entries)
-                if decision == ApprovalDecision.ALWAYS_ALLOW:
-                    for (_, tool_obj, _a), resource, _desc in ask_entries:
+            indexed_entries = list(enumerate(ask_entries))
+
+            for pos, (entry, resource, description) in indexed_entries:
+                idx, tool_obj, v_args = entry
+                tc_req = parsed_calls[idx]
+
+                if self._publish_outbound is not None and self._chat_id is not None:
+                    prompt = format_approval_message(tool_obj.name, description)
+
+                    if self._session_id:
+                        await self._persist_approval_prompt(prompt)
+
+                    if self._request_id:
+                        from backend.app.bus import message_bus
+
+                        await message_bus.publish_event(
+                            self._request_id,
+                            {"type": "approval_request", "content": prompt},
+                        )
+
+                    gate = get_approval_gate()
+                    decision = await gate.request_approval(
+                        user_id=self.user.id,
+                        tool_name=tool_obj.name,
+                        description=description,
+                        publish_outbound=self._publish_outbound,
+                        channel=self._channel,
+                        chat_id=self._chat_id,
+                        prompt=prompt,
+                    )
+                else:
+                    decision = ApprovalDecision.DENIED
+
+                if decision in (ApprovalDecision.APPROVED, ApprovalDecision.ALWAYS_ALLOW):
+                    approved_entries.append(entry)
+                    if decision == ApprovalDecision.ALWAYS_ALLOW:
                         try:
                             store.set_permission(
                                 self.user.id, tool_obj.name, PermissionLevel.ALWAYS, resource
                             )
                         except Exception:
                             logger.warning("Failed to persist ALWAYS for tool %s", tool_obj.name)
-            elif decision == ApprovalDecision.INTERRUPTED:
-                # User changed the subject. Don't persist any permission.
-                for (idx, _tool_obj, v_args), _resource, desc in ask_entries:
-                    tc_req = parsed_calls[idx]
-                    tool_tags = self._get_tool_tags(tc_req.name)
-                    hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERRUPTED]
-                    msg = (
-                        f"Tool request interrupted: the user moved on to a "
-                        f'different topic instead of approving "{desc}". '
-                        f"Do not proactively retry this tool; only call it "
-                        f"again if the user explicitly asks.\n\n{hint}"
-                    )
-                    actions_taken.append(f"Interrupted: {tc_req.name}")
-                    tool_call_records.append(
-                        StoredToolInteraction(
-                            tool_call_id=tc_req.id,
-                            name=tc_req.name,
-                            args=v_args,
-                            result=msg,
-                            is_error=True,
-                            tags=set(tool_tags),
+
+                elif decision == ApprovalDecision.INTERRUPTED:
+                    # User changed subject. Error this entry + all remaining.
+                    for _p, (e, _r, d) in indexed_entries[pos:]:
+                        i_rem, _t_rem, va_rem = e
+                        tc_rem = parsed_calls[i_rem]
+                        rem_tags = self._get_tool_tags(tc_rem.name)
+                        hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERRUPTED]
+                        msg = (
+                            f"Tool request interrupted: the user moved on to a "
+                            f'different topic instead of approving "{d}". '
+                            f"Do not proactively retry this tool; only call it "
+                            f"again if the user explicitly asks.\n\n{hint}"
                         )
-                    )
-                    tool_results.append(
-                        ToolResultMessage(tool_call_id=tc_req.id, content=msg, is_error=True)
-                    )
-            else:
-                if decision == ApprovalDecision.ALWAYS_DENY:
-                    for (_, tool_obj, _a), resource, _desc in ask_entries:
+                        actions_taken.append(f"Interrupted: {tc_rem.name}")
+                        tool_call_records.append(
+                            StoredToolInteraction(
+                                tool_call_id=tc_rem.id,
+                                name=tc_rem.name,
+                                args=va_rem,
+                                result=msg,
+                                is_error=True,
+                                tags=set(rem_tags),
+                            )
+                        )
+                        tool_results.append(
+                            ToolResultMessage(tool_call_id=tc_rem.id, content=msg, is_error=True)
+                        )
+                    break
+
+                else:  # DENIED / ALWAYS_DENY
+                    if decision == ApprovalDecision.ALWAYS_DENY:
                         try:
                             store.set_permission(
                                 self.user.id, tool_obj.name, PermissionLevel.DENY, resource
@@ -656,8 +644,6 @@ class ClawboltAgent:
                         except Exception:
                             logger.warning("Failed to persist DENY for tool %s", tool_obj.name)
 
-                for (idx, _tool_obj, v_args), _resource, _desc in ask_entries:
-                    tc_req = parsed_calls[idx]
                     tool_tags = self._get_tool_tags(tc_req.name)
                     hint = _ERROR_KIND_HINTS[ToolErrorKind.PERMISSION]
                     deny_msg = f"Error: permission denied for tool '{tc_req.name}'\n\n{hint}"
