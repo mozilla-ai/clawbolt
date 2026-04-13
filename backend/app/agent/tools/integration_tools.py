@@ -18,14 +18,9 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.services.oauth import get_oauth_config, list_oauth_integrations, oauth_service
 
 if TYPE_CHECKING:
-    from backend.app.agent.tools.registry import ToolContext
+    from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 
 logger = logging.getLogger(__name__)
-
-# Tool groups that cannot be disabled (must stay in sync with user_tools.py).
-_CORE_FACTORIES: frozenset[str] = frozenset(
-    {"workspace", "profile", "memory", "messaging", "file", "heartbeat", "integration"}
-)
 
 # Human-readable display names for tool groups.
 _DISPLAY_NAMES: dict[str, str] = {
@@ -130,13 +125,9 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
 
 async def _handle_status(
     user_id: str,
-    registry: object,
+    registry: ToolRegistry,
 ) -> ToolResult:
     """Build a status overview of all tool groups."""
-    from backend.app.agent.tools.registry import ToolRegistry
-
-    assert isinstance(registry, ToolRegistry)
-
     store = ToolConfigStore(user_id)
     disabled_groups = await store.get_disabled_tool_names()
 
@@ -187,15 +178,13 @@ async def _handle_status(
 async def _handle_enable(
     user_id: str,
     target: str,
-    registry: object,
+    registry: ToolRegistry,
 ) -> ToolResult:
     """Enable a tool group."""
-    from backend.app.agent.tools.registry import ToolRegistry
-
-    assert isinstance(registry, ToolRegistry)
-
     if target not in registry.factory_names:
-        available = [n for n in sorted(registry.factory_names) if n not in _CORE_FACTORIES]
+        available = [
+            n for n in sorted(registry.factory_names) if n not in registry.core_factory_names
+        ]
         return ToolResult(
             content=(
                 f"Unknown tool group '{target}'. Available integrations: {', '.join(available)}"
@@ -224,15 +213,13 @@ async def _handle_enable(
 async def _handle_disable(
     user_id: str,
     target: str,
-    registry: object,
+    registry: ToolRegistry,
 ) -> ToolResult:
     """Disable a tool group."""
-    from backend.app.agent.tools.registry import ToolRegistry
-
-    assert isinstance(registry, ToolRegistry)
-
     if target not in registry.factory_names:
-        available = [n for n in sorted(registry.factory_names) if n not in _CORE_FACTORIES]
+        available = [
+            n for n in sorted(registry.factory_names) if n not in registry.core_factory_names
+        ]
         return ToolResult(
             content=(
                 f"Unknown tool group '{target}'. Available integrations: {', '.join(available)}"
