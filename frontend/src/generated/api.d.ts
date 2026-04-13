@@ -92,6 +92,13 @@ export interface paths {
          *     The provider redirects here with an authorization code and the state
          *     parameter we generated earlier. We exchange the code for tokens,
          *     persist them, and redirect the user to the frontend success page.
+         *
+         *     All parameters are optional because OAuth providers may redirect with
+         *     only error parameters (no code/state) when the user denies access.
+         *
+         *     When the flow was initiated from chat (source="chat"), a standalone
+         *     HTML page is returned instead of redirecting to the SPA, so users
+         *     on SMS/iMessage see a "you can close this tab" message.
          */
         get: operations["oauth_callback_api_oauth_callback_get"];
         put?: never;
@@ -1378,9 +1385,9 @@ export interface operations {
     };
     oauth_callback_api_oauth_callback_get: {
         parameters: {
-            query: {
-                code: string;
-                state: string;
+            query?: {
+                code?: string;
+                state?: string;
                 realmId?: string;
                 error?: string;
                 error_description?: string;

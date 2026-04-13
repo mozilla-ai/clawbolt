@@ -105,24 +105,26 @@
     "/api/oauth/callback": {
       "get": {
         "summary": "Oauth Callback",
-        "description": "Handle OAuth provider redirect after user authorization.\n\nThe provider redirects here with an authorization code and the state\nparameter we generated earlier. We exchange the code for tokens,\npersist them, and redirect the user to the frontend success page.",
+        "description": "Handle OAuth provider redirect after user authorization.\n\nThe provider redirects here with an authorization code and the state\nparameter we generated earlier. We exchange the code for tokens,\npersist them, and redirect the user to the frontend success page.\n\nAll parameters are optional because OAuth providers may redirect with\nonly error parameters (no code/state) when the user denies access.\n\nWhen the flow was initiated from chat (source=\"chat\"), a standalone\nHTML page is returned instead of redirecting to the SPA, so users\non SMS/iMessage see a \"you can close this tab\" message.",
         "operationId": "oauth_callback_api_oauth_callback_get",
         "parameters": [
           {
             "name": "code",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
+              "default": "",
               "title": "Code"
             }
           },
           {
             "name": "state",
             "in": "query",
-            "required": true,
+            "required": false,
             "schema": {
               "type": "string",
+              "default": "",
               "title": "State"
             }
           },
