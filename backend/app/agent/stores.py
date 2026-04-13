@@ -495,6 +495,32 @@ class ToolConfigStore:
         finally:
             db.close()
 
+    async def set_enabled(self, name: str, enabled: bool) -> None:
+        """Set a single tool group's enabled state.
+
+        Creates or updates a ToolConfig row for the given factory name.
+        Only stores the name and enabled flag; the router fills in display
+        metadata from the registry when building the full tool list.
+        """
+        with db_session() as db:
+            existing = db.query(ToolConfig).filter_by(user_id=self.user_id, name=name).first()
+            if existing:
+                existing.enabled = enabled
+            else:
+                db.add(
+                    ToolConfig(
+                        user_id=self.user_id,
+                        name=name,
+                        description="",
+                        category="domain",
+                        domain_group="",
+                        domain_group_order=0,
+                        enabled=enabled,
+                        disabled_sub_tools="",
+                    )
+                )
+            db.commit()
+
     async def get_disabled_sub_tool_names(self) -> set[str]:
         """Return the union of all disabled sub-tool names across all groups."""
         db = SessionLocal()

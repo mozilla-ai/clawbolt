@@ -30,7 +30,7 @@ ensure_tool_modules_imported()
 
 # Factories whose tools are always available and cannot be disabled.
 _CORE_FACTORIES: frozenset[str] = frozenset(
-    {"workspace", "profile", "memory", "messaging", "file", "heartbeat"}
+    {"workspace", "profile", "memory", "messaging", "file", "heartbeat", "integration"}
 )
 
 # Consolidated metadata for each factory group: description, display group,
@@ -50,6 +50,7 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
     "messaging": _FactoryMeta("Send text and media replies to the user"),
     "file": _FactoryMeta("Upload and organize files in cloud storage"),
     "heartbeat": _FactoryMeta("View and edit heartbeat notes"),
+    "integration": _FactoryMeta("Manage integrations, enable/disable tools, connect OAuth"),
     "quickbooks": _FactoryMeta(
         "Query, create, and manage QuickBooks Online entities",
         domain_group="Integrations",

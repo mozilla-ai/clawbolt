@@ -878,7 +878,8 @@ def _calendar_auth_check(ctx: ToolContext) -> str | None:
         return None
     return (
         "Google Calendar is not connected. "
-        "The user needs to authenticate via the Clawbolt web dashboard."
+        "Use manage_integration(action='connect', target='google_calendar') "
+        "to generate a connection link for the user."
     )
 
 

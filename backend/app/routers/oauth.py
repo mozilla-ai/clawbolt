@@ -6,7 +6,7 @@ import logging
 import urllib.parse
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from fastapi.responses import RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.models import User
@@ -54,25 +54,46 @@ async def get_authorize_url(
     return OAuthAuthorizeResponse(url=url, integration=integration)
 
 
-@router.get("/oauth/callback")
+@router.get("/oauth/callback", response_model=None)
 async def oauth_callback(
-    code: str = Query(...),
-    state: str = Query(...),
+    code: str = Query(""),
+    state: str = Query(""),
     realmId: str = Query(""),  # QuickBooks sends camelCase
     error: str = Query(""),
     error_description: str = Query(""),
-) -> RedirectResponse:
+) -> RedirectResponse | HTMLResponse:
     """Handle OAuth provider redirect after user authorization.
 
     The provider redirects here with an authorization code and the state
     parameter we generated earlier. We exchange the code for tokens,
     persist them, and redirect the user to the frontend success page.
+
+    All parameters are optional because OAuth providers may redirect with
+    only error parameters (no code/state) when the user denies access.
+
+    When the flow was initiated from chat (source="chat"), a standalone
+    HTML page is returned instead of redirecting to the SPA, so users
+    on SMS/iMessage see a "you can close this tab" message.
     """
+    source = oauth_service.get_pending_state_source(state) if state else "web"
+
     if error:
         logger.warning("OAuth callback error: %s - %s", error, error_description)
-        msg = urllib.parse.quote(error_description or error)
+        msg = error_description or error
+        if source == "chat":
+            return _chat_callback_page(success=False, error_message=msg)
         return RedirectResponse(
-            f"/app/oauth/callback?status=error&error={msg}",
+            f"/app/oauth/callback?status=error&error={urllib.parse.quote(msg)}",
+            status_code=302,
+        )
+
+    if not code or not state:
+        logger.warning("OAuth callback missing code or state: code=%r state=%r", code, state)
+        msg = "Missing authorization code"
+        if source == "chat":
+            return _chat_callback_page(success=False, error_message=msg)
+        return RedirectResponse(
+            f"/app/oauth/callback?status=error&error={urllib.parse.quote(msg)}",
             status_code=302,
         )
 
@@ -82,22 +103,113 @@ async def oauth_callback(
         await oauth_service.handle_callback(state, code, realm_id=realmId)
     except ValueError as exc:
         logger.warning("OAuth callback failed: %s", exc)
-        msg = urllib.parse.quote(str(exc))
+        if source == "chat":
+            return _chat_callback_page(success=False, error_message=str(exc))
         return RedirectResponse(
-            f"/app/oauth/callback?status=error&error={msg}",
+            f"/app/oauth/callback?status=error&error={urllib.parse.quote(str(exc))}",
             status_code=302,
         )
     except Exception:
         logger.exception("OAuth token exchange failed")
+        if source == "chat":
+            return _chat_callback_page(success=False, error_message="Token exchange failed")
         return RedirectResponse(
             "/app/oauth/callback?status=error&error=Token+exchange+failed",
             status_code=302,
         )
 
+    if source == "chat":
+        return _chat_callback_page(success=True, integration=integration or "unknown")
+
     return RedirectResponse(
         f"/app/oauth/callback?status=success&integration={integration or 'unknown'}",
         status_code=302,
     )
+
+
+def _chat_callback_page(
+    *,
+    success: bool,
+    integration: str = "",
+    error_message: str = "",
+) -> HTMLResponse:
+    """Render a standalone HTML page for chat-initiated OAuth callbacks.
+
+    This page is self-contained (no SPA, no auth required) so it works
+    when users tap an OAuth link from SMS/iMessage and complete the flow
+    in their phone's browser.
+    """
+    if success:
+        title = "Connected"
+        icon = "&#10003;"
+        icon_color = "#17c964"
+        body = (
+            f"<p>{integration.replace('_', ' ').title()} has been connected successfully.</p>"
+            "<p>You can close this tab and go back to your chat.</p>"
+        )
+    else:
+        title = "Connection Failed"
+        icon = "&#10007;"
+        icon_color = "#f31260"
+        safe_error = error_message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        body = (
+            f"<p>{safe_error or 'Something went wrong. Please try again.'}</p>"
+            "<p>Go back to your chat and ask to try connecting again.</p>"
+        )
+
+    html = f"""\
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{title} - Clawbolt</title>
+<style>
+  body {{
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+                 Helvetica, Arial, sans-serif;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    min-height: 100dvh;
+    margin: 0;
+    background: #fafafa;
+    color: #333;
+  }}
+  .card {{
+    text-align: center;
+    max-width: 360px;
+    padding: 2.5rem 2rem;
+    background: #fff;
+    border-radius: 1rem;
+    box-shadow: 0 2px 12px rgba(0,0,0,0.08);
+  }}
+  .icon {{
+    font-size: 3rem;
+    color: {icon_color};
+    margin-bottom: 0.75rem;
+  }}
+  h1 {{
+    font-size: 1.25rem;
+    margin: 0 0 1rem;
+  }}
+  p {{
+    font-size: 0.9rem;
+    color: #666;
+    margin: 0.5rem 0;
+    line-height: 1.5;
+  }}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">{icon}</div>
+  <h1>{title}</h1>
+  {body}
+</div>
+</body>
+</html>"""
+    return HTMLResponse(content=html)
 
 
 @router.delete("/oauth/{integration}")

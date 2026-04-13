@@ -653,3 +653,138 @@ def test_oauth_callback_with_provider_error(client: TestClient) -> None:
     assert resp.status_code == 302
     location = resp.headers["location"]
     assert "User" in location and "denied" in location
+
+
+def test_oauth_callback_missing_code(client: TestClient) -> None:
+    """Callback without code param (e.g. user denied) should redirect with error."""
+    resp = client.get(
+        "/api/oauth/callback?error=access_denied",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert "error" in resp.headers["location"]
+
+
+def test_oauth_callback_empty_code_no_error(client: TestClient) -> None:
+    """Callback with empty code and no error should redirect with error."""
+    resp = client.get(
+        "/api/oauth/callback?state=some_state",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 302
+    assert "error" in resp.headers["location"]
+
+
+# ---------------------------------------------------------------------------
+# Chat-initiated OAuth callback (standalone HTML)
+# ---------------------------------------------------------------------------
+
+
+def test_chat_callback_success_returns_html(
+    client: TestClient, qb_config: OAuthConfig, test_user: User
+) -> None:
+    """Chat-initiated OAuth success should return HTML, not a redirect."""
+    url = oauth_service.get_authorization_url(qb_config, user_id=test_user.id, source="chat")
+    import urllib.parse as _up
+
+    state = _up.parse_qs(_up.urlparse(url).query)["state"][0]
+
+    mock_request = httpx.Request("POST", "https://example.com/token")
+    mock_response = httpx.Response(
+        200,
+        json={
+            "access_token": "at",
+            "refresh_token": "rt",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        },
+        request=mock_request,
+    )
+    with (
+        patch.object(oauth_service, "_get_http") as mock_http_fn,
+        patch(
+            "backend.app.services.oauth.get_oauth_config",
+            return_value=qb_config,
+        ),
+    ):
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_http_fn.return_value = mock_client
+
+        resp = client.get(
+            f"/api/oauth/callback?code=auth-code&state={state}&realmId=r1",
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Connected" in resp.text
+    assert "close this tab" in resp.text
+
+
+def test_chat_callback_error_returns_html(client: TestClient) -> None:
+    """Chat-initiated OAuth error should return HTML, not a redirect."""
+    # Inject a pending state with source="chat" so the callback renders HTML
+    import time
+
+    from backend.app.services.oauth import _PendingState
+
+    state_key = "chat-error-test-state"
+    oauth_service._pending_states[state_key] = _PendingState(
+        user_id="test",
+        integration="google_calendar",
+        code_verifier="v",
+        redirect_uri="http://localhost/api/oauth/callback",
+        expires_at=time.time() + 600,
+        source="chat",
+    )
+
+    resp = client.get(
+        f"/api/oauth/callback?state={state_key}&error=access_denied"
+        "&error_description=User+denied+access",
+        follow_redirects=False,
+    )
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "Connection Failed" in resp.text
+    assert "User denied access" in resp.text
+
+
+def test_web_callback_still_redirects(
+    client: TestClient, qb_config: OAuthConfig, test_user: User
+) -> None:
+    """Web-initiated OAuth success should still redirect to the SPA."""
+    url = oauth_service.get_authorization_url(qb_config, user_id=test_user.id)
+    import urllib.parse as _up
+
+    state = _up.parse_qs(_up.urlparse(url).query)["state"][0]
+
+    mock_request = httpx.Request("POST", "https://example.com/token")
+    mock_response = httpx.Response(
+        200,
+        json={
+            "access_token": "at",
+            "refresh_token": "rt",
+            "expires_in": 3600,
+            "token_type": "Bearer",
+        },
+        request=mock_request,
+    )
+    with (
+        patch.object(oauth_service, "_get_http") as mock_http_fn,
+        patch(
+            "backend.app.services.oauth.get_oauth_config",
+            return_value=qb_config,
+        ),
+    ):
+        mock_client = AsyncMock()
+        mock_client.post.return_value = mock_response
+        mock_http_fn.return_value = mock_client
+
+        resp = client.get(
+            f"/api/oauth/callback?code=auth-code&state={state}&realmId=r1",
+            follow_redirects=False,
+        )
+
+    assert resp.status_code == 302
+    assert "/app/oauth/callback?status=success" in resp.headers["location"]
