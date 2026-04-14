@@ -59,8 +59,9 @@ async def test_read_permissions_json(tmp_path: object) -> None:
     assert "version" in data
 
 
-async def test_edit_permissions_json(tmp_path: object) -> None:
-    """edit_file can change a permission level in PERMISSIONS.json."""
+async def test_edit_permissions_json_rejected(tmp_path: object) -> None:
+    """edit_file on PERMISSIONS.json is rejected: the file is managed by
+    the approval system and the dashboard, not the agent."""
     user_id = "test-ws-perm-edit"
     store = get_approval_store()
     store.ensure_complete(user_id)
@@ -69,41 +70,35 @@ async def test_edit_permissions_json(tmp_path: object) -> None:
     read_tool = next(t for t in tools if t.name == ToolName.READ_FILE)
     edit_tool = next(t for t in tools if t.name == ToolName.EDIT_FILE)
 
-    # Read current content to find the send_reply entry
+    # Sanity: read still works.
     result = await read_tool.function("PERMISSIONS.json")
     assert not result.is_error
-    assert '"send_reply": "ask"' in result.content
+    original_content = result.content
 
-    # Edit send_reply from ask to always
     result = await edit_tool.function(
-        "PERMISSIONS.json", '"send_reply": "ask"', '"send_reply": "always"'
+        "PERMISSIONS.json", '"send_reply": "always"', '"send_reply": "deny"'
     )
-    assert not result.is_error
-    assert "Updated" in result.content
+    assert result.is_error
+    assert "read-only" in result.content.lower()
 
-    # Verify the change
-    result = await read_tool.function("PERMISSIONS.json")
-    data = json.loads(result.content)
-    assert data["tools"]["send_reply"] == "always"
+    # Store state unchanged.
+    after = await read_tool.function("PERMISSIONS.json")
+    assert after.content == original_content
 
 
-async def test_write_permissions_json(tmp_path: object) -> None:
-    """write_file can overwrite PERMISSIONS.json."""
+async def test_write_permissions_json_rejected(tmp_path: object) -> None:
+    """write_file on PERMISSIONS.json is rejected."""
     user_id = "test-ws-perm-write"
     store = get_approval_store()
     store.ensure_complete(user_id)
 
     tools = create_workspace_tools(user_id)
     write_tool = next(t for t in tools if t.name == ToolName.WRITE_FILE)
-    read_tool = next(t for t in tools if t.name == ToolName.READ_FILE)
 
     new_content = json.dumps({"version": 1, "tools": {"send_reply": "deny"}, "resources": {}})
     result = await write_tool.function("PERMISSIONS.json", new_content)
-    assert not result.is_error
-
-    result = await read_tool.function("PERMISSIONS.json")
-    data = json.loads(result.content)
-    assert data["tools"]["send_reply"] == "deny"
+    assert result.is_error
+    assert "read-only" in result.content.lower()
 
 
 async def test_delete_permissions_json_blocked(tmp_path: object) -> None:

@@ -57,10 +57,21 @@ _MEMORY_DOC_COLUMN: dict[str, str] = {
     "HISTORY.md": "history_text",
 }
 
-# Files routed to the UserPermissionSet table instead of disk. The
-# ApprovalStore uses the same row, so read_file/write_file/edit_file and
-# the approval gate share a single source of truth.
+# PERMISSIONS.json is read-only from the agent's side: the approval
+# system writes it when the user replies Always/Never to a prompt, and
+# the dashboard's permissions page writes it when the user toggles
+# entries. Letting the agent write it caused cascading bugs -- the LLM
+# treated a user's "always" as a cue to edit the file itself, clobbering
+# the per-resource overrides the gate just wrote, which triggered a
+# second approval prompt in the next round.
 _PERMISSIONS_FILE = "PERMISSIONS.json"
+_PERMISSIONS_READONLY_MSG = (
+    "PERMISSIONS.json is read-only for the agent. The approval system "
+    "saves 'always' / 'never' replies automatically, and users manage "
+    "permissions through the dashboard. To see current permissions, use "
+    "read_file. To change them, ask the user to update them in the "
+    "dashboard or reply to an approval prompt."
+)
 
 
 class ReadFileParams(BaseModel):
@@ -253,41 +264,6 @@ async def _permissions_read(user_id: str) -> str:
     return await asyncio.to_thread(_permissions_read_sync, user_id)
 
 
-def _permissions_write_sync(user_id: str, content: str) -> None:
-    """Persist PERMISSIONS.json content, normalizing to indented JSON.
-
-    Stable pretty-printing matters: the approval store pretty-prints on
-    every set_permission, and edit_file old_text matching breaks if one
-    writer leaves minified JSON around. We parse + re-serialize so every
-    reader sees the same shape regardless of what the caller passed in.
-    Malformed JSON is stored verbatim so a user who's mid-edit can
-    recover, but this is the narrow escape hatch, not the hot path.
-    """
-    import json as _json
-
-    from backend.app.database import db_session
-    from backend.app.models import UserPermissionSet
-
-    try:
-        parsed = _json.loads(content)
-    except (_json.JSONDecodeError, ValueError):
-        payload = content
-    else:
-        payload = _json.dumps(parsed, indent=2, default=str)
-
-    with db_session() as db:
-        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
-        if row is None:
-            db.add(UserPermissionSet(user_id=user_id, data=payload))
-        else:
-            row.data = payload
-        db.commit()
-
-
-async def _permissions_write(user_id: str, content: str) -> None:
-    await asyncio.to_thread(_permissions_write_sync, user_id, content)
-
-
 def create_workspace_tools(user_id: str) -> list[Tool]:
     """Create generic file tools scoped to the user's data directory."""
 
@@ -332,8 +308,11 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             return ToolResult(content=f"Wrote {path}")
 
         if _is_permissions_path(path):
-            await _permissions_write(user_id, content)
-            return ToolResult(content=f"Wrote {path}")
+            return ToolResult(
+                content=_PERMISSIONS_READONLY_MSG,
+                is_error=True,
+                error_kind=ToolErrorKind.PERMISSION,
+            )
 
         resolved, err = _resolve_path(user_id, path)
         if err:
@@ -386,25 +365,11 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             return ToolResult(content=f"Updated {path}")
 
         if _is_permissions_path(path):
-            text = await _permissions_read(user_id)
-            if old_text not in text:
-                return ToolResult(
-                    content=f"Text not found in {path}. Read the file first to see current contents.",
-                    is_error=True,
-                    error_kind=ToolErrorKind.NOT_FOUND,
-                )
-            count = text.count(old_text)
-            if count > 1:
-                return ToolResult(
-                    content=(
-                        f"Found {count} matches in {path}. Provide more context to match uniquely."
-                    ),
-                    is_error=True,
-                    error_kind=ToolErrorKind.VALIDATION,
-                )
-            updated = text.replace(old_text, new_text, 1)
-            await _permissions_write(user_id, updated)
-            return ToolResult(content=f"Updated {path}")
+            return ToolResult(
+                content=_PERMISSIONS_READONLY_MSG,
+                is_error=True,
+                error_kind=ToolErrorKind.PERMISSION,
+            )
 
         resolved, err = _resolve_path(user_id, path)
         if err:

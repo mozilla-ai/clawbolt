@@ -531,12 +531,9 @@ async def test_denied_short_circuits_sibling_ask_entries(test_user: User) -> Non
 
 
 @pytest.mark.asyncio()
-async def test_permissions_json_shared_between_approval_store_and_workspace(
-    test_user: User,
-) -> None:
-    """ApprovalStore and read_file/write_file must hit the same DB row so
-    the chat vocabulary ('PERMISSIONS.json') and the typed approval API
-    can't drift apart."""
+async def test_permissions_json_readable_via_workspace_tools(test_user: User) -> None:
+    """read_file("PERMISSIONS.json") hits the same DB row as ApprovalStore
+    so the agent can answer "what are my permissions?" correctly."""
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
     store = get_approval_store()
@@ -545,45 +542,48 @@ async def test_permissions_json_shared_between_approval_store_and_workspace(
 
     tools = create_workspace_tools(test_user.id)
     read_tool = next(t for t in tools if t.name == "read_file")
-    write_tool = next(t for t in tools if t.name == "write_file")
 
     result = await read_tool.function(path="PERMISSIONS.json")
     assert result.is_error is False
     assert '"qb_query"' in result.content
     assert '"Invoice": "always"' in result.content
 
-    # Editing through workspace_tools must flow back into ApprovalStore.
-    overridden = result.content.replace('"Invoice": "always"', '"Invoice": "deny"')
-    await write_tool.function(path="PERMISSIONS.json", content=overridden)
-
-    level = store.check_permission(
-        test_user.id, "qb_query", resource="Invoice", default=PermissionLevel.ASK
-    )
-    assert level == PermissionLevel.DENY
-
 
 @pytest.mark.asyncio()
-async def test_permissions_write_normalizes_minified_json(test_user: User) -> None:
-    """If the agent writes minified PERMISSIONS.json (no newlines) via
-    write_file, the store should normalize it to indented JSON so
-    subsequent edit_file calls have stable formatting to match against.
-    Regression for the bug where one minified write broke every later
-    edit_file because old_text assumed pretty-printed content."""
+async def test_permissions_json_write_is_rejected(test_user: User) -> None:
+    """PERMISSIONS.json is read-only for the agent: write_file must refuse.
+
+    The LLM, following old instructions, would 'officialize' an Always
+    reply by rewriting PERMISSIONS.json -- which clobbered the
+    per-resource overrides the approval gate had just written and forced
+    a second approval prompt. Making writes impossible removes the
+    failure mode entirely."""
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
     store = get_approval_store()
     store.reset_permissions(test_user.id)
+    store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
 
     tools = create_workspace_tools(test_user.id)
     write_tool = next(t for t in tools if t.name == "write_file")
-    read_tool = next(t for t in tools if t.name == "read_file")
+    edit_tool = next(t for t in tools if t.name == "edit_file")
 
-    minified = '{"version": 1, "tools": {"qb_query": "always"}, "resources": {}}'
-    await write_tool.function(path="PERMISSIONS.json", content=minified)
+    write_result = await write_tool.function(
+        path="PERMISSIONS.json", content='{"tools": {"qb_query": "always"}, "resources": {}}'
+    )
+    assert write_result.is_error is True
+    assert "read-only" in write_result.content.lower()
 
-    result = await read_tool.function(path="PERMISSIONS.json")
-    assert result.is_error is False
-    # Indented form has newlines and leading spaces on nested keys.
-    assert "\n" in result.content
-    assert '  "tools"' in result.content
-    assert '"qb_query": "always"' in result.content
+    edit_result = await edit_tool.function(
+        path="PERMISSIONS.json",
+        old_text='"qb_query": "ask"',
+        new_text='"qb_query": "always"',
+    )
+    assert edit_result.is_error is True
+    assert "read-only" in edit_result.content.lower()
+
+    # Store state is untouched.
+    level = store.check_permission(
+        test_user.id, "qb_query", resource="Invoice", default=PermissionLevel.ASK
+    )
+    assert level == PermissionLevel.ALWAYS
