@@ -461,3 +461,68 @@ async def test_organize_file_without_client_returns_error(
     assert "Error" in result.content
     assert "client_name or client_address is required" in result.content
     assert result.is_error is True
+
+
+@pytest.mark.asyncio()
+async def test_organize_file_resolves_by_storage_url(
+    test_user: User,
+) -> None:
+    """organize_file should find the record when the agent passes storage_url
+    as original_url. This is the real-world case: upload_to_storage's tool
+    result surfaces storage_url (e.g. ``file:///...``) to the LLM, not the
+    channel attachment id (e.g. ``bb_<guid>``) that we stored on the record.
+    Later calls to organize_file pass back the storage_url because that's
+    the only URL the LLM has seen."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_001.jpg")
+    media_store = MediaStore(test_user.id)
+    await media_store.create(
+        original_url="bb_abc-guid",  # channel attachment id, hidden from LLM
+        mime_type="image/jpeg",
+        storage_url="file:///app/data/.../Unsorted/2026-03-02/file_001.jpg",
+        storage_path="/Unsorted/2026-03-02/file_001.jpg",
+    )
+
+    tools = create_file_tools(test_user, storage)
+    organize = tools[1].function
+
+    # LLM only ever saw the storage_url in the upload result; it passes that.
+    result = await organize(
+        original_url="file:///app/data/.../Unsorted/2026-03-02/file_001.jpg",
+        file_category="job_photo",
+        client_name="Ralph Smith",
+        description="tile installation reference photo",
+    )
+
+    assert result.is_error is False
+    assert "Moved" in result.content
+    assert "Ralph Smith" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_organize_file_resolves_by_storage_path(
+    test_user: User,
+) -> None:
+    """organize_file should also find the record by storage_path, in case
+    the LLM echoes the path fragment instead of the full URL."""
+    storage = MockStorageBackend()
+    await storage.upload_file(b"img-data", "/Unsorted/2026-03-02", "file_002.jpg")
+    media_store = MediaStore(test_user.id)
+    await media_store.create(
+        original_url="bb_xyz-guid",
+        mime_type="image/jpeg",
+        storage_url="https://mock-storage.example.com/Unsorted/2026-03-02/file_002.jpg",
+        storage_path="/Unsorted/2026-03-02/file_002.jpg",
+    )
+
+    tools = create_file_tools(test_user, storage)
+    organize = tools[1].function
+
+    result = await organize(
+        original_url="/Unsorted/2026-03-02/file_002.jpg",
+        file_category="job_photo",
+        client_name="Ralph Smith",
+    )
+
+    assert result.is_error is False
+    assert "Moved" in result.content
