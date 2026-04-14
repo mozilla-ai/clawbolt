@@ -14,7 +14,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -279,12 +279,29 @@ class MediaStore:
             return _media_to_dto(m)
 
     async def get_by_url(self, original_url: str) -> MediaData | None:
-        """Query a MediaFile by original_url."""
+        """Query a MediaFile by any of its stored URLs or paths.
+
+        Matches ``original_url`` (channel attachment id, e.g. ``bb_<guid>``),
+        ``storage_url`` (backend-emitted URL shown to the LLM in upload
+        results, e.g. ``file:///...``), or ``storage_path`` (the folder path).
+        The agent only sees ``storage_url`` in upload_to_storage's result and
+        will pass that back to organize_file later; matching on all three
+        lets the lookup succeed regardless of which identifier the LLM used.
+        """
+        if not original_url:
+            return None
         db = SessionLocal()
         try:
             m = (
                 db.query(MediaFile)
-                .filter_by(user_id=self.user_id, original_url=original_url)
+                .filter(MediaFile.user_id == self.user_id)
+                .filter(
+                    or_(
+                        MediaFile.original_url == original_url,
+                        MediaFile.storage_url == original_url,
+                        MediaFile.storage_path == original_url,
+                    )
+                )
                 .first()
             )
             return _media_to_dto(m) if m else None
