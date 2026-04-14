@@ -32,11 +32,14 @@ logger = logging.getLogger(__name__)
 def upgrade() -> None:
     op.create_table(
         "user_permissions",
-        sa.Column("user_id", sa.String(), sa.ForeignKey("users.id", ondelete="CASCADE"),
-                  primary_key=True),
+        sa.Column("user_id", sa.String(), primary_key=True),
         sa.Column("data", sa.Text(), nullable=False, server_default="{}"),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False,
-                  server_default=sa.func.now()),
+        sa.Column(
+            "updated_at",
+            sa.DateTime(timezone=True),
+            nullable=False,
+            server_default=sa.func.now(),
+        ),
     )
 
     _backfill_from_disk()
