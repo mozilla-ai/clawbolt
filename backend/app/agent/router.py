@@ -142,14 +142,21 @@ def _upload_permitted_always(user_id: str) -> bool:
     Used to decide whether to auto-save inbound media in the pipeline.
     When the permission is 'ask' or 'deny', auto-save is skipped so the
     agent loop can prompt the user through the approval gate.
+
+    Returns False on any error (corrupt PERMISSIONS.json, filesystem
+    issues) so the pipeline never crashes due to a permission check.
     """
-    store = get_approval_store()
-    level = store.check_permission(
-        user_id,
-        ToolName.UPLOAD_TO_STORAGE,
-        default=PermissionLevel.ASK,
-    )
-    return level == PermissionLevel.ALWAYS
+    try:
+        store = get_approval_store()
+        level = store.check_permission(
+            user_id,
+            ToolName.UPLOAD_TO_STORAGE,
+            default=PermissionLevel.ASK,
+        )
+        return level == PermissionLevel.ALWAYS
+    except Exception:
+        logger.warning("Failed to check upload permission for user %s, skipping auto-save", user_id)
+        return False
 
 
 async def prepare_media(
