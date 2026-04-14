@@ -3,16 +3,11 @@ title: Estimates & Invoicing
 description: Create estimates and invoices by talking to your assistant, powered by QuickBooks Online.
 ---
 
-If your Clawbolt instance is connected to QuickBooks Online, you can create estimates, look up invoices, and manage customers all through text. The signature workflow: dictate a job description from your truck and your assistant drafts an estimate in QuickBooks.
+With QuickBooks connected, you can create estimates, look up invoices, and manage customers all through text.
 
-## The voice-to-estimate workflow
+## Voice-to-estimate
 
-This is the fastest way to create an estimate in the field:
-
-1. **Dictate from your phone.** Tap the microphone on your keyboard and describe the job out loud.
-2. **Your assistant creates the estimate.** It extracts the client, scope, labor, and materials from your description and creates a draft in QuickBooks.
-3. **Review later.** Come back when you have time to refine the numbers.
-4. **Send it.** When it's ready, your assistant emails it to your client.
+Dictate a job description from your phone and your assistant drafts an estimate in QuickBooks:
 
 ```
 You: Just left the Davis place. They want the master bathroom
@@ -30,8 +25,6 @@ No laptop required. No "computer time" at the end of the day.
 
 ## Looking up invoices
 
-Ask about a client's invoice history:
-
 ```
 You: What invoices do I have for Amy's Bird Sanctuary?
 
@@ -42,34 +35,20 @@ Clawbolt: Found 4 invoices for Amy's Bird Sanctuary:
           - #1003 | $475.00 (Paid)
 ```
 
-## Sending estimates and invoices
+## Sending and managing
 
-When you're happy with an estimate or invoice, ask your assistant to send it:
-
-```
-You: Send that estimate to Davis
-
-Clawbolt: Done! I've emailed the estimate to Davis at
-          davis@email.com.
-```
-
-## Managing customers
-
-Your assistant can create new customers and update existing ones in QuickBooks:
-
-```
-You: Add a new customer: Sarah Miller, 555-0123,
-     sarah@example.com, 88 Elm Street
-
-Clawbolt: Created a new customer in QuickBooks:
-          Sarah Miller
-          555-0123
-          sarah@example.com
-          88 Elm Street
-```
+Ask your assistant to send estimates or invoices to clients, or create and update customers in QuickBooks. Your assistant always asks for permission before creating or changing anything.
 
 ## Getting connected
 
-QuickBooks integration is configured by whoever set up your Clawbolt instance. Once connected, the QuickBooks tools appear automatically. Your assistant will ask for your permission before creating or modifying anything in QuickBooks.
+Ask your assistant to connect QuickBooks:
 
-If you don't see QuickBooks capabilities, ask your admin to set up the integration. See the [QuickBooks](/features/quickbooks/) page for technical setup details.
+```
+You: Connect my QuickBooks
+
+Clawbolt: Here's a link to connect your QuickBooks account:
+          [link]
+          Tap it, sign in, and you're all set.
+```
+
+You can also connect from the Tools page in the web dashboard. See [QuickBooks](/features/quickbooks/) for technical setup details.

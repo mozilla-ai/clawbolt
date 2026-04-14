@@ -3,17 +3,7 @@ title: Heartbeat
 description: Your assistant proactively checks in with reminders and follow-ups.
 ---
 
-Heartbeat is your assistant's proactive check-in feature. Instead of waiting for you to message first, your assistant periodically reviews your tasks and priorities, then reaches out when there's something useful to say.
-
-## What it does
-
-When heartbeat is enabled, your assistant checks in on a schedule and looks for:
-
-- **Tasks and priorities you've set** -- things you told it to follow up on
-- **Time-sensitive items** -- deadlines, follow-ups, reminders from your memory
-- **Idle periods** -- if you haven't been in touch for a while, it might check in
-
-If it finds something worth mentioning, it sends you a message. If not, it stays quiet.
+Heartbeat lets your assistant reach out proactively. Instead of waiting for you to message first, it periodically reviews your tasks and priorities and sends you a reminder when there's something useful to say.
 
 ```
 Clawbolt: Hey! Quick reminder: you mentioned wanting to
@@ -22,16 +12,9 @@ Clawbolt: Hey! Quick reminder: you mentioned wanting to
           message to send her?
 ```
 
-## Setting up heartbeat
+## Setting it up
 
-You can enable and configure heartbeat from the web dashboard:
-
-1. Go to the **Heartbeat** page in the dashboard
-2. Toggle check-ins on
-3. Choose how often your assistant checks in (e.g., every few hours, daily)
-4. Add your current tasks and priorities
-
-You can also manage your heartbeat through chat:
+Enable heartbeat from the dashboard (Heartbeat page) or through chat:
 
 ```
 You: Add to my heartbeat: follow up with Davis about
@@ -41,39 +24,18 @@ Clawbolt: Added to your heartbeat. I'll remind you about
           the Davis estimate before Friday.
 ```
 
+Good things to add: client follow-ups, estimate deadlines, material orders, upcoming inspections.
+
 ## Business hours
 
-Your assistant respects your schedule. Check-in messages are only sent during your configured business hours (for example, 7 AM to 5 PM). Late-night messages won't happen.
-
-Make sure your timezone and business hours are set correctly in the dashboard (User page) so check-ins arrive at the right times.
-
-## What to put in your heartbeat
-
-Think of your heartbeat as your assistant's to-do list. Good things to add:
-
-- Follow-ups with clients you're waiting to hear back from
-- Deadlines for estimates or bids
-- Material orders that need to be placed
-- Jobs that need scheduling
-- Reminders about upcoming inspections
-
-```
-You: Update my heartbeat: I need to order tile for the
-     Davis bathroom by Wednesday, and I'm waiting on
-     the permit for the Johnson job
-
-Clawbolt: Updated your heartbeat with both items. I'll
-          remind you about the tile order before Wednesday
-          and keep an eye on the Johnson permit.
-```
+Check-in messages are only sent during your configured business hours. Make sure your timezone is set correctly in the dashboard (User page).
 
 ## Turning it off
 
-If you want your assistant to stop checking in, toggle heartbeat off from the dashboard or tell it:
+Toggle heartbeat off from the dashboard, or:
 
 ```
 You: Turn off heartbeat for now
 
-Clawbolt: Heartbeat check-ins are now disabled. Let me
-          know when you want to turn them back on.
+Clawbolt: Heartbeat check-ins are now disabled.
 ```

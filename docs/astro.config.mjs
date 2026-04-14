@@ -67,6 +67,7 @@ export default defineConfig({
             { label: "Estimates", slug: "guide/estimates" },
             { label: "Calendar", slug: "guide/calendar" },
             { label: "Heartbeat", slug: "guide/heartbeat" },
+            { label: "Integrations", slug: "guide/integrations" },
             { label: "Dashboard", slug: "guide/dashboard" },
             { label: "Tips & Tricks", slug: "guide/tips" },
           ],

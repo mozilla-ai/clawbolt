@@ -3,9 +3,9 @@ title: Calendar
 description: Manage your schedule through chat with Google Calendar integration.
 ---
 
-When your Clawbolt instance is connected to Google Calendar, you can check your schedule, book jobs, and manage appointments all through text.
+With Google Calendar connected, you can check your schedule, book jobs, and manage appointments through text.
 
-## Checking your schedule
+## Examples
 
 ```
 You: What do I have tomorrow?
@@ -15,17 +15,6 @@ Clawbolt: Here's your schedule for tomorrow (Tuesday):
           - 11:30 AM: Lunch with supplier
           - 2:00 PM: Estimate walkthrough at 42 Oak St
 ```
-
-## Checking availability
-
-```
-You: Am I free Friday afternoon?
-
-Clawbolt: You have a gap from 1:00 PM to 5:00 PM on Friday.
-          Want me to schedule something?
-```
-
-## Scheduling a job
 
 ```
 You: Schedule a bathroom remodel at the Davis place
@@ -41,36 +30,22 @@ You: Yes
 Clawbolt: Done! Event created on your calendar.
 ```
 
-Your assistant always asks for your approval before creating, changing, or deleting calendar events. Read-only actions (checking your schedule, checking availability) happen automatically.
-
-## Updating events
-
-```
-You: Move the Davis job to Tuesday same time
-
-Clawbolt: I'd like to update the event:
-          "Job: Davis - Bathroom remodel"
-          Move from Monday to Tuesday, 8:00 AM - 4:00 PM
-          Approve?
-
-You: Go ahead
-
-Clawbolt: Updated! The Davis job is now on Tuesday.
-```
+Your assistant always asks for approval before creating, changing, or deleting events. Read-only actions (checking schedule, checking availability) happen automatically.
 
 ## Timezone
 
-Your assistant uses your timezone when you mention times. "9am tomorrow" means 9 AM in your local time. Make sure your timezone is set correctly in the dashboard (User page) so times show up right.
+Your assistant uses your timezone when interpreting times. Make sure it's set correctly in the dashboard (User page).
 
 ## Getting connected
 
-Google Calendar integration is set up from the web dashboard:
+Ask your assistant to connect Google Calendar:
 
-1. Open the dashboard and go to the **Tools** page
-2. Find **Google Calendar** and click **Connect**
-3. Sign in with your Google account
-4. Grant calendar access
+```
+You: Connect my Google Calendar
 
-Once connected, calendar tools are available to your assistant automatically. You can control which calendar actions are enabled (list, create, update, delete) from the Tools page.
+Clawbolt: Here's a link to connect your Google account:
+          [link]
+          Tap it, sign in, and grant calendar access.
+```
 
-If the Connect button isn't available, your admin needs to configure Google Calendar credentials first. See the [Google Calendar](/features/calendar/) page for technical setup details.
+You can also connect from the Tools page in the web dashboard. You can control which calendar actions are enabled (list, create, update, delete) from there. See [Google Calendar](/features/calendar/) for technical setup details.
