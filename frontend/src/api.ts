@@ -105,6 +105,17 @@ const api = {
     if (error) _throwApiError(error, 'Failed to delete message');
   },
 
+  deleteMessages: async (sessionId: string, seqs: number[]) => {
+    const { error } = await client.DELETE(
+      '/api/user/sessions/{session_id}/messages/batch' as never,
+      {
+        params: { path: { session_id: sessionId } },
+        body: { seqs },
+      } as never,
+    );
+    if (error) _throwApiError(error, 'Failed to delete messages');
+  },
+
   // Memory
   getMemory: async () => {
     const { data, error } = await client.GET('/api/user/memory');

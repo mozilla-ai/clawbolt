@@ -237,6 +237,163 @@ def test_delete_single_message_cross_user_isolation(client: TestClient, test_use
 
 
 # ---------------------------------------------------------------------------
+# DELETE /api/user/sessions/{session_id}/messages/batch
+# ---------------------------------------------------------------------------
+
+
+def test_delete_batch_messages(client: TestClient, test_user: User) -> None:
+    """Batch deleting specific messages removes only those messages."""
+    _create_session(
+        test_user,
+        "del_batch_1",
+        [
+            {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
+            {"direction": "outbound", "body": "Hey", "timestamp": "2025-01-15T10:02:00", "seq": 2},
+            {"direction": "inbound", "body": "Q", "timestamp": "2025-01-15T10:03:00", "seq": 3},
+            {"direction": "outbound", "body": "A", "timestamp": "2025-01-15T10:04:00", "seq": 4},
+            {"direction": "inbound", "body": "Bye", "timestamp": "2025-01-15T10:05:00", "seq": 5},
+        ],
+    )
+    resp = client.request(
+        "DELETE", "/api/user/sessions/del_batch_1/messages/batch", json={"seqs": [2, 3, 4]}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "deleted"
+    assert data["messages_deleted"] == 3
+
+    # Verify only messages 1 and 5 remain
+    resp = client.get("/api/user/sessions/del_batch_1")
+    detail = resp.json()
+    seqs = [m["seq"] for m in detail["messages"]]
+    assert seqs == [1, 5]
+
+
+def test_delete_batch_partial(client: TestClient, test_user: User) -> None:
+    """Batch delete with some nonexistent seqs deletes only existing ones."""
+    _create_session(
+        test_user,
+        "del_batch_partial",
+        [
+            {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
+            {"direction": "outbound", "body": "Hey", "timestamp": "2025-01-15T10:02:00", "seq": 2},
+            {"direction": "inbound", "body": "Bye", "timestamp": "2025-01-15T10:03:00", "seq": 3},
+        ],
+    )
+    resp = client.request(
+        "DELETE", "/api/user/sessions/del_batch_partial/messages/batch", json={"seqs": [1, 2, 99]}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["messages_deleted"] == 2
+
+    resp = client.get("/api/user/sessions/del_batch_partial")
+    detail = resp.json()
+    seqs = [m["seq"] for m in detail["messages"]]
+    assert seqs == [3]
+
+
+def test_delete_batch_empty_seqs(client: TestClient, test_user: User) -> None:
+    """Batch delete with empty seqs returns 422 validation error."""
+    _create_session(
+        test_user,
+        "del_batch_empty",
+        [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+    )
+    resp = client.request(
+        "DELETE", "/api/user/sessions/del_batch_empty/messages/batch", json={"seqs": []}
+    )
+    assert resp.status_code == 422
+
+
+def test_delete_batch_session_not_found(client: TestClient) -> None:
+    """Batch delete on a nonexistent session returns 404."""
+    resp = client.request(
+        "DELETE", "/api/user/sessions/nonexistent/messages/batch", json={"seqs": [1, 2]}
+    )
+    assert resp.status_code == 404
+
+
+def test_delete_batch_cross_user(client: TestClient, test_user: User) -> None:
+    """A user cannot batch delete messages from another user's session."""
+    other_user_id = "other-user-batch-delete-test"
+    db = _db_module.SessionLocal()
+    try:
+        other_user = User(
+            id=other_user_id,
+            user_id="other-user-bd",
+            phone="+15557777777",
+            channel_identifier="777777",
+        )
+        db.add(other_user)
+        db.flush()
+        cs = ChatSession(
+            session_id="other_batch_del",
+            user_id=other_user_id,
+            is_active=True,
+            channel="",
+            last_compacted_seq=0,
+            created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
+            last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
+        )
+        db.add(cs)
+        db.flush()
+        for i in range(1, 4):
+            msg = Message(
+                session_id=cs.id,
+                seq=i,
+                direction="inbound",
+                body=f"secret {i}",
+                timestamp=datetime(2025, 1, 15, 10, i, 0, tzinfo=UTC),
+            )
+            db.add(msg)
+        db.commit()
+    finally:
+        db.close()
+
+    # Authenticated as test_user, try to batch delete other user's messages
+    resp = client.request(
+        "DELETE", "/api/user/sessions/other_batch_del/messages/batch", json={"seqs": [1, 2]}
+    )
+    assert resp.status_code == 404
+
+    # Verify messages are still intact
+    db = _db_module.SessionLocal()
+    try:
+        cs = db.query(ChatSession).filter_by(session_id="other_batch_del").first()
+        assert cs is not None
+        count = db.query(Message).filter_by(session_id=cs.id).count()
+        assert count == 3
+    finally:
+        db.close()
+
+
+def test_delete_batch_large(client: TestClient, test_user: User) -> None:
+    """Batch delete handles a large number of messages."""
+    msgs = [
+        {
+            "direction": "inbound" if i % 2 == 1 else "outbound",
+            "body": f"msg {i}",
+            "timestamp": f"2025-01-15T10:{i:02d}:00",
+            "seq": i,
+        }
+        for i in range(1, 51)
+    ]
+    _create_session(test_user, "del_batch_large", msgs)
+    seqs_to_delete = list(range(1, 51))
+    resp = client.request(
+        "DELETE", "/api/user/sessions/del_batch_large/messages/batch", json={"seqs": seqs_to_delete}
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["messages_deleted"] == 50
+
+    resp = client.get("/api/user/sessions/del_batch_large")
+    detail = resp.json()
+    assert len(detail["messages"]) == 0
+
+
+# ---------------------------------------------------------------------------
 # DELETE /api/user/sessions/{session_id}/messages
 # ---------------------------------------------------------------------------
 

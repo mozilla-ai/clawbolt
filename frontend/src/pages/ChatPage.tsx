@@ -3,6 +3,8 @@ import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import Markdown from 'react-markdown';
 import Button from '@/components/ui/button';
+import ConfirmModal from '@/components/ui/confirm-modal';
+import { Checkbox } from '@heroui/checkbox';
 import { Tooltip } from '@heroui/tooltip';
 import { Spinner } from '@heroui/spinner';
 import api from '@/api';
@@ -58,6 +60,15 @@ export default function ChatPage() {
   const [isDeleting, setIsDeleting] = useState(false);
   const [deletingMsgId, setDeletingMsgId] = useState<number | null>(null);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [selectedSeqs, setSelectedSeqs] = useState<Set<number>>(new Set());
+  const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  const [confirmModal, setConfirmModal] = useState<{
+    title: string;
+    message: string;
+    confirmLabel: string;
+    onConfirm: () => void;
+  } | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -148,10 +159,12 @@ export default function ChatPage() {
     });
   }, [searchParams, setSearchParams]);
 
-  // Save active session to localStorage and reset expand state
+  // Save active session to localStorage and reset expand/selection state
   useEffect(() => {
     if (activeSessionId) saveLastSession(activeSessionId);
     setExpandedTools(new Set());
+    setSelectionMode(false);
+    setSelectedSeqs(new Set());
   }, [activeSessionId]);
 
   // Populate messages from session history when it loads
@@ -322,6 +335,56 @@ export default function ChatPage() {
     }
   };
 
+  const toggleSelection = (seq: number) => {
+    setSelectedSeqs((prev) => {
+      const next = new Set(prev);
+      if (next.has(seq)) next.delete(seq);
+      else next.add(seq);
+      return next;
+    });
+  };
+
+  const exitSelectionMode = () => {
+    setSelectionMode(false);
+    setSelectedSeqs(new Set());
+  };
+
+  const selectableMessages = messages.filter((m) => m.seq);
+
+  const handleBatchDelete = async () => {
+    if (!activeSessionId || selectedSeqs.size === 0 || isBatchDeleting) return;
+    // Filter to only seqs that still exist in messages
+    const validSeqs = [...selectedSeqs].filter((seq) =>
+      messages.some((m) => m.seq === seq),
+    );
+    if (validSeqs.length === 0) return;
+    setIsBatchDeleting(true);
+    setConfirmModal(null);
+    try {
+      await api.deleteMessages(activeSessionId, validSeqs);
+      // Animate out selected messages
+      const idsToRemove = messages
+        .filter((m) => m.seq && validSeqs.includes(m.seq))
+        .map((m) => m.id);
+      // Set all as exiting for animation
+      setDeletingMsgId(idsToRemove[0] ?? null);
+      await new Promise((r) => setTimeout(r, 250));
+      setMessages((prev) => prev.filter((m) => !idsToRemove.includes(m.id)));
+      setDeletingMsgId(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.sessions.detail(activeSessionId),
+      });
+      toast.success(`Deleted ${validSeqs.length} message${validSeqs.length > 1 ? 's' : ''}`);
+      exitSelectionMode();
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Failed to delete messages';
+      toast.error(errMsg);
+    } finally {
+      setIsBatchDeleting(false);
+    }
+  };
+
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
 
   return (
@@ -335,39 +398,59 @@ export default function ChatPage() {
           </p>
         </div>
         {activeSessionId && messages.length > 0 && (
-          <Tooltip content="Delete conversation history" delay={400} closeDelay={0}>
-            <Button
-              variant="ghost"
-              size="sm"
-              disabled={isDeleting || sending}
-              className="text-muted-foreground hover:text-danger shrink-0"
-              onClick={async () => {
-                if (!activeSessionId || isDeleting) return;
-                const ok = window.confirm(
-                  'Delete all conversation messages? Your memory and personality will be kept.',
-                );
-                if (!ok) return;
-                setIsDeleting(true);
-                try {
-                  await api.deleteConversationHistory(activeSessionId);
-                  setMessages([]);
-                  void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
-                  void queryClient.invalidateQueries({
-                    queryKey: queryKeys.sessions.detail(activeSessionId),
-                  });
-                  toast.success('Conversation history deleted');
-                } catch (err: unknown) {
-                  const msg = err instanceof Error ? err.message : 'Failed to delete history';
-                  toast.error(msg);
-                } finally {
-                  setIsDeleting(false);
-                }
-              }}
-            >
-              <TrashIcon />
-              <span className="ml-1.5 hidden sm:inline">Clear history</span>
-            </Button>
-          </Tooltip>
+          <div className="flex items-center gap-1.5">
+            <Tooltip content={selectionMode ? 'Exit selection' : 'Select messages'} delay={400} closeDelay={0}>
+              <Button
+                variant={selectionMode ? 'secondary' : 'ghost'}
+                size="sm"
+                disabled={isDeleting || sending || isBatchDeleting}
+                className="text-muted-foreground shrink-0"
+                onClick={() => selectionMode ? exitSelectionMode() : setSelectionMode(true)}
+              >
+                <SelectIcon />
+                <span className="ml-1.5 hidden sm:inline">{selectionMode ? 'Cancel' : 'Select'}</span>
+              </Button>
+            </Tooltip>
+            {!selectionMode && (
+              <Tooltip content="Delete conversation history" delay={400} closeDelay={0}>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  disabled={isDeleting || sending}
+                  className="text-muted-foreground hover:text-danger shrink-0"
+                  onClick={() => {
+                    if (!activeSessionId || isDeleting) return;
+                    setConfirmModal({
+                      title: 'Clear conversation history',
+                      message: 'Delete all conversation messages? Your memory and personality will be kept.',
+                      confirmLabel: 'Clear all',
+                      onConfirm: async () => {
+                        setConfirmModal(null);
+                        setIsDeleting(true);
+                        try {
+                          await api.deleteConversationHistory(activeSessionId);
+                          setMessages([]);
+                          void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+                          void queryClient.invalidateQueries({
+                            queryKey: queryKeys.sessions.detail(activeSessionId),
+                          });
+                          toast.success('Conversation history deleted');
+                        } catch (err: unknown) {
+                          const msg = err instanceof Error ? err.message : 'Failed to delete history';
+                          toast.error(msg);
+                        } finally {
+                          setIsDeleting(false);
+                        }
+                      },
+                    });
+                  }}
+                >
+                  <TrashIcon />
+                  <span className="ml-1.5 hidden sm:inline">Clear history</span>
+                </Button>
+              </Tooltip>
+            )}
+          </div>
         )}
       </div>
 
@@ -407,7 +490,9 @@ export default function ChatPage() {
                 msg.seq !== undefined &&
                 msg.seq > lastCompactedSeq &&
                 (idx === 0 || prevSeq <= lastCompactedSeq);
-              const isExiting = deletingMsgId === msg.id;
+              const isExiting = isBatchDeleting
+                ? (msg.seq !== undefined && selectedSeqs.has(msg.seq))
+                : deletingMsgId === msg.id;
               return (
                 <div
                   key={msg.id}
@@ -415,7 +500,15 @@ export default function ChatPage() {
                 >
                   {showCompactionMarker && <CompactionMarker />}
                   <div className={`group/msg flex items-center gap-1.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-                    {msg.role === 'user' && msg.seq && (
+                    {selectionMode && msg.seq ? (
+                      <Checkbox
+                        isSelected={selectedSeqs.has(msg.seq)}
+                        onValueChange={() => toggleSelection(msg.seq!)}
+                        aria-label={`Select message ${msg.seq}`}
+                        className="shrink-0"
+                        size="sm"
+                      />
+                    ) : msg.role === 'user' && msg.seq && !selectionMode ? (
                       <button
                         type="button"
                         onClick={() => handleDeleteMessage(msg)}
@@ -425,7 +518,7 @@ export default function ChatPage() {
                       >
                         <SmallTrashIcon />
                       </button>
-                    )}
+                    ) : null}
                 <div
                   className={`max-w-[80%] px-4 py-2.5 animate-message-in ${
                     msg.role === 'user'
@@ -569,7 +662,7 @@ export default function ChatPage() {
                     {msg.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                   </p>
                 </div>
-                    {msg.role === 'assistant' && msg.seq && (
+                    {!selectionMode && msg.role === 'assistant' && msg.seq && (
                       <button
                         type="button"
                         onClick={() => handleDeleteMessage(msg)}
@@ -594,6 +687,59 @@ export default function ChatPage() {
           </div>
         )}
       </div>
+
+      {/* Selection action bar */}
+      {selectionMode && (
+        <div className="border-t border-border bg-card/95 backdrop-blur-sm px-4 py-2.5 flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <span className="text-sm font-medium text-foreground">
+              {selectedSeqs.size} selected
+            </span>
+            <button
+              type="button"
+              onClick={() => {
+                if (selectedSeqs.size === selectableMessages.length) {
+                  setSelectedSeqs(new Set());
+                } else {
+                  setSelectedSeqs(new Set(selectableMessages.map((m) => m.seq!)));
+                }
+              }}
+              className="text-xs text-primary hover:text-primary-hover underline"
+            >
+              {selectedSeqs.size === selectableMessages.length ? 'Deselect all' : 'Select all'}
+            </button>
+          </div>
+          <Button
+            variant="danger"
+            size="sm"
+            disabled={selectedSeqs.size === 0 || isBatchDeleting}
+            isLoading={isBatchDeleting}
+            onClick={() => {
+              setConfirmModal({
+                title: 'Delete messages',
+                message: `Delete ${selectedSeqs.size} selected message${selectedSeqs.size > 1 ? 's' : ''}? This cannot be undone.`,
+                confirmLabel: `Delete ${selectedSeqs.size}`,
+                onConfirm: handleBatchDelete,
+              });
+            }}
+          >
+            <SmallTrashIcon />
+            <span className="ml-1">Delete</span>
+          </Button>
+        </div>
+      )}
+
+      {/* Confirm modal */}
+      <ConfirmModal
+        isOpen={confirmModal !== null}
+        onConfirm={confirmModal?.onConfirm ?? (() => {})}
+        onCancel={() => setConfirmModal(null)}
+        title={confirmModal?.title ?? ''}
+        message={confirmModal?.message ?? ''}
+        confirmLabel={confirmModal?.confirmLabel}
+        variant="danger"
+        isLoading={isBatchDeleting || isDeleting}
+      />
 
       {/* Input area */}
       <div className="pt-3 pb-4 sm:pb-6">
@@ -794,6 +940,19 @@ function ChevronIcon({ open }: { open: boolean }) {
       viewBox="0 0 24 24"
     >
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function SelectIcon() {
+  return (
+    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4"
+      />
     </svg>
   );
 }
