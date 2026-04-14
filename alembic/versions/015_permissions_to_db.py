@@ -17,8 +17,8 @@ import logging
 from pathlib import Path
 
 import sqlalchemy as sa
-from alembic import op
 
+from alembic import op
 from backend.app.config import settings
 
 revision: str = "015"
@@ -77,9 +77,7 @@ def _backfill_from_disk() -> None:
             raw = perm_file.read_text(encoding="utf-8")
             parsed = json.loads(raw)
         except (OSError, json.JSONDecodeError, ValueError) as exc:
-            logger.warning(
-                "permissions migration: skipping %s (%s)", perm_file, exc
-            )
+            logger.warning("permissions migration: skipping %s (%s)", perm_file, exc)
             continue
         if not isinstance(parsed, dict):
             continue
