@@ -49,6 +49,11 @@ class BaseChannel(ABC):
     ``send_typing_indicator``, ``download_media``) to deliver messages.
     """
 
+    # Set to True after a successful PaaS webhook registration so the
+    # OSS ``start()`` method can skip the cloudflared tunnel discovery
+    # retry loop (which is only useful for local dev tunnels).
+    webhook_registered: bool = False
+
     @property
     @abstractmethod
     def name(self) -> str:

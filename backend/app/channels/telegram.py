@@ -237,6 +237,8 @@ class TelegramChannel(BaseChannel):
         Telegram can reach the webhook URL during its validation check.
         """
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
+        if self.webhook_registered:
+            return
         tunnel_url = await discover_tunnel_url()
         if not tunnel_url:
             logger.debug("Cloudflare tunnel not detected: skipping webhook auto-registration")
