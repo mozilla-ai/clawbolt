@@ -265,3 +265,65 @@ async def test_approval_cache_coalesces_repeat_ask(test_user: User) -> None:
     # Three tool calls, one user approval prompt.
     assert gate.request_approval.await_count == 1  # type: ignore[attr-defined]
     assert calls == ["David Graham", "David Graham", "David Graham"]
+
+
+@pytest.mark.asyncio()
+async def test_always_allow_for_upload_to_storage_persists_globally(
+    test_user: User,
+) -> None:
+    """When the user says 'Always' to an upload_to_storage prompt, the
+    permission must persist globally for the tool, not scoped per client
+    name (otherwise the user would have to say 'Always' separately for
+    every new client they ever upload for)."""
+    from backend.app.agent.llm_parsing import ParsedToolCall
+    from backend.app.agent.messages import ToolCallRequest
+    from backend.app.agent.tools.file_tools import create_file_tools
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+
+    gate = get_approval_gate()
+    gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_ALLOW)  # type: ignore[method-assign]
+
+    async def _publish(_msg: object) -> None:
+        return None
+
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage, pending_media={"bb_photo": b"bytes"})
+    upload_tool = next(t for t in tools if t.name == "upload_to_storage")
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=_publish,
+        chat_id="+1234567890",
+        session_id="",
+    )
+    agent.register_tools([upload_tool])
+
+    args = {
+        "file_category": "job_photo",
+        "client_name": "David Graham",
+        "original_url": "bb_photo",
+    }
+    parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
+    raw = [ParsedToolCall(id="call_0", name="upload_to_storage", arguments=args)]
+    await agent._execute_tool_round(
+        parsed_calls=parsed,
+        parsed_raw=raw,
+        actions_taken=[],
+        memories_saved=[],
+        tool_call_records=[],
+    )
+
+    # Permission should now be ALWAYS for upload_to_storage globally, not
+    # scoped to David Graham only. A subsequent upload for a different
+    # client should auto-approve without another prompt.
+    level_global = store.check_permission(
+        test_user.id, "upload_to_storage", default=PermissionLevel.ASK
+    )
+    level_different_client = store.check_permission(
+        test_user.id, "upload_to_storage", resource="Other Client", default=PermissionLevel.ASK
+    )
+    assert level_global == PermissionLevel.ALWAYS
+    assert level_different_client == PermissionLevel.ALWAYS
