@@ -180,6 +180,8 @@ class LinqChannel(BaseChannel):
             return
 
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
+        if self.webhook_registered:
+            return
         tunnel_url = await discover_tunnel_url()
         if not tunnel_url:
             logger.debug("Cloudflare tunnel not detected: skipping Linq webhook auto-registration")

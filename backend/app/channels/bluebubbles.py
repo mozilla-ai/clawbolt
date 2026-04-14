@@ -89,12 +89,50 @@ class BBWebhookPayload(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+async def _cleanup_stale_webhooks(server_url: str, our_endpoint: str) -> None:
+    """Remove existing BlueBubbles webhooks that point to our endpoint.
+
+    BlueBubbles accumulates webhook registrations on each startup.  This
+    lists all registered webhooks and deletes any whose URL contains our
+    endpoint path, preventing duplicate deliveries.
+    """
+    try:
+        async with httpx.AsyncClient() as client:
+            resp = await client.get(
+                f"{server_url}/api/v1/webhook",
+                params={"password": settings.bluebubbles_password},
+                timeout=settings.http_timeout_seconds,
+            )
+            if resp.status_code >= 400:
+                return
+            data = resp.json()
+            webhooks = data if isinstance(data, list) else data.get("data", [])
+            for wh in webhooks:
+                wh_url = wh.get("url", "")
+                wh_id = wh.get("id")
+                if not wh_id or our_endpoint not in wh_url:
+                    continue
+                await client.delete(
+                    f"{server_url}/api/v1/webhook/{wh_id}",
+                    params={"password": settings.bluebubbles_password},
+                    timeout=settings.http_timeout_seconds,
+                )
+                logger.info("Removed stale BlueBubbles webhook %s", wh_id)
+    except Exception:
+        logger.debug("Could not clean up stale BlueBubbles webhooks", exc_info=True)
+
+
 async def register_bluebubbles_webhook(server_url: str, webhook_url: str) -> bool:
     """Register a webhook subscription with the BlueBubbles server.
 
-    Calls ``POST /api/v1/webhook`` to register *webhook_url* for
-    ``new-message`` events. Returns ``True`` on success.
+    Cleans up any existing webhooks for our endpoint first to prevent
+    duplicate deliveries, then calls ``POST /api/v1/webhook`` to register
+    *webhook_url* for ``new-message`` events.  Returns ``True`` on success.
     """
+    # Remove stale registrations before adding the new one
+    endpoint = webhook_url.split("?")[0]
+    await _cleanup_stale_webhooks(server_url, endpoint)
+
     url = f"{server_url}/api/v1/webhook"
     payload = {
         "url": webhook_url,
@@ -117,8 +155,7 @@ async def register_bluebubbles_webhook(server_url: str, webhook_url: str) -> boo
                 return False
 
             # Log without the token query param
-            safe_url = webhook_url.split("?")[0]
-            logger.info("BlueBubbles webhook registered: %s", safe_url)
+            logger.info("BlueBubbles webhook registered: %s", endpoint)
             return True
     except httpx.ConnectError as exc:
         logger.warning("BlueBubbles server not reachable at %s: %s", server_url, exc)
@@ -182,6 +219,11 @@ class BlueBubblesChannel(BaseChannel):
             return
 
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
+
+        # If a PaaS webhook was already registered (e.g. via premium on
+        # Railway), skip the tunnel discovery retry loop entirely.
+        if self.webhook_registered:
+            return
 
         # Verify the server is actually reachable before advertising as configured.
         self.server_reachable = await self._check_server_reachable()
