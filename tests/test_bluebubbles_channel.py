@@ -754,6 +754,47 @@ async def test_start_marks_unreachable_when_server_down() -> None:
     mock_register.assert_not_called()
 
 
+async def test_start_checks_reachability_even_with_paas_webhook_registered() -> None:
+    """On premium, the PaaS lifespan sets webhook_registered=True before
+    start() runs the tunnel loop. Reachability must still be checked so
+    is_bluebubbles_configured() returns True and the dashboard doesn't
+    gray out a working channel.
+
+    Regression test: earlier code short-circuited start() on
+    webhook_registered, leaving server_reachable=False on premium
+    deployments even when the user's BlueBubbles server was up.
+    """
+    channel = BlueBubblesChannel()
+    channel.webhook_registered = True
+
+    with (
+        patch(
+            "backend.app.channels.bluebubbles.settings.bluebubbles_server_url",
+            "https://bb.example.com",
+        ),
+        patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", "test-pw"),
+        patch("backend.app.channels.bluebubbles.asyncio.sleep", new_callable=AsyncMock),
+        patch.object(
+            channel, "_check_server_reachable", new_callable=AsyncMock, return_value=True
+        ) as mock_check,
+        patch(
+            "backend.app.channels.bluebubbles.discover_tunnel_url",
+            new_callable=AsyncMock,
+        ) as mock_discover,
+        patch(
+            "backend.app.channels.bluebubbles.register_bluebubbles_webhook",
+            new_callable=AsyncMock,
+        ) as mock_register,
+    ):
+        await channel.start()
+
+    assert channel.server_reachable is True
+    mock_check.assert_awaited_once()
+    # Tunnel discovery must still be skipped: the PaaS webhook is already in place.
+    mock_discover.assert_not_called()
+    mock_register.assert_not_called()
+
+
 async def test_check_server_reachable_success() -> None:
     """_check_server_reachable returns True when server responds."""
     channel = BlueBubblesChannel()

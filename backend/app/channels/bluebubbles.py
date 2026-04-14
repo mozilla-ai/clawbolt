@@ -220,18 +220,23 @@ class BlueBubblesChannel(BaseChannel):
 
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
 
-        # If a PaaS webhook was already registered (e.g. via premium on
-        # Railway), skip the tunnel discovery retry loop entirely.
-        if self.webhook_registered:
-            return
-
-        # Verify the server is actually reachable before advertising as configured.
+        # Verify the server is actually reachable before advertising as
+        # configured. Do this regardless of who registered the inbound
+        # webhook: on premium the PaaS lifespan registers a webhook on the
+        # BlueBubbles server, but that doesn't tell us whether the user's
+        # Mac is actually up and reachable; the dashboard still needs the
+        # reachability signal so it doesn't gray out a working channel.
         self.server_reachable = await self._check_server_reachable()
         if not self.server_reachable:
             logger.warning(
                 "BlueBubbles server not reachable at %s",
                 settings.bluebubbles_server_url,
             )
+            return
+
+        # If a PaaS webhook was already registered (e.g. via premium on
+        # Railway), skip the tunnel discovery retry loop entirely.
+        if self.webhook_registered:
             return
 
         tunnel_url = await discover_tunnel_url()
