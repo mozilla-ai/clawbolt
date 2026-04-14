@@ -20,7 +20,6 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from enum import StrEnum
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -188,16 +187,11 @@ class ApprovalStore:
         with db_session() as db:
             row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
             if row is None:
-                db.add(
-                    UserPermissionSet(
-                        user_id=user_id,
-                        data=payload,
-                        updated_at=datetime.now(UTC),
-                    )
-                )
+                # `updated_at` gets its `default=` via the ORM on insert.
+                db.add(UserPermissionSet(user_id=user_id, data=payload))
             else:
+                # `updated_at` gets its `onupdate=` via the ORM on update.
                 row.data = payload
-                row.updated_at = datetime.now(UTC)
             db.commit()
 
     def load_user_permissions(self, user_id: str) -> dict[str, Any]:

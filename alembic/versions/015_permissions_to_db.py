@@ -55,6 +55,16 @@ def _backfill_from_disk() -> None:
     Best-effort: skips unreadable files, malformed JSON, and any user dir
     that doesn't correspond to a known user row. The files stay on disk
     so the data isn't lost if something goes wrong.
+
+    ``settings.data_dir`` defaults to ``"data/users"`` (relative), which
+    resolves against the alembic process's CWD. Docker images run
+    alembic from ``/app`` so it finds ``/app/data/users``. If you ever
+    run migrations from a different CWD, the backfill silently finds
+    nothing -- set an absolute ``DATA_DIR`` env var to avoid surprises.
+
+    Uses Postgres-specific ``ON CONFLICT DO UPDATE``. The project uses
+    Postgres for tests and production; if that ever changes, switch
+    this to an explicit SELECT-then-INSERT/UPDATE.
     """
     data_root = Path(settings.data_dir)
     if not data_root.exists():

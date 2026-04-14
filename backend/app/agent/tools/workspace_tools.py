@@ -236,12 +236,17 @@ async def _memory_doc_write(user_id: str, column: str, content: str) -> None:
 
 
 def _is_permissions_path(relative_path: str) -> bool:
-    """Return True if ``relative_path`` refers to the top-level PERMISSIONS.json."""
+    """Return True if ``relative_path`` refers to the top-level PERMISSIONS.json.
+
+    Case-insensitive on the filename so a lowercase ``permissions.json``
+    from the LLM doesn't fall through to the disk path (where it would
+    be unprotected and writable).
+    """
     try:
         name = Path(relative_path).name
     except (ValueError, OSError):
         return False
-    if name != _PERMISSIONS_FILE:
+    if name.casefold() != _PERMISSIONS_FILE.casefold():
         return False
     stripped = relative_path.lstrip("./")
     return not ("/" in stripped or relative_path.startswith(".."))

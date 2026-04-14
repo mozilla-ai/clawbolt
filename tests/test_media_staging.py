@@ -330,6 +330,72 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
 
 
 @pytest.mark.asyncio()
+async def test_always_deny_does_not_emit_synthetic_tool_record(test_user: User) -> None:
+    """Symmetric to the ALWAYS_ALLOW test: ALWAYS_DENY persists silently
+    to the DB and must NOT surface as a synthetic PERMISSIONS.json tool
+    record (the old pattern taught the agent to double-manage the file)."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.llm_parsing import ParsedToolCall
+    from backend.app.agent.messages import ToolCallRequest
+    from backend.app.agent.tools.file_tools import create_file_tools
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+
+    gate = get_approval_gate()
+    gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_DENY)  # type: ignore[method-assign]
+
+    async def _publish(_msg: object) -> None:
+        return None
+
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage, pending_media={"bb_photo": b"bytes"})
+    upload_tool = next(t for t in tools if t.name == "upload_to_storage")
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=_publish,
+        chat_id="+1234567890",
+        session_id="",
+    )
+    agent.register_tools([upload_tool])
+
+    args = {"file_category": "job_photo", "client_name": "Jane", "original_url": "bb_photo"}
+    parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
+    raw = [ParsedToolCall(id="call_0", name="upload_to_storage", arguments=args)]
+    records: list[StoredToolInteraction] = []
+    await agent._execute_tool_round(
+        parsed_calls=parsed,
+        parsed_raw=raw,
+        actions_taken=[],
+        memories_saved=[],
+        tool_call_records=records,
+    )
+
+    perm_records = [r for r in records if r.args.get("path") == "PERMISSIONS.json"]
+    assert perm_records == []
+    # And the DENY must be persisted.
+    level = store.check_permission(test_user.id, "upload_to_storage", default=PermissionLevel.ASK)
+    assert level == PermissionLevel.DENY
+
+
+@pytest.mark.asyncio()
+async def test_permissions_path_match_is_case_insensitive(test_user: User) -> None:
+    """_is_permissions_path guards against lowercase / mixed-case filename
+    variants so the LLM can't slip a write past the read-only barrier."""
+    from backend.app.agent.tools.workspace_tools import create_workspace_tools
+
+    tools = create_workspace_tools(test_user.id)
+    write_tool = next(t for t in tools if t.name == "write_file")
+
+    for variant in ("permissions.json", "Permissions.json", "PERMISSIONS.JSON"):
+        result = await write_tool.function(path=variant, content="{}")
+        assert result.is_error is True, f"{variant} should be rejected"
+        assert "read-only" in result.content.lower()
+
+
+@pytest.mark.asyncio()
 async def test_always_allow_does_not_emit_synthetic_tool_record(test_user: User) -> None:
     """ALWAYS_ALLOW persists silently to the DB. The chat should NOT contain
     a synthetic tool record that mimics the agent editing PERMISSIONS.json
