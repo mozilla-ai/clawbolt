@@ -27,31 +27,61 @@ class SystemPromptBuilder:
     into a single string with Markdown-style ``## Heading`` separators.
     No ``str.format()`` is used, so user-supplied content with curly
     braces is safe.
+
+    Sections may be marked ``dynamic=True`` to indicate their content
+    changes between calls (e.g. memory, cross-session context).
+    ``build_content_blocks()`` uses this flag to split the prompt into
+    a cacheable stable prefix and a non-cached dynamic suffix so that
+    Anthropic prompt caching can reuse the stable prefix across turns.
     """
 
     def __init__(self) -> None:
         self._preamble: str = ""
-        self._sections: list[tuple[str, str]] = []
+        self._sections: list[tuple[str, str, bool]] = []  # (heading, content, dynamic)
 
     def set_preamble(self, text: str) -> SystemPromptBuilder:
         """Set the opening line(s) before any sections."""
         self._preamble = text
         return self
 
-    def add_section(self, heading: str, content: str) -> SystemPromptBuilder:
-        """Append a named section.  Empty content sections are skipped in output."""
-        self._sections.append((heading, content))
+    def add_section(
+        self,
+        heading: str,
+        content: str,
+        *,
+        dynamic: bool = False,
+    ) -> SystemPromptBuilder:
+        """Append a named section.  Empty content sections are skipped in output.
+
+        Mark ``dynamic=True`` for sections whose content changes between
+        turns (memory, cross-session context) so they are excluded from
+        the prompt cache prefix.
+        """
+        self._sections.append((heading, content, dynamic))
         return self
 
+    # Marker inserted between stable and dynamic sections so the caching
+    # layer can split the prompt into a cacheable prefix and a dynamic suffix.
+    CACHE_BOUNDARY = "\n<!-- CACHE_BOUNDARY -->\n"
+
     def build(self) -> str:
-        """Assemble all sections into the final prompt string."""
+        """Assemble all sections into the final prompt string.
+
+        A ``CACHE_BOUNDARY`` marker is inserted before the first dynamic
+        section so ``prepare_system_with_caching()`` can split the prompt
+        into a cacheable stable prefix and a non-cached dynamic suffix.
+        """
         parts: list[str] = []
         if self._preamble:
             parts.append(self._preamble)
 
-        for heading, content in self._sections:
+        hit_dynamic = False
+        for heading, content, dynamic in self._sections:
             if not content:
                 continue
+            if dynamic and not hit_dynamic:
+                hit_dynamic = True
+                parts.append(self.CACHE_BOUNDARY.strip())
             parts.append(f"## {heading}\n{content}")
 
         return "\n\n".join(parts)
@@ -212,9 +242,6 @@ async def build_agent_system_prompt(
 
     builder.add_section("About Your User", build_user_section(user))
 
-    memory = await build_memory_section(user.id, query=message_context)
-    builder.add_section("Your Memory", memory)
-
     tool_guidelines = build_tool_guidelines_section(tools)
     if tool_guidelines:
         instructions = (
@@ -227,10 +254,15 @@ async def build_agent_system_prompt(
     builder.add_section("Proactive Messaging", build_proactive_section())
     builder.add_section("Recall Behavior", build_recall_section())
 
+    # Dynamic sections: content changes between turns, placed after the
+    # stable prefix so prompt caching can reuse the stable portion.
+    memory = await build_memory_section(user.id, query=message_context)
+    builder.add_section("Your Memory", memory, dynamic=True)
+
     if current_session_id:
         cross = build_cross_session_context(user.id, current_session_id)
         if cross:
-            builder.add_section("Recent Activity (other channel)", cross)
+            builder.add_section("Recent Activity (other channel)", cross, dynamic=True)
 
     return builder.build()
 

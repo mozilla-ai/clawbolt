@@ -97,10 +97,11 @@ export default function ChatPage() {
     return () => controller.abort();
   }, [queryClient]);
 
-  // Fetch session history via React Query (poll every 3s when idle)
+  // Fetch session history via React Query.  The activity SSE stream
+  // already invalidates queries on the "done" event, so periodic
+  // polling is unnecessary and wasteful.
   const { data: sessionDetail, isPending: loadingHistoryPending, isError: historyError } = useSession(
     activeSessionId,
-    sending ? false : 3_000,
   );
   const loadingHistory = loadingHistoryPending && !!activeSessionId;
 

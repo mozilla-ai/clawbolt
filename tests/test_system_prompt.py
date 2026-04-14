@@ -88,6 +88,72 @@ class TestSystemPromptBuilder:
         assert "## B" in result
 
 
+class TestCacheBoundary:
+    def test_boundary_inserted_before_dynamic(self) -> None:
+        """CACHE_BOUNDARY marker should appear before the first dynamic section."""
+        builder = SystemPromptBuilder()
+        builder.set_preamble("Preamble")
+        builder.add_section("Stable", "stable content")
+        builder.add_section("Dynamic", "dynamic content", dynamic=True)
+        result = builder.build()
+        assert SystemPromptBuilder.CACHE_BOUNDARY.strip() in result
+        idx = result.index(SystemPromptBuilder.CACHE_BOUNDARY.strip())
+        assert result.index("stable content") < idx
+        assert result.index("dynamic content") > idx
+
+    def test_no_boundary_when_all_stable(self) -> None:
+        """No marker should appear when no sections are dynamic."""
+        builder = SystemPromptBuilder()
+        builder.set_preamble("Preamble")
+        builder.add_section("A", "content a")
+        builder.add_section("B", "content b")
+        result = builder.build()
+        assert SystemPromptBuilder.CACHE_BOUNDARY.strip() not in result
+
+    def test_prepare_system_splits_on_boundary(self) -> None:
+        """prepare_system_with_caching should split into two blocks at the marker."""
+        from backend.app.services.llm_service import prepare_system_with_caching
+
+        builder = SystemPromptBuilder()
+        builder.set_preamble("Preamble")
+        builder.add_section("Instructions", "be helpful")
+        builder.add_section("Memory", "user likes coffee", dynamic=True)
+        prompt = builder.build()
+        blocks = prepare_system_with_caching(prompt)
+        assert len(blocks) == 2
+        assert "cache_control" in blocks[0]
+        assert "cache_control" not in blocks[1]
+        assert "be helpful" in blocks[0]["text"]
+        assert "user likes coffee" in blocks[1]["text"]
+
+    def test_prepare_system_single_block_without_boundary(self) -> None:
+        """Without a boundary marker the whole prompt is one cached block."""
+        from backend.app.services.llm_service import prepare_system_with_caching
+
+        blocks = prepare_system_with_caching("Just a plain prompt")
+        assert len(blocks) == 1
+        assert "cache_control" in blocks[0]
+
+    def test_agent_prompt_has_boundary(self) -> None:
+        """build_agent_system_prompt should include the cache boundary marker."""
+        user = MagicMock()
+        user.id = "user-123"
+        user.soul_text = "soul"
+        user.user_text = "user info"
+        user.timezone = ""
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="some memory",
+        ):
+            import asyncio
+
+            prompt = asyncio.get_event_loop().run_until_complete(
+                build_agent_system_prompt(user, tools=[], message_context="hello")
+            )
+        assert SystemPromptBuilder.CACHE_BOUNDARY.strip() in prompt
+
+
 class TestSectionBuilders:
     def test_build_identity_section(self) -> None:
         """Should include soul_text content."""

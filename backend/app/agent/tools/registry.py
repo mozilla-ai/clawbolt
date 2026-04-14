@@ -440,12 +440,20 @@ class ToolRegistry:
 default_registry = ToolRegistry()
 
 
+_tool_modules_imported = False
+
+
 def ensure_tool_modules_imported() -> None:
     """Auto-discover and import all tool modules that end with ``_tools``.
 
-    This is idempotent: Python's import system caches modules, so repeated
-    calls are essentially free.
+    Guarded so the discovery loop and its log messages only run once,
+    even when called from multiple import sites.
     """
+    global _tool_modules_imported
+    if _tool_modules_imported:
+        return
+    _tool_modules_imported = True
+
     package = importlib.import_module("backend.app.agent.tools")
     for _, name, _ in pkgutil.iter_modules(package.__path__, package.__name__ + "."):
         if name.endswith("_tools"):
