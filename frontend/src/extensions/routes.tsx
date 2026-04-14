@@ -27,5 +27,5 @@ export function getReportIssueUrl(): string {
 }
 
 export function getDocsUrl(): string {
-  return 'https://clawbolt.ai/guide/';
+  return 'https://mozilla-ai.github.io/clawbolt/guide/';
 }
