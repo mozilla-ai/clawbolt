@@ -6,6 +6,7 @@ export {
   shouldRedirectRootToApp,
   getFeatureRequestUrl,
   getReportIssueUrl,
+  getDocsUrl,
 } from './routes';
 export {
   getExtraSettingsTabs,

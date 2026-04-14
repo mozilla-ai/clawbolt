@@ -134,6 +134,7 @@ Commit both `frontend/openapi.json` and `frontend/src/generated/api.d.ts`.
 
 - Bug fixes include regression tests
 - New features evaluate whether the docs site (`docs/`) needs updates
+- Features that change how users interact with the assistant must update the user guide (`docs/src/content/docs/guide/`)
 - When you manage a pull request, you must always adhere to the pull request template at .github/pull_request_template.md
 - CI green
 

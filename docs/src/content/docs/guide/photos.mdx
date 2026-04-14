@@ -1,0 +1,64 @@
+---
+title: Photos & Files
+description: Send job site photos for AI analysis and automatic organization in cloud storage.
+---
+
+Send a photo to your assistant and it will describe what it sees, store it, and organize it for you. Great for documenting job sites, tracking progress, and keeping records.
+
+## Sending a photo
+
+Take a photo at a job site and send it to your assistant just like you'd send it to anyone else. Your assistant will:
+
+1. Analyze the image using AI vision
+2. Give you a description of what it sees
+3. Upload it to your cloud storage (if configured)
+4. Organize it by date
+
+```
+You: [sends photo of kitchen before demo]
+
+Clawbolt: I can see a dated kitchen with dark wood cabinets,
+          laminate countertops, and vinyl flooring. The
+          backsplash is beige ceramic tile. Looks like a
+          full gut job. I've saved this to your Job Photos
+          folder under today's date.
+```
+
+## Use cases
+
+- **Before/after shots** -- document the state of a job site before you start and after you finish
+- **Damage documentation** -- photograph damage for insurance or client records
+- **Material identification** -- send a photo of a part or fixture and ask your assistant to help identify it
+- **Progress tracking** -- snap photos throughout a project to show progress over time
+
+## Where photos are stored
+
+When you have cloud storage connected (Dropbox or Google Drive), your assistant uploads photos and organizes them into folders:
+
+```
+Job Photos/
+  2026-03-15/
+    kitchen-before.jpg
+    kitchen-after.jpg
+  2026-03-16/
+    bathroom-tile.jpg
+```
+
+Without cloud storage, photos are kept on the server's local storage.
+
+## Asking about past photos
+
+Your assistant tracks what photos you've sent:
+
+```
+You: What photos did I take at the Johnson place?
+
+Clawbolt: You sent 3 photos for the Johnson project:
+          - Kitchen before demo (March 15)
+          - Kitchen after demo (March 15)
+          - Bathroom tile selection (March 16)
+```
+
+## Setting up cloud storage
+
+Cloud storage is configured by whoever set up your Clawbolt instance. If you want photos saved to Dropbox or Google Drive, ask your admin to set up a storage provider. See the [Storage Providers](/deployment/storage/) page for technical setup details.

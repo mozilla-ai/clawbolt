@@ -58,6 +58,20 @@ export default defineConfig({
           ],
         },
         {
+          label: "User Guide",
+          items: [
+            { label: "What is Clawbolt?", slug: "guide" },
+            { label: "First Steps", slug: "guide/getting-started" },
+            { label: "Memory", slug: "guide/memory" },
+            { label: "Photos & Files", slug: "guide/photos" },
+            { label: "Estimates", slug: "guide/estimates" },
+            { label: "Calendar", slug: "guide/calendar" },
+            { label: "Heartbeat", slug: "guide/heartbeat" },
+            { label: "Dashboard", slug: "guide/dashboard" },
+            { label: "Tips & Tricks", slug: "guide/tips" },
+          ],
+        },
+        {
           label: "Features",
           items: [
             { label: "Memory", slug: "features/memory" },
