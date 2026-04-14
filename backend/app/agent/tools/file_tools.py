@@ -160,8 +160,8 @@ async def auto_save_media(
     """Auto-save downloaded media to storage before the agent loop.
 
     Persists all inbound media to /Unsorted/{date}/ immediately after
-    download. This ensures files are never lost regardless of whether the
-    agent calls upload_to_storage.
+    download. Only called when the ``upload_to_storage`` permission is
+    ``always``; callers must check the permission level first.
 
     Returns a list of storage URLs for saved files.
     """

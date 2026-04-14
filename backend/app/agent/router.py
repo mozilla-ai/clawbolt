@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from any_llm import AuthenticationError, ContentFilterError
 
+from backend.app.agent.approval import PermissionLevel, get_approval_store
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, ClawboltAgent
 from backend.app.agent.dto import SessionState, StoredMessage
@@ -35,6 +36,7 @@ from backend.app.agent.skills.loader import load_all_skills
 from backend.app.agent.stores import ToolConfigStore
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
+from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import (
     ToolContext,
     create_list_capabilities_tool,
@@ -134,6 +136,22 @@ def init_storage(user: User) -> StorageBackend | None:
     return None
 
 
+def _upload_permitted_always(user_id: str) -> bool:
+    """Return True when the upload_to_storage permission is 'always'.
+
+    Used to decide whether to auto-save inbound media in the pipeline.
+    When the permission is 'ask' or 'deny', auto-save is skipped so the
+    agent loop can prompt the user through the approval gate.
+    """
+    store = get_approval_store()
+    level = store.check_permission(
+        user_id,
+        ToolName.UPLOAD_TO_STORAGE,
+        default=PermissionLevel.ASK,
+    )
+    return level == PermissionLevel.ALWAYS
+
+
 async def prepare_media(
     user: User,
     message: StoredMessage,
@@ -143,7 +161,10 @@ async def prepare_media(
     """Download media and initialize storage backend.
 
     Returns (downloaded_media, storage_backend).
-    Also auto-saves downloaded media to storage when available.
+    Auto-saves downloaded media to storage only when the user's
+    ``upload_to_storage`` permission is ``always``.  For ``ask`` or
+    ``deny``, file persistence is deferred to the agent loop so the
+    approval gate can prompt the user.
     """
     downloaded_media: list[DownloadedMedia] = []
     logger.debug(
@@ -163,8 +184,10 @@ async def prepare_media(
 
     storage = init_storage(user)
 
-    # Auto-save inbound media to storage
-    if storage and downloaded_media:
+    # Auto-save inbound media only when the user allows it freely.
+    # For "ask" or "deny", the agent loop handles it via the
+    # upload_to_storage tool so the approval gate can prompt.
+    if storage and downloaded_media and _upload_permitted_always(user.id):
         try:
             await auto_save_media(user, storage, downloaded_media)
         except Exception:
@@ -413,8 +436,8 @@ async def prepare_media_step(ctx: PipelineContext) -> PipelineContext:
     )
     ctx.downloaded_media = pre_downloaded + newly_downloaded
 
-    # Auto-save pre-downloaded media (webchat uploads) to storage
-    if ctx.storage and pre_downloaded:
+    # Auto-save pre-downloaded media (webchat uploads) when permitted.
+    if ctx.storage and pre_downloaded and _upload_permitted_always(ctx.user.id):
         try:
             await auto_save_media(ctx.user, ctx.storage, pre_downloaded)
         except Exception:

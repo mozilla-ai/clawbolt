@@ -810,7 +810,7 @@ async def test_typing_indicator_failure_does_not_block_processing(
 
 
 # ---------------------------------------------------------------------------
-# Auto-save media tests (issue #270)
+# Auto-save media respects permissions
 # ---------------------------------------------------------------------------
 
 
@@ -818,7 +818,7 @@ async def test_typing_indicator_failure_does_not_block_processing(
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.router.get_storage_service")
 @patch("backend.app.agent.router.settings")
-async def test_auto_save_persists_media_to_storage(
+async def test_auto_save_persists_media_when_permission_always(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
@@ -827,7 +827,7 @@ async def test_auto_save_persists_media_to_storage(
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
 ) -> None:
-    """Downloaded media should be auto-saved to storage before the agent loop."""
+    """Downloaded media should be auto-saved when upload_to_storage is 'always'."""
     from backend.app.media.download import DownloadedMedia
 
     mock_download_media.return_value = DownloadedMedia(
@@ -845,7 +845,13 @@ async def test_auto_save_persists_media_to_storage(
     mock_get_storage.return_value = mock_storage
     mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
 
-    with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
+    with (
+        patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision,
+        patch(
+            "backend.app.agent.router._upload_permitted_always",
+            return_value=True,
+        ),
+    ):
         mock_vision.return_value = "A photo."
         await handle_inbound_message(
             user=test_user,
@@ -856,7 +862,6 @@ async def test_auto_save_persists_media_to_storage(
             download_media=mock_download_media,
         )
 
-    # Media should be auto-saved to storage
     assert len(mock_storage.files) >= 1
 
 
@@ -864,7 +869,7 @@ async def test_auto_save_persists_media_to_storage(
 @patch("backend.app.agent.core.amessages")
 @patch("backend.app.agent.router.get_storage_service")
 @patch("backend.app.agent.router.settings")
-async def test_auto_save_failure_does_not_block_processing(
+async def test_auto_save_skipped_when_permission_ask(
     mock_settings: MagicMock,
     mock_get_storage: MagicMock,
     mock_amessages: object,
@@ -873,11 +878,18 @@ async def test_auto_save_failure_does_not_block_processing(
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
 ) -> None:
-    """If auto-save fails, message processing should continue."""
+    """Media must NOT be auto-saved when upload_to_storage is 'ask'.
+
+    When the user wants to be asked before saving, auto-save is skipped
+    and file persistence is deferred to the agent's upload_to_storage
+    tool which goes through the approval gate.
+
+    Regression test for the permission bypass bug.
+    """
     from backend.app.media.download import DownloadedMedia
 
     mock_download_media.return_value = DownloadedMedia(
-        content=b"image",
+        content=b"image-bytes",
         mime_type="image/jpeg",
         original_url="AgACAgIAAxkBAAI",
         filename="photo.jpg",
@@ -887,16 +899,19 @@ async def test_auto_save_failure_does_not_block_processing(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
-    # Make storage raise on upload to simulate auto-save failure
-    mock_storage = MagicMock(spec=MockStorageBackend)
-    mock_storage.create_folder = AsyncMock()
-    mock_storage.upload_file = AsyncMock(side_effect=RuntimeError("Storage down"))
+    mock_storage = MockStorageBackend()
     mock_get_storage.return_value = mock_storage
-    mock_amessages.return_value = make_text_response("Still works!")  # type: ignore[union-attr]
+    mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
 
-    with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
+    with (
+        patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision,
+        patch(
+            "backend.app.agent.router._upload_permitted_always",
+            return_value=False,
+        ),
+    ):
         mock_vision.return_value = "A photo."
-        response = await handle_inbound_message(
+        await handle_inbound_message(
             user=test_user,
             session=conversation,
             message=inbound_message,
@@ -905,7 +920,8 @@ async def test_auto_save_failure_does_not_block_processing(
             download_media=mock_download_media,
         )
 
-    assert response.reply_text == "Still works!"
+    # No files written -- the agent loop handles it via the tool.
+    assert len(mock_storage.files) == 0
 
 
 # ---------------------------------------------------------------------------
