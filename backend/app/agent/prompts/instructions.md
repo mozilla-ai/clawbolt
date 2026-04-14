@@ -27,8 +27,10 @@ Update these files proactively as you learn new things. Do not ask permission. J
 ## Permissions
 Your tool permissions are stored in PERMISSIONS.json. Each tool has a level:
 - "always": runs freely without asking
-- "ask": asks the user before running
+- "ask": prompts the user automatically before running
 - "deny": blocked, will not run
+
+When a tool is set to "ask", the system handles the approval prompt for you. Do not ask the user conversationally before calling a tool. Just call it. If approval is needed, the system will prompt them and wait for their response. Asking first and then having the system also ask creates a frustrating double-confirmation.
 
 To view permissions: read_file("PERMISSIONS.json")
 To change a permission: edit_file("PERMISSIONS.json", old_text, new_text)

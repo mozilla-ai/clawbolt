@@ -98,6 +98,13 @@ const api = {
     if (error) _throwApiError(error, 'Failed to delete conversation history');
   },
 
+  deleteMessage: async (sessionId: string, seq: number) => {
+    const { error } = await client.DELETE('/api/user/sessions/{session_id}/messages/{seq}' as never, {
+      params: { path: { session_id: sessionId, seq } },
+    } as never);
+    if (error) _throwApiError(error, 'Failed to delete message');
+  },
+
   // Memory
   getMemory: async () => {
     const { data, error } = await client.GET('/api/user/memory');

@@ -13,6 +13,7 @@ from backend.app.auth.dependencies import get_current_user
 from backend.app.database import get_db
 from backend.app.models import ChatSession, Message, User
 from backend.app.schemas import (
+    DeleteMessageResponse,
     DeleteMessagesResponse,
     SessionDetailResponse,
     SessionListItem,
@@ -104,6 +105,27 @@ async def get_session(
         last_compacted_seq=session.last_compacted_seq,
         messages=messages,
     )
+
+
+@router.delete(
+    "/user/sessions/{session_id}/messages/{seq}",
+    response_model=DeleteMessageResponse,
+)
+async def delete_single_message(
+    session_id: str,
+    seq: int,
+    current_user: User = Depends(get_current_user),
+) -> DeleteMessageResponse:
+    """Delete a single message from a session by its sequence number."""
+    store = get_session_store(current_user.id)
+    async with user_locks.acquire(current_user.id):
+        session = store.load_session(session_id)
+        if session is None:
+            raise HTTPException(status_code=404, detail="Session not found")
+        deleted = store.delete_message(session_id, seq)
+        if not deleted:
+            raise HTTPException(status_code=404, detail="Message not found")
+    return DeleteMessageResponse(status="deleted", seq=seq)
 
 
 @router.delete(

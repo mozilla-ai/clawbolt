@@ -147,6 +147,12 @@
   to { opacity: 1; transform: translateY(0); }
 }
 
+@keyframes message-out {
+  from { opacity: 1; transform: scale(1); max-height: 500px; margin-bottom: 0; }
+  50% { opacity: 0; transform: scale(0.95); }
+  to { opacity: 0; transform: scale(0.95); max-height: 0; margin-bottom: -12px; overflow: hidden; }
+}
+
 @keyframes typing-bounce {
   0%, 60%, 100% { transform: translateY(0); }
   30% { transform: translateY(-4px); }
