@@ -380,7 +380,6 @@ def create_file_tools(
             usage_hint="Upload a recently received file to cloud storage.",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
-                resource_extractor=lambda args: args.get("client_name") or None,
                 description_builder=lambda args: (
                     f"Upload file to {args.get('client_name') or 'storage'}"
                 ),
@@ -400,7 +399,6 @@ def create_file_tools(
             usage_hint="Move an unsorted file into the correct client folder.",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
-                resource_extractor=lambda args: args.get("client_name") or None,
                 description_builder=lambda args: (
                     f"Move file to {args.get('client_name') or 'client'} folder"
                 ),
