@@ -222,44 +222,57 @@ class ClawboltAgent:
 
         return level, resource, description
 
+    def _snapshot_permissions(self) -> str:
+        """Serialize the current PERMISSIONS.json content (empty on failure)."""
+        store = get_approval_store()
+        try:
+            return json.dumps(store.ensure_complete(self.user.id), indent=2)
+        except Exception:
+            logger.warning("Failed to snapshot PERMISSIONS.json")
+            return ""
+
     async def _record_permissions_edit(
         self,
+        before: str,
         tool_call_records: list[StoredToolInteraction],
     ) -> None:
         """Surface an approval-system permissions change as a synthetic
-        ``write_file("PERMISSIONS.json", ...)`` record.
+        ``edit_file("PERMISSIONS.json", ...)`` record.
 
         When the user says "Always" / "Never" to an approval prompt, the
         gate quietly persists the permission. Without a visible record,
         the chat transcript only shows the raw "Always" reply and the
-        tool it approved, hiding the state change. Emitting a
-        ``write_file`` record (rather than a bespoke ``update_permission``
-        tool) keeps the vocabulary consistent: users who ``read_file
-        PERMISSIONS.json`` see exactly what changed, and there's no
-        parallel notion to maintain.
+        tool it approved, hiding the state change. Emitting an
+        ``edit_file`` record (rather than a bespoke ``update_permission``
+        tool) keeps the vocabulary consistent: one verb for "this file
+        changed" whether the agent did it via edit_file, the user edited
+        it in the dashboard, or the approval gate persisted an Always.
+        The ``old_text`` + ``new_text`` pair gives a full-file diff the
+        UI can render straightforwardly.
         """
-        store = get_approval_store()
-        try:
-            snapshot = json.dumps(store.ensure_complete(self.user.id), indent=2)
-        except Exception:
-            logger.warning("Failed to snapshot PERMISSIONS.json for history record")
+        after = self._snapshot_permissions()
+        if not after or after == before:
             return
-        args: dict[str, Any] = {"path": "PERMISSIONS.json", "content": snapshot}
-        result = "Wrote PERMISSIONS.json"
-        call_id = f"perm_write_{int(time.monotonic() * 1000)}"
+        args: dict[str, Any] = {
+            "path": "PERMISSIONS.json",
+            "old_text": before,
+            "new_text": after,
+        }
+        result = "Updated PERMISSIONS.json"
+        call_id = f"perm_edit_{int(time.monotonic() * 1000)}"
         tool_call_records.append(
             StoredToolInteraction(
                 tool_call_id=call_id,
-                name=ToolName.WRITE_FILE,
+                name=ToolName.EDIT_FILE,
                 args=args,
                 result=result,
                 is_error=False,
             )
         )
-        await self._emit(ToolExecutionStartEvent(tool_name=ToolName.WRITE_FILE, arguments=args))
+        await self._emit(ToolExecutionStartEvent(tool_name=ToolName.EDIT_FILE, arguments=args))
         await self._emit(
             ToolExecutionEndEvent(
-                tool_name=ToolName.WRITE_FILE,
+                tool_name=ToolName.EDIT_FILE,
                 result=result,
                 is_error=False,
                 duration_ms=0.0,
@@ -664,6 +677,7 @@ class ClawboltAgent:
                 if decision in (ApprovalDecision.APPROVED, ApprovalDecision.ALWAYS_ALLOW):
                     approved_entries.append(entry)
                     if decision == ApprovalDecision.ALWAYS_ALLOW:
+                        before = self._snapshot_permissions()
                         try:
                             store.set_permission(
                                 self.user.id, tool_obj.name, PermissionLevel.ALWAYS, resource
@@ -671,7 +685,7 @@ class ClawboltAgent:
                         except Exception:
                             logger.warning("Failed to persist ALWAYS for tool %s", tool_obj.name)
                         else:
-                            await self._record_permissions_edit(tool_call_records)
+                            await self._record_permissions_edit(before, tool_call_records)
 
                 elif decision == ApprovalDecision.INTERRUPTED:
                     # User changed subject. Error this entry + all remaining.
@@ -704,6 +718,7 @@ class ClawboltAgent:
 
                 else:  # DENIED / ALWAYS_DENY
                     if decision == ApprovalDecision.ALWAYS_DENY:
+                        before = self._snapshot_permissions()
                         try:
                             store.set_permission(
                                 self.user.id, tool_obj.name, PermissionLevel.DENY, resource
@@ -711,7 +726,7 @@ class ClawboltAgent:
                         except Exception:
                             logger.warning("Failed to persist DENY for tool %s", tool_obj.name)
                         else:
-                            await self._record_permissions_edit(tool_call_records)
+                            await self._record_permissions_edit(before, tool_call_records)
 
                     tool_tags = self._get_tool_tags(tc_req.name)
                     hint = _ERROR_KIND_HINTS[ToolErrorKind.PERMISSION]

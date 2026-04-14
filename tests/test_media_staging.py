@@ -330,8 +330,8 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
 
 
 @pytest.mark.asyncio()
-async def test_always_allow_emits_write_file_permissions_record(test_user: User) -> None:
-    """ALWAYS_ALLOW must surface as a synthetic write_file record targeting
+async def test_always_allow_emits_edit_file_permissions_record(test_user: User) -> None:
+    """ALWAYS_ALLOW must surface as a synthetic edit_file record targeting
     PERMISSIONS.json so the chat panel shows that the file was updated,
     matching the same vocabulary users see when they edit it by hand."""
     from backend.app.agent.context import StoredToolInteraction
@@ -381,17 +381,19 @@ async def test_always_allow_emits_write_file_permissions_record(test_user: User)
     perm_records = [
         r
         for r in records
-        if r.name == ToolName.WRITE_FILE and r.args.get("path") == "PERMISSIONS.json"
+        if r.name == ToolName.EDIT_FILE and r.args.get("path") == "PERMISSIONS.json"
     ]
     assert len(perm_records) == 1
     assert perm_records[0].is_error is False
-    # Serialized snapshot should reflect the new ALWAYS permission.
-    content = perm_records[0].args["content"]
-    assert '"upload_to_storage": "always"' in content
+    # Full-file diff: old shows the pre-change content, new reflects ALWAYS.
+    old_text = perm_records[0].args["old_text"]
+    new_text = perm_records[0].args["new_text"]
+    assert '"upload_to_storage": "ask"' in old_text
+    assert '"upload_to_storage": "always"' in new_text
 
 
 @pytest.mark.asyncio()
-async def test_always_deny_emits_write_file_permissions_record(test_user: User) -> None:
+async def test_always_deny_emits_edit_file_permissions_record(test_user: User) -> None:
     """Same treatment for ALWAYS_DENY ('Never')."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.llm_parsing import ParsedToolCall
@@ -436,11 +438,11 @@ async def test_always_deny_emits_write_file_permissions_record(test_user: User) 
     perm_records = [
         r
         for r in records
-        if r.name == ToolName.WRITE_FILE and r.args.get("path") == "PERMISSIONS.json"
+        if r.name == ToolName.EDIT_FILE and r.args.get("path") == "PERMISSIONS.json"
     ]
     assert len(perm_records) == 1
-    content = perm_records[0].args["content"]
-    assert '"upload_to_storage": "deny"' in content
+    new_text = perm_records[0].args["new_text"]
+    assert '"upload_to_storage": "deny"' in new_text
 
 
 @pytest.mark.asyncio()

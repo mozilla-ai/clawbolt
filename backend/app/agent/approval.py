@@ -198,6 +198,7 @@ class ApprovalStore:
             else:
                 row.data = payload
                 row.updated_at = datetime.now(UTC)
+            db.commit()
 
     def load_user_permissions(self, user_id: str) -> dict[str, Any]:
         """Load the raw permission data for a user.

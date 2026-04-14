@@ -263,6 +263,7 @@ def _permissions_write_sync(user_id: str, content: str) -> None:
             db.add(UserPermissionSet(user_id=user_id, data=content))
         else:
             row.data = content
+        db.commit()
 
 
 async def _permissions_write(user_id: str, content: str) -> None:
