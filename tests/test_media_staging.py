@@ -433,3 +433,147 @@ async def test_always_deny_emits_update_permission_record(test_user: User) -> No
     assert len(perm_records) == 1
     assert perm_records[0].args["level"] == "deny"
     assert "never run" in perm_records[0].result
+
+
+@pytest.mark.asyncio()
+async def test_always_allow_short_circuits_sibling_ask_entries_in_same_round(
+    test_user: User,
+) -> None:
+    """If the agent fires three qb_query-style calls with the same resource in
+    one round, saying 'Always' to the first should short-circuit the other
+    two: they were already bucketed into ask_entries when the round started,
+    so the in-memory approval cache has to absorb ALWAYS_ALLOW (not just
+    APPROVED) to prevent the follow-up prompts."""
+    from backend.app.agent.llm_parsing import ParsedToolCall
+    from backend.app.agent.messages import ToolCallRequest
+
+    class _QueryParams(BaseModel):
+        query: str = Field(default="")
+
+    calls: list[str] = []
+
+    async def _fn(query: str = "") -> ToolResult:
+        calls.append(query)
+        return ToolResult(content=f"ran {query}")
+
+    tool = Tool(
+        name="fake_qb_query",
+        description="fake",
+        function=_fn,
+        params_model=_QueryParams,
+        usage_hint="",
+        approval_policy=ApprovalPolicy(
+            default_level=PermissionLevel.ASK,
+            resource_extractor=lambda args: (
+                "Invoice" if "Invoice" in args.get("query", "") else None
+            ),
+            description_builder=lambda args: f"Run {args.get('query', '')}",
+        ),
+    )
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+
+    async def _publish(_msg: object) -> None:
+        return None
+
+    gate = get_approval_gate()
+    gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_ALLOW)  # type: ignore[method-assign]
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=_publish,
+        chat_id="+1234567890",
+        session_id="",
+    )
+    agent.register_tools([tool])
+
+    queries = [
+        "SELECT * FROM Invoice ORDERBY TxnDate DESC MAXRESULTS 5",
+        "SELECT * FROM Invoice WHERE Balance > 0",
+        "SELECT * FROM Invoice MAXRESULTS 10",
+    ]
+    parsed_calls = [
+        ToolCallRequest(id=f"call_{i}", name="fake_qb_query", arguments={"query": q})
+        for i, q in enumerate(queries)
+    ]
+    parsed_raw = [
+        ParsedToolCall(id=f"call_{i}", name="fake_qb_query", arguments={"query": q})
+        for i, q in enumerate(queries)
+    ]
+
+    await agent._execute_tool_round(
+        parsed_calls=parsed_calls,
+        parsed_raw=parsed_raw,
+        actions_taken=[],
+        memories_saved=[],
+        tool_call_records=[],
+    )
+
+    # Three calls, same resource (Invoice) → user prompted exactly once.
+    assert gate.request_approval.await_count == 1  # type: ignore[attr-defined]
+    assert calls == queries  # all three ran
+
+
+@pytest.mark.asyncio()
+async def test_denied_short_circuits_sibling_ask_entries(test_user: User) -> None:
+    """Symmetric: if the agent fires the same tool+resource multiple times
+    and the user says 'no', we shouldn't re-prompt for the siblings."""
+    from backend.app.agent.llm_parsing import ParsedToolCall
+    from backend.app.agent.messages import ToolCallRequest
+
+    class _Params(BaseModel):
+        x: str = Field(default="")
+
+    async def _fn(x: str = "") -> ToolResult:
+        return ToolResult(content=f"ran {x}")
+
+    tool = Tool(
+        name="fake_tool",
+        description="fake",
+        function=_fn,
+        params_model=_Params,
+        usage_hint="",
+        approval_policy=ApprovalPolicy(
+            default_level=PermissionLevel.ASK,
+            resource_extractor=lambda args: args.get("x") or None,
+            description_builder=lambda args: f"Run {args.get('x', '')}",
+        ),
+    )
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+
+    async def _publish(_msg: object) -> None:
+        return None
+
+    gate = get_approval_gate()
+    gate.request_approval = AsyncMock(return_value=ApprovalDecision.DENIED)  # type: ignore[method-assign]
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=_publish,
+        chat_id="+1234567890",
+        session_id="",
+    )
+    agent.register_tools([tool])
+
+    args = {"x": "shared"}
+    parsed_calls = [
+        ToolCallRequest(id=f"call_{i}", name="fake_tool", arguments=args) for i in range(3)
+    ]
+    parsed_raw = [
+        ParsedToolCall(id=f"call_{i}", name="fake_tool", arguments=args) for i in range(3)
+    ]
+
+    await agent._execute_tool_round(
+        parsed_calls=parsed_calls,
+        parsed_raw=parsed_raw,
+        actions_taken=[],
+        memories_saved=[],
+        tool_call_records=[],
+    )
+
+    assert gate.request_approval.await_count == 1  # type: ignore[attr-defined]
