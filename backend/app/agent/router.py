@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 
 from any_llm import AuthenticationError, ContentFilterError
 
+from backend.app.agent import media_staging
 from backend.app.agent.approval import PermissionLevel, get_approval_store
 from backend.app.agent.context import load_conversation_history
 from backend.app.agent.core import AgentResponse, ClawboltAgent
@@ -185,6 +186,7 @@ async def prepare_media(
             try:
                 media = await download_media(file_id)
                 downloaded_media.append(media)
+                media_staging.stage(user.id, media.original_url, media.content, media.mime_type)
                 logger.debug("Downloaded media %s (%s)", file_id, _mime_type)
             except Exception:
                 logger.exception("Failed to download media: %s", file_id)
@@ -193,7 +195,9 @@ async def prepare_media(
 
     # Auto-save inbound media only when the user allows it freely.
     # For "ask" or "deny", the agent loop handles it via the
-    # upload_to_storage tool so the approval gate can prompt.
+    # upload_to_storage tool so the approval gate can prompt. Bytes
+    # stay in media_staging across turns so the agent can still call
+    # upload_to_storage after clarifying questions.
     if storage and downloaded_media and _upload_permitted_always(user.id):
         try:
             await auto_save_media(user, storage, downloaded_media)
@@ -438,6 +442,9 @@ async def prepare_media_step(ctx: PipelineContext) -> PipelineContext:
     ``media_urls`` (e.g. Telegram file-id references).
     """
     pre_downloaded = list(ctx.downloaded_media)
+    if ctx.user is not None:
+        for media in pre_downloaded:
+            media_staging.stage(ctx.user.id, media.original_url, media.content, media.mime_type)
     newly_downloaded, ctx.storage = await prepare_media(
         ctx.user, ctx.message, ctx.media_urls, download_media=ctx.download_media
     )

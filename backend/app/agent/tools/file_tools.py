@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Literal
 
 from pydantic import BaseModel, Field
 
+from backend.app.agent import media_staging
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.dto import slugify as _store_slugify
 from backend.app.agent.stores import MediaStore
@@ -189,6 +190,7 @@ async def auto_save_media(
             storage_path=f"{folder_path}/{filename}",
         )
         saved_urls.append(storage_url)
+        media_staging.evict(user.id, media.original_url)
 
     return saved_urls
 
@@ -203,7 +205,9 @@ def create_file_tools(
     Args:
         user: The user
         storage: Storage backend (Dropbox, Google Drive, or mock)
-        pending_media: Dict of original_url -> file bytes for media in the current message
+        pending_media: Dict of original_url -> file bytes available for upload.
+            Includes bytes from the current message and any recent staged
+            media bytes from prior turns (populated by ``_file_factory``).
     """
     media_map = pending_media or {}
 
@@ -225,6 +229,13 @@ def create_file_tools(
             first_url = next(iter(media_map))
             file_bytes = media_map[first_url]
             original_url = original_url or first_url
+
+        # The download layer knows the real mime type; prefer that over the
+        # LLM-supplied argument so PDFs or HEICs don't get mislabeled.
+        if original_url:
+            staged_mime = media_staging.get_mime_type(user.id, original_url)
+            if staged_mime:
+                mime_type = staged_mime
 
         if not file_bytes:
             logger.warning("upload_to_storage called but no file content available")
@@ -270,6 +281,9 @@ def create_file_tools(
             storage_url=storage_url,
             storage_path=f"{folder_path}/{filename}",
         )
+
+        if original_url:
+            media_staging.evict(user.id, original_url)
 
         logger.info("File cataloged: %s/%s -> %s", folder_path, filename, storage_url)
         return ToolResult(content=f"Uploaded {filename} to {folder_path}/ ({storage_url})")
@@ -340,6 +354,8 @@ def create_file_tools(
             update_fields["processed_text"] = description
         await media_store.update(media_file.id, **update_fields)
 
+        media_staging.evict(user.id, original_url)
+
         logger.info(
             "File organized: %s -> %s/%s",
             current_path,
@@ -352,18 +368,19 @@ def create_file_tools(
         Tool(
             name=ToolName.UPLOAD_TO_STORAGE,
             description=(
-                "Upload a file attached to the CURRENT message to the user's "
-                "cloud storage. Only works when the user sent media in this "
-                "message. Files are organized by client: provide client_name or "
-                "client_address to file under their folder, otherwise files go to "
-                "Unsorted. For files received in previous messages, use "
-                "organize_file instead."
+                "Upload a file attached to the current message (or a recently "
+                "received one still in the staging cache) to the user's cloud "
+                "storage. Files are organized by client: provide client_name or "
+                "client_address to file under their folder, otherwise files go "
+                "to Unsorted. If the file was already persisted to storage in a "
+                "prior turn, use organize_file instead to move it."
             ),
             function=upload_to_storage,
             params_model=UploadToStorageParams,
-            usage_hint="Upload media from the current message to cloud storage.",
+            usage_hint="Upload a recently received file to cloud storage.",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
+                resource_extractor=lambda args: args.get("client_name") or None,
                 description_builder=lambda args: (
                     f"Upload file to {args.get('client_name') or 'storage'}"
                 ),
@@ -383,6 +400,7 @@ def create_file_tools(
             usage_hint="Move an unsorted file into the correct client folder.",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
+                resource_extractor=lambda args: args.get("client_name") or None,
                 description_builder=lambda args: (
                     f"Move file to {args.get('client_name') or 'client'} folder"
                 ),
@@ -395,6 +413,10 @@ def _file_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for file tools, used by the registry."""
     assert ctx.storage is not None
     pending_media = {m.original_url: m.content for m in ctx.downloaded_media if m.content}
+    # Fall back to recent staged bytes so upload_to_storage works even when the
+    # agent defers the call to a later turn with no attachments of its own.
+    for url, content in media_staging.get_all_for_user(ctx.user.id).items():
+        pending_media.setdefault(url, content)
     return create_file_tools(ctx.user, ctx.storage, pending_media)
 
 
