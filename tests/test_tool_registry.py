@@ -5,7 +5,17 @@ from __future__ import annotations
 import importlib
 from unittest.mock import patch
 
+import pytest
+
+import backend.app.agent.tools.registry as _reg
 from backend.app.agent.tools.registry import ensure_tool_modules_imported
+
+
+@pytest.fixture(autouse=True)
+def _reset_import_guard() -> None:
+    """Reset the once-only guard so each test triggers fresh discovery."""
+    _reg._tool_modules_imported = False
+
 
 EXPECTED_TOOL_MODULES: set[str] = {
     "backend.app.agent.tools.memory_tools",

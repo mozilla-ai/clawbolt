@@ -26,11 +26,14 @@ def _post_webhook(
     client: TestClient,
     payload: dict,
     token: str = "",
+    password: str = "",
 ) -> httpx.Response:
-    """Post a BlueBubbles webhook with optional token query param."""
+    """Post a BlueBubbles webhook with optional token or password query param."""
     url = "/api/webhooks/bluebubbles"
     if token:
         url = f"{url}?token={token}"
+    elif password:
+        url = f"{url}?password={password}"
     return client.post(url, json=payload)
 
 
@@ -159,6 +162,39 @@ def test_correct_token_publishes(bluebubbles_client: TestClient) -> None:
 
     assert resp.status_code == 200
     mock_pub.assert_called_once()
+
+
+def test_correct_password_param_publishes(bluebubbles_client: TestClient) -> None:
+    """Webhook with correct raw ?password= should also pass auth and publish."""
+    password = "correct-password"
+    with (
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
+        patch(
+            "backend.app.channels.bluebubbles.settings.bluebubbles_password",
+            password,
+        ),
+    ):
+        payload = make_bluebubbles_webhook_payload(text="Hi via password")
+        resp = _post_webhook(bluebubbles_client, payload, password=password)
+
+    assert resp.status_code == 200
+    mock_pub.assert_called_once()
+
+
+def test_wrong_password_param_does_not_publish(bluebubbles_client: TestClient) -> None:
+    """Webhook with incorrect raw ?password= should not publish."""
+    with (
+        patch(_PATCH_BUS_PUBLISH, new_callable=AsyncMock) as mock_pub,
+        patch(
+            "backend.app.channels.bluebubbles.settings.bluebubbles_password",
+            "correct-password",
+        ),
+    ):
+        payload = make_bluebubbles_webhook_payload(text="Hi")
+        resp = _post_webhook(bluebubbles_client, payload, password="wrong-password")
+
+    assert resp.status_code == 200
+    mock_pub.assert_not_called()
 
 
 def test_raw_password_never_in_webhook_url() -> None:

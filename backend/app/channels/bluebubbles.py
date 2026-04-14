@@ -293,8 +293,14 @@ class BlueBubblesChannel(BaseChannel):
             _rate_limit: None = Depends(check_webhook_rate_limit),
         ) -> JSONResponse:
             """Receive inbound messages from BlueBubbles."""
-            # Validate webhook token (derived from password; never log the raw password)
+            # Validate webhook token.  Accept either the derived ?token= or
+            # the raw ?password= (BlueBubbles appends the password to webhook
+            # URLs by default, so stale registrations use that form).
             token = request.query_params.get("token", "")
+            if not token:
+                raw_pw = request.query_params.get("password", "")
+                if raw_pw:
+                    token = _derive_webhook_token(raw_pw)
             expected = _derive_webhook_token(settings.bluebubbles_password)
             if settings.bluebubbles_password and not hmac.compare_digest(token, expected):
                 logger.warning("Invalid BlueBubbles webhook token")

@@ -68,13 +68,30 @@ async def get_models(
 # ---------------------------------------------------------------------------
 
 
-def prepare_system_with_caching(system: str) -> list[dict[str, Any]]:
-    """Wrap a system prompt string as a content block with cache_control.
+_CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
 
-    Returns the format expected by the Anthropic Messages API for prompt
-    caching. Providers that do not support caching silently ignore the
+
+def prepare_system_with_caching(system: str) -> list[dict[str, Any]]:
+    """Wrap a system prompt string as content blocks with cache_control.
+
+    If the prompt contains a ``<!-- CACHE_BOUNDARY -->`` marker (inserted
+    by ``SystemPromptBuilder``), the text before the marker is cached and
+    the text after it is sent without caching.  This allows the stable
+    prefix (identity, instructions) to be reused across turns even when
+    dynamic sections (memory, cross-session context) change.
+
+    Providers that do not support caching silently ignore the
     ``cache_control`` key.
     """
+    if _CACHE_BOUNDARY in system:
+        stable, dynamic = system.split(_CACHE_BOUNDARY, 1)
+        blocks: list[dict[str, Any]] = [
+            {"type": "text", "text": stable.strip(), "cache_control": {"type": "ephemeral"}},
+        ]
+        dynamic = dynamic.strip()
+        if dynamic:
+            blocks.append({"type": "text", "text": dynamic})
+        return blocks
     return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
 
 
