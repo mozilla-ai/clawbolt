@@ -330,15 +330,16 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
 
 
 @pytest.mark.asyncio()
-async def test_always_allow_emits_edit_file_permissions_record(test_user: User) -> None:
-    """ALWAYS_ALLOW must surface as a synthetic edit_file record targeting
-    PERMISSIONS.json so the chat panel shows that the file was updated,
-    matching the same vocabulary users see when they edit it by hand."""
+async def test_always_allow_does_not_emit_synthetic_tool_record(test_user: User) -> None:
+    """ALWAYS_ALLOW persists silently to the DB. The chat should NOT contain
+    a synthetic tool record that mimics the agent editing PERMISSIONS.json
+    -- that pattern taught the agent to double-manage the file, clobbering
+    per-resource overrides. Visible feedback comes from the absence of
+    future prompts and the dashboard Permissions page instead."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.llm_parsing import ParsedToolCall
     from backend.app.agent.messages import ToolCallRequest
     from backend.app.agent.tools.file_tools import create_file_tools
-    from backend.app.agent.tools.names import ToolName
 
     store = get_approval_store()
     store.reset_permissions(test_user.id)
@@ -378,71 +379,11 @@ async def test_always_allow_emits_edit_file_permissions_record(test_user: User) 
         tool_call_records=records,
     )
 
-    perm_records = [
-        r
-        for r in records
-        if r.name == ToolName.EDIT_FILE and r.args.get("path") == "PERMISSIONS.json"
-    ]
-    assert len(perm_records) == 1
-    assert perm_records[0].is_error is False
-    # Full-file diff: old shows the pre-change content, new reflects ALWAYS.
-    old_text = perm_records[0].args["old_text"]
-    new_text = perm_records[0].args["new_text"]
-    assert '"upload_to_storage": "ask"' in old_text
-    assert '"upload_to_storage": "always"' in new_text
-
-
-@pytest.mark.asyncio()
-async def test_always_deny_emits_edit_file_permissions_record(test_user: User) -> None:
-    """Same treatment for ALWAYS_DENY ('Never')."""
-    from backend.app.agent.context import StoredToolInteraction
-    from backend.app.agent.llm_parsing import ParsedToolCall
-    from backend.app.agent.messages import ToolCallRequest
-    from backend.app.agent.tools.file_tools import create_file_tools
-    from backend.app.agent.tools.names import ToolName
-
-    store = get_approval_store()
-    store.reset_permissions(test_user.id)
-
-    gate = get_approval_gate()
-    gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_DENY)  # type: ignore[method-assign]
-
-    async def _publish(_msg: object) -> None:
-        return None
-
-    storage = MockStorageBackend()
-    tools = create_file_tools(test_user, storage, pending_media={"bb_photo": b"bytes"})
-    upload_tool = next(t for t in tools if t.name == "upload_to_storage")
-
-    agent = ClawboltAgent(
-        user=test_user,
-        channel="bluebubbles",
-        publish_outbound=_publish,
-        chat_id="+1234567890",
-        session_id="",
-    )
-    agent.register_tools([upload_tool])
-
-    args = {"file_category": "job_photo", "client_name": "Jane", "original_url": "bb_photo"}
-    parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
-    raw = [ParsedToolCall(id="call_0", name="upload_to_storage", arguments=args)]
-    records: list[StoredToolInteraction] = []
-    await agent._execute_tool_round(
-        parsed_calls=parsed,
-        parsed_raw=raw,
-        actions_taken=[],
-        memories_saved=[],
-        tool_call_records=records,
-    )
-
-    perm_records = [
-        r
-        for r in records
-        if r.name == ToolName.EDIT_FILE and r.args.get("path") == "PERMISSIONS.json"
-    ]
-    assert len(perm_records) == 1
-    new_text = perm_records[0].args["new_text"]
-    assert '"upload_to_storage": "deny"' in new_text
+    perm_records = [r for r in records if r.args.get("path") == "PERMISSIONS.json"]
+    assert perm_records == []
+    # And the permission must still be persisted.
+    level = store.check_permission(test_user.id, "upload_to_storage", default=PermissionLevel.ASK)
+    assert level == PermissionLevel.ALWAYS
 
 
 @pytest.mark.asyncio()
@@ -619,3 +560,30 @@ async def test_permissions_json_shared_between_approval_store_and_workspace(
         test_user.id, "qb_query", resource="Invoice", default=PermissionLevel.ASK
     )
     assert level == PermissionLevel.DENY
+
+
+@pytest.mark.asyncio()
+async def test_permissions_write_normalizes_minified_json(test_user: User) -> None:
+    """If the agent writes minified PERMISSIONS.json (no newlines) via
+    write_file, the store should normalize it to indented JSON so
+    subsequent edit_file calls have stable formatting to match against.
+    Regression for the bug where one minified write broke every later
+    edit_file because old_text assumed pretty-printed content."""
+    from backend.app.agent.tools.workspace_tools import create_workspace_tools
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+
+    tools = create_workspace_tools(test_user.id)
+    write_tool = next(t for t in tools if t.name == "write_file")
+    read_tool = next(t for t in tools if t.name == "read_file")
+
+    minified = '{"version": 1, "tools": {"qb_query": "always"}, "resources": {}}'
+    await write_tool.function(path="PERMISSIONS.json", content=minified)
+
+    result = await read_tool.function(path="PERMISSIONS.json")
+    assert result.is_error is False
+    # Indented form has newlines and leading spaces on nested keys.
+    assert "\n" in result.content
+    assert '  "tools"' in result.content
+    assert '"qb_query": "always"' in result.content

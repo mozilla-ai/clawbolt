@@ -254,15 +254,33 @@ async def _permissions_read(user_id: str) -> str:
 
 
 def _permissions_write_sync(user_id: str, content: str) -> None:
+    """Persist PERMISSIONS.json content, normalizing to indented JSON.
+
+    Stable pretty-printing matters: the approval store pretty-prints on
+    every set_permission, and edit_file old_text matching breaks if one
+    writer leaves minified JSON around. We parse + re-serialize so every
+    reader sees the same shape regardless of what the caller passed in.
+    Malformed JSON is stored verbatim so a user who's mid-edit can
+    recover, but this is the narrow escape hatch, not the hot path.
+    """
+    import json as _json
+
     from backend.app.database import db_session
     from backend.app.models import UserPermissionSet
+
+    try:
+        parsed = _json.loads(content)
+    except (_json.JSONDecodeError, ValueError):
+        payload = content
+    else:
+        payload = _json.dumps(parsed, indent=2, default=str)
 
     with db_session() as db:
         row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
         if row is None:
-            db.add(UserPermissionSet(user_id=user_id, data=content))
+            db.add(UserPermissionSet(user_id=user_id, data=payload))
         else:
-            row.data = content
+            row.data = payload
         db.commit()
 
 
