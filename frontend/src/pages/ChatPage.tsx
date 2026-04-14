@@ -56,6 +56,7 @@ export default function ChatPage() {
   const [agentBusy, setAgentBusy] = useState(false);
   const [waitingForApproval, setWaitingForApproval] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [deletingMsgId, setDeletingMsgId] = useState<number | null>(null);
   const [systemPromptOpen, setSystemPromptOpen] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
@@ -302,6 +303,26 @@ export default function ChatPage() {
     });
   };
 
+  const handleDeleteMessage = async (msg: ChatMessage) => {
+    if (!activeSessionId || !msg.seq || deletingMsgId !== null) return;
+    setDeletingMsgId(msg.id);
+    // Play exit animation, then remove after it completes
+    await new Promise((r) => setTimeout(r, 250));
+    try {
+      await api.deleteMessage(activeSessionId, msg.seq);
+      setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+      void queryClient.invalidateQueries({
+        queryKey: queryKeys.sessions.detail(activeSessionId),
+      });
+    } catch (err: unknown) {
+      const errMsg = err instanceof Error ? err.message : 'Failed to delete message';
+      toast.error(errMsg);
+    } finally {
+      setDeletingMsgId(null);
+    }
+  };
+
   const canSend = input.trim().length > 0 || selectedFiles.length > 0;
 
   return (
@@ -387,10 +408,25 @@ export default function ChatPage() {
                 msg.seq !== undefined &&
                 msg.seq > lastCompactedSeq &&
                 (idx === 0 || prevSeq <= lastCompactedSeq);
+              const isExiting = deletingMsgId === msg.id;
               return (
-                <div key={msg.id}>
+                <div
+                  key={msg.id}
+                  style={isExiting ? { animation: 'message-out 250ms ease-in forwards' } : undefined}
+                >
                   {showCompactionMarker && <CompactionMarker />}
-                  <div className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                  <div className={`group/msg flex items-center gap-1.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
+                    {msg.role === 'user' && msg.seq && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMessage(msg)}
+                        disabled={deletingMsgId !== null}
+                        className="opacity-0 group-hover/msg:opacity-100 focus-visible:opacity-100 transition-opacity duration-150 p-1 rounded text-muted-foreground hover:text-danger shrink-0"
+                        aria-label="Delete message"
+                      >
+                        <SmallTrashIcon />
+                      </button>
+                    )}
                 <div
                   className={`max-w-[80%] px-4 py-2.5 animate-message-in ${
                     msg.role === 'user'
@@ -534,6 +570,17 @@ export default function ChatPage() {
                     {msg.timestamp.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
                   </p>
                 </div>
+                    {msg.role === 'assistant' && msg.seq && (
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteMessage(msg)}
+                        disabled={deletingMsgId !== null}
+                        className="opacity-0 group-hover/msg:opacity-100 focus-visible:opacity-100 transition-opacity duration-150 p-1 rounded text-muted-foreground hover:text-danger shrink-0"
+                        aria-label="Delete message"
+                      >
+                        <SmallTrashIcon />
+                      </button>
+                    )}
               </div>
                 </div>
               );
@@ -748,6 +795,19 @@ function ChevronIcon({ open }: { open: boolean }) {
       viewBox="0 0 24 24"
     >
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+    </svg>
+  );
+}
+
+function SmallTrashIcon() {
+  return (
+    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        strokeWidth={1.5}
+        d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+      />
     </svg>
   );
 }

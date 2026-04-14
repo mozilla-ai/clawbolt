@@ -986,6 +986,55 @@
         }
       }
     },
+    "/api/user/sessions/{session_id}/messages/{seq}": {
+      "delete": {
+        "summary": "Delete Single Message",
+        "description": "Delete a single message from a session by its sequence number.",
+        "operationId": "delete_single_message_api_user_sessions__session_id__messages__seq__delete",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          },
+          {
+            "name": "seq",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Seq"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMessageResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/sessions/{session_id}/messages": {
       "delete": {
         "summary": "Delete Conversation History",
@@ -1663,6 +1712,24 @@
           "deleted"
         ],
         "title": "DeleteHeartbeatLogsResponse"
+      },
+      "DeleteMessageResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "seq": {
+            "type": "integer",
+            "title": "Seq"
+          }
+        },
+        "type": "object",
+        "required": [
+          "status",
+          "seq"
+        ],
+        "title": "DeleteMessageResponse"
       },
       "DeleteMessagesResponse": {
         "properties": {
