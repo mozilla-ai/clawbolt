@@ -30,9 +30,9 @@ class SystemPromptBuilder:
 
     Sections may be marked ``dynamic=True`` to indicate their content
     changes between calls (e.g. memory, cross-session context).
-    ``build_content_blocks()`` uses this flag to split the prompt into
-    a cacheable stable prefix and a non-cached dynamic suffix so that
-    Anthropic prompt caching can reuse the stable prefix across turns.
+    ``build()`` uses this flag to split the prompt into a cacheable
+    stable prefix and a non-cached dynamic suffix so that Anthropic
+    prompt caching can reuse the stable prefix across turns.
     """
 
     def __init__(self) -> None:
