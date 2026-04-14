@@ -327,3 +327,109 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
     )
     assert level_global == PermissionLevel.ALWAYS
     assert level_different_client == PermissionLevel.ALWAYS
+
+
+@pytest.mark.asyncio()
+async def test_always_allow_emits_update_permission_record(test_user: User) -> None:
+    """ALWAYS_ALLOW must surface as a synthetic update_permission record in
+    tool_call_records so the chat panel shows that the permission was
+    remembered, not just the tool the user approved."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.llm_parsing import ParsedToolCall
+    from backend.app.agent.messages import ToolCallRequest
+    from backend.app.agent.tools.file_tools import create_file_tools
+    from backend.app.agent.tools.names import ToolName
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+
+    gate = get_approval_gate()
+    gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_ALLOW)  # type: ignore[method-assign]
+
+    async def _publish(_msg: object) -> None:
+        return None
+
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage, pending_media={"bb_photo": b"bytes"})
+    upload_tool = next(t for t in tools if t.name == "upload_to_storage")
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=_publish,
+        chat_id="+1234567890",
+        session_id="",
+    )
+    agent.register_tools([upload_tool])
+
+    args = {
+        "file_category": "job_photo",
+        "client_name": "David Graham",
+        "original_url": "bb_photo",
+    }
+    parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
+    raw = [ParsedToolCall(id="call_0", name="upload_to_storage", arguments=args)]
+    records: list[StoredToolInteraction] = []
+    await agent._execute_tool_round(
+        parsed_calls=parsed,
+        parsed_raw=raw,
+        actions_taken=[],
+        memories_saved=[],
+        tool_call_records=records,
+    )
+
+    perm_records = [r for r in records if r.name == ToolName.UPDATE_PERMISSION]
+    assert len(perm_records) == 1
+    assert perm_records[0].args == {"tool": "upload_to_storage", "level": "always"}
+    assert perm_records[0].is_error is False
+    assert "upload_to_storage" in perm_records[0].result
+    assert "always run" in perm_records[0].result
+
+
+@pytest.mark.asyncio()
+async def test_always_deny_emits_update_permission_record(test_user: User) -> None:
+    """Same treatment for ALWAYS_DENY ('Never')."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.llm_parsing import ParsedToolCall
+    from backend.app.agent.messages import ToolCallRequest
+    from backend.app.agent.tools.file_tools import create_file_tools
+    from backend.app.agent.tools.names import ToolName
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+
+    gate = get_approval_gate()
+    gate.request_approval = AsyncMock(return_value=ApprovalDecision.ALWAYS_DENY)  # type: ignore[method-assign]
+
+    async def _publish(_msg: object) -> None:
+        return None
+
+    storage = MockStorageBackend()
+    tools = create_file_tools(test_user, storage, pending_media={"bb_photo": b"bytes"})
+    upload_tool = next(t for t in tools if t.name == "upload_to_storage")
+
+    agent = ClawboltAgent(
+        user=test_user,
+        channel="bluebubbles",
+        publish_outbound=_publish,
+        chat_id="+1234567890",
+        session_id="",
+    )
+    agent.register_tools([upload_tool])
+
+    args = {"file_category": "job_photo", "client_name": "Jane", "original_url": "bb_photo"}
+    parsed = [ToolCallRequest(id="call_0", name="upload_to_storage", arguments=args)]
+    raw = [ParsedToolCall(id="call_0", name="upload_to_storage", arguments=args)]
+    records: list[StoredToolInteraction] = []
+    await agent._execute_tool_round(
+        parsed_calls=parsed,
+        parsed_raw=raw,
+        actions_taken=[],
+        memories_saved=[],
+        tool_call_records=records,
+    )
+
+    perm_records = [r for r in records if r.name == ToolName.UPDATE_PERMISSION]
+    assert len(perm_records) == 1
+    assert perm_records[0].args["level"] == "deny"
+    assert "never run" in perm_records[0].result
