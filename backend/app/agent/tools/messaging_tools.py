@@ -85,7 +85,7 @@ def create_messaging_tools(
             tags={ToolTags.SENDS_REPLY},
             usage_hint="Use this to send a text message to the user.",
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ASK,
+                default_level=PermissionLevel.ALWAYS,
                 description_builder=lambda args: "Send a text message",
             ),
         ),
@@ -97,7 +97,7 @@ def create_messaging_tools(
             tags={ToolTags.SENDS_REPLY},
             usage_hint=("When sending estimates or files, use this to send media to the user."),
             approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ASK,
+                default_level=PermissionLevel.ALWAYS,
                 description_builder=lambda args: "Send a file attachment",
             ),
         ),
@@ -121,12 +121,16 @@ def _register() -> None:
         requires_outbound=True,
         sub_tools=[
             SubToolInfo(
-                ToolName.SEND_REPLY, "Send text replies to the user", default_permission="ask"
+                ToolName.SEND_REPLY,
+                "Send text replies to the user",
+                default_permission="always",
+                hidden_in_permissions=True,
             ),
             SubToolInfo(
                 ToolName.SEND_MEDIA_REPLY,
                 "Send replies with media attachments",
-                default_permission="ask",
+                default_permission="always",
+                hidden_in_permissions=True,
             ),
         ],
     )

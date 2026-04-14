@@ -2541,6 +2541,11 @@
             "type": "string",
             "title": "Permission Level",
             "default": "always"
+          },
+          "hidden_in_permissions": {
+            "type": "boolean",
+            "title": "Hidden In Permissions",
+            "default": false
           }
         },
         "type": "object",

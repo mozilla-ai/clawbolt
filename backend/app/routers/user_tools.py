@@ -116,6 +116,7 @@ def _build_tool_list(
                 )
                 if perm_data is not None
                 else st.default_permission,
+                hidden_in_permissions=st.hidden_in_permissions,
             )
             for st in factory_sub_tools
         ]
@@ -186,6 +187,7 @@ def _entry_to_response(
                 description=st.description,
                 enabled=st.enabled,
                 permission_level=st.permission_level,
+                hidden_in_permissions=st.hidden_in_permissions,
             )
             for st in e.sub_tools
         ],

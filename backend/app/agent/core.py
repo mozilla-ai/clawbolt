@@ -1,4 +1,5 @@
 import asyncio
+import json
 import logging
 import random
 import time
@@ -221,43 +222,44 @@ class ClawboltAgent:
 
         return level, resource, description
 
-    async def _record_permission_update(
+    async def _record_permissions_edit(
         self,
-        tool_name: str,
-        level: str,
-        resource: str | None,
         tool_call_records: list[StoredToolInteraction],
     ) -> None:
-        """Record an approval-system permission change as a synthetic tool call.
+        """Surface an approval-system permissions change as a synthetic
+        ``write_file("PERMISSIONS.json", ...)`` record.
 
-        When the user says "Always" / "Never" to an approval prompt, the gate
-        persists the permission silently. Without this record, the chat
-        transcript only shows the raw "Always" reply and the tool it approved,
-        with no indication that the permission was remembered. Emit a fake
-        ``update_permission`` record so it renders alongside real tool calls
-        in the dashboard and session history.
+        When the user says "Always" / "Never" to an approval prompt, the
+        gate quietly persists the permission. Without a visible record,
+        the chat transcript only shows the raw "Always" reply and the
+        tool it approved, hiding the state change. Emitting a
+        ``write_file`` record (rather than a bespoke ``update_permission``
+        tool) keeps the vocabulary consistent: users who ``read_file
+        PERMISSIONS.json`` see exactly what changed, and there's no
+        parallel notion to maintain.
         """
-        args: dict[str, Any] = {"tool": tool_name, "level": level}
-        if resource:
-            args["resource"] = resource
-        verb = "always run" if level == "always" else "never run"
-        result = f"Saved: {tool_name} will {verb} without asking."
-        call_id = f"perm_{tool_name}_{level}_{int(time.monotonic() * 1000)}"
+        store = get_approval_store()
+        try:
+            snapshot = json.dumps(store.ensure_complete(self.user.id), indent=2)
+        except Exception:
+            logger.warning("Failed to snapshot PERMISSIONS.json for history record")
+            return
+        args: dict[str, Any] = {"path": "PERMISSIONS.json", "content": snapshot}
+        result = "Wrote PERMISSIONS.json"
+        call_id = f"perm_write_{int(time.monotonic() * 1000)}"
         tool_call_records.append(
             StoredToolInteraction(
                 tool_call_id=call_id,
-                name=ToolName.UPDATE_PERMISSION,
+                name=ToolName.WRITE_FILE,
                 args=args,
                 result=result,
                 is_error=False,
             )
         )
-        await self._emit(
-            ToolExecutionStartEvent(tool_name=ToolName.UPDATE_PERMISSION, arguments=args)
-        )
+        await self._emit(ToolExecutionStartEvent(tool_name=ToolName.WRITE_FILE, arguments=args))
         await self._emit(
             ToolExecutionEndEvent(
-                tool_name=ToolName.UPDATE_PERMISSION,
+                tool_name=ToolName.WRITE_FILE,
                 result=result,
                 is_error=False,
                 duration_ms=0.0,
@@ -669,9 +671,7 @@ class ClawboltAgent:
                         except Exception:
                             logger.warning("Failed to persist ALWAYS for tool %s", tool_obj.name)
                         else:
-                            await self._record_permission_update(
-                                tool_obj.name, "always", resource, tool_call_records
-                            )
+                            await self._record_permissions_edit(tool_call_records)
 
                 elif decision == ApprovalDecision.INTERRUPTED:
                     # User changed subject. Error this entry + all remaining.
@@ -711,9 +711,7 @@ class ClawboltAgent:
                         except Exception:
                             logger.warning("Failed to persist DENY for tool %s", tool_obj.name)
                         else:
-                            await self._record_permission_update(
-                                tool_obj.name, "deny", resource, tool_call_records
-                            )
+                            await self._record_permissions_edit(tool_call_records)
 
                     tool_tags = self._get_tool_tags(tc_req.name)
                     hint = _ERROR_KIND_HINTS[ToolErrorKind.PERMISSION]

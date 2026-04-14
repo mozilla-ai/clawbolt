@@ -330,10 +330,10 @@ async def test_always_allow_for_upload_to_storage_persists_globally(
 
 
 @pytest.mark.asyncio()
-async def test_always_allow_emits_update_permission_record(test_user: User) -> None:
-    """ALWAYS_ALLOW must surface as a synthetic update_permission record in
-    tool_call_records so the chat panel shows that the permission was
-    remembered, not just the tool the user approved."""
+async def test_always_allow_emits_write_file_permissions_record(test_user: User) -> None:
+    """ALWAYS_ALLOW must surface as a synthetic write_file record targeting
+    PERMISSIONS.json so the chat panel shows that the file was updated,
+    matching the same vocabulary users see when they edit it by hand."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.llm_parsing import ParsedToolCall
     from backend.app.agent.messages import ToolCallRequest
@@ -378,16 +378,20 @@ async def test_always_allow_emits_update_permission_record(test_user: User) -> N
         tool_call_records=records,
     )
 
-    perm_records = [r for r in records if r.name == ToolName.UPDATE_PERMISSION]
+    perm_records = [
+        r
+        for r in records
+        if r.name == ToolName.WRITE_FILE and r.args.get("path") == "PERMISSIONS.json"
+    ]
     assert len(perm_records) == 1
-    assert perm_records[0].args == {"tool": "upload_to_storage", "level": "always"}
     assert perm_records[0].is_error is False
-    assert "upload_to_storage" in perm_records[0].result
-    assert "always run" in perm_records[0].result
+    # Serialized snapshot should reflect the new ALWAYS permission.
+    content = perm_records[0].args["content"]
+    assert '"upload_to_storage": "always"' in content
 
 
 @pytest.mark.asyncio()
-async def test_always_deny_emits_update_permission_record(test_user: User) -> None:
+async def test_always_deny_emits_write_file_permissions_record(test_user: User) -> None:
     """Same treatment for ALWAYS_DENY ('Never')."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.llm_parsing import ParsedToolCall
@@ -429,10 +433,14 @@ async def test_always_deny_emits_update_permission_record(test_user: User) -> No
         tool_call_records=records,
     )
 
-    perm_records = [r for r in records if r.name == ToolName.UPDATE_PERMISSION]
+    perm_records = [
+        r
+        for r in records
+        if r.name == ToolName.WRITE_FILE and r.args.get("path") == "PERMISSIONS.json"
+    ]
     assert len(perm_records) == 1
-    assert perm_records[0].args["level"] == "deny"
-    assert "never run" in perm_records[0].result
+    content = perm_records[0].args["content"]
+    assert '"upload_to_storage": "deny"' in content
 
 
 @pytest.mark.asyncio()
@@ -577,3 +585,35 @@ async def test_denied_short_circuits_sibling_ask_entries(test_user: User) -> Non
     )
 
     assert gate.request_approval.await_count == 1  # type: ignore[attr-defined]
+
+
+@pytest.mark.asyncio()
+async def test_permissions_json_shared_between_approval_store_and_workspace(
+    test_user: User,
+) -> None:
+    """ApprovalStore and read_file/write_file must hit the same DB row so
+    the chat vocabulary ('PERMISSIONS.json') and the typed approval API
+    can't drift apart."""
+    from backend.app.agent.tools.workspace_tools import create_workspace_tools
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+    store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
+
+    tools = create_workspace_tools(test_user.id)
+    read_tool = next(t for t in tools if t.name == "read_file")
+    write_tool = next(t for t in tools if t.name == "write_file")
+
+    result = await read_tool.function(path="PERMISSIONS.json")
+    assert result.is_error is False
+    assert '"qb_query"' in result.content
+    assert '"Invoice": "always"' in result.content
+
+    # Editing through workspace_tools must flow back into ApprovalStore.
+    overridden = result.content.replace('"Invoice": "always"', '"Invoice": "deny"')
+    await write_tool.function(path="PERMISSIONS.json", content=overridden)
+
+    level = store.check_permission(
+        test_user.id, "qb_query", resource="Invoice", default=PermissionLevel.ASK
+    )
+    assert level == PermissionLevel.DENY

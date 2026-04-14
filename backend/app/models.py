@@ -190,6 +190,12 @@ class User(Base):
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(
         "OAuthToken", back_populates="user", cascade="all, delete-orphan"
     )
+    permission_set: Mapped["UserPermissionSet | None"] = relationship(
+        "UserPermissionSet",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        uselist=False,
+    )
 
 
 class ChannelRoute(Base):
@@ -435,3 +441,26 @@ class OAuthToken(Base):
     )
 
     user: Mapped["User"] = relationship("User", back_populates="oauth_tokens")
+
+
+class UserPermissionSet(Base):
+    """Per-user tool/resource permission overrides (formerly PERMISSIONS.json).
+
+    Stores the full permissions document as a JSON-encoded string so the
+    app-layer shape matches the legacy file format unchanged. One row per
+    user; ``ApprovalStore`` reads/writes this instead of the filesystem.
+    """
+
+    __tablename__ = "user_permissions"
+
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), primary_key=True
+    )
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+    user: Mapped["User"] = relationship("User", back_populates="permission_set")

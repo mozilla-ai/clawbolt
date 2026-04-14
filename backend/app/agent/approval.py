@@ -20,9 +20,9 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from fnmatch import fnmatch
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from any_llm import acompletion
@@ -30,39 +30,13 @@ from any_llm.types.completion import ChatCompletion
 from pydantic import BaseModel, Field
 
 from backend.app.config import settings
+from backend.app.database import db_session
+from backend.app.models import UserPermissionSet
 
 if TYPE_CHECKING:
     from backend.app.bus import OutboundMessage
 
 logger = logging.getLogger(__name__)
-
-
-# ---------------------------------------------------------------------------
-# File I/O helpers (self-contained, no file_store dependency)
-# ---------------------------------------------------------------------------
-
-
-def _user_dir(user_id: str) -> Path:
-    """Return the directory for a specific user."""
-    return Path(settings.data_dir) / str(user_id)
-
-
-def _read_json(path: Path, default: Any = None) -> Any:
-    """Read and parse a JSON file. Returns default if missing/corrupt."""
-    if not path.exists():
-        return default
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, ValueError):
-        return default
-
-
-def _write_json(path: Path, data: Any) -> None:
-    """Write data as JSON to a file atomically."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
-    tmp.rename(path)
 
 
 # ---------------------------------------------------------------------------
@@ -196,17 +170,34 @@ class ApprovalStore:
     Resolution order: resource match (exact then glob) > tool match > policy default.
     """
 
-    def _permissions_path(self, user_id: str) -> Path:
-        return _user_dir(user_id) / "PERMISSIONS.json"
-
     def _load(self, user_id: str) -> dict[str, Any]:
-        data = _read_json(self._permissions_path(user_id), default=None)
-        if data is None or not isinstance(data, dict):
-            return {"version": _PERMISSIONS_VERSION, "tools": {}, "resources": {}}
-        return data
+        with db_session() as db:
+            row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+            if row is None:
+                return {"version": _PERMISSIONS_VERSION, "tools": {}, "resources": {}}
+            try:
+                parsed = json.loads(row.data)
+            except (json.JSONDecodeError, ValueError):
+                return {"version": _PERMISSIONS_VERSION, "tools": {}, "resources": {}}
+            if not isinstance(parsed, dict):
+                return {"version": _PERMISSIONS_VERSION, "tools": {}, "resources": {}}
+            return parsed
 
     def _save(self, user_id: str, data: dict[str, Any]) -> None:
-        _write_json(self._permissions_path(user_id), data)
+        payload = json.dumps(data, indent=2, default=str)
+        with db_session() as db:
+            row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+            if row is None:
+                db.add(
+                    UserPermissionSet(
+                        user_id=user_id,
+                        data=payload,
+                        updated_at=datetime.now(UTC),
+                    )
+                )
+            else:
+                row.data = payload
+                row.updated_at = datetime.now(UTC)
 
     def load_user_permissions(self, user_id: str) -> dict[str, Any]:
         """Load the raw permission data for a user.

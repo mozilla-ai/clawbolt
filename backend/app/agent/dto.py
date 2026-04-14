@@ -118,6 +118,7 @@ class SubToolEntry(BaseModel):
     description: str = ""
     enabled: bool = True
     permission_level: str = "always"
+    hidden_in_permissions: bool = False
 
 
 class ToolConfigEntry(BaseModel):

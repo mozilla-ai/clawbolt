@@ -57,6 +57,11 @@ _MEMORY_DOC_COLUMN: dict[str, str] = {
     "HISTORY.md": "history_text",
 }
 
+# Files routed to the UserPermissionSet table instead of disk. The
+# ApprovalStore uses the same row, so read_file/write_file/edit_file and
+# the approval gate share a single source of truth.
+_PERMISSIONS_FILE = "PERMISSIONS.json"
+
 
 class ReadFileParams(BaseModel):
     """Parameters for the read_file tool."""
@@ -219,6 +224,51 @@ async def _memory_doc_write(user_id: str, column: str, content: str) -> None:
     await asyncio.to_thread(_memory_doc_write_sync, user_id, column, content)
 
 
+def _is_permissions_path(relative_path: str) -> bool:
+    """Return True if ``relative_path`` refers to the top-level PERMISSIONS.json."""
+    try:
+        name = Path(relative_path).name
+    except (ValueError, OSError):
+        return False
+    if name != _PERMISSIONS_FILE:
+        return False
+    stripped = relative_path.lstrip("./")
+    return not ("/" in stripped or relative_path.startswith(".."))
+
+
+def _permissions_read_sync(user_id: str) -> str:
+    from backend.app.models import UserPermissionSet
+
+    db = SessionLocal()
+    try:
+        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        if row is None:
+            return ""
+        return row.data or ""
+    finally:
+        db.close()
+
+
+async def _permissions_read(user_id: str) -> str:
+    return await asyncio.to_thread(_permissions_read_sync, user_id)
+
+
+def _permissions_write_sync(user_id: str, content: str) -> None:
+    from backend.app.database import db_session
+    from backend.app.models import UserPermissionSet
+
+    with db_session() as db:
+        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        if row is None:
+            db.add(UserPermissionSet(user_id=user_id, data=content))
+        else:
+            row.data = content
+
+
+async def _permissions_write(user_id: str, content: str) -> None:
+    await asyncio.to_thread(_permissions_write_sync, user_id, content)
+
+
 def create_workspace_tools(user_id: str) -> list[Tool]:
     """Create generic file tools scoped to the user's data directory."""
 
@@ -232,6 +282,10 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         mem_col = _memory_doc_column(path)
         if mem_col:
             content = await _memory_doc_read(user_id, mem_col)
+            return ToolResult(content=content or "(empty)")
+
+        if _is_permissions_path(path):
+            content = await _permissions_read(user_id)
             return ToolResult(content=content or "(empty)")
 
         resolved, err = _resolve_path(user_id, path)
@@ -256,6 +310,10 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         mem_col = _memory_doc_column(path)
         if mem_col:
             await _memory_doc_write(user_id, mem_col, content)
+            return ToolResult(content=f"Wrote {path}")
+
+        if _is_permissions_path(path):
+            await _permissions_write(user_id, content)
             return ToolResult(content=f"Wrote {path}")
 
         resolved, err = _resolve_path(user_id, path)
@@ -306,6 +364,27 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 )
             updated = text.replace(old_text, new_text, 1)
             await _memory_doc_write(user_id, mem_col, updated)
+            return ToolResult(content=f"Updated {path}")
+
+        if _is_permissions_path(path):
+            text = await _permissions_read(user_id)
+            if old_text not in text:
+                return ToolResult(
+                    content=f"Text not found in {path}. Read the file first to see current contents.",
+                    is_error=True,
+                    error_kind=ToolErrorKind.NOT_FOUND,
+                )
+            count = text.count(old_text)
+            if count > 1:
+                return ToolResult(
+                    content=(
+                        f"Found {count} matches in {path}. Provide more context to match uniquely."
+                    ),
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
+            updated = text.replace(old_text, new_text, 1)
+            await _permissions_write(user_id, updated)
             return ToolResult(content=f"Updated {path}")
 
         resolved, err = _resolve_path(user_id, path)
