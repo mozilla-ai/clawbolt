@@ -419,6 +419,25 @@ class SessionStore:
             db.commit()
             return count > 0
 
+    def delete_messages_by_seqs(self, session_id: str, seqs: list[int]) -> int:
+        """Delete specific messages by seq numbers from a session.
+
+        Returns the number of messages actually deleted.
+        """
+        with db_session() as db:
+            cs = (
+                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
+            )
+            if cs is None:
+                return 0
+            count: int = (
+                db.query(Message)
+                .filter(Message.session_id == cs.id, Message.seq.in_(seqs))
+                .delete(synchronize_session="fetch")
+            )
+            db.commit()
+            return count
+
     def delete_messages(self, session_id: str) -> int:
         """Delete all messages from a session and reset its compaction pointer.
 

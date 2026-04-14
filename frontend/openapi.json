@@ -986,6 +986,56 @@
         }
       }
     },
+    "/api/user/sessions/{session_id}/messages/batch": {
+      "delete": {
+        "summary": "Delete Messages Batch",
+        "description": "Delete specific messages from a session by their sequence numbers.",
+        "operationId": "delete_messages_batch_api_user_sessions__session_id__messages_batch_delete",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BatchDeleteRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeleteMessagesResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/sessions/{session_id}/messages/{seq}": {
       "delete": {
         "summary": "Delete Single Message",
@@ -1321,6 +1371,24 @@
   },
   "components": {
     "schemas": {
+      "BatchDeleteRequest": {
+        "properties": {
+          "seqs": {
+            "items": {
+              "type": "integer"
+            },
+            "type": "array",
+            "maxItems": 1000,
+            "minItems": 1,
+            "title": "Seqs"
+          }
+        },
+        "type": "object",
+        "required": [
+          "seqs"
+        ],
+        "title": "BatchDeleteRequest"
+      },
       "Body_send_chat_message_api_user_chat_post": {
         "properties": {
           "message": {
