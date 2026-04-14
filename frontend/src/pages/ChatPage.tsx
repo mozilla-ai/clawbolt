@@ -166,6 +166,7 @@ export default function ChatPage() {
     setExpandedTools(new Set());
     setSelectionMode(false);
     setSelectedSeqs(new Set());
+    setConfirmModal(null);
   }, [activeSessionId]);
 
   // Populate messages from session history when it loads
@@ -363,13 +364,12 @@ export default function ChatPage() {
     setConfirmModal(null);
     try {
       await api.deleteMessages(activeSessionId, validSeqs);
-      // API succeeded: now play exit animation
-      const idsToRemove = messages
-        .filter((m) => m.seq && validSeqs.includes(m.seq))
-        .map((m) => m.id);
+      // API succeeded: play exit animation, then remove from state
       setBatchExitingSeqs(new Set(validSeqs));
       await new Promise((r) => setTimeout(r, 250));
-      setMessages((prev) => prev.filter((m) => !idsToRemove.includes(m.id)));
+      setMessages((prev) =>
+        prev.filter((m) => !m.seq || !validSeqs.includes(m.seq)),
+      );
       setBatchExitingSeqs(new Set());
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
       void queryClient.invalidateQueries({
