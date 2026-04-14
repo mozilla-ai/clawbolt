@@ -382,17 +382,22 @@ async def test_always_deny_does_not_emit_synthetic_tool_record(test_user: User) 
 
 @pytest.mark.asyncio()
 async def test_permissions_path_match_is_case_insensitive(test_user: User) -> None:
-    """_is_permissions_path guards against lowercase / mixed-case filename
-    variants so the LLM can't slip a write past the read-only barrier."""
+    """Case variants of the filename all hit the DB row rather than
+    falling through to an unintended on-disk write."""
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
     tools = create_workspace_tools(test_user.id)
-    write_tool = next(t for t in tools if t.name == "write_file")
+    read_tool = next(t for t in tools if t.name == "read_file")
+
+    # Seed via ApprovalStore.
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+    store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
 
     for variant in ("permissions.json", "Permissions.json", "PERMISSIONS.JSON"):
-        result = await write_tool.function(path=variant, content="{}")
-        assert result.is_error is True, f"{variant} should be rejected"
-        assert "read-only" in result.content.lower()
+        result = await read_tool.function(path=variant)
+        assert result.is_error is False, f"{variant} should resolve to the DB row"
+        assert '"Invoice": "always"' in result.content
 
 
 @pytest.mark.asyncio()
@@ -616,14 +621,11 @@ async def test_permissions_json_readable_via_workspace_tools(test_user: User) ->
 
 
 @pytest.mark.asyncio()
-async def test_permissions_json_write_is_rejected(test_user: User) -> None:
-    """PERMISSIONS.json is read-only for the agent: write_file must refuse.
-
-    The LLM, following old instructions, would 'officialize' an Always
-    reply by rewriting PERMISSIONS.json -- which clobbered the
-    per-resource overrides the approval gate had just written and forced
-    a second approval prompt. Making writes impossible removes the
-    failure mode entirely."""
+async def test_permissions_json_write_flows_into_approval_store(test_user: User) -> None:
+    """write_file on PERMISSIONS.json persists through the same DB row
+    ApprovalStore uses, so the dashboard / chat / approval gate all see
+    the same data. Agents and users who legitimately need to edit
+    permissions (via plain-chat requests or the dashboard) can."""
     from backend.app.agent.tools.workspace_tools import create_workspace_tools
 
     store = get_approval_store()
@@ -631,25 +633,42 @@ async def test_permissions_json_write_is_rejected(test_user: User) -> None:
     store.set_permission(test_user.id, "qb_query", PermissionLevel.ALWAYS, resource="Invoice")
 
     tools = create_workspace_tools(test_user.id)
-    write_tool = next(t for t in tools if t.name == "write_file")
+    read_tool = next(t for t in tools if t.name == "read_file")
     edit_tool = next(t for t in tools if t.name == "edit_file")
 
-    write_result = await write_tool.function(
-        path="PERMISSIONS.json", content='{"tools": {"qb_query": "always"}, "resources": {}}'
-    )
-    assert write_result.is_error is True
-    assert "read-only" in write_result.content.lower()
+    before = await read_tool.function(path="PERMISSIONS.json")
+    assert '"Invoice": "always"' in before.content
 
     edit_result = await edit_tool.function(
         path="PERMISSIONS.json",
-        old_text='"qb_query": "ask"',
-        new_text='"qb_query": "always"',
+        old_text='"Invoice": "always"',
+        new_text='"Invoice": "deny"',
     )
-    assert edit_result.is_error is True
-    assert "read-only" in edit_result.content.lower()
+    assert edit_result.is_error is False
 
-    # Store state is untouched.
     level = store.check_permission(
         test_user.id, "qb_query", resource="Invoice", default=PermissionLevel.ASK
     )
-    assert level == PermissionLevel.ALWAYS
+    assert level == PermissionLevel.DENY
+
+
+@pytest.mark.asyncio()
+async def test_permissions_write_normalizes_minified_json(test_user: User) -> None:
+    """Minified JSON from write_file gets normalized to indented form so
+    subsequent edit_file calls have stable text to match against."""
+    from backend.app.agent.tools.workspace_tools import create_workspace_tools
+
+    store = get_approval_store()
+    store.reset_permissions(test_user.id)
+
+    tools = create_workspace_tools(test_user.id)
+    write_tool = next(t for t in tools if t.name == "write_file")
+    read_tool = next(t for t in tools if t.name == "read_file")
+
+    minified = '{"version": 1, "tools": {"qb_query": "always"}, "resources": {}}'
+    await write_tool.function(path="PERMISSIONS.json", content=minified)
+
+    result = await read_tool.function(path="PERMISSIONS.json")
+    assert "\n" in result.content
+    assert '  "tools"' in result.content
+    assert '"qb_query": "always"' in result.content

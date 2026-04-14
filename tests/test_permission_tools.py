@@ -59,9 +59,8 @@ async def test_read_permissions_json(tmp_path: object) -> None:
     assert "version" in data
 
 
-async def test_edit_permissions_json_rejected(tmp_path: object) -> None:
-    """edit_file on PERMISSIONS.json is rejected: the file is managed by
-    the approval system and the dashboard, not the agent."""
+async def test_edit_permissions_json(tmp_path: object) -> None:
+    """edit_file on PERMISSIONS.json flows through ApprovalStore's DB row."""
     user_id = "test-ws-perm-edit"
     store = get_approval_store()
     store.ensure_complete(user_id)
@@ -70,35 +69,47 @@ async def test_edit_permissions_json_rejected(tmp_path: object) -> None:
     read_tool = next(t for t in tools if t.name == ToolName.READ_FILE)
     edit_tool = next(t for t in tools if t.name == ToolName.EDIT_FILE)
 
-    # Sanity: read still works.
+    # Sanity: read returns the default-seeded send_reply level.
     result = await read_tool.function("PERMISSIONS.json")
     assert not result.is_error
-    original_content = result.content
+    # send_reply defaults to always since the messaging-tools flip.
+    original = json.loads(result.content)
+    assert original["tools"]["send_reply"] == "always"
 
+    # Flip send_reply from always to deny.
     result = await edit_tool.function(
         "PERMISSIONS.json", '"send_reply": "always"', '"send_reply": "deny"'
     )
-    assert result.is_error
-    assert "read-only" in result.content.lower()
+    assert not result.is_error
+    assert "Updated" in result.content
 
-    # Store state unchanged.
-    after = await read_tool.function("PERMISSIONS.json")
-    assert after.content == original_content
+    result = await read_tool.function("PERMISSIONS.json")
+    data = json.loads(result.content)
+    assert data["tools"]["send_reply"] == "deny"
 
 
-async def test_write_permissions_json_rejected(tmp_path: object) -> None:
-    """write_file on PERMISSIONS.json is rejected."""
+async def test_write_permissions_json(tmp_path: object) -> None:
+    """write_file can overwrite PERMISSIONS.json; content is normalized."""
     user_id = "test-ws-perm-write"
     store = get_approval_store()
     store.ensure_complete(user_id)
 
     tools = create_workspace_tools(user_id)
     write_tool = next(t for t in tools if t.name == ToolName.WRITE_FILE)
+    read_tool = next(t for t in tools if t.name == ToolName.READ_FILE)
 
-    new_content = json.dumps({"version": 1, "tools": {"send_reply": "deny"}, "resources": {}})
-    result = await write_tool.function("PERMISSIONS.json", new_content)
-    assert result.is_error
-    assert "read-only" in result.content.lower()
+    # Minified input must be stored as indented JSON so later edit_file
+    # calls have a stable shape to match against.
+    minified = '{"version": 1, "tools": {"send_reply": "deny"}, "resources": {}}'
+    result = await write_tool.function("PERMISSIONS.json", minified)
+    assert not result.is_error
+
+    result = await read_tool.function("PERMISSIONS.json")
+    data = json.loads(result.content)
+    assert data["tools"]["send_reply"] == "deny"
+    # Indented: newlines plus a 2-space prefix on nested keys.
+    assert "\n" in result.content
+    assert '  "tools"' in result.content
 
 
 async def test_delete_permissions_json_blocked(tmp_path: object) -> None:
