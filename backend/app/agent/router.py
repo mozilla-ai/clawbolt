@@ -116,19 +116,21 @@ def init_storage(user: User) -> StorageBackend | None:
 
     Returns the storage backend if configured, or ``None`` otherwise.
     """
-    try:
-        has_storage = (
-            settings.storage_provider == "local"
-            or (settings.storage_provider == "dropbox" and settings.dropbox_access_token)
-            or (
-                settings.storage_provider == "google_drive"
-                and settings.google_drive_credentials_json
-            )
+    has_storage = (
+        settings.storage_provider == "local"
+        or (settings.storage_provider == "dropbox" and settings.dropbox_access_token)
+        or (settings.storage_provider == "google_drive" and settings.google_drive_credentials_json)
+    )
+    if not has_storage:
+        logger.debug(
+            "Storage not configured (provider=%r), skipping file features",
+            settings.storage_provider,
         )
-        if has_storage:
-            return get_storage_service(user=user)
+        return None
+    try:
+        return get_storage_service(user=user)
     except Exception:
-        logger.debug("Storage not configured, skipping file features")
+        logger.exception("Storage backend %r failed to initialize", settings.storage_provider)
     return None
 
 
