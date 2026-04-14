@@ -185,9 +185,7 @@ def test_delete_single_message_not_found_seq(client: TestClient, test_user: User
     assert resp.status_code == 404
 
 
-def test_delete_single_message_cross_user_isolation(
-    client: TestClient, test_user: User
-) -> None:
+def test_delete_single_message_cross_user_isolation(client: TestClient, test_user: User) -> None:
     """A user cannot delete a message from another user's session."""
     other_user_id = "other-user-single-delete-test"
     db = _db_module.SessionLocal()
