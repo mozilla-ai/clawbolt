@@ -134,7 +134,8 @@ class TestCacheBoundary:
         assert len(blocks) == 1
         assert "cache_control" in blocks[0]
 
-    def test_agent_prompt_has_boundary(self) -> None:
+    @pytest.mark.asyncio
+    async def test_agent_prompt_has_boundary(self) -> None:
         """build_agent_system_prompt should include the cache boundary marker."""
         user = MagicMock()
         user.id = "user-123"
@@ -146,11 +147,7 @@ class TestCacheBoundary:
             new_callable=AsyncMock,
             return_value="some memory",
         ):
-            import asyncio
-
-            prompt = asyncio.get_event_loop().run_until_complete(
-                build_agent_system_prompt(user, tools=[], message_context="hello")
-            )
+            prompt = await build_agent_system_prompt(user, tools=[], message_context="hello")
         assert SystemPromptBuilder.CACHE_BOUNDARY.strip() in prompt
 
 

@@ -286,6 +286,11 @@ class DeleteMessagesResponse(BaseModel):
     messages_deleted: int
 
 
+class DeleteMessageResponse(BaseModel):
+    status: str
+    seq: int
+
+
 # ---------------------------------------------------------------------------
 # LLM usage summary (admin)
 # ---------------------------------------------------------------------------

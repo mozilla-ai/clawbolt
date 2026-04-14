@@ -133,6 +133,110 @@ def test_session_channel_defaults_empty(client: TestClient, test_user: User) -> 
 
 
 # ---------------------------------------------------------------------------
+# DELETE /api/user/sessions/{session_id}/messages/{seq}
+# ---------------------------------------------------------------------------
+
+
+def test_delete_single_message(client: TestClient, test_user: User) -> None:
+    """Deleting a single message removes only that message."""
+    _create_session(
+        test_user,
+        "del_single_1",
+        [
+            {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
+            {
+                "direction": "outbound",
+                "body": "Hello!",
+                "timestamp": "2025-01-15T10:02:00",
+                "seq": 2,
+            },
+            {"direction": "inbound", "body": "Bye", "timestamp": "2025-01-15T10:03:00", "seq": 3},
+        ],
+    )
+    # Delete message seq=2
+    resp = client.delete("/api/user/sessions/del_single_1/messages/2")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["status"] == "deleted"
+    assert data["seq"] == 2
+
+    # Verify only that message was removed
+    resp = client.get("/api/user/sessions/del_single_1")
+    assert resp.status_code == 200
+    detail = resp.json()
+    seqs = [m["seq"] for m in detail["messages"]]
+    assert seqs == [1, 3]
+
+
+def test_delete_single_message_not_found_session(client: TestClient) -> None:
+    """Deleting a message from a nonexistent session returns 404."""
+    resp = client.delete("/api/user/sessions/nonexistent/messages/1")
+    assert resp.status_code == 404
+
+
+def test_delete_single_message_not_found_seq(client: TestClient, test_user: User) -> None:
+    """Deleting a nonexistent seq from a valid session returns 404."""
+    _create_session(
+        test_user,
+        "del_single_noseq",
+        [{"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+    )
+    resp = client.delete("/api/user/sessions/del_single_noseq/messages/99")
+    assert resp.status_code == 404
+
+
+def test_delete_single_message_cross_user_isolation(client: TestClient, test_user: User) -> None:
+    """A user cannot delete a message from another user's session."""
+    other_user_id = "other-user-single-delete-test"
+    db = _db_module.SessionLocal()
+    try:
+        other_user = User(
+            id=other_user_id,
+            user_id="other-user-sd",
+            phone="+15558888888",
+            channel_identifier="888888",
+        )
+        db.add(other_user)
+        db.flush()
+        cs = ChatSession(
+            session_id="other_single_del",
+            user_id=other_user_id,
+            is_active=True,
+            channel="",
+            last_compacted_seq=0,
+            created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
+            last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
+        )
+        db.add(cs)
+        db.flush()
+        msg = Message(
+            session_id=cs.id,
+            seq=1,
+            direction="inbound",
+            body="secret",
+            timestamp=datetime(2025, 1, 15, 10, 1, 0, tzinfo=UTC),
+        )
+        db.add(msg)
+        db.commit()
+    finally:
+        db.close()
+
+    # Authenticated as test_user, try to delete other user's message
+    resp = client.delete("/api/user/sessions/other_single_del/messages/1")
+    assert resp.status_code == 404
+
+    # Verify the message is still intact
+    db = _db_module.SessionLocal()
+    try:
+        cs = db.query(ChatSession).filter_by(session_id="other_single_del").first()
+        assert cs is not None
+        count = db.query(Message).filter_by(session_id=cs.id).count()
+        assert count == 1
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
 # DELETE /api/user/sessions/{session_id}/messages
 # ---------------------------------------------------------------------------
 
