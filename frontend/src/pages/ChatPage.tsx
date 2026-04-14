@@ -63,6 +63,7 @@ export default function ChatPage() {
   const [selectionMode, setSelectionMode] = useState(false);
   const [selectedSeqs, setSelectedSeqs] = useState<Set<number>>(new Set());
   const [isBatchDeleting, setIsBatchDeleting] = useState(false);
+  const [batchExitingSeqs, setBatchExitingSeqs] = useState<Set<number>>(new Set());
   const [confirmModal, setConfirmModal] = useState<{
     title: string;
     message: string;
@@ -362,15 +363,14 @@ export default function ChatPage() {
     setConfirmModal(null);
     try {
       await api.deleteMessages(activeSessionId, validSeqs);
-      // Animate out selected messages
+      // API succeeded: now play exit animation
       const idsToRemove = messages
         .filter((m) => m.seq && validSeqs.includes(m.seq))
         .map((m) => m.id);
-      // Set all as exiting for animation
-      setDeletingMsgId(idsToRemove[0] ?? null);
+      setBatchExitingSeqs(new Set(validSeqs));
       await new Promise((r) => setTimeout(r, 250));
       setMessages((prev) => prev.filter((m) => !idsToRemove.includes(m.id)));
-      setDeletingMsgId(null);
+      setBatchExitingSeqs(new Set());
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.sessions.detail(activeSessionId),
@@ -490,8 +490,8 @@ export default function ChatPage() {
                 msg.seq !== undefined &&
                 msg.seq > lastCompactedSeq &&
                 (idx === 0 || prevSeq <= lastCompactedSeq);
-              const isExiting = isBatchDeleting
-                ? (msg.seq !== undefined && selectedSeqs.has(msg.seq))
+              const isExiting = batchExitingSeqs.size > 0
+                ? (msg.seq !== undefined && batchExitingSeqs.has(msg.seq))
                 : deletingMsgId === msg.id;
               return (
                 <div

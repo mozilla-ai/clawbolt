@@ -25,9 +25,27 @@ export default function ConfirmModal({
   const cancelRef = useRef<HTMLButtonElement>(null);
   const overlayRef = useRef<HTMLDivElement>(null);
 
+  const confirmRef = useRef<HTMLButtonElement>(null);
+
   const handleKeyDown = useCallback(
     (e: KeyboardEvent) => {
-      if (e.key === 'Escape' && !isLoading) onCancel();
+      if (e.key === 'Escape' && !isLoading) {
+        onCancel();
+        return;
+      }
+      if (e.key === 'Tab') {
+        const focusable = [cancelRef.current, confirmRef.current].filter(Boolean);
+        if (focusable.length === 0) return;
+        const first = focusable[0]!;
+        const last = focusable[focusable.length - 1]!;
+        if (e.shiftKey && document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
     },
     [onCancel, isLoading],
   );
@@ -71,6 +89,7 @@ export default function ConfirmModal({
             Cancel
           </Button>
           <Button
+            ref={confirmRef}
             variant={variant}
             size="sm"
             onClick={onConfirm}
