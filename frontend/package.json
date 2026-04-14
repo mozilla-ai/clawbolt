@@ -56,5 +56,8 @@
     "vite-plugin-pwa": "^1.2.0",
     "vitest": "^4.0.18",
     "workbox-precaching": "^7.4.0"
+  },
+  "overrides": {
+    "serialize-javascript": "^7.0.5"
   }
 }
