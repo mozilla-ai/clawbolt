@@ -131,6 +131,11 @@ class ClawboltAgent:
         self._excluded_tool_names = excluded_tool_names
         self._request_id = request_id
         self._reactive_trim_dropped: list[AgentMessage] = []
+        # Remembers ASK decisions within a single agent run so the user is not
+        # re-prompted for the same (tool, resource) if the LLM retries or
+        # chains calls. ALWAYS_ALLOW is persisted to PERMISSIONS.json and does
+        # not need this cache.
+        self._approval_cache: dict[tuple[str, str | None], ApprovalDecision] = {}
 
     def subscribe(self, callback: Callable[[AgentEvent], Awaitable[None]]) -> None:
         """Register an event subscriber.
@@ -569,7 +574,17 @@ class ClawboltAgent:
                 idx, tool_obj, v_args = entry
                 tc_req = parsed_calls[idx]
 
-                if self._publish_outbound is not None and self._chat_id is not None:
+                cache_key = (tool_obj.name, resource)
+                cached_decision = self._approval_cache.get(cache_key)
+                if cached_decision is not None:
+                    logger.debug(
+                        "Reusing approval for %s (resource=%r) from this turn: %s",
+                        tool_obj.name,
+                        resource,
+                        cached_decision,
+                    )
+                    decision = cached_decision
+                elif self._publish_outbound is not None and self._chat_id is not None:
                     prompt = format_approval_message(tool_obj.name, description)
 
                     if self._session_id:
@@ -593,6 +608,8 @@ class ClawboltAgent:
                         chat_id=self._chat_id,
                         prompt=prompt,
                     )
+                    if decision == ApprovalDecision.APPROVED:
+                        self._approval_cache[cache_key] = ApprovalDecision.APPROVED
                 else:
                     decision = ApprovalDecision.DENIED
 

@@ -40,7 +40,9 @@ When the user asks about permissions, approval settings, what you can do freely,
 or wants to change how you handle actions, use PERMISSIONS.json.
 
 ## File uploads
-When the user sends a photo, document, or other file attachment and file storage is enabled, use upload_to_storage to save it. Provide the best client_name and file_category you can infer from context. If the permission system prompts the user for approval, wait for their response before continuing.
+When the user sends a photo, document, or other file attachment and file storage is enabled, call upload_to_storage. Do not ask "want me to save this?" in chat first. The permission system handles the approval prompt; a conversational pre-check creates a frustrating double-confirmation.
+
+Provide the best client_name and file_category you can infer from context. If you do not yet know the client, either ask one short clarifying question OR call upload_to_storage without client_name to stage the file under Unsorted; pick one, not both.
 
 Notes:
 - If the file was already auto-saved to the Unsorted folder (you will see it in the media records), use organize_file to move it to the correct client folder instead of uploading again.
