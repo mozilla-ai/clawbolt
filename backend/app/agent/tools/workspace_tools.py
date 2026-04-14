@@ -267,9 +267,13 @@ def _permissions_write_sync(user_id: str, content: str) -> None:
     writer leaves a minified blob. Parse + re-serialize so every reader
     sees the same shape regardless of what the caller passed in.
     Malformed JSON is stored verbatim as a narrow escape hatch.
+
+    Uses the same advisory lock as ApprovalStore so workspace writes
+    serialize correctly against set_permission / dashboard PUT.
     """
     import json as _json
 
+    from backend.app.agent.approval import _lock_user_permissions
     from backend.app.database import db_session
     from backend.app.models import UserPermissionSet
 
@@ -281,6 +285,7 @@ def _permissions_write_sync(user_id: str, content: str) -> None:
         payload = _json.dumps(parsed, indent=2, default=str)
 
     with db_session() as db:
+        _lock_user_permissions(db, user_id)
         row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
         if row is None:
             db.add(UserPermissionSet(user_id=user_id, data=payload))
@@ -291,6 +296,51 @@ def _permissions_write_sync(user_id: str, content: str) -> None:
 
 async def _permissions_write(user_id: str, content: str) -> None:
     await asyncio.to_thread(_permissions_write_sync, user_id, content)
+
+
+def _permissions_edit_sync(user_id: str, old_text: str, new_text: str) -> tuple[bool, str]:
+    """Atomic text replace on PERMISSIONS.json.
+
+    Returns ``(ok, detail)``: ``ok=True`` with ``detail=""`` on success,
+    ``ok=False`` with a user-facing error string otherwise. All work
+    runs in a single locked transaction so concurrent set_permission /
+    dashboard PUT / write_file calls can't steal the row between our
+    read and write.
+    """
+    import json as _json
+
+    from backend.app.agent.approval import _lock_user_permissions
+    from backend.app.database import db_session
+    from backend.app.models import UserPermissionSet
+
+    with db_session() as db:
+        _lock_user_permissions(db, user_id)
+        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        current = (row.data if row is not None else "") or ""
+
+        if old_text not in current:
+            return (False, "text_not_found")
+        if current.count(old_text) > 1:
+            return (False, "ambiguous")
+
+        updated = current.replace(old_text, new_text, 1)
+        try:
+            parsed = _json.loads(updated)
+        except (_json.JSONDecodeError, ValueError):
+            payload = updated
+        else:
+            payload = _json.dumps(parsed, indent=2, default=str)
+
+        if row is None:
+            db.add(UserPermissionSet(user_id=user_id, data=payload))
+        else:
+            row.data = payload
+        db.commit()
+    return (True, "")
+
+
+async def _permissions_edit(user_id: str, old_text: str, new_text: str) -> tuple[bool, str]:
+    return await asyncio.to_thread(_permissions_edit_sync, user_id, old_text, new_text)
 
 
 def create_workspace_tools(user_id: str) -> list[Tool]:
@@ -391,25 +441,30 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             return ToolResult(content=f"Updated {path}")
 
         if _is_permissions_path(path):
-            text = await _permissions_read(user_id)
-            if old_text not in text:
+            ok, detail = await _permissions_edit(user_id, old_text, new_text)
+            if ok:
+                return ToolResult(content=f"Updated {path}")
+            if detail == "text_not_found":
                 return ToolResult(
-                    content=f"Text not found in {path}. Read the file first to see current contents.",
+                    content=(
+                        f"Text not found in {path}. Read the file first to see current contents."
+                    ),
                     is_error=True,
                     error_kind=ToolErrorKind.NOT_FOUND,
                 )
-            count = text.count(old_text)
-            if count > 1:
+            if detail == "ambiguous":
                 return ToolResult(
                     content=(
-                        f"Found {count} matches in {path}. Provide more context to match uniquely."
+                        f"Found multiple matches in {path}. Provide more context to match uniquely."
                     ),
                     is_error=True,
                     error_kind=ToolErrorKind.VALIDATION,
                 )
-            updated = text.replace(old_text, new_text, 1)
-            await _permissions_write(user_id, updated)
-            return ToolResult(content=f"Updated {path}")
+            return ToolResult(
+                content=f"Failed to edit {path}",
+                is_error=True,
+                error_kind=ToolErrorKind.INTERNAL,
+            )
 
         resolved, err = _resolve_path(user_id, path)
         if err:
