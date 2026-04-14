@@ -25,3 +25,7 @@ export function getFeatureRequestUrl(): string {
 export function getReportIssueUrl(): string {
   return 'https://github.com/mozilla-ai/clawbolt/issues/new?title=Bug:+&labels=bug';
 }
+
+export function getDocsUrl(): string {
+  return 'https://clawbolt.ai/guide/';
+}

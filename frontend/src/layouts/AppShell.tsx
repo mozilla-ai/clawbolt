@@ -9,7 +9,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { Tooltip } from '@heroui/tooltip';
 import { Link } from '@heroui/link';
 import { Divider } from '@heroui/divider';
-import { getFeatureRequestUrl, getReportIssueUrl, getExtraNavItems, renderSidebarFooter } from '@/extensions';
+import { getFeatureRequestUrl, getReportIssueUrl, getDocsUrl, getExtraNavItems, renderSidebarFooter } from '@/extensions';
 import useSwipeSidebar from '@/hooks/useSwipeSidebar';
 import { useProfile } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
@@ -226,7 +226,15 @@ export default function AppShell() {
               </svg>
               Get Started
             </NavLink>
-            <div className="flex gap-2 px-3 py-1">
+            <div className="flex gap-2 px-3 py-1 flex-wrap">
+              <Link
+                href={getDocsUrl()}
+                isExternal
+                size="sm"
+                className="text-xs text-muted-foreground can-hover:hover:text-foreground transition-all duration-150"
+              >
+                Help
+              </Link>
               <Link
                 href={getReportIssueUrl()}
                 isExternal
