@@ -651,8 +651,11 @@ class ClawboltAgent:
                         chat_id=self._chat_id,
                         prompt=prompt,
                     )
-                    if decision == ApprovalDecision.APPROVED:
-                        self._approval_cache[cache_key] = ApprovalDecision.APPROVED
+                    # Cache every terminal decision so sibling calls with the
+                    # same (tool, resource) in this round skip the prompt.
+                    # INTERRUPTED is not terminal (user changed subject).
+                    if decision != ApprovalDecision.INTERRUPTED:
+                        self._approval_cache[cache_key] = decision
                 else:
                     decision = ApprovalDecision.DENIED
 

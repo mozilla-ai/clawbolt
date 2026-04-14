@@ -29,6 +29,26 @@ export default function PermissionsPage() {
   const tools = toolData?.tools ?? [];
   const rawContent = permData?.content ?? '';
 
+  const resourcesByTool = useMemo<Record<string, Record<string, PermLevel>>>(() => {
+    try {
+      const parsed = JSON.parse(rawContent) as Record<string, unknown>;
+      const raw = (parsed.resources ?? {}) as Record<string, Record<string, string>>;
+      const filtered: Record<string, Record<string, PermLevel>> = {};
+      for (const [toolName, overrides] of Object.entries(raw)) {
+        const levels: Record<string, PermLevel> = {};
+        for (const [resource, level] of Object.entries(overrides)) {
+          if (level === 'always' || level === 'ask' || level === 'deny') {
+            levels[resource] = level;
+          }
+        }
+        if (Object.keys(levels).length > 0) filtered[toolName] = levels;
+      }
+      return filtered;
+    } catch {
+      return {};
+    }
+  }, [rawContent]);
+
   const coreTools = useMemo(
     () => tools.filter((t) => t.category === 'core' && (t.sub_tools?.length ?? 0) > 0),
     [tools],
@@ -79,6 +99,45 @@ export default function PermissionsPage() {
     [rawContent, updateMutation],
   );
 
+  const handleRevokeResourceOverride = useCallback(
+    async (subToolName: string, resourceName: string) => {
+      let parsed: Record<string, unknown>;
+      try {
+        parsed = JSON.parse(rawContent) as Record<string, unknown>;
+      } catch {
+        parsed = {};
+      }
+
+      const resources = {
+        ...((parsed.resources as Record<string, Record<string, string>>) ?? {}),
+      };
+      const toolOverrides = { ...(resources[subToolName] ?? {}) };
+      delete toolOverrides[resourceName];
+      if (Object.keys(toolOverrides).length === 0) {
+        delete resources[subToolName];
+      } else {
+        resources[subToolName] = toolOverrides;
+      }
+      parsed = { ...parsed, resources };
+
+      const content = JSON.stringify(parsed, null, 2);
+      try {
+        await updateMutation.mutateAsync(
+          { content },
+          {
+            onSuccess: () => {
+              toast.success(`Revoked override for ${resourceName}`);
+            },
+            onError: (e) => toast.error(e.message),
+          },
+        );
+      } catch {
+        // handled by onError
+      }
+    },
+    [rawContent, updateMutation],
+  );
+
   if (toolsPending && !toolData) {
     return (
       <div className="flex justify-center py-12">
@@ -108,9 +167,11 @@ export default function PermissionsPage() {
               <ToolPermissionCard
                 key={tool.name}
                 tool={tool}
+                resourceOverrides={resourcesByTool}
                 isExpanded={!collapsedTools.has(tool.name)}
                 onToggleExpand={() => toggleCollapsed(tool.name)}
                 onPermissionChange={handlePermissionChange}
+                onRevokeResourceOverride={handleRevokeResourceOverride}
                 isUpdating={updateMutation.isPending || permsPending}
               />
             ))}
@@ -126,9 +187,11 @@ export default function PermissionsPage() {
               <ToolPermissionCard
                 key={tool.name}
                 tool={tool}
+                resourceOverrides={resourcesByTool}
                 isExpanded={!collapsedTools.has(tool.name)}
                 onToggleExpand={() => toggleCollapsed(tool.name)}
                 onPermissionChange={handlePermissionChange}
+                onRevokeResourceOverride={handleRevokeResourceOverride}
                 isUpdating={updateMutation.isPending || permsPending}
               />
             ))}
@@ -142,15 +205,19 @@ export default function PermissionsPage() {
 
 function ToolPermissionCard({
   tool,
+  resourceOverrides,
   isExpanded,
   onToggleExpand,
   onPermissionChange,
+  onRevokeResourceOverride,
   isUpdating,
 }: {
   tool: ToolConfigEntryResponse;
+  resourceOverrides: Record<string, Record<string, PermLevel>>;
   isExpanded: boolean;
   onToggleExpand: () => void;
   onPermissionChange: (toolName: string, level: string) => void;
+  onRevokeResourceOverride: (toolName: string, resourceName: string) => void;
   isUpdating: boolean;
 }) {
   const subTools = tool.sub_tools ?? [];
@@ -178,7 +245,9 @@ function ToolPermissionCard({
             <SubToolRow
               key={st.name}
               subTool={st}
+              overrides={resourceOverrides[st.name]}
               onPermissionChange={onPermissionChange}
+              onRevokeResourceOverride={onRevokeResourceOverride}
               isUpdating={isUpdating}
             />
           ))}
@@ -190,31 +259,67 @@ function ToolPermissionCard({
 
 function SubToolRow({
   subTool,
+  overrides,
   onPermissionChange,
+  onRevokeResourceOverride,
   isUpdating,
 }: {
   subTool: SubToolEntryResponse;
+  overrides: Record<string, PermLevel> | undefined;
   onPermissionChange: (toolName: string, level: string) => void;
+  onRevokeResourceOverride: (toolName: string, resourceName: string) => void;
   isUpdating: boolean;
 }) {
+  const overrideEntries = Object.entries(overrides ?? {});
   return (
-    <div className="flex items-center justify-between gap-2 py-0.5">
-      <span className="text-xs min-w-0 truncate flex items-center gap-1">
-        {subToolDisplayName(subTool.name)}
-        {subTool.description && (
-          <Tooltip content={subTool.description} delay={200} closeDelay={0}>
-            <span className="inline-flex text-muted-foreground cursor-help shrink-0">
-              <InfoIcon />
-            </span>
-          </Tooltip>
-        )}
-      </span>
-      <PermissionSelector
-        toolName={subToolDisplayName(subTool.name)}
-        level={subTool.permission_level as PermLevel}
-        onChange={(level) => onPermissionChange(subTool.name, level)}
-        disabled={isUpdating}
-      />
+    <div className="py-0.5">
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-xs min-w-0 truncate flex items-center gap-1">
+          {subToolDisplayName(subTool.name)}
+          {subTool.description && (
+            <Tooltip content={subTool.description} delay={200} closeDelay={0}>
+              <span className="inline-flex text-muted-foreground cursor-help shrink-0">
+                <InfoIcon />
+              </span>
+            </Tooltip>
+          )}
+        </span>
+        <PermissionSelector
+          toolName={subToolDisplayName(subTool.name)}
+          level={subTool.permission_level as PermLevel}
+          onChange={(level) => onPermissionChange(subTool.name, level)}
+          disabled={isUpdating}
+        />
+      </div>
+      {overrideEntries.length > 0 && (
+        <ul className="mt-1 ml-3 space-y-0.5">
+          {overrideEntries.map(([resourceName, level]) => (
+            <li
+              key={resourceName}
+              className="flex items-center justify-between gap-2 text-[11px] text-muted-foreground"
+            >
+              <span className="truncate">
+                <span className="font-mono">{resourceName}</span>
+                <span className="ml-1">
+                  overrides to{' '}
+                  <span className={PERM_ACTIVE_STYLES[level] + ' px-1 rounded'}>
+                    {PERM_OPTIONS.find((o) => o.value === level)?.label ?? level}
+                  </span>
+                </span>
+              </span>
+              <button
+                type="button"
+                disabled={isUpdating}
+                onClick={() => onRevokeResourceOverride(subTool.name, resourceName)}
+                className="text-[10px] text-muted-foreground hover:text-danger px-1 py-0.5 rounded hover:bg-muted disabled:opacity-50 disabled:cursor-not-allowed"
+                aria-label={`Revoke ${resourceName} override`}
+              >
+                Revoke
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }
