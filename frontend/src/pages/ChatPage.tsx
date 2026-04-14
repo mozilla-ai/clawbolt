@@ -305,12 +305,13 @@ export default function ChatPage() {
 
   const handleDeleteMessage = async (msg: ChatMessage) => {
     if (!activeSessionId || !msg.seq || deletingMsgId !== null) return;
-    setDeletingMsgId(msg.id);
-    // Play exit animation, then remove after it completes
-    await new Promise((r) => setTimeout(r, 250));
     try {
       await api.deleteMessage(activeSessionId, msg.seq);
+      // API succeeded: play exit animation, then remove from state
+      setDeletingMsgId(msg.id);
+      await new Promise((r) => setTimeout(r, 250));
       setMessages((prev) => prev.filter((m) => m.id !== msg.id));
+      setDeletingMsgId(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
       void queryClient.invalidateQueries({
         queryKey: queryKeys.sessions.detail(activeSessionId),
@@ -318,8 +319,6 @@ export default function ChatPage() {
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Failed to delete message';
       toast.error(errMsg);
-    } finally {
-      setDeletingMsgId(null);
     }
   };
 
