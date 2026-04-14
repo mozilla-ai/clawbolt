@@ -546,6 +546,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/sessions/{session_id}/messages/batch": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /**
+         * Delete Messages Batch
+         * @description Delete specific messages from a session by their sequence numbers.
+         */
+        delete: operations["delete_messages_batch_api_user_sessions__session_id__messages_batch_delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/sessions/{session_id}/messages/{seq}": {
         parameters: {
             query?: never;
@@ -715,6 +735,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** BatchDeleteRequest */
+        BatchDeleteRequest: {
+            /** Seqs */
+            seqs: number[];
+        };
         /** Body_send_chat_message_api_user_chat_post */
         Body_send_chat_message_api_user_chat_post: {
             /**
@@ -2095,6 +2120,41 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    delete_messages_batch_api_user_sessions__session_id__messages_batch_delete: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["BatchDeleteRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeleteMessagesResponse"];
                 };
             };
             /** @description Validation Error */
