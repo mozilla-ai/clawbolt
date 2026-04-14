@@ -8,10 +8,7 @@ and per-process; not durable.
 
 from __future__ import annotations
 
-import logging
 import time
-
-logger = logging.getLogger(__name__)
 
 STAGING_TTL_SECONDS = 3600
 
@@ -35,6 +32,21 @@ def get_all_for_user(user_id: str) -> dict[str, bytes]:
     return {
         url: content for url, (content, _mime, exp) in _cache.get(user_id, {}).items() if exp > now
     }
+
+
+def get_mime_type(user_id: str, original_url: str) -> str | None:
+    """Return the staged mime type for ``original_url``, or None if not cached.
+
+    The download step knows the authoritative mime type; the LLM is guessing.
+    ``upload_to_storage`` uses this to override its argument when available.
+    """
+    _purge_expired()
+    now = time.monotonic()
+    entry = _cache.get(user_id, {}).get(original_url)
+    if entry is None:
+        return None
+    _content, mime, exp = entry
+    return mime if exp > now else None
 
 
 def evict(user_id: str, original_url: str) -> None:

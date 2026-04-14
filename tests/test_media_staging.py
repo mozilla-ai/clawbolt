@@ -132,6 +132,36 @@ async def test_file_factory_prefers_current_turn_over_stale_staging(
     assert any(v == b"fresh-bytes" for v in storage.files.values())
 
 
+def test_get_mime_type_returns_staged_value(test_user: User) -> None:
+    media_staging.stage(test_user.id, "bb_doc", b"pdf-bytes", "application/pdf")
+    assert media_staging.get_mime_type(test_user.id, "bb_doc") == "application/pdf"
+    assert media_staging.get_mime_type(test_user.id, "missing") is None
+
+
+@pytest.mark.asyncio()
+async def test_upload_uses_staged_mime_over_llm_argument(test_user: User) -> None:
+    """The download layer knows the real mime; the LLM-supplied value must not
+    overwrite it (e.g. agent defaults to image/jpeg but file is a PDF)."""
+    media_staging.stage(test_user.id, "bb_doc", b"pdf-bytes", "application/pdf")
+    ctx = ToolContext(
+        user=test_user,
+        storage=MockStorageBackend(),
+        downloaded_media=[],
+    )
+    tools = _file_factory(ctx)
+    upload = tools[0].function
+
+    result = await upload(
+        file_category="document",
+        original_url="bb_doc",
+        client_name="Jane",
+        mime_type="image/jpeg",  # LLM's wrong guess
+    )
+    assert result.is_error is False
+    # Filename should reflect the real mime (.pdf), not the LLM guess (.jpg).
+    assert ".pdf" in result.content
+
+
 @pytest.mark.asyncio()
 async def test_upload_evicts_staged_entry(test_user: User) -> None:
     media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")

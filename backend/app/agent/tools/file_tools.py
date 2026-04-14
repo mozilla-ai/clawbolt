@@ -230,6 +230,13 @@ def create_file_tools(
             file_bytes = media_map[first_url]
             original_url = original_url or first_url
 
+        # The download layer knows the real mime type; prefer that over the
+        # LLM-supplied argument so PDFs or HEICs don't get mislabeled.
+        if original_url:
+            staged_mime = media_staging.get_mime_type(user.id, original_url)
+            if staged_mime:
+                mime_type = staged_mime
+
         if not file_bytes:
             logger.warning("upload_to_storage called but no file content available")
             return ToolResult(
@@ -361,16 +368,16 @@ def create_file_tools(
         Tool(
             name=ToolName.UPLOAD_TO_STORAGE,
             description=(
-                "Upload a file attached to the CURRENT message to the user's "
-                "cloud storage. Only works when the user sent media in this "
-                "message. Files are organized by client: provide client_name or "
-                "client_address to file under their folder, otherwise files go to "
-                "Unsorted. For files received in previous messages, use "
-                "organize_file instead."
+                "Upload a file attached to the current message (or a recently "
+                "received one still in the staging cache) to the user's cloud "
+                "storage. Files are organized by client: provide client_name or "
+                "client_address to file under their folder, otherwise files go "
+                "to Unsorted. If the file was already persisted to storage in a "
+                "prior turn, use organize_file instead to move it."
             ),
             function=upload_to_storage,
             params_model=UploadToStorageParams,
-            usage_hint="Upload media from the current message to cloud storage.",
+            usage_hint="Upload a recently received file to cloud storage.",
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ASK,
                 resource_extractor=lambda args: args.get("client_name") or None,
