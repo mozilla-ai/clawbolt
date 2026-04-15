@@ -170,6 +170,7 @@ async def get_channel_routes(
                 channel_identifier=r.channel_identifier,
                 enabled=r.enabled,
                 created_at=r.created_at.isoformat() if r.created_at else "",
+                last_inbound_at=r.last_inbound_at.isoformat() if r.last_inbound_at else None,
             )
             for r in routes
         ]
@@ -235,6 +236,7 @@ async def update_channel_route(
         channel_identifier=route.channel_identifier,
         enabled=route.enabled,
         created_at=route.created_at.isoformat() if route.created_at else "",
+        last_inbound_at=route.last_inbound_at.isoformat() if route.last_inbound_at else None,
     )
 
 

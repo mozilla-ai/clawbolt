@@ -2,12 +2,13 @@ import { useState, useEffect, useRef } from 'react';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import { toast } from '@/lib/toast';
-import { useToggleChannelRoute } from '@/hooks/queries';
+import { useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
 import { useChannelStates } from '@/hooks/useChannelStates';
 import { useAuth } from '@/contexts/AuthContext';
 import {
   getVisibleChannels,
   getChannelStatusDisplay,
+  getImessageAddress,
   type ChannelKey,
   type ChannelState,
 } from '@/lib/channel-utils';
@@ -21,6 +22,15 @@ export default function ChannelsPage() {
   const toggleMutation = useToggleChannelRoute();
   const { states: channelStates, channelConfig, telegramLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
   const visibleChannels = getVisibleChannels(channelConfig);
+  const routesQuery = useChannelRoutes();
+  const imessageAddress = getImessageAddress(channelConfig);
+  // Map channel key -> verified boolean (inbound has been received).
+  const verifiedByChannel: Partial<Record<ChannelKey, boolean>> = {};
+  for (const r of routesQuery.data?.routes ?? []) {
+    if (r.enabled && r.last_inbound_at) {
+      verifiedByChannel[r.channel as ChannelKey] = true;
+    }
+  }
 
   // Track which config form is expanded
   const [expandedChannel, setExpandedChannel] = useState<ChannelKey | null>(null);
@@ -151,6 +161,8 @@ export default function ChannelsPage() {
                     botInfo={key === 'telegram' ? botInfo : null}
                     telegramLinkData={key === 'telegram' ? telegramLinkData : null}
                     premiumLinkData={linkDataMap[key] ?? null}
+                    imessageAddress={imessageAddress}
+                    verified={verifiedByChannel[key] ?? false}
                     onConfigSaved={() => handleConfigSaved(key)}
                     selectable
                   />
@@ -176,6 +188,8 @@ export default function ChannelsPage() {
               botInfo={key === 'telegram' ? botInfo : null}
               telegramLinkData={key === 'telegram' ? telegramLinkData : null}
               premiumLinkData={linkDataMap[key] ?? null}
+              imessageAddress={imessageAddress}
+              verified={verifiedByChannel[key] ?? false}
               onConfigSaved={() => handleConfigSaved(key)}
               selectable={false}
             />
@@ -206,6 +220,8 @@ interface ChannelCardProps {
   botInfo: TelegramBotInfo | null;
   telegramLinkData: TelegramLinkData | null;
   premiumLinkData: PremiumLinkData | null;
+  imessageAddress: string | null;
+  verified: boolean;
   onConfigSaved: () => void;
   selectable: boolean;
 }
@@ -224,6 +240,8 @@ function ChannelCard({
   botInfo,
   telegramLinkData,
   premiumLinkData,
+  imessageAddress,
+  verified,
   onConfigSaved,
   selectable,
 }: ChannelCardProps) {
@@ -309,6 +327,36 @@ function ChannelCard({
             @{botInfo.bot_username}
           </a>
           {' '}on Telegram to chat with your assistant.
+        </div>
+      )}
+
+      {/* iMessage address banner + verification status */}
+      {(channelKey === 'linq' || channelKey === 'bluebubbles')
+        && imessageAddress
+        && (state === 'configured' || state === 'active') && (
+        <div className="mt-3 ml-7 text-sm">
+          Send an iMessage to{' '}
+          <span className="font-mono font-medium text-primary">{imessageAddress}</span>
+          {' '}to chat with your assistant.
+          <div className="mt-1.5">
+            {verified ? (
+              <span
+                className="inline-flex items-center gap-1 text-xs text-success bg-success-bg px-2 py-0.5 rounded-full font-medium"
+                aria-label="Connection verified"
+              >
+                <CheckIcon />
+                Verified
+              </span>
+            ) : (
+              <span
+                className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full font-medium"
+                aria-label="Waiting for first message to verify connection"
+              >
+                <span className="w-2 h-2 rounded-full bg-muted-foreground/50 animate-pulse" />
+                Waiting for your first message
+              </span>
+            )}
+          </div>
         </div>
       )}
 

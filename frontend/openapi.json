@@ -1750,6 +1750,17 @@
           "created_at": {
             "type": "string",
             "title": "Created At"
+          },
+          "last_inbound_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Inbound At"
           }
         },
         "type": "object",

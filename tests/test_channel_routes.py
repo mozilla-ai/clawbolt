@@ -213,3 +213,45 @@ def test_heartbeat_resolve_none_when_all_disabled(test_user: User) -> None:
         db.close()
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# last_inbound_at: stamped on every inbound routing
+# ---------------------------------------------------------------------------
+
+
+def test_last_inbound_at_null_until_first_inbound(client: TestClient, test_user: User) -> None:
+    """Newly-created route reports last_inbound_at=None until a message arrives."""
+    _create_route(test_user.id, "telegram", "111", enabled=True)
+
+    resp = client.get("/api/user/channels/routes")
+    assert resp.status_code == 200
+    routes = resp.json()["routes"]
+    assert len(routes) == 1
+    assert routes[0]["last_inbound_at"] is None
+
+
+@pytest.mark.asyncio
+async def test_last_inbound_at_stamped_by_ingestion(client: TestClient, test_user: User) -> None:
+    """An inbound message resolving to a route updates last_inbound_at so the
+    channel picker UI can flip to "Verified"."""
+    _create_route(test_user.id, "telegram", "111", enabled=True)
+
+    with patch.object(message_bus, "publish_outbound", new_callable=AsyncMock):
+        await process_inbound_from_bus(
+            InboundMessage(
+                channel="telegram",
+                sender_id="111",
+                text="hello",
+                session_id="test-session",
+                external_message_id="ext-1",
+                media_refs=[],
+            )
+        )
+
+    resp = client.get("/api/user/channels/routes")
+    assert resp.status_code == 200
+    routes = resp.json()["routes"]
+    stamped = next((r for r in routes if r["channel"] == "telegram"), None)
+    assert stamped is not None
+    assert stamped["last_inbound_at"] is not None
