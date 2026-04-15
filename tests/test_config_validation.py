@@ -88,7 +88,17 @@ class TestLogConfigWarnings:
     """log_config_warnings emits warnings for unusual but valid values."""
 
     def test_no_warnings_with_defaults(self) -> None:
-        s = Settings(encryption_key=SecretStr("a-secure-random-key-at-least-32-chars"))
+        # Explicit overrides for env vars that leak from a local .env into
+        # tests (LINQ_*, BLUEBUBBLES_*) so this test is deterministic in
+        # any developer's shell.
+        s = Settings(
+            encryption_key=SecretStr("a-secure-random-key-at-least-32-chars"),
+            linq_api_token="",
+            linq_from_number="",
+            bluebubbles_server_url="",
+            bluebubbles_password="",
+            bluebubbles_imessage_address="",
+        )
         assert log_config_warnings(s) == []
 
     def test_warns_missing_encryption_key(self) -> None:
@@ -190,3 +200,42 @@ class TestIMessageBackend:
         )
         with pytest.raises(RuntimeError, match="iMessage"):
             validate_imessage_backend(s)
+
+
+class TestIMessageAddressWarning:
+    """log_config_warnings flags a configured iMessage backend with empty address."""
+
+    def test_warns_linq_configured_without_from_number(self) -> None:
+        s = Settings(linq_api_token="tok", linq_from_number="")
+        warnings = log_config_warnings(s)
+        assert any("LINQ_FROM_NUMBER is empty" in w for w in warnings)
+
+    def test_no_warning_when_linq_from_number_set(self) -> None:
+        s = Settings(linq_api_token="tok", linq_from_number="+15551234567")
+        warnings = log_config_warnings(s)
+        assert not any("LINQ_FROM_NUMBER" in w for w in warnings)
+
+    def test_warns_bluebubbles_configured_without_imessage_address(self) -> None:
+        s = Settings(
+            bluebubbles_server_url="https://mac.ngrok.io",
+            bluebubbles_password="p",
+            bluebubbles_imessage_address="",
+        )
+        warnings = log_config_warnings(s)
+        assert any("BLUEBUBBLES_IMESSAGE_ADDRESS is empty" in w for w in warnings)
+
+    def test_no_warning_when_bluebubbles_imessage_address_set(self) -> None:
+        s = Settings(
+            bluebubbles_server_url="https://mac.ngrok.io",
+            bluebubbles_password="p",
+            bluebubbles_imessage_address="clawbolt@icloud.com",
+        )
+        warnings = log_config_warnings(s)
+        assert not any("BLUEBUBBLES_IMESSAGE_ADDRESS" in w for w in warnings)
+
+    def test_no_warning_when_no_imessage_backend_configured(self) -> None:
+        s = Settings(linq_api_token="", bluebubbles_server_url="", bluebubbles_password="")
+        warnings = log_config_warnings(s)
+        assert not any(
+            "LINQ_FROM_NUMBER" in w or "BLUEBUBBLES_IMESSAGE_ADDRESS" in w for w in warnings
+        )

@@ -321,6 +321,21 @@ def log_config_warnings(s: Settings | None = None) -> list[str]:
             " trimming will never trigger"
         )
 
+    # Warn when an iMessage backend is configured but the address users are
+    # supposed to text isn't set. The channel picker UI falls back to generic
+    # copy in that case, leaving users with no idea where to send messages.
+    backend = resolve_imessage_backend(s)
+    if backend == "linq" and not s.linq_from_number:
+        warnings.append(
+            "LINQ_API_TOKEN is set but LINQ_FROM_NUMBER is empty;"
+            " the iMessage channel picker will not show an address for users to text"
+        )
+    elif backend == "bluebubbles" and not s.bluebubbles_imessage_address:
+        warnings.append(
+            "BlueBubbles is configured but BLUEBUBBLES_IMESSAGE_ADDRESS is empty;"
+            " the iMessage channel picker will not show an address for users to text"
+        )
+
     enc_key = s.encryption_key.get_secret_value()
     if not enc_key:
         warnings.append(
