@@ -241,6 +241,17 @@ export function useChannelRoutes() {
   return useQuery({
     queryKey: queryKeys.channelRoutes,
     queryFn: () => api.getChannelRoutes(),
+    // Poll while any enabled non-webchat route is still waiting for its first
+    // inbound message so the channel picker can flip to "Verified" without the
+    // user refreshing. Stops once every enabled route has a last_inbound_at.
+    refetchInterval: (query) => {
+      const data = query.state.data;
+      if (!data) return false;
+      const hasUnverified = data.routes.some(
+        (r) => r.enabled && r.channel !== 'webchat' && !r.last_inbound_at,
+      );
+      return hasUnverified ? 3000 : false;
+    },
   });
 }
 

@@ -206,6 +206,10 @@ class ChannelRoute(Base):
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # Set whenever an inbound message resolves to this route. The channel
+    # picker UI reads this field to flip to a "Verified" state so users see
+    # that their configured channel actually delivers messages end-to-end.
+    last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="channel_routes")
 

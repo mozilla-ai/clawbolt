@@ -885,6 +885,8 @@ export interface components {
             enabled: boolean;
             /** Created At */
             created_at: string;
+            /** Last Inbound At */
+            last_inbound_at?: string | null;
         };
         /** ChannelRouteUpdate */
         ChannelRouteUpdate: {

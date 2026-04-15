@@ -45,6 +45,9 @@ export default function GetStartedPage() {
   }, [isPremium]);
 
   const routes = routesData?.routes ?? [];
+  const verifiedChannels = new Set(
+    routes.filter((r) => r.enabled && r.last_inbound_at).map((r) => r.channel),
+  );
 
   const linqConfigured = channelConfig ? isServerAvailable('linq', channelConfig) : false;
   const fromNumber = channelConfig?.linq_from_number ?? '';
@@ -258,6 +261,7 @@ export default function GetStartedPage() {
                     subtitle="Send an iMessage to this address to get started."
                     qrSize={80}
                   />
+                  <VerifyBadge verified={verifiedChannels.has('linq')} />
                 </div>
               ) : selectedChannel === 'bluebubbles' && bbConfigured && bbAddress ? (
                 <div className="mt-2">
@@ -266,6 +270,7 @@ export default function GetStartedPage() {
                     subtitle="Send an iMessage to this address to get started."
                     qrSize={80}
                   />
+                  <VerifyBadge verified={verifiedChannels.has('bluebubbles')} />
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-1">
@@ -394,6 +399,32 @@ function ChannelRadioItem({
         </span>
       )}
     </label>
+  );
+}
+
+function VerifyBadge({ verified }: { verified: boolean }) {
+  return (
+    <div className="mt-2">
+      {verified ? (
+        <span
+          className="inline-flex items-center gap-1 text-xs text-success bg-success-bg px-2 py-0.5 rounded-full font-medium"
+          aria-label="Connection verified"
+        >
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
+          </svg>
+          Verified
+        </span>
+      ) : (
+        <span
+          className="inline-flex items-center gap-1 text-xs text-muted-foreground bg-muted px-2 py-0.5 rounded-full font-medium"
+          aria-label="Waiting for first message to verify connection"
+        >
+          <span className="w-2 h-2 rounded-full bg-muted-foreground/50 animate-pulse" />
+          Waiting for your first message
+        </span>
+      )}
+    </div>
   );
 }
 

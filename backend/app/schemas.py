@@ -127,6 +127,10 @@ class ChannelRouteResponse(BaseModel):
     channel_identifier: str
     enabled: bool
     created_at: str
+    # ISO-8601 timestamp of the last inbound message that resolved to this
+    # route, or None if the user has never successfully messaged through it.
+    # The channel picker UI uses this to flip to a "Verified" state.
+    last_inbound_at: str | None = None
 
 
 class ChannelRouteListResponse(BaseModel):
