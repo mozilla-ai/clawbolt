@@ -57,6 +57,12 @@ _MEMORY_DOC_COLUMN: dict[str, str] = {
     "HISTORY.md": "history_text",
 }
 
+# PERMISSIONS.json is routed to the UserPermissionSet DB row rather
+# than the per-user filesystem directory. ApprovalStore writes the same
+# row, so the typed approval API and the raw read/write/edit tools
+# share a single source of truth.
+_PERMISSIONS_FILE = "PERMISSIONS.json"
+
 
 class ReadFileParams(BaseModel):
     """Parameters for the read_file tool."""
@@ -219,6 +225,124 @@ async def _memory_doc_write(user_id: str, column: str, content: str) -> None:
     await asyncio.to_thread(_memory_doc_write_sync, user_id, column, content)
 
 
+def _is_permissions_path(relative_path: str) -> bool:
+    """Return True if ``relative_path`` refers to the top-level PERMISSIONS.json.
+
+    Case-insensitive on the filename so a lowercase ``permissions.json``
+    from the LLM doesn't fall through to the disk path (where it would
+    be unprotected and writable).
+    """
+    try:
+        name = Path(relative_path).name
+    except (ValueError, OSError):
+        return False
+    if name.casefold() != _PERMISSIONS_FILE.casefold():
+        return False
+    stripped = relative_path.lstrip("./")
+    return not ("/" in stripped or relative_path.startswith(".."))
+
+
+def _permissions_read_sync(user_id: str) -> str:
+    from backend.app.models import UserPermissionSet
+
+    db = SessionLocal()
+    try:
+        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        if row is None:
+            return ""
+        return row.data or ""
+    finally:
+        db.close()
+
+
+async def _permissions_read(user_id: str) -> str:
+    return await asyncio.to_thread(_permissions_read_sync, user_id)
+
+
+def _permissions_write_sync(user_id: str, content: str) -> None:
+    """Persist PERMISSIONS.json content, normalizing to indented JSON.
+
+    Stable pretty-printing matters: ApprovalStore pretty-prints on every
+    set_permission, and edit_file's old_text matching breaks if one
+    writer leaves a minified blob. Parse + re-serialize so every reader
+    sees the same shape regardless of what the caller passed in.
+    Malformed JSON is stored verbatim as a narrow escape hatch.
+
+    Uses the same advisory lock as ApprovalStore so workspace writes
+    serialize correctly against set_permission / dashboard PUT.
+    """
+    import json as _json
+
+    from backend.app.agent.approval import _lock_user_permissions
+    from backend.app.database import db_session
+    from backend.app.models import UserPermissionSet
+
+    try:
+        parsed = _json.loads(content)
+    except (_json.JSONDecodeError, ValueError):
+        payload = content
+    else:
+        payload = _json.dumps(parsed, indent=2, default=str)
+
+    with db_session() as db:
+        _lock_user_permissions(db, user_id)
+        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        if row is None:
+            db.add(UserPermissionSet(user_id=user_id, data=payload))
+        else:
+            row.data = payload
+        db.commit()
+
+
+async def _permissions_write(user_id: str, content: str) -> None:
+    await asyncio.to_thread(_permissions_write_sync, user_id, content)
+
+
+def _permissions_edit_sync(user_id: str, old_text: str, new_text: str) -> tuple[bool, str]:
+    """Atomic text replace on PERMISSIONS.json.
+
+    Returns ``(ok, detail)``: ``ok=True`` with ``detail=""`` on success,
+    ``ok=False`` with a user-facing error string otherwise. All work
+    runs in a single locked transaction so concurrent set_permission /
+    dashboard PUT / write_file calls can't steal the row between our
+    read and write.
+    """
+    import json as _json
+
+    from backend.app.agent.approval import _lock_user_permissions
+    from backend.app.database import db_session
+    from backend.app.models import UserPermissionSet
+
+    with db_session() as db:
+        _lock_user_permissions(db, user_id)
+        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        current = (row.data if row is not None else "") or ""
+
+        if old_text not in current:
+            return (False, "text_not_found")
+        if current.count(old_text) > 1:
+            return (False, "ambiguous")
+
+        updated = current.replace(old_text, new_text, 1)
+        try:
+            parsed = _json.loads(updated)
+        except (_json.JSONDecodeError, ValueError):
+            payload = updated
+        else:
+            payload = _json.dumps(parsed, indent=2, default=str)
+
+        if row is None:
+            db.add(UserPermissionSet(user_id=user_id, data=payload))
+        else:
+            row.data = payload
+        db.commit()
+    return (True, "")
+
+
+async def _permissions_edit(user_id: str, old_text: str, new_text: str) -> tuple[bool, str]:
+    return await asyncio.to_thread(_permissions_edit_sync, user_id, old_text, new_text)
+
+
 def create_workspace_tools(user_id: str) -> list[Tool]:
     """Create generic file tools scoped to the user's data directory."""
 
@@ -232,6 +356,10 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         mem_col = _memory_doc_column(path)
         if mem_col:
             content = await _memory_doc_read(user_id, mem_col)
+            return ToolResult(content=content or "(empty)")
+
+        if _is_permissions_path(path):
+            content = await _permissions_read(user_id)
             return ToolResult(content=content or "(empty)")
 
         resolved, err = _resolve_path(user_id, path)
@@ -256,6 +384,10 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
         mem_col = _memory_doc_column(path)
         if mem_col:
             await _memory_doc_write(user_id, mem_col, content)
+            return ToolResult(content=f"Wrote {path}")
+
+        if _is_permissions_path(path):
+            await _permissions_write(user_id, content)
             return ToolResult(content=f"Wrote {path}")
 
         resolved, err = _resolve_path(user_id, path)
@@ -307,6 +439,32 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
             updated = text.replace(old_text, new_text, 1)
             await _memory_doc_write(user_id, mem_col, updated)
             return ToolResult(content=f"Updated {path}")
+
+        if _is_permissions_path(path):
+            ok, detail = await _permissions_edit(user_id, old_text, new_text)
+            if ok:
+                return ToolResult(content=f"Updated {path}")
+            if detail == "text_not_found":
+                return ToolResult(
+                    content=(
+                        f"Text not found in {path}. Read the file first to see current contents."
+                    ),
+                    is_error=True,
+                    error_kind=ToolErrorKind.NOT_FOUND,
+                )
+            if detail == "ambiguous":
+                return ToolResult(
+                    content=(
+                        f"Found multiple matches in {path}. Provide more context to match uniquely."
+                    ),
+                    is_error=True,
+                    error_kind=ToolErrorKind.VALIDATION,
+                )
+            return ToolResult(
+                content=f"Failed to edit {path}",
+                is_error=True,
+                error_kind=ToolErrorKind.INTERNAL,
+            )
 
         resolved, err = _resolve_path(user_id, path)
         if err:

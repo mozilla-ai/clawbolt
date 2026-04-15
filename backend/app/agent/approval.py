@@ -22,14 +22,16 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from enum import StrEnum
 from fnmatch import fnmatch
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from any_llm import acompletion
 from any_llm.types.completion import ChatCompletion
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from backend.app.config import settings
+from backend.app.database import db_session
+from backend.app.models import UserPermissionSet
 
 if TYPE_CHECKING:
     from backend.app.bus import OutboundMessage
@@ -38,31 +40,37 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# File I/O helpers (self-contained, no file_store dependency)
+# ApprovalStore helpers
 # ---------------------------------------------------------------------------
 
 
-def _user_dir(user_id: str) -> Path:
-    """Return the directory for a specific user."""
-    return Path(settings.data_dir) / str(user_id)
+def _lock_user_permissions(db: Any, user_id: str) -> None:
+    """Acquire a transaction-scoped Postgres advisory lock for this user's
+    permissions row.
+
+    Serializes concurrent read-modify-write sequences across workers and
+    requests. Released automatically at COMMIT / ROLLBACK. Postgres-only;
+    the project's test + production databases are both Postgres.
+    """
+    db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+        {"k": f"user_permissions:{user_id}"},
+    )
 
 
-def _read_json(path: Path, default: Any = None) -> Any:
-    """Read and parse a JSON file. Returns default if missing/corrupt."""
-    if not path.exists():
+def _parse_row_data(row: UserPermissionSet | None) -> dict[str, Any]:
+    """Parse a UserPermissionSet.data blob into a dict, falling back to
+    the default shape on missing row or malformed JSON."""
+    default = {"version": _PERMISSIONS_VERSION, "tools": {}, "resources": {}}
+    if row is None:
         return default
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        parsed = json.loads(row.data)
     except (json.JSONDecodeError, ValueError):
         return default
-
-
-def _write_json(path: Path, data: Any) -> None:
-    """Write data as JSON to a file atomically."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, indent=2, default=str) + "\n", encoding="utf-8")
-    tmp.rename(path)
+    if not isinstance(parsed, dict):
+        return default
+    return parsed
 
 
 # ---------------------------------------------------------------------------
@@ -196,17 +204,25 @@ class ApprovalStore:
     Resolution order: resource match (exact then glob) > tool match > policy default.
     """
 
-    def _permissions_path(self, user_id: str) -> Path:
-        return _user_dir(user_id) / "PERMISSIONS.json"
-
     def _load(self, user_id: str) -> dict[str, Any]:
-        data = _read_json(self._permissions_path(user_id), default=None)
-        if data is None or not isinstance(data, dict):
-            return {"version": _PERMISSIONS_VERSION, "tools": {}, "resources": {}}
-        return data
+        with db_session() as db:
+            row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+            return _parse_row_data(row)
 
     def _save(self, user_id: str, data: dict[str, Any]) -> None:
-        _write_json(self._permissions_path(user_id), data)
+        """Wholesale replace. Serialized against concurrent writers via an
+        advisory lock keyed on the user so the dashboard PUT can't race
+        with set_permission or a workspace_tools write on the same row.
+        """
+        payload = json.dumps(data, indent=2, default=str)
+        with db_session() as db:
+            _lock_user_permissions(db, user_id)
+            row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+            if row is None:
+                db.add(UserPermissionSet(user_id=user_id, data=payload))
+            else:
+                row.data = payload
+            db.commit()
 
     def load_user_permissions(self, user_id: str) -> dict[str, Any]:
         """Load the raw permission data for a user.
@@ -295,19 +311,39 @@ class ApprovalStore:
         level: PermissionLevel,
         resource: str | None = None,
     ) -> None:
-        """Store a permission override for a tool or resource.
+        """Store a permission override atomically.
 
-        Backfills the complete tool list first so that setting one
-        permission does not lose other entries.
+        Runs the read-modify-write inside a single transaction guarded by
+        a Postgres advisory lock keyed on the user. Otherwise two
+        concurrent callers (the approval gate persisting an Always, the
+        dashboard PUT, and/or an agent edit_file) could read the same
+        snapshot and overwrite each other -- classic lost update. The
+        lock plus same-transaction read+write closes the window.
+
+        Backfills the complete tool list before writing so setting one
+        permission doesn't drop other entries.
         """
-        data = self.ensure_complete(user_id)
-        if resource is not None:
-            resources = data.setdefault("resources", {})
-            tool_resources = resources.setdefault(tool_name, {})
-            tool_resources[resource] = str(level)
-        else:
-            data.setdefault("tools", {})[tool_name] = str(level)
-        self._save(user_id, data)
+        with db_session() as db:
+            _lock_user_permissions(db, user_id)
+            row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+            data = _parse_row_data(row)
+
+            # ensure_complete-style backfill: fill missing tool defaults.
+            defaults = self.generate_defaults(user_id)
+            for tname, default_level in defaults["tools"].items():
+                data.setdefault("tools", {}).setdefault(tname, default_level)
+
+            if resource is not None:
+                data.setdefault("resources", {}).setdefault(tool_name, {})[resource] = str(level)
+            else:
+                data.setdefault("tools", {})[tool_name] = str(level)
+
+            payload = json.dumps(data, indent=2, default=str)
+            if row is None:
+                db.add(UserPermissionSet(user_id=user_id, data=payload))
+            else:
+                row.data = payload
+            db.commit()
 
 
 # ---------------------------------------------------------------------------

@@ -49,13 +49,23 @@ export default function PermissionsPage() {
     }
   }, [rawContent]);
 
+  const visibleTools = useMemo(() => {
+    // Exclude sub-tools flagged hidden_in_permissions (e.g. send_reply) and
+    // then drop any tool group left without visible sub-tools.
+    return tools
+      .map((t) => ({
+        ...t,
+        sub_tools: (t.sub_tools ?? []).filter((st) => !st.hidden_in_permissions),
+      }))
+      .filter((t) => t.sub_tools.length > 0);
+  }, [tools]);
   const coreTools = useMemo(
-    () => tools.filter((t) => t.category === 'core' && (t.sub_tools?.length ?? 0) > 0),
-    [tools],
+    () => visibleTools.filter((t) => t.category === 'core'),
+    [visibleTools],
   );
   const domainTools = useMemo(
-    () => tools.filter((t) => t.category === 'domain' && (t.sub_tools?.length ?? 0) > 0),
-    [tools],
+    () => visibleTools.filter((t) => t.category === 'domain'),
+    [visibleTools],
   );
 
   const toggleCollapsed = (name: string) => {

@@ -435,3 +435,28 @@ class OAuthToken(Base):
     )
 
     user: Mapped["User"] = relationship("User", back_populates="oauth_tokens")
+
+
+class UserPermissionSet(Base):
+    """Per-user tool/resource permission overrides (formerly PERMISSIONS.json).
+
+    Stores the full permissions document as a JSON-encoded string so the
+    app-layer shape matches the legacy file format unchanged. One row per
+    user; ``ApprovalStore`` reads/writes this instead of the filesystem.
+
+    No FK / ORM relationship to ``User``: the approval store is exercised
+    by lightweight unit tests that don't insert a ``User`` row, and
+    production uses soft-delete (``is_active = False``) rather than hard
+    row deletion, so cascade cleanup would never fire anyway. Orphan
+    hygiene, if ever needed, is handled explicitly at the call site.
+    """
+
+    __tablename__ = "user_permissions"
+
+    user_id: Mapped[str] = mapped_column(String, primary_key=True)
+    data: Mapped[str] = mapped_column(Text, default="{}")
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )

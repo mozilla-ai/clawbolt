@@ -1194,6 +1194,11 @@ export interface components {
              * @default always
              */
             permission_level: string;
+            /**
+             * Hidden In Permissions
+             * @default false
+             */
+            hidden_in_permissions: boolean;
         };
         /** TelegramBotInfoResponse */
         TelegramBotInfoResponse: {

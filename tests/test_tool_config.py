@@ -328,9 +328,12 @@ def test_sub_tool_info_default_permission() -> None:
     assert ws_sub_tools["write_file"].default_permission == "always"
     assert ws_sub_tools["delete_file"].default_permission == "ask"
 
-    # messaging tools are all ask
+    # messaging tools default to always and are hidden from the Permissions UI
     msg_sub_tools = {st.name: st for st in default_registry.get_factory_sub_tools("messaging")}
-    assert msg_sub_tools["send_reply"].default_permission == "ask"
+    assert msg_sub_tools["send_reply"].default_permission == "always"
+    assert msg_sub_tools["send_reply"].hidden_in_permissions is True
+    assert msg_sub_tools["send_media_reply"].default_permission == "always"
+    assert msg_sub_tools["send_media_reply"].hidden_in_permissions is True
 
 
 # ---------------------------------------------------------------------------

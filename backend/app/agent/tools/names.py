@@ -46,11 +46,6 @@ class ToolName:
     LIST_CAPABILITIES = "list_capabilities"
     MANAGE_INTEGRATION = "manage_integration"
 
-    # Synthetic records (not LLM-callable; emitted by the approval system
-    # so permission remembers show up in chat history alongside real tool
-    # calls.)
-    UPDATE_PERMISSION = "update_permission"
-
     # Heartbeat (not registered in the main tool registry)
     COMPOSE_MESSAGE = "compose_message"
     HEARTBEAT_DECISION = "heartbeat_decision"
