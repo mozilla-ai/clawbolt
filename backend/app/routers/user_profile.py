@@ -8,7 +8,12 @@ from sqlalchemy.orm import Session
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.channels import is_bluebubbles_configured, reset_channel_clients
-from backend.app.config import save_persistent_config, settings, update_settings
+from backend.app.config import (
+    resolve_imessage_backend,
+    save_persistent_config,
+    settings,
+    update_settings,
+)
 from backend.app.database import get_db
 from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
 from backend.app.query_helpers import get_or_404
@@ -96,6 +101,7 @@ def _build_channel_config_response() -> ChannelConfigResponse:
     return ChannelConfigResponse(
         telegram_bot_token_set=bool(settings.telegram_bot_token),
         telegram_allowed_chat_id=settings.telegram_allowed_chat_id,
+        imessage_backend=resolve_imessage_backend(),
         linq_api_token_set=bool(settings.linq_api_token),
         linq_from_number=settings.linq_from_number,
         linq_allowed_numbers=settings.linq_allowed_numbers,

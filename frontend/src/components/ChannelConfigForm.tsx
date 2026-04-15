@@ -65,17 +65,18 @@ interface PremiumLinkConfig {
 const PREMIUM_LINK_CONFIGS: Partial<Record<ChannelKey, PremiumLinkConfig>> = {
   linq: {
     channelKey: 'linq',
-    displayName: 'Text Messaging',
+    displayName: 'iMessage',
     label: 'Your Phone Number',
     placeholder: 'e.g. +15551234567',
-    helpText: "E.164 format phone number. This is the number you'll text from.",
+    helpText: "E.164 format phone number. This is the number you'll send messages from.",
     inputMode: 'tel',
     getAssistantAddress: (config) => config?.linq_from_number ?? '',
+    assistantSubtitle: 'Send an iMessage to this address to reach your assistant.',
     setLink: (id) => api.setLinqLink(id),
   },
   bluebubbles: {
     channelKey: 'bluebubbles',
-    displayName: 'BlueBubbles',
+    displayName: 'iMessage',
     label: 'Your Phone Number or iCloud Email',
     placeholder: 'e.g. +15551234567 or user@icloud.com',
     helpText: 'The phone number or iCloud email you send iMessages from.',
@@ -253,7 +254,7 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
       onSuccess: () => {
         setAllowedNumber(null);
         setPreferredService(null);
-        toast.success('Linq settings updated');
+        toast.success('iMessage settings updated');
         onSaved();
       },
       onError: (e) => toast.error(e.message),
@@ -320,7 +321,7 @@ function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
       onSuccess: () => {
         setAllowedNumbers(null);
         setImessageAddress(null);
-        toast.success('BlueBubbles settings updated');
+        toast.success('iMessage settings updated');
         onSaved();
       },
       onError: (e) => toast.error(e.message),

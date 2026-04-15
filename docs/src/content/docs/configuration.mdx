@@ -47,12 +47,18 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `MESSAGING_PROVIDER` | `telegram` | Default messaging backend. Both Telegram and Linq channels can run simultaneously |
+| `MESSAGING_PROVIDER` | `telegram` | Default messaging backend. Telegram and iMessage channels can run simultaneously; only one iMessage backend (Linq OR BlueBubbles) may be configured at a time |
 | `TELEGRAM_BOT_TOKEN` | | Bot token from @BotFather |
 | `TELEGRAM_WEBHOOK_SECRET` | (auto-derived) | Webhook validation secret. Auto-derived from bot token if not set |
 | `TELEGRAM_ALLOWED_CHAT_ID` | (empty) | Your numeric Telegram user ID, or `*` to allow all. Only a single ID is allowed per user. Empty = deny all |
 
-## Linq settings (iMessage/RCS/SMS)
+## iMessage backends
+
+Clawbolt's user-facing "iMessage" channel is powered by one of two interchangeable
+backends. Choose one: configuring both at once will cause the app to refuse to start.
+End users see a single "iMessage" option regardless of which backend you pick.
+
+### Linq (hosted iMessage/RCS/SMS)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -62,9 +68,9 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 | `LINQ_ALLOWED_NUMBERS` | (empty) | E.164 phone number, `*` for all, or empty to deny all |
 | `LINQ_PREFERRED_SERVICE` | `iMessage` | Preferred messaging service: `iMessage`, `SMS`, or `RCS` |
 
-When `LINQ_API_TOKEN` is set, the Linq channel is active and users can text their assistant from their phone's native messaging app. Linq provides iMessage, RCS, and SMS access via [linqapp.com](https://linqapp.com).
+When `LINQ_API_TOKEN` is set, the iMessage channel is powered by Linq and users can text their assistant from their phone's native messaging app. Linq provides iMessage, RCS, and SMS access via [linqapp.com](https://linqapp.com).
 
-## BlueBubbles settings (self-hosted iMessage bridge)
+### BlueBubbles (self-hosted iMessage bridge)
 
 | Variable | Default | Description |
 |----------|---------|-------------|
@@ -74,7 +80,7 @@ When `LINQ_API_TOKEN` is set, the Linq channel is active and users can text thei
 | `BLUEBUBBLES_SEND_METHOD` | `apple-script` | Send method: `apple-script` (default) or `private-api` |
 | `BLUEBUBBLES_IMESSAGE_ADDRESS` | (empty) | iCloud email or phone number displayed in the UI for users to text |
 
-When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the BlueBubbles channel is active. [BlueBubbles](https://github.com/BlueBubblesApp/bluebubbles-server) is a free, open-source iMessage bridge that runs on any Mac with iMessage signed in.
+When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage channel is powered by BlueBubbles. [BlueBubbles](https://github.com/BlueBubblesApp/bluebubbles-server) is a free, open-source iMessage bridge that runs on any Mac with iMessage signed in.
 
 ## Storage settings
 

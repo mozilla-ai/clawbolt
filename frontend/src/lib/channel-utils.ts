@@ -5,11 +5,31 @@ export type ChannelState = 'unavailable' | 'available' | 'configured' | 'active'
 
 export type ChannelKey = (typeof MESSAGING_CHANNELS)[number]['key'];
 
+// Real backend channel keys. `linq` and `bluebubbles` are both rendered to the
+// user as "iMessage"; which one shows up at runtime is determined by which
+// backend the admin has configured. Users never see the backend name.
 export const MESSAGING_CHANNELS = [
   { key: 'telegram', label: 'Telegram' },
-  { key: 'linq', label: 'Text Messaging (iMessage / RCS / SMS)' },
-  { key: 'bluebubbles', label: 'BlueBubbles (iMessage)' },
+  { key: 'linq', label: 'iMessage' },
+  { key: 'bluebubbles', label: 'iMessage' },
 ] as const;
+
+/** Return the subset of MESSAGING_CHANNELS the user should see, filtered by
+ * which iMessage backend (if any) the admin has configured. The mutual
+ * exclusion between Linq and BlueBubbles is enforced at server startup, so at
+ * most one of them will ever be present in the visible list. */
+export function getVisibleChannels(
+  config: ChannelConfigResponse | undefined,
+): ReadonlyArray<(typeof MESSAGING_CHANNELS)[number]> {
+  // Before the config loads we can't know which iMessage backend (if any) to
+  // render, so we show only the always-available entries. Once config arrives
+  // we include the single iMessage card matching config.imessage_backend.
+  if (!config) return MESSAGING_CHANNELS.filter((ch) => ch.key === 'telegram');
+  return MESSAGING_CHANNELS.filter((ch) => {
+    if (ch.key === 'telegram') return true;
+    return ch.key === config.imessage_backend;
+  });
+}
 
 /** Premium link data keyed by channel. Adding a channel here is all that's needed. */
 export type PremiumChannelData = {
@@ -20,8 +40,8 @@ export type PremiumChannelData = {
 /** Whether the server has the necessary credentials/config for this channel. */
 export function isServerAvailable(key: ChannelKey, config: ChannelConfigResponse): boolean {
   if (key === 'telegram') return config.telegram_bot_token_set;
-  if (key === 'linq') return config.linq_api_token_set;
-  if (key === 'bluebubbles') return config.bluebubbles_configured;
+  if (key === 'linq') return config.imessage_backend === 'linq';
+  if (key === 'bluebubbles') return config.imessage_backend === 'bluebubbles';
   return false;
 }
 

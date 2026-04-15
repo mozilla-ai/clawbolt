@@ -84,7 +84,7 @@ Tool selection is context-aware: the registry picks relevant tools based on mess
 
 ### Channel abstraction
 
-The async message bus (`bus.py`) decouples the agent from delivery mechanics. Channels publish inbound messages to the bus and the `ChannelManager` dispatches outbound replies to the correct channel. The agent only interacts with the bus, never with channel implementations directly. Current channels are Linq (iMessage/RCS/SMS) and Telegram, and new channels can be added without modifying the agent.
+The async message bus (`bus.py`) decouples the agent from delivery mechanics. Channels publish inbound messages to the bus and the `ChannelManager` dispatches outbound replies to the correct channel. The agent only interacts with the bus, never with channel implementations directly. Current channels are Telegram and two interchangeable iMessage backends: Linq (hosted iMessage/RCS/SMS) and BlueBubbles (self-hosted iMessage bridge). Users see whichever iMessage backend the operator configures as a single unified "iMessage" option in the UI. New channels can be added without modifying the agent.
 
 ### Storage abstraction
 

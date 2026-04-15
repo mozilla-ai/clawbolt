@@ -6,7 +6,7 @@ import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
 import { useUpdateProfile, useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
-import { MESSAGING_CHANNELS, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
+import { getVisibleChannels, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
 import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
 import api from '@/api';
 import type { AppShellContext } from '@/layouts/AppShell';
@@ -20,6 +20,7 @@ export default function GetStartedPage() {
   const updateProfile = useUpdateProfile();
   const { data: channelConfig } = useChannelConfig();
   const { data: routesData } = useChannelRoutes();
+  const visibleChannels = getVisibleChannels(channelConfig);
   const toggleChannelRoute = useToggleChannelRoute();
   const [selectedChannel, setSelectedChannel] = useState<Selection | null>(null);
   const [confirmedChannel, setConfirmedChannel] = useState<Selection | null>(null);
@@ -51,7 +52,7 @@ export default function GetStartedPage() {
   const bbConfigured = channelConfig ? isServerAvailable('bluebubbles', channelConfig) : false;
 
   // Find the currently active channel route
-  const activeChannelKey = MESSAGING_CHANNELS.find(
+  const activeChannelKey = visibleChannels.find(
     (ch) => routes.some((r) => r.channel === ch.key && r.enabled),
   )?.key ?? null;
 
@@ -139,7 +140,7 @@ export default function GetStartedPage() {
   const step2Label = selectedChannel === 'none'
     ? 'No setup needed'
     : selectedChannel
-      ? `Configure ${MESSAGING_CHANNELS.find((c) => c.key === selectedChannel)?.label ?? selectedChannel}`
+      ? `Configure ${visibleChannels.find((c) => c.key === selectedChannel)?.label ?? selectedChannel}`
       : 'Configure your channel';
 
   return (
@@ -168,7 +169,7 @@ export default function GetStartedPage() {
                 Pick how you want to talk to Clawbolt. You can change this later.
               </p>
               <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Messaging channel">
-                {MESSAGING_CHANNELS.map(({ key, label }) => {
+                {visibleChannels.map(({ key, label }) => {
                   const configured = channelConfig ? isServerAvailable(key, channelConfig) : false;
                   return (
                     <ChannelRadioItem
@@ -250,15 +251,15 @@ export default function GetStartedPage() {
                 <span className="text-xs font-medium text-muted-foreground">Step 3</span>
               </div>
               <h3 className="text-sm font-semibold font-display">Send a message</h3>
-              {linqConfigured && fromNumber && selectedChannel === 'linq' ? (
+              {selectedChannel === 'linq' && linqConfigured && fromNumber ? (
                 <div className="mt-2">
                   <TextAssistantCard
                     fromNumber={fromNumber}
-                    subtitle="Just say hello to get started."
+                    subtitle="Send an iMessage to this address to get started."
                     qrSize={80}
                   />
                 </div>
-              ) : bbConfigured && bbAddress && selectedChannel === 'bluebubbles' ? (
+              ) : selectedChannel === 'bluebubbles' && bbConfigured && bbAddress ? (
                 <div className="mt-2">
                   <TextAssistantCard
                     fromNumber={bbAddress}
@@ -272,31 +273,29 @@ export default function GetStartedPage() {
                     ? 'Use the chat in the sidebar to talk to your assistant.'
                     : selectedChannel === 'telegram'
                       ? 'Open Telegram and send a message to your bot to get started.'
-                      : selectedChannel === 'bluebubbles'
-                        ? 'Send an iMessage to get started.'
-                        : linqConfigured && fromNumber
-                          ? 'Text your assistant to get started.'
-                          : (
-                              <>
-                                Text messaging is not configured yet. You can also{' '}
-                                <button
-                                  type="button"
-                                  className="text-primary hover:underline font-medium"
-                                  onClick={() => navigate('/app/chat')}
-                                >
-                                  chat from the web
-                                </button>
-                                {' '}or{' '}
-                                <button
-                                  type="button"
-                                  className="text-primary hover:underline font-medium"
-                                  onClick={() => navigate('/app/channels')}
-                                >
-                                  set up a channel
-                                </button>
-                                .
-                              </>
-                            )}
+                      : selectedChannel === 'linq' || selectedChannel === 'bluebubbles'
+                        ? 'Send an iMessage to your assistant to get started.'
+                        : (
+                            <>
+                              No messaging channel is configured yet. You can also{' '}
+                              <button
+                                type="button"
+                                className="text-primary hover:underline font-medium"
+                                onClick={() => navigate('/app/chat')}
+                              >
+                                chat from the web
+                              </button>
+                              {' '}or{' '}
+                              <button
+                                type="button"
+                                className="text-primary hover:underline font-medium"
+                                onClick={() => navigate('/app/channels')}
+                              >
+                                set up a channel
+                              </button>
+                              .
+                            </>
+                          )}
                 </p>
               )}
             </div>

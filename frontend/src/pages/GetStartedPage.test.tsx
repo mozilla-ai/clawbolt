@@ -44,6 +44,7 @@ const mockUpdateChannelConfig = vi.fn().mockResolvedValue({
   linq_preferred_service: 'iMessage',
   bluebubbles_configured: false,
   bluebubbles_allowed_numbers: '',
+  imessage_backend: 'linq',
 });
 const mockGetChannelConfig = vi.fn().mockResolvedValue({
   telegram_bot_token_set: false,
@@ -54,6 +55,7 @@ const mockGetChannelConfig = vi.fn().mockResolvedValue({
   linq_preferred_service: 'iMessage',
   bluebubbles_configured: false,
   bluebubbles_allowed_numbers: '',
+  imessage_backend: 'linq',
 });
 const mockGetChannelRoutes = vi.fn().mockResolvedValue({ routes: [] });
 const mockToggleChannelRoute = vi.fn().mockResolvedValue({
@@ -90,12 +92,16 @@ describe('GetStartedPage', () => {
     expect(screen.getByText("You're off to the races")).toBeInTheDocument();
   });
 
-  it('renders channel selection radio options from shared MESSAGING_CHANNELS', () => {
+  it('renders channel selection radio options: Telegram, iMessage, None', async () => {
     renderWithRouter(<GetStartedPage />);
 
+    // Wait for channel config to load so getVisibleChannels can filter the list.
+    await waitFor(() => {
+      expect(screen.getAllByText('iMessage')).toHaveLength(1);
+    });
     expect(screen.getByText('Telegram')).toBeInTheDocument();
-    expect(screen.getByText('Text Messaging (iMessage / RCS / SMS)')).toBeInTheDocument();
-    expect(screen.getByText('BlueBubbles (iMessage)')).toBeInTheDocument();
+    expect(screen.queryByText(/Text Messaging/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/BlueBubbles/)).not.toBeInTheDocument();
     expect(screen.getByText('None')).toBeInTheDocument();
   });
 
@@ -114,11 +120,11 @@ describe('GetStartedPage', () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    const linqRadio = screen.getByDisplayValue('linq');
+    const linqRadio = await screen.findByDisplayValue('linq');
     await user.click(linqRadio);
 
     await waitFor(() => {
-      expect(screen.getByText(/Configure Text Messaging/)).toBeInTheDocument();
+      expect(screen.getByText(/Configure iMessage/)).toBeInTheDocument();
     });
     // The shared OssLinqForm shows "Allowed Phone Number" field
     expect(screen.getByPlaceholderText('e.g. +15551234567')).toBeInTheDocument();
@@ -134,6 +140,7 @@ describe('GetStartedPage', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: 'linq',
     });
 
     renderWithRouter(<GetStartedPage />);
@@ -156,7 +163,7 @@ describe('GetStartedPage', () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    const linqRadio = screen.getByDisplayValue('linq');
+    const linqRadio = await screen.findByDisplayValue('linq');
     await user.click(linqRadio);
 
     await waitFor(() => {
@@ -176,7 +183,7 @@ describe('GetStartedPage', () => {
     renderWithRouter(<GetStartedPage />);
     const user = userEvent.setup();
 
-    const linqRadio = screen.getByDisplayValue('linq');
+    const linqRadio = await screen.findByDisplayValue('linq');
     await user.click(linqRadio);
 
     await waitFor(() => {
@@ -184,10 +191,10 @@ describe('GetStartedPage', () => {
       const matches = screen.getAllByText('+15559876543');
       expect(matches.length).toBeGreaterThanOrEqual(1);
     });
-    expect(screen.getByText(/say hello to get started/)).toBeInTheDocument();
+    expect(screen.getByText(/Send an iMessage to this address to get started/)).toBeInTheDocument();
   });
 
-  it('shows fallback messaging when linq is not configured', async () => {
+  it('shows fallback messaging when no iMessage backend is configured', async () => {
     mockGetChannelConfig.mockResolvedValueOnce({
       telegram_bot_token_set: false,
       telegram_allowed_chat_id: '',
@@ -197,12 +204,13 @@ describe('GetStartedPage', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: null,
     });
 
     renderWithRouter(<GetStartedPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/Text messaging is not configured yet/)).toBeInTheDocument();
+      expect(screen.getByText(/No messaging channel is configured yet/)).toBeInTheDocument();
     });
   });
 
@@ -216,6 +224,7 @@ describe('GetStartedPage', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: 'linq',
     });
 
     renderWithRouter(<GetStartedPage />);
@@ -258,6 +267,7 @@ describe('GetStartedPage', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: 'linq',
     });
     mockGetChannelRoutes.mockResolvedValue({
       routes: [{ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' }],

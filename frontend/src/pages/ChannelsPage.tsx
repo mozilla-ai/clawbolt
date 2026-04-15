@@ -6,7 +6,7 @@ import { useToggleChannelRoute } from '@/hooks/queries';
 import { useChannelStates } from '@/hooks/useChannelStates';
 import { useAuth } from '@/contexts/AuthContext';
 import {
-  MESSAGING_CHANNELS,
+  getVisibleChannels,
   getChannelStatusDisplay,
   type ChannelKey,
   type ChannelState,
@@ -20,6 +20,7 @@ export default function ChannelsPage() {
   const { isPremium } = useAuth();
   const toggleMutation = useToggleChannelRoute();
   const { states: channelStates, channelConfig, telegramLinkData, botInfo, linkDataMap, invalidateLink } = useChannelStates();
+  const visibleChannels = getVisibleChannels(channelConfig);
 
   // Track which config form is expanded
   const [expandedChannel, setExpandedChannel] = useState<ChannelKey | null>(null);
@@ -30,7 +31,7 @@ export default function ChannelsPage() {
   const hasAutoExpanded = useRef(false);
   useEffect(() => {
     if (!channelConfig || hasAutoExpanded.current) return;
-    const needsSetup = MESSAGING_CHANNELS.find(
+    const needsSetup = visibleChannels.find(
       (ch) => channelStates[ch.key] === 'available',
     );
     if (needsSetup) {
@@ -40,7 +41,7 @@ export default function ChannelsPage() {
   }, [channelConfig, channelStates]);
 
   // Find which channel is currently active (if any)
-  const activeChannelKey = MESSAGING_CHANNELS.find(
+  const activeChannelKey = visibleChannels.find(
     (ch) => channelStates[ch.key] === 'active',
   )?.key ?? null;
 
@@ -51,7 +52,7 @@ export default function ChannelsPage() {
       {
         onSuccess: () => {
           setSwitchingChannel(null);
-          toast.success(`Switched to ${MESSAGING_CHANNELS.find((c) => c.key === key)?.label}`);
+          toast.success(`Switched to ${visibleChannels.find((c) => c.key === key)?.label}`);
         },
         onError: (e) => {
           setSwitchingChannel(null);
@@ -91,14 +92,15 @@ export default function ChannelsPage() {
 
   // Check if any channels are available at all
   const anyAvailable = channelConfig
-    ? MESSAGING_CHANNELS.some((ch) => channelStates[ch.key] !== 'unavailable')
+    ? visibleChannels.length > 0 &&
+      visibleChannels.some((ch) => channelStates[ch.key] !== 'unavailable')
     : true; // Don't show empty state while loading
 
   // Separate channels into selectable (configured/active) and non-selectable
-  const selectableChannels = MESSAGING_CHANNELS.filter(
+  const selectableChannels = visibleChannels.filter(
     (ch) => channelStates[ch.key] === 'configured' || channelStates[ch.key] === 'active',
   );
-  const nonSelectableChannels = MESSAGING_CHANNELS.filter(
+  const nonSelectableChannels = visibleChannels.filter(
     (ch) => channelStates[ch.key] === 'unavailable' || channelStates[ch.key] === 'available',
   );
 
@@ -114,8 +116,8 @@ export default function ChannelsPage() {
           <div className="text-center py-4">
             <h3 className="text-sm font-medium mb-2">No messaging channels available</h3>
             <p className="text-xs text-muted-foreground mb-4">
-              Your server doesn't have any messaging channels configured yet.
-              Ask your administrator to set up Telegram, Text Messaging, or BlueBubbles.
+              No messaging channels have been configured yet.
+              Contact your administrator to enable Telegram or iMessage.
             </p>
             <Button onClick={() => window.location.assign('/app/chat')}>Go to Chat</Button>
           </div>
@@ -407,10 +409,10 @@ function NoneIcon() {
 }
 
 function getUnavailableHint(key: ChannelKey): string {
-  if (key === 'telegram') return 'Set TELEGRAM_BOT_TOKEN in your environment to enable.';
-  if (key === 'linq') return 'Set LINQ_API_TOKEN in your environment to enable.';
-  if (key === 'bluebubbles')
-    return 'Set BLUEBUBBLES_SERVER_URL and BLUEBUBBLES_PASSWORD in your environment to enable.';
+  if (key === 'telegram') return 'Contact your administrator to enable Telegram.';
+  if (key === 'linq' || key === 'bluebubbles') {
+    return 'Contact your administrator to enable iMessage.';
+  }
   return '';
 }
 
@@ -445,17 +447,10 @@ function ChannelIcon({ channelKey }: { channelKey: ChannelKey }) {
       </svg>
     );
   }
-  if (channelKey === 'linq') {
-    return (
-      <svg className="w-5 h-5 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-      </svg>
-    );
-  }
-  // bluebubbles
+  // linq and bluebubbles both render as the unified iMessage chat bubble.
   return (
     <svg className="w-5 h-5 text-muted-foreground shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 8h2a2 2 0 012 2v6a2 2 0 01-2 2h-2v4l-4-4H9a2 2 0 01-2-2v-1M13 4H7a2 2 0 00-2 2v6a2 2 0 002 2h2v4l4-4h2a2 2 0 002-2V6a2 2 0 00-2-2z" />
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
     </svg>
   );
 }

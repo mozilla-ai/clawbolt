@@ -7,7 +7,7 @@ import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
 import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useCalendarConfig, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
 import { useChannelStates } from '@/hooks/useChannelStates';
-import { MESSAGING_CHANNELS, getChannelStatusDisplay } from '@/lib/channel-utils';
+import { getVisibleChannels, getChannelStatusDisplay } from '@/lib/channel-utils';
 import { displayName as toolDisplayName, getToolOAuthStatus } from '@/lib/tool-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
 
@@ -105,7 +105,7 @@ export default function DashboardPage() {
   const updateProfile = useUpdateProfile();
 
   // --- Channels ---
-  const channelStates = MESSAGING_CHANNELS.flatMap((ch) => {
+  const channelStates = getVisibleChannels(channelData.channelConfig).flatMap((ch) => {
     const state = channelData.states[ch.key];
     return state ? [{ ...ch, state }] : [];
   });
