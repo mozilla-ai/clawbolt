@@ -31,6 +31,19 @@ export function getVisibleChannels(
   });
 }
 
+/** Return the iMessage address/phone users should message to reach their
+ * assistant, or null if no iMessage backend is configured. */
+export function getImessageAddress(
+  config: ChannelConfigResponse | undefined,
+): string | null {
+  if (!config) return null;
+  if (config.imessage_backend === 'linq') return config.linq_from_number || null;
+  if (config.imessage_backend === 'bluebubbles') {
+    return config.bluebubbles_imessage_address || null;
+  }
+  return null;
+}
+
 /** Premium link data keyed by channel. Adding a channel here is all that's needed. */
 export type PremiumChannelData = {
   telegram_user_id?: string | null;

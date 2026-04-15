@@ -15,6 +15,9 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+
+from sqlalchemy.orm import Session
 
 from backend.app.agent.approval import (
     ApprovalDecision,
@@ -108,6 +111,19 @@ async def _send_error_fallback(
         logger.exception("Failed to send error fallback to user %s", user_id)
 
 
+def _stamp_route_last_inbound(db: Session, user_id: str, channel: str, sender_id: str) -> None:
+    """Mark the resolved ChannelRoute as having received an inbound.
+
+    The channel picker UI flips to "Verified" when this field is non-null,
+    giving users end-to-end confirmation that their configured channel
+    delivers messages. Called on every inbound resolution so the stamp
+    always reflects the most recent successful delivery.
+    """
+    db.query(ChannelRoute).filter_by(
+        user_id=user_id, channel=channel, channel_identifier=sender_id
+    ).update({"last_inbound_at": datetime.now(UTC)})
+
+
 async def _get_or_create_user(channel: str, sender_id: str) -> User:
     """Look up or create a user by channel-specific sender ID.
 
@@ -168,9 +184,9 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                         channel,
                         user.id,
                     )
-                if db.dirty or db.new or db.deleted:
-                    db.commit()
-                    db.refresh(user)
+                _stamp_route_last_inbound(db, user.id, channel, sender_id)
+                db.commit()
+                db.refresh(user)
                 logger.debug("_get_or_create_user: found via channel route -> user %s", user.id)
                 db.expunge(user)
                 return user
@@ -192,6 +208,8 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
             user.channel_identifier = sender_id
             user.preferred_channel = channel
+            db.flush()
+            _stamp_route_last_inbound(db, user.id, channel, sender_id)
             db.commit()
             db.refresh(user)
             db.expunge(user)
@@ -208,6 +226,8 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             )
             db.add(ChannelRoute(user_id=existing.id, channel=channel, channel_identifier=sender_id))
             provision_user(existing, db)
+            db.flush()
+            _stamp_route_last_inbound(db, existing.id, channel, sender_id)
             db.commit()
             db.refresh(existing)
             db.expunge(existing)
@@ -225,6 +245,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
             db.flush()
             provision_user(user, db)
+            _stamp_route_last_inbound(db, user.id, channel, sender_id)
             db.commit()
             db.refresh(user)
             logger.debug(

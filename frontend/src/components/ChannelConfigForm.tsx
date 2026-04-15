@@ -300,27 +300,17 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
 function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
   const updateMutation = useUpdateChannelConfig();
   const [allowedNumbers, setAllowedNumbers] = useState<string | null>(null);
-  const [imessageAddress, setImessageAddress] = useState<string | null>(null);
 
   const displayedNumbers = allowedNumbers ?? channelConfig?.bluebubbles_allowed_numbers ?? '';
-  const displayedAddress = imessageAddress ?? channelConfig?.bluebubbles_imessage_address ?? '';
 
   const handleSave = () => {
-    const updates: Record<string, string> = {};
-    if (allowedNumbers !== null && allowedNumbers !== (channelConfig?.bluebubbles_allowed_numbers ?? '')) {
-      updates.bluebubbles_allowed_numbers = allowedNumbers;
-    }
-    if (imessageAddress !== null && imessageAddress !== (channelConfig?.bluebubbles_imessage_address ?? '')) {
-      updates.bluebubbles_imessage_address = imessageAddress;
-    }
-    if (Object.keys(updates).length === 0) {
+    if (allowedNumbers === null || allowedNumbers === (channelConfig?.bluebubbles_allowed_numbers ?? '')) {
       toast.error('No changes to save');
       return;
     }
-    updateMutation.mutate(updates, {
+    updateMutation.mutate({ bluebubbles_allowed_numbers: allowedNumbers }, {
       onSuccess: () => {
         setAllowedNumbers(null);
-        setImessageAddress(null);
         toast.success('iMessage settings updated');
         onSaved();
       },
@@ -330,22 +320,6 @@ function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
 
   return (
     <div className="grid gap-4">
-      {displayedAddress && (
-        <TextAssistantCard
-          fromNumber={displayedAddress}
-          subtitle="Send an iMessage to this address to reach your assistant."
-        />
-      )}
-      <Field label="iMessage Address">
-        <Input
-          value={displayedAddress}
-          onChange={(e) => setImessageAddress(e.target.value)}
-          placeholder="e.g. user@icloud.com or +15551234567"
-        />
-        <p className="text-xs text-muted-foreground mt-1">
-          The iCloud email or phone number people should text to reach your assistant.
-        </p>
-      </Field>
       <Field label="Allowed Sender">
         <Input
           value={displayedNumbers}
@@ -354,6 +328,7 @@ function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
         />
         <p className="text-xs text-muted-foreground mt-1">
           E.164 phone number or iCloud email, or * to allow all. Empty = deny all.
+          The iMessage address is set by the administrator and shown on the channel card.
         </p>
       </Field>
       <div className="flex justify-end">

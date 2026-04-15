@@ -116,6 +116,44 @@ describe('ChannelsPage - Channel States', () => {
     expect(screen.queryByText(/BlueBubbles/)).not.toBeInTheDocument();
   });
 
+  it('shows the iMessage address and a "Waiting" badge when no inbound has arrived yet', async () => {
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        { channel: 'linq', channel_identifier: '+15559876543', enabled: true, created_at: '', last_inbound_at: null },
+      ],
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/Send an iMessage to/)).toBeInTheDocument();
+    });
+    expect(screen.getByText('+15551234567')).toBeInTheDocument();
+    expect(screen.getByText(/Waiting for your first message/)).toBeInTheDocument();
+    expect(screen.queryByLabelText('Connection verified')).not.toBeInTheDocument();
+  });
+
+  it('shows a "Verified" badge once last_inbound_at is populated', async () => {
+    mockGetChannelRoutes.mockResolvedValue({
+      routes: [
+        {
+          channel: 'linq',
+          channel_identifier: '+15559876543',
+          enabled: true,
+          created_at: '',
+          last_inbound_at: '2026-04-15T13:00:00Z',
+        },
+      ],
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByLabelText('Connection verified')).toBeInTheDocument();
+    });
+    expect(screen.queryByText(/Waiting for your first message/)).not.toBeInTheDocument();
+  });
+
   it('hides the iMessage card entirely when no iMessage backend is configured', async () => {
     // Telegram available, neither iMessage backend configured -> iMessage card is filtered out.
     mockGetChannelConfig.mockResolvedValue({
