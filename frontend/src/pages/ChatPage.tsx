@@ -11,6 +11,7 @@ import api from '@/api';
 import { toast } from '@/lib/toast';
 import { useSession } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
+import { useChatActivity } from '@/contexts/ChatActivityContext';
 import type { ToolInteraction } from '@/types';
 
 interface FileAttachment {
@@ -54,8 +55,7 @@ export default function ChatPage() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [currentTool, setCurrentTool] = useState<string | null>(null);
-  const [activityTool, setActivityTool] = useState<string | null>(null);
-  const [agentBusy, setAgentBusy] = useState(false);
+  const { agentBusy, activityTool, doneTick } = useChatActivity();
   const [waitingForApproval, setWaitingForApproval] = useState(false);
   const [isDeleting, setIsDeleting] = useState(false);
   const [deletingMsgId, setDeletingMsgId] = useState<number | null>(null);
@@ -83,32 +83,18 @@ export default function ChatPage() {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // Subscribe to user-level activity stream for real-time agent status
-  // from any channel (Telegram, iMessage, etc.)
+  // Refresh session data when the agent finishes, so replies produced while
+  // we were mounted elsewhere (e.g. user switched tabs mid-send) show up on
+  // return. Skip when webchat is actively waiting for its own SSE reply:
+  // handleSubmit appends the reply and invalidates queries itself, and an
+  // early refetch here would race with the SSE handler and duplicate the
+  // assistant message. The activity subscription itself lives in
+  // ChatActivityProvider so it survives tab navigation.
   useEffect(() => {
-    const controller = api.subscribeToActivity((event) => {
-      if (!mountedRef.current) return;
-      if (event.type === 'thinking') {
-        setAgentBusy(true);
-        setActivityTool(null);
-      } else if (event.type === 'tool_call') {
-        setAgentBusy(true);
-        setActivityTool(event.tool_name ?? null);
-      } else if (event.type === 'done') {
-        setAgentBusy(false);
-        setActivityTool(null);
-        // Refresh session data to pick up the new message, but only when
-        // webchat isn't actively waiting for its own SSE reply. When sending,
-        // handleSubmit adds the reply and invalidates queries itself. Without
-        // this guard, the activity refresh can load the reply from the DB
-        // before the SSE resolves, and then the SSE handler appends a duplicate.
-        if (pendingRef.current === 0) {
-          void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
-        }
-      }
-    });
-    return () => controller.abort();
-  }, [queryClient]);
+    if (doneTick === 0) return;
+    if (pendingRef.current > 0) return;
+    void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+  }, [doneTick, queryClient]);
 
   // Fetch session history via React Query.  The activity SSE stream
   // already invalidates queries on the "done" event, so periodic
