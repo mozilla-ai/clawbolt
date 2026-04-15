@@ -842,6 +842,8 @@ export interface components {
              * @default
              */
             bluebubbles_imessage_address: string;
+            /** Imessage Backend */
+            imessage_backend?: string | null;
         };
         /** ChannelConfigUpdate */
         ChannelConfigUpdate: {

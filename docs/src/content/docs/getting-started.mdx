@@ -8,7 +8,7 @@ The fastest way to run Clawbolt is with Docker Compose.
 ## Prerequisites
 
 - [Docker](https://docs.docker.com/get-docker/) and Docker Compose
-- A messaging channel: either a [Linq account](../deployment/linq-setup/) (iMessage/RCS/SMS) or a [Telegram bot token](../deployment/telegram-setup/)
+- A messaging channel: either an iMessage backend ([Linq](../deployment/linq-setup/) for hosted iMessage/RCS/SMS, or [BlueBubbles](../deployment/bluebubbles-setup/) for self-hosted iMessage) or a [Telegram bot token](../deployment/telegram-setup/)
 - An LLM provider API key (OpenAI, Anthropic, etc.)
 
 ## 1. Clone the repository
@@ -30,7 +30,7 @@ At minimum you need:
 - An LLM API key (`OPENAI_API_KEY`, `ANTHROPIC_API_KEY`, etc.)
 - `VISION_MODEL` -- the model used for image analysis (defaults to `LLM_MODEL` if not set)
 - At least one messaging channel configured:
-  - **Texting (recommended):** `LINQ_API_TOKEN` and `LINQ_FROM_NUMBER` for iMessage/RCS/SMS via [Linq](../deployment/linq-setup/)
+  - **iMessage (recommended):** choose one backend. Hosted iMessage/RCS/SMS via [Linq](../deployment/linq-setup/) (`LINQ_API_TOKEN` + `LINQ_FROM_NUMBER`), or self-hosted iMessage via [BlueBubbles](../deployment/bluebubbles-setup/) (`BLUEBUBBLES_SERVER_URL` + `BLUEBUBBLES_PASSWORD`). The app surfaces whichever backend you configure as a single "iMessage" channel to end users. Configuring both at once is not supported.
   - **Telegram:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_ID` for Telegram via [Telegram Setup](../deployment/telegram-setup/)
 
 ## 3. Start the services
@@ -56,7 +56,7 @@ curl http://localhost:8000/api/health
 
 Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app and registers webhooks automatically. No Cloudflare account or auth token required.
 
-Send a message to your assistant and Clawbolt will respond. If you configured Linq, text the Linq phone number from your phone. If you configured Telegram, message your bot on Telegram.
+Send a message to your assistant and Clawbolt will respond. If you configured an iMessage backend, send an iMessage (or SMS/RCS if Linq is your backend) to the configured phone number or address. If you configured Telegram, message your bot on Telegram.
 
 ## Next steps
 

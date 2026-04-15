@@ -5,7 +5,12 @@ import logging
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from backend.app.config import Settings, log_config_warnings
+from backend.app.config import (
+    Settings,
+    log_config_warnings,
+    resolve_imessage_backend,
+    validate_imessage_backend,
+)
 
 
 class TestFieldConstraints:
@@ -121,3 +126,67 @@ class TestLogConfigWarnings:
         with caplog.at_level(logging.WARNING):
             log_config_warnings(s)
         assert any("max_tool_rounds" in r.message for r in caplog.records)
+
+
+class TestIMessageBackend:
+    """validate_imessage_backend rejects double-configuration; resolve_imessage_backend picks the active one."""
+
+    def test_resolve_none_when_nothing_set(self) -> None:
+        s = Settings(linq_api_token="", bluebubbles_server_url="", bluebubbles_password="")
+        assert resolve_imessage_backend(s) is None
+
+    def test_resolve_linq_when_only_linq_set(self) -> None:
+        s = Settings(
+            linq_api_token="tok",
+            bluebubbles_server_url="",
+            bluebubbles_password="",
+        )
+        assert resolve_imessage_backend(s) == "linq"
+
+    def test_resolve_bluebubbles_when_only_bluebubbles_set(self) -> None:
+        s = Settings(
+            linq_api_token="",
+            bluebubbles_server_url="https://mac.ngrok.io",
+            bluebubbles_password="p",
+        )
+        assert resolve_imessage_backend(s) == "bluebubbles"
+
+    def test_bluebubbles_requires_both_url_and_password(self) -> None:
+        # Partial config is not "configured" - resolver returns None.
+        partial_url_only = Settings(
+            linq_api_token="",
+            bluebubbles_server_url="https://mac.ngrok.io",
+            bluebubbles_password="",
+        )
+        partial_pw_only = Settings(
+            linq_api_token="",
+            bluebubbles_server_url="",
+            bluebubbles_password="p",
+        )
+        assert resolve_imessage_backend(partial_url_only) is None
+        assert resolve_imessage_backend(partial_pw_only) is None
+
+    def test_validate_accepts_only_linq(self) -> None:
+        s = Settings(linq_api_token="tok", bluebubbles_server_url="", bluebubbles_password="")
+        validate_imessage_backend(s)  # must not raise
+
+    def test_validate_accepts_only_bluebubbles(self) -> None:
+        s = Settings(
+            linq_api_token="",
+            bluebubbles_server_url="https://mac.ngrok.io",
+            bluebubbles_password="p",
+        )
+        validate_imessage_backend(s)
+
+    def test_validate_accepts_neither(self) -> None:
+        s = Settings(linq_api_token="", bluebubbles_server_url="", bluebubbles_password="")
+        validate_imessage_backend(s)
+
+    def test_validate_rejects_both_configured(self) -> None:
+        s = Settings(
+            linq_api_token="tok",
+            bluebubbles_server_url="https://mac.ngrok.io",
+            bluebubbles_password="p",
+        )
+        with pytest.raises(RuntimeError, match="iMessage"):
+            validate_imessage_backend(s)

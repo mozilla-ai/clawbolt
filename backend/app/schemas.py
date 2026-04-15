@@ -102,6 +102,10 @@ class ChannelConfigResponse(BaseModel):
     bluebubbles_configured: bool = False
     bluebubbles_allowed_numbers: str = ""
     bluebubbles_imessage_address: str = ""
+    # Resolved iMessage backend ("linq" | "bluebubbles" | None).
+    # The UI uses this to render a single iMessage card without exposing which
+    # backend powers it; None means iMessage is not configured on this server.
+    imessage_backend: str | None = None
 
 
 class ChannelConfigUpdate(BaseModel):

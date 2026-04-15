@@ -186,3 +186,44 @@ def test_update_channel_config_rejects_multiple_chat_ids(
         )
     assert resp.status_code == 422
     assert "single" in resp.json()["detail"].lower()
+
+
+@pytest.fixture()
+def _imessage_reset() -> Iterator[None]:
+    """Reset iMessage backend settings to empty around a test."""
+    original_linq = settings.linq_api_token
+    original_bb_url = settings.bluebubbles_server_url
+    original_bb_pw = settings.bluebubbles_password
+    settings.linq_api_token = ""
+    settings.bluebubbles_server_url = ""
+    settings.bluebubbles_password = ""
+    yield
+    settings.linq_api_token = original_linq
+    settings.bluebubbles_server_url = original_bb_url
+    settings.bluebubbles_password = original_bb_pw
+
+
+def test_channel_config_imessage_backend_none(client: TestClient, _imessage_reset: None) -> None:
+    """imessage_backend is None when neither Linq nor BlueBubbles is configured."""
+    resp = client.get("/api/user/channels/config")
+    assert resp.status_code == 200
+    assert resp.json()["imessage_backend"] is None
+
+
+def test_channel_config_imessage_backend_linq(client: TestClient, _imessage_reset: None) -> None:
+    """imessage_backend reports 'linq' when only Linq is configured."""
+    settings.linq_api_token = "tok"
+    resp = client.get("/api/user/channels/config")
+    assert resp.status_code == 200
+    assert resp.json()["imessage_backend"] == "linq"
+
+
+def test_channel_config_imessage_backend_bluebubbles(
+    client: TestClient, _imessage_reset: None
+) -> None:
+    """imessage_backend reports 'bluebubbles' when only BlueBubbles is configured."""
+    settings.bluebubbles_server_url = "https://mac.ngrok.io"
+    settings.bluebubbles_password = "p"
+    resp = client.get("/api/user/channels/config")
+    assert resp.status_code == 200
+    assert resp.json()["imessage_backend"] == "bluebubbles"

@@ -27,7 +27,7 @@ cp .env.example .env
 Edit `.env` with your credentials. At minimum:
 - An LLM API key
 - At least one messaging channel:
-  - **Texting (Linq):** `LINQ_API_TOKEN` and `LINQ_FROM_NUMBER`
+  - **iMessage:** pick one backend. Linq (`LINQ_API_TOKEN` + `LINQ_FROM_NUMBER`) for hosted iMessage/RCS/SMS, or BlueBubbles (`BLUEBUBBLES_SERVER_URL` + `BLUEBUBBLES_PASSWORD`) for a self-hosted bridge. The app surfaces either as a single "iMessage" channel to users. Configuring both at once is not supported.
   - **Telegram:** `TELEGRAM_BOT_TOKEN` and `TELEGRAM_ALLOWED_CHAT_ID`
 
 ## Set up PostgreSQL
@@ -65,7 +65,7 @@ Without Docker, you need a tunnel to give messaging providers a public URL:
 cloudflared tunnel --url http://localhost:8000
 ```
 
-If using **Linq**, the webhook registers automatically when the server detects the tunnel URL.
+If using the **iMessage** channel backed by Linq, the webhook registers automatically when the server detects the tunnel URL. If using BlueBubbles as the iMessage backend, configure the webhook on your BlueBubbles server per its setup guide.
 
 If using **Telegram**, copy the tunnel URL and register the webhook manually:
 
@@ -75,4 +75,4 @@ curl -X POST "https://api.telegram.org/bot<TOKEN>/setWebhook" \
   -d '{"url": "https://<tunnel-url>/api/webhooks/telegram"}'
 ```
 
-See [Linq Setup](../../deployment/linq-setup/) or [Telegram Setup](../../deployment/telegram-setup/) for details.
+See [Linq Setup](../../deployment/linq-setup/), [BlueBubbles Setup](../../deployment/bluebubbles-setup/), or [Telegram Setup](../../deployment/telegram-setup/) for details.
