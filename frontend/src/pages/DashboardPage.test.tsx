@@ -94,6 +94,7 @@ function setupMocks(overrides?: {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: 'linq',
     },
   );
   mockGetToolConfig.mockResolvedValue(
@@ -185,15 +186,17 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Active')).toBeInTheDocument();
   });
 
-  it('shows per-channel status lines for all channels', async () => {
+  it('shows per-channel status lines with a unified iMessage card', async () => {
     setupMocks();
     renderWithRouter(<DashboardPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Telegram')).toBeInTheDocument();
     });
-    expect(screen.getByText('Text Messaging (iMessage / RCS / SMS)')).toBeInTheDocument();
-    expect(screen.getByText('BlueBubbles (iMessage)')).toBeInTheDocument();
+    // Only one iMessage card; backend name never exposed.
+    expect(screen.getAllByText('iMessage')).toHaveLength(1);
+    expect(screen.queryByText(/Text Messaging/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/BlueBubbles/)).not.toBeInTheDocument();
   });
 
   it('shows "Setup needed" for available but unconfigured channels', async () => {
@@ -207,6 +210,7 @@ describe('DashboardPage', () => {
         linq_preferred_service: 'iMessage',
         bluebubbles_configured: false,
         bluebubbles_allowed_numbers: '',
+        imessage_backend: 'linq',
       },
       routes: { routes: [] },
     });
@@ -218,7 +222,7 @@ describe('DashboardPage', () => {
     });
   });
 
-  it('shows "Not available" for channels without server config', async () => {
+  it('hides the iMessage card entirely when no iMessage backend is configured', async () => {
     setupMocks({
       channelConfig: {
         telegram_bot_token_set: true,
@@ -229,14 +233,15 @@ describe('DashboardPage', () => {
         linq_preferred_service: 'iMessage',
         bluebubbles_configured: false,
         bluebubbles_allowed_numbers: '',
+        imessage_backend: null,
       },
     });
     renderWithRouter(<DashboardPage />);
 
     await waitFor(() => {
-      const badges = screen.getAllByText('Not available');
-      expect(badges.length).toBe(2);
+      expect(screen.getByText('Telegram')).toBeInTheDocument();
     });
+    expect(screen.queryByText('iMessage')).not.toBeInTheDocument();
   });
 
   it('shows setup prompt when no channels are available at all', async () => {
@@ -251,6 +256,7 @@ describe('DashboardPage', () => {
         linq_preferred_service: 'iMessage',
         bluebubbles_configured: false,
         bluebubbles_allowed_numbers: '',
+        imessage_backend: null,
       },
     });
     renderWithRouter(<DashboardPage />);
@@ -509,6 +515,7 @@ describe('DashboardPage', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: null,
     });
     mockGetToolConfig.mockResolvedValue({ tools: [] });
     mockGetOAuthStatus.mockResolvedValue({ integrations: [] });

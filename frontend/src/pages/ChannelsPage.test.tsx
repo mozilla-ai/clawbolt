@@ -70,6 +70,7 @@ beforeEach(() => {
     linq_preferred_service: 'iMessage',
     bluebubbles_configured: false,
     bluebubbles_allowed_numbers: '',
+    imessage_backend: 'linq',
   });
   mockGetChannelRoutes.mockResolvedValue({ routes: [] });
   mockToggleChannelRoute.mockResolvedValue({ channel: 'telegram', channel_identifier: '123', enabled: true, created_at: '' });
@@ -81,18 +82,42 @@ beforeEach(() => {
 });
 
 describe('ChannelsPage - Channel States', () => {
-  it('renders all three channel cards', async () => {
+  it('renders Telegram and a single unified iMessage card when linq is the backend', async () => {
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
       expect(screen.getByText('Telegram')).toBeInTheDocument();
     });
-    expect(screen.getByText('Text Messaging (iMessage / RCS / SMS)')).toBeInTheDocument();
-    expect(screen.getByText('BlueBubbles (iMessage)')).toBeInTheDocument();
+    // iMessage appears once as a unified card (Linq backend is not named in the UI).
+    expect(screen.getAllByText('iMessage')).toHaveLength(1);
+    expect(screen.queryByText(/Text Messaging/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/BlueBubbles/)).not.toBeInTheDocument();
   });
 
-  it('shows "Not available" badge for unavailable channels alongside available ones', async () => {
-    // Telegram available, Linq and BB unavailable
+  it('renders the iMessage card when bluebubbles is the backend (still one card, still labeled iMessage)', async () => {
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '*',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: true,
+      bluebubbles_allowed_numbers: '*',
+      imessage_backend: 'bluebubbles',
+    });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Telegram')).toBeInTheDocument();
+    });
+    expect(screen.getAllByText('iMessage')).toHaveLength(1);
+    expect(screen.queryByText(/BlueBubbles/)).not.toBeInTheDocument();
+  });
+
+  it('hides the iMessage card entirely when no iMessage backend is configured', async () => {
+    // Telegram available, neither iMessage backend configured -> iMessage card is filtered out.
     mockGetChannelConfig.mockResolvedValue({
       telegram_bot_token_set: true,
       telegram_allowed_chat_id: '',
@@ -102,6 +127,7 @@ describe('ChannelsPage - Channel States', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: null,
     });
     mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
     mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
@@ -109,10 +135,10 @@ describe('ChannelsPage - Channel States', () => {
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      const badges = screen.getAllByText('Not available');
-      expect(badges.length).toBe(2); // Linq and BB
+      expect(screen.getByText('Telegram')).toBeInTheDocument();
     });
-    // Telegram should show Setup needed
+    expect(screen.queryByText('iMessage')).not.toBeInTheDocument();
+    // Telegram shows "Setup needed" since the server has a bot token but the user lacks a chat id.
     expect(screen.getByText('Setup needed')).toBeInTheDocument();
   });
 
@@ -129,6 +155,7 @@ describe('ChannelsPage - Channel States', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: null,
     });
 
     renderWithRouter(<ChannelsPage />);
@@ -255,6 +282,7 @@ describe('ChannelsPage - Config Forms', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: null,
     });
 
     renderWithRouter(<ChannelsPage />);
@@ -297,8 +325,8 @@ describe('ChannelsPage - Config Forms', () => {
 });
 
 describe('ChannelsPage - Unavailable hints', () => {
-  it('shows environment variable hint for unavailable Telegram', async () => {
-    // Telegram unavailable, but Linq available so page renders channel cards (not empty state)
+  it('shows admin-contact hint for unavailable Telegram without leaking env var names', async () => {
+    // Telegram unavailable, linq is the iMessage backend so page renders channel cards (not empty state).
     mockGetChannelConfig.mockResolvedValue({
       telegram_bot_token_set: false,
       telegram_allowed_chat_id: '',
@@ -308,6 +336,7 @@ describe('ChannelsPage - Unavailable hints', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: 'linq',
     });
     mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
     mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
@@ -315,46 +344,10 @@ describe('ChannelsPage - Unavailable hints', () => {
     renderWithRouter(<ChannelsPage />);
 
     await waitFor(() => {
-      expect(screen.getByText(/TELEGRAM_BOT_TOKEN/)).toBeInTheDocument();
+      expect(screen.getByText(/Contact your administrator to enable Telegram/)).toBeInTheDocument();
     });
-  });
-
-  it('shows environment variable hint for unavailable Linq', async () => {
-    mockGetChannelConfig.mockResolvedValue({
-      telegram_bot_token_set: true,
-      telegram_allowed_chat_id: '*',
-      linq_api_token_set: false,
-      linq_from_number: '',
-      linq_allowed_numbers: '',
-      linq_preferred_service: 'iMessage',
-      bluebubbles_configured: false,
-      bluebubbles_allowed_numbers: '',
-    });
-
-    renderWithRouter(<ChannelsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/LINQ_API_TOKEN/)).toBeInTheDocument();
-    });
-  });
-
-  it('shows environment variable hint for unavailable BlueBubbles', async () => {
-    mockGetChannelConfig.mockResolvedValue({
-      telegram_bot_token_set: true,
-      telegram_allowed_chat_id: '*',
-      linq_api_token_set: true,
-      linq_from_number: '+15551234567',
-      linq_allowed_numbers: '*',
-      linq_preferred_service: 'iMessage',
-      bluebubbles_configured: false,
-      bluebubbles_allowed_numbers: '',
-    });
-
-    renderWithRouter(<ChannelsPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/BLUEBUBBLES_SERVER_URL/)).toBeInTheDocument();
-    });
+    // The hint must not leak the backend env var name.
+    expect(screen.queryByText(/TELEGRAM_BOT_TOKEN/)).not.toBeInTheDocument();
   });
 });
 
@@ -369,6 +362,7 @@ describe('ChannelsPage - Empty state', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: null,
     });
     mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
     mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
@@ -395,6 +389,7 @@ describe('ChannelsPage - OSS mode', () => {
       linq_preferred_service: 'iMessage',
       bluebubbles_configured: false,
       bluebubbles_allowed_numbers: '',
+      imessage_backend: null,
     });
 
     renderWithRouter(<ChannelsPage />);

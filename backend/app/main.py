@@ -17,7 +17,12 @@ from backend.app.channels.bluebubbles import BlueBubblesChannel
 from backend.app.channels.linq import LinqChannel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.channels.webchat import WebChatChannel
-from backend.app.config import load_persistent_config, log_config_warnings, settings
+from backend.app.config import (
+    load_persistent_config,
+    log_config_warnings,
+    settings,
+    validate_imessage_backend,
+)
 from backend.app.database import SessionLocal, get_engine
 from backend.app.models import ChannelRoute, User
 from backend.app.routers import (
@@ -180,6 +185,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
 
     _verify_database()
     _enforce_single_channel()
+    validate_imessage_backend()
     log_config_warnings()
     await _verify_llm_settings()
     heartbeat_scheduler.start()

@@ -265,6 +265,39 @@ def save_persistent_config(updates: dict[str, str], path: Path | None = None) ->
     config_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
 
+def resolve_imessage_backend(s: "Settings | None" = None) -> str | None:
+    """Return the configured iMessage backend: "linq", "bluebubbles", or None.
+
+    Users of the product never see the backend name. This helper is the single
+    source of truth for which backend powers the user-facing iMessage channel.
+    """
+    s = s or settings
+    linq_set = bool(s.linq_api_token)
+    bluebubbles_set = bool(s.bluebubbles_server_url and s.bluebubbles_password)
+    if linq_set:
+        return "linq"
+    if bluebubbles_set:
+        return "bluebubbles"
+    return None
+
+
+def validate_imessage_backend(s: "Settings | None" = None) -> None:
+    """Reject startup if both iMessage backends are configured simultaneously.
+
+    The UI surfaces a single iMessage channel; allowing both backends at once
+    would make that card's behavior ambiguous. Operators must pick one.
+    """
+    s = s or settings
+    linq_set = bool(s.linq_api_token)
+    bluebubbles_set = bool(s.bluebubbles_server_url and s.bluebubbles_password)
+    if linq_set and bluebubbles_set:
+        raise RuntimeError(
+            "Two iMessage backends are configured at once. "
+            "Set only LINQ_API_TOKEN or only BLUEBUBBLES_SERVER_URL + "
+            "BLUEBUBBLES_PASSWORD, not both."
+        )
+
+
 def log_config_warnings(s: Settings | None = None) -> list[str]:
     """Log warnings for unusual but valid config values. Returns the warnings."""
     s = s or settings

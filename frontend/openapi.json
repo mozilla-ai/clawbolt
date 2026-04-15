@@ -1570,6 +1570,17 @@
             "type": "string",
             "title": "Bluebubbles Imessage Address",
             "default": ""
+          },
+          "imessage_backend": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Imessage Backend"
           }
         },
         "type": "object",
