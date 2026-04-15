@@ -2,6 +2,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { renderWithRouter } from '@/test/test-utils';
+import { ChatActivityProvider } from '@/contexts/ChatActivityContext';
 import ChatPage from './ChatPage';
 
 // Mock the api module
@@ -25,7 +26,7 @@ beforeEach(() => {
 
 describe('ChatPage auto-focus', () => {
   it('focuses the chat input on mount', async () => {
-    renderWithRouter(<ChatPage />);
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>);
 
     const textarea = screen.getByPlaceholderText('Type a message...');
     await waitFor(() => {
@@ -67,7 +68,7 @@ describe('ChatPage tool interactions', () => {
       ],
     });
 
-    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
 
     await waitFor(() => {
       expect(screen.getByText('I created the estimate for you.')).toBeInTheDocument();
@@ -107,7 +108,7 @@ describe('ChatPage tool interactions', () => {
       ],
     });
 
-    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
 
     await waitFor(() => {
       expect(screen.getByText('Hi there!')).toBeInTheDocument();
@@ -156,7 +157,7 @@ describe('ChatPage tool interaction expand/collapse', () => {
       { name: 'long_tool', args: {}, result: fullResult, is_error: false, tool_call_id: 'tc_123' },
     ]);
 
-    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
 
     const user = userEvent.setup();
 
@@ -183,7 +184,7 @@ describe('ChatPage tool interaction expand/collapse', () => {
       { name: 'toggle_tool', args: {}, result: 'some result', is_error: false, tool_call_id: 'tc_456' },
     ]);
 
-    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
 
     const user = userEvent.setup();
 
@@ -205,7 +206,7 @@ describe('ChatPage tool interaction expand/collapse', () => {
       { name: 'failing_tool', args: {}, result: 'Something went wrong', is_error: true },
     ]);
 
-    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
 
     await waitFor(() => {
       expect(screen.getByText('failing_tool')).toBeInTheDocument();
@@ -224,7 +225,7 @@ describe('ChatPage tool interaction expand/collapse', () => {
       },
     ]);
 
-    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
 
     const user = userEvent.setup();
 
@@ -248,7 +249,7 @@ describe('ChatPage tool interaction expand/collapse', () => {
       { name: 'no_args_tool', args: {}, result: 'Done', is_error: false },
     ]);
 
-    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
 
     const user = userEvent.setup();
 
@@ -270,7 +271,7 @@ describe('ChatPage tool interaction expand/collapse', () => {
       { name: 'empty_result_tool', args: { key: 'val' }, result: '', is_error: false },
     ]);
 
-    renderWithRouter(<ChatPage />, { route: `/app/chat?session=${sessionId}` });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: `/app/chat?session=${sessionId}` });
 
     const user = userEvent.setup();
 
@@ -329,7 +330,7 @@ describe('ChatPage session auto-discovery', () => {
     });
 
     // Render without ?session= param and with empty localStorage
-    renderWithRouter(<ChatPage />, { route: '/app/chat' });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: '/app/chat' });
 
     // Should discover the session and load its history
     await waitFor(() => {
@@ -345,7 +346,7 @@ describe('ChatPage session auto-discovery', () => {
   it('shows empty state when no active sessions exist', async () => {
     mockApi.listSessions.mockResolvedValue({ total: 0, items: [] });
 
-    renderWithRouter(<ChatPage />, { route: '/app/chat' });
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: '/app/chat' });
 
     await waitFor(() => {
       expect(mockApi.listSessions).toHaveBeenCalled();
@@ -361,7 +362,7 @@ describe('ChatPage concurrent messaging', () => {
     // sendChatMessage never resolves, simulating a pending response
     mockApi.sendChatMessage.mockReturnValue(new Promise(() => {}));
 
-    renderWithRouter(<ChatPage />);
+    renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>);
 
     const textarea = screen.getByPlaceholderText('Type a message...');
     const user = userEvent.setup();

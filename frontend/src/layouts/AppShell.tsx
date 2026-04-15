@@ -6,6 +6,7 @@ import Button from '@/components/ui/button';
 import OfflineIndicator from '@/components/ui/OfflineIndicator';
 import { Spinner } from '@heroui/spinner';
 import { useAuth } from '@/contexts/AuthContext';
+import { ChatActivityProvider } from '@/contexts/ChatActivityContext';
 import { Tooltip } from '@heroui/tooltip';
 import { Link } from '@heroui/link';
 import { Divider } from '@heroui/divider';
@@ -107,6 +108,7 @@ export default function AppShell() {
   };
 
   return (
+    <ChatActivityProvider>
     <div className="flex h-dvh">
       {/* Mobile overlay */}
       {sidebarOpen && (
@@ -294,6 +296,7 @@ export default function AppShell() {
       <OfflineIndicator />
       <ToastProvider placement="bottom-right" />
     </div>
+    </ChatActivityProvider>
   );
 }
 
