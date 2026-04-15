@@ -1,5 +1,4 @@
 import { useState } from 'react';
-import TextAssistantCard from '@/components/TextAssistantCard';
 import Input from '@/components/ui/input';
 import Button from '@/components/ui/button';
 import Field from '@/components/ui/field';
@@ -56,9 +55,6 @@ interface PremiumLinkConfig {
   placeholder: string;
   helpText: string;
   inputMode?: 'tel' | 'text';
-  /** Return the display address for the TextAssistantCard, or empty to hide it. */
-  getAssistantAddress: (config: ChannelConfigResponse | undefined) => string;
-  assistantSubtitle?: string;
   setLink: (identifier: string) => Promise<unknown>;
 }
 
@@ -70,8 +66,6 @@ const PREMIUM_LINK_CONFIGS: Partial<Record<ChannelKey, PremiumLinkConfig>> = {
     placeholder: 'e.g. +15551234567',
     helpText: "E.164 format phone number. This is the number you'll send messages from.",
     inputMode: 'tel',
-    getAssistantAddress: (config) => config?.linq_from_number ?? '',
-    assistantSubtitle: 'Send an iMessage to this address to reach your assistant.',
     setLink: (id) => api.setLinqLink(id),
   },
   bluebubbles: {
@@ -80,8 +74,6 @@ const PREMIUM_LINK_CONFIGS: Partial<Record<ChannelKey, PremiumLinkConfig>> = {
     label: 'Your Phone Number or iCloud Email',
     placeholder: 'e.g. +15551234567 or user@icloud.com',
     helpText: 'The phone number or iCloud email you send iMessages from.',
-    getAssistantAddress: (config) => config?.bluebubbles_imessage_address ?? '',
-    assistantSubtitle: 'Send an iMessage to this address to reach your assistant.',
     setLink: (id) => api.setBlueBubblesLink(id),
   },
 };
@@ -89,14 +81,12 @@ const PREMIUM_LINK_CONFIGS: Partial<Record<ChannelKey, PremiumLinkConfig>> = {
 function PremiumChannelLinkForm({
   config,
   premiumLinkData,
-  channelConfig,
   onSaved,
 }: { config: PremiumLinkConfig } & Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
   const [identifier, setIdentifier] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
 
   const displayedValue = identifier ?? premiumLinkData?.identifier ?? '';
-  const assistantAddress = config.getAssistantAddress(channelConfig);
 
   const handleSave = async () => {
     if (premiumLinkData && displayedValue === (premiumLinkData.identifier ?? '')) {
@@ -118,12 +108,6 @@ function PremiumChannelLinkForm({
 
   return (
     <div className="grid gap-4">
-      {assistantAddress && (
-        <TextAssistantCard
-          fromNumber={assistantAddress}
-          subtitle={config.assistantSubtitle}
-        />
-      )}
       <Field label={config.label}>
         <Input
           value={displayedValue}
@@ -236,7 +220,6 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
 
   const displayedNumber = allowedNumber ?? channelConfig?.linq_allowed_numbers ?? '';
   const displayedService = preferredService ?? channelConfig?.linq_preferred_service ?? 'iMessage';
-  const fromNumber = channelConfig?.linq_from_number ?? '';
 
   const handleSave = () => {
     const updates: Record<string, string> = {};
@@ -263,7 +246,6 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
 
   return (
     <div className="grid gap-4">
-      {fromNumber && <TextAssistantCard fromNumber={fromNumber} />}
       <Field label="Allowed Phone Number">
         <Input
           value={displayedNumber}
