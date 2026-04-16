@@ -13,10 +13,11 @@ import type {
 
 // --- Profile ---
 
-export function useProfile() {
+export function useProfile(opts: { enabled?: boolean } = {}) {
   const query = useQuery({
     queryKey: queryKeys.profile,
     queryFn: () => api.getProfile(),
+    enabled: opts.enabled ?? true,
   });
   const { mutate } = useUpdateProfile();
   const backfilled = useRef(false);

@@ -67,9 +67,29 @@ describe('AppShell', () => {
       expect(screen.getByText('Dashboard')).toBeInTheDocument();
     });
     expect(screen.getByText('Memory')).toBeInTheDocument();
-    expect(screen.getByText('Heartbeat')).toBeInTheDocument();
+    expect(screen.getByText('Channels')).toBeInTheDocument();
+    expect(screen.getByText('Tools')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByText('Chat')).toBeInTheDocument();
+    // Heartbeat, Soul, User, Permissions live under the "Advanced" fold.
+    expect(screen.getByText('Advanced')).toBeInTheDocument();
+    expect(screen.queryByText('Heartbeat')).not.toBeInTheDocument();
+  });
+
+  it('reveals advanced nav items when the Advanced section is expanded', async () => {
+    renderWithRouter(<AppShell />, { route: '/app' });
+
+    await waitFor(() => {
+      expect(screen.getByText('Advanced')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Heartbeat')).not.toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByText('Advanced'));
+
+    expect(screen.getByText('Heartbeat')).toBeInTheDocument();
+    expect(screen.getByText('Soul')).toBeInTheDocument();
+    expect(screen.getByText('Permissions')).toBeInTheDocument();
   });
 
   it('renders Dashboard first and Chat last in sidebar', async () => {
@@ -153,6 +173,8 @@ describe('AppShell', () => {
     expect(mockApi.subscribeToActivity).toHaveBeenCalledTimes(1);
 
     const user = userEvent.setup();
+    // Permissions sits under the collapsed "Advanced" section now; expand it first.
+    await user.click(screen.getByText('Advanced'));
     await user.click(screen.getByText('Permissions'));
 
     await waitFor(() => {

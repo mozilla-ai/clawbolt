@@ -41,6 +41,10 @@ function loadLastSession(): string | null {
   try { return localStorage.getItem(LAST_SESSION_KEY); } catch { return null; }
 }
 
+function clearLastSession() {
+  try { localStorage.removeItem(LAST_SESSION_KEY); } catch { /* ignore */ }
+}
+
 export default function ChatPage() {
   const queryClient = useQueryClient();
   const [searchParams, setSearchParams] = useSearchParams();
@@ -154,6 +158,18 @@ export default function ChatPage() {
     setSelectedSeqs(new Set());
     setConfirmModal(null);
   }, [activeSessionId]);
+
+  // If the persisted session id no longer exists (e.g. account was purged
+  // and re-created, or the session was deleted), clear it and fall back to
+  // fresh-start behavior instead of showing a broken chat view.
+  useEffect(() => {
+    if (historyError && activeSessionId) {
+      clearLastSession();
+      setActiveSessionId(null);
+      setSearchParams({}, { replace: true });
+      autoAttachDone.current = false;
+    }
+  }, [historyError, activeSessionId, setSearchParams]);
 
   // Populate messages from session history when it loads
   useEffect(() => {

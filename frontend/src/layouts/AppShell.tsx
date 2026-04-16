@@ -30,13 +30,16 @@ const NAV_TOP = [
 
 const NAV_MAIN = [
   { to: '/app/memory', label: 'Memory', icon: MemoryIcon, end: false },
+  { to: '/app/channels', label: 'Channels', icon: ChannelsIcon, end: false },
+  { to: '/app/tools', label: 'Tools', icon: ToolsIcon, end: false },
+  { to: '/app/settings', label: 'Settings', icon: SettingsIcon, end: false },
+] as const;
+
+const NAV_ADVANCED = [
   { to: '/app/heartbeat', label: 'Heartbeat', icon: HeartbeatIcon, end: false },
   { to: '/app/soul', label: 'Soul', icon: SoulIcon, end: false },
   { to: '/app/user', label: 'User', icon: UserIcon, end: false },
-  { to: '/app/channels', label: 'Channels', icon: ChannelsIcon, end: false },
   { to: '/app/permissions', label: 'Permissions', icon: PermissionsIcon, end: false },
-  { to: '/app/tools', label: 'Tools', icon: ToolsIcon, end: false },
-  { to: '/app/settings', label: 'Settings', icon: SettingsIcon, end: false },
 ] as const;
 
 const NAV_BOTTOM = [
@@ -46,13 +49,18 @@ const NAV_BOTTOM = [
 export default function AppShell() {
   const { authState, currentAuthUser, isPremium, handleLogout } = useAuth();
   const queryClient = useQueryClient();
+  // Gate the profile query until auth has resolved. Without this, the query
+  // fires on every render while authState is still 'loading' or 'login' and
+  // hammers /api/user/profile with 401 retries before the redirect below
+  // kicks in.
   const {
     data: profile,
     isError: profileError,
     isPending: profilePending,
     refetch: refetchProfile,
-  } = useProfile();
+  } = useProfile({ enabled: authState === 'ready' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
@@ -186,6 +194,34 @@ export default function AppShell() {
               {label}
             </NavLink>
           ))}
+          <button
+            type="button"
+            onClick={() => setAdvancedOpen((v) => !v)}
+            aria-expanded={advancedOpen}
+            className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground transition-all duration-150 w-full"
+          >
+            <ChevronIcon open={advancedOpen} />
+            Advanced
+          </button>
+          {advancedOpen &&
+            NAV_ADVANCED.map(({ to, label, icon: Icon, end }) => (
+              <NavLink
+                key={to}
+                to={to}
+                end={end}
+                onClick={closeSidebar}
+                className={({ isActive }) =>
+                  `flex items-center gap-3 px-3 py-2 pl-6 rounded-md text-sm transition-all duration-150 ${
+                    isActive
+                      ? 'bg-selected-bg text-primary font-medium border-l-2 border-primary'
+                      : 'text-muted-foreground border-l-2 border-transparent can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground'
+                  }`
+                }
+              >
+                <Icon />
+                {label}
+              </NavLink>
+            ))}
           <Divider className="my-1" />
           {NAV_BOTTOM.map(({ to, label, icon: Icon, end }) => (
             <NavLink
@@ -306,6 +342,19 @@ function DashboardIcon() {
   return (
     <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1V5zM14 5a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1V5zM4 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1H5a1 1 0 01-1-1v-4zM14 15a1 1 0 011-1h4a1 1 0 011 1v4a1 1 0 01-1 1h-4a1 1 0 01-1-1v-4z" />
+    </svg>
+  );
+}
+
+function ChevronIcon({ open }: { open: boolean }) {
+  return (
+    <svg
+      className={`w-5 h-5 shrink-0 transition-transform ${open ? 'rotate-90' : ''}`}
+      fill="none"
+      stroke="currentColor"
+      viewBox="0 0 24 24"
+    >
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 5l7 7-7 7" />
     </svg>
   );
 }
