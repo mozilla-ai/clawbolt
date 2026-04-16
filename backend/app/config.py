@@ -111,6 +111,9 @@ class Settings(BaseSettings):
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
 
+    # CompanyCam
+    companycam_access_token: str = ""  # Server-level API token (per-user tokens take precedence)
+
     # Supplier pricing (SerpApi Home Depot engine)
     serpapi_api_key: str = ""  # https://serpapi.com — free tier: 250 searches/month
 

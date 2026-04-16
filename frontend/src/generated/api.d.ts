@@ -47,7 +47,7 @@ export interface paths {
         };
         /**
          * Get Oauth Status
-         * @description Return connection status for all OAuth integrations.
+         * @description Return connection status for all OAuth and token-based integrations.
          */
         get: operations["get_oauth_status_api_oauth_status_get"];
         put?: never;
@@ -109,6 +109,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/oauth/{integration}/token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Connect With Token
+         * @description Connect a token-based integration by validating and storing an API token.
+         */
+        post: operations["connect_with_token_api_oauth__integration__token_post"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/oauth/{integration}": {
         parameters: {
             query?: never;
@@ -121,9 +141,33 @@ export interface paths {
         post?: never;
         /**
          * Disconnect Integration
-         * @description Disconnect an OAuth integration by removing stored tokens.
+         * @description Disconnect an OAuth or token-based integration by removing stored tokens.
          */
         delete: operations["disconnect_integration_api_oauth__integration__delete"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/media/temp/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve Temp Media
+         * @description Serve a temporarily staged media file. No auth required.
+         *
+         *     The token stays valid for the full TTL (5 minutes) and can be
+         *     fetched multiple times. External services like CompanyCam may
+         *     download the image more than once (original + thumbnails).
+         */
+        get: operations["serve_temp_media_api_media_temp__token__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
         options?: never;
         head?: never;
         patch?: never;
@@ -1211,6 +1255,26 @@ export interface components {
             /** Bot Link */
             bot_link: string;
         };
+        /** TokenConnectRequest */
+        TokenConnectRequest: {
+            /**
+             * Token
+             * @description API access token for the integration
+             */
+            token: string;
+        };
+        /** TokenConnectResponse */
+        TokenConnectResponse: {
+            /** Status */
+            status: string;
+            /** Integration */
+            integration: string;
+            /**
+             * Display Name
+             * @default
+             */
+            display_name: string;
+        };
         /** ToolConfigEntryResponse */
         ToolConfigEntryResponse: {
             /** Name */
@@ -1479,6 +1543,41 @@ export interface operations {
             };
         };
     };
+    connect_with_token_api_oauth__integration__token_post: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                integration: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TokenConnectRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TokenConnectResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
     disconnect_integration_api_oauth__integration__delete: {
         parameters: {
             query?: never;
@@ -1499,6 +1598,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    serve_temp_media_api_media_temp__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */

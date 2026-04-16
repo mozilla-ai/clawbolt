@@ -248,6 +248,14 @@ const api = {
     });
     if (error) _throwApiError(error, 'Failed to disconnect OAuth');
   },
+  connectWithToken: async (integration: string, token: string) => {
+    const { data, error } = await client.POST('/api/oauth/{integration}/token', {
+      params: { path: { integration } },
+      body: { token },
+    });
+    if (error) _throwApiError(error, 'Failed to connect integration');
+    return data as { status: string; integration: string; display_name: string };
+  },
 
   // Calendar config
   getCalendarList: async () => {

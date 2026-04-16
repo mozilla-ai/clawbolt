@@ -4,8 +4,9 @@ import Button from '@/components/ui/button';
 import { Switch } from '@heroui/switch';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
-import { displayName, subToolDisplayName, TOOL_OAUTH_MAP, getToolOAuthStatus } from '@/lib/tool-utils';
-import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
+import { displayName, subToolDisplayName, TOOL_OAUTH_MAP, TOKEN_BASED_INTEGRATIONS, getToolOAuthStatus } from '@/lib/tool-utils';
+import { IntegrationIcon } from '@/components/integration-icons';
+import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useTokenConnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
 import api from '@/api';
 import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
@@ -43,8 +44,10 @@ export default function ToolsPage() {
   const updateMutation = useUpdateToolConfig();
   const { data: oauthData } = useOAuthStatus();
   const disconnectMutation = useOAuthDisconnect();
+  const tokenConnectMutation = useTokenConnect();
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [connectingIntegration, setConnectingIntegration] = useState<string | null>(null);
+  const [tokenInputs, setTokenInputs] = useState<Record<string, string>>({});
 
   const tools = data?.tools ?? [];
   const oauthMap: Record<string, OAuthStatusEntry> = {};
@@ -139,54 +142,100 @@ export default function ToolsPage() {
               const oauthIntegration = TOOL_OAUTH_MAP[tool.name];
               const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap, tool.configured);
 
+              const isTokenBased = TOKEN_BASED_INTEGRATIONS.has(tool.name);
+
               return (
-                <Card key={tool.name} className={!isConfigured ? 'opacity-50' : undefined}>
+                <Card key={tool.name}>
                   <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="text-sm font-medium">{displayName(tool.name)}</span>
-                        {isConfigured ? (
-                          <span className="inline-flex items-center gap-1.5 text-xs">
-                            <span className={`size-1.5 rounded-full inline-block shrink-0 ${
-                              isConnected ? 'bg-success' : 'bg-warning'
-                            }`} />
-                            {needsOAuth ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
-                          </span>
-                        ) : (
-                          <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                            <span className="size-1.5 rounded-full inline-block shrink-0 bg-default-300" />
-                            Not configured
-                          </span>
+                    <div className="flex items-start gap-3 flex-1 min-w-0">
+                      <IntegrationIcon name={tool.name} />
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-sm font-medium">{displayName(tool.name)}</span>
+                          {isConfigured ? (
+                            <span className="inline-flex items-center gap-1.5 text-xs">
+                              <span className={`size-1.5 rounded-full inline-block shrink-0 ${
+                                isConnected ? 'bg-success' : 'bg-warning'
+                              }`} />
+                              {needsOAuth ? (isConnected ? 'Connected' : 'Not connected') : 'Available'}
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
+                              <span className="size-1.5 rounded-full inline-block shrink-0 bg-default-300" />
+                              Not connected
+                            </span>
+                          )}
+                        </div>
+                        {tool.description && (
+                          <p className="text-xs text-muted-foreground mt-1">{tool.description}</p>
                         )}
                       </div>
-                      {tool.description && (
-                        <p className="text-xs text-muted-foreground mt-1">{tool.description}</p>
-                      )}
                     </div>
                     <div className="flex items-center gap-3 shrink-0">
-                      {isConfigured && needsOAuth && (
-                        isConnected ? (
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            onClick={() => handleDisconnect(oauthIntegration!)}
-                            disabled={disconnectMutation.isPending}
-                          >
-                            Disconnect
-                          </Button>
-                        ) : (
-                          <Button
-                            size="sm"
-                            onClick={() => void handleConnect(oauthIntegration!)}
-                            disabled={connectingIntegration === oauthIntegration}
-                            isLoading={connectingIntegration === oauthIntegration}
-                          >
-                            Connect
-                          </Button>
-                        )
+                      {needsOAuth && isConnected && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => handleDisconnect(oauthIntegration!)}
+                          disabled={disconnectMutation.isPending}
+                        >
+                          Disconnect
+                        </Button>
+                      )}
+                      {needsOAuth && !isConnected && !isTokenBased && (
+                        <Button
+                          size="sm"
+                          onClick={() => void handleConnect(oauthIntegration!)}
+                          disabled={connectingIntegration === oauthIntegration}
+                          isLoading={connectingIntegration === oauthIntegration}
+                        >
+                          Connect
+                        </Button>
                       )}
                     </div>
                   </div>
+
+                  {/* Token-based connection input */}
+                  {isTokenBased && !isConnected && (
+                    <div className="mt-3 pt-3 border-t border-border">
+                      <label className="block text-xs text-muted-foreground mb-1.5">
+                        API token
+                        {tool.name === 'companycam' && (
+                          <span> (generate at <a href="https://app.companycam.com/access_tokens" target="_blank" rel="noreferrer" className="text-primary hover:underline">app.companycam.com</a>)</span>
+                        )}
+                      </label>
+                      <div className="flex gap-2">
+                        <input
+                          type="password"
+                          placeholder="Paste your API token"
+                          value={tokenInputs[tool.name] ?? ''}
+                          onChange={(e) => setTokenInputs((prev) => ({ ...prev, [tool.name]: e.target.value }))}
+                          className="flex-1 text-sm px-2.5 py-1.5 rounded-md border border-border bg-background"
+                        />
+                        <Button
+                          size="sm"
+                          disabled={!tokenInputs[tool.name]?.trim() || tokenConnectMutation.isPending}
+                          isLoading={tokenConnectMutation.isPending}
+                          onClick={() => {
+                            const token = tokenInputs[tool.name]?.trim();
+                            if (!token) return;
+                            tokenConnectMutation.mutate(
+                              { integration: oauthIntegration!, token },
+                              {
+                                onSuccess: () => {
+                                  toast.success(`${displayName(tool.name)} connected`);
+                                  setTokenInputs((prev) => ({ ...prev, [tool.name]: '' }));
+                                },
+                                onError: (e) => toast.error(e.message),
+                              },
+                            );
+                          }}
+                        >
+                          Connect
+                        </Button>
+                      </div>
+                    </div>
+                  )}
 
                   {/* Enable/disable toggle: show when connected (OAuth) or always (non-OAuth) */}
                   {isConnected && (

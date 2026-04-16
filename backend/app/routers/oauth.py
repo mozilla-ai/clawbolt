@@ -10,8 +10,15 @@ from fastapi.responses import HTMLResponse, RedirectResponse
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.models import User
-from backend.app.schemas import OAuthAuthorizeResponse, OAuthStatusEntry, OAuthStatusResponse
+from backend.app.schemas import (
+    OAuthAuthorizeResponse,
+    OAuthStatusEntry,
+    OAuthStatusResponse,
+    TokenConnectRequest,
+    TokenConnectResponse,
+)
 from backend.app.services.oauth import (
+    OAuthTokenData,
     get_oauth_config,
     list_oauth_integrations,
     oauth_service,
@@ -22,11 +29,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+_TOKEN_BASED_INTEGRATIONS = ("companycam",)
+
+
 @router.get("/oauth/status", response_model=OAuthStatusResponse)
 async def get_oauth_status(
     current_user: User = Depends(get_current_user),
 ) -> OAuthStatusResponse:
-    """Return connection status for all OAuth integrations."""
+    """Return connection status for all OAuth and token-based integrations."""
+    from backend.app.config import settings
+
     entries: list[OAuthStatusEntry] = []
     for name in list_oauth_integrations():
         config = get_oauth_config(name)
@@ -35,6 +47,16 @@ async def get_oauth_status(
                 integration=name,
                 configured=config is not None and config.is_configured,
                 connected=oauth_service.is_connected(current_user.id, name),
+            )
+        )
+    for name in _TOKEN_BASED_INTEGRATIONS:
+        has_user_token = oauth_service.is_connected(current_user.id, name)
+        has_env_token = bool(getattr(settings, f"{name}_access_token", ""))
+        entries.append(
+            OAuthStatusEntry(
+                integration=name,
+                configured=True,
+                connected=has_user_token or has_env_token,
             )
         )
     return OAuthStatusResponse(integrations=entries)
@@ -212,12 +234,49 @@ def _chat_callback_page(
     return HTMLResponse(content=html)
 
 
+@router.post("/oauth/{integration}/token", response_model=TokenConnectResponse)
+async def connect_with_token(
+    integration: str,
+    body: TokenConnectRequest,
+    current_user: User = Depends(get_current_user),
+) -> TokenConnectResponse:
+    """Connect a token-based integration by validating and storing an API token."""
+    if integration not in _TOKEN_BASED_INTEGRATIONS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Integration '{integration}' does not support token-based auth",
+        )
+
+    if integration == "companycam":
+        from backend.app.services.companycam import CompanyCamService
+
+        service = CompanyCamService(access_token=body.token)
+        try:
+            user_info = await service.validate_token()
+        except Exception as exc:
+            logger.warning("CompanyCam token validation failed: %s", exc)
+            raise HTTPException(status_code=401, detail="Invalid CompanyCam API token") from exc
+
+        token_data = OAuthTokenData(access_token=body.token, token_type="Bearer")
+        oauth_service.save_token(current_user.id, integration, token_data)
+
+        display_name = user_info.first_name or ""
+        logger.info("User %s connected CompanyCam via API token", current_user.id)
+        return TokenConnectResponse(
+            status="connected",
+            integration=integration,
+            display_name=display_name,
+        )
+
+    raise HTTPException(status_code=400, detail=f"Unsupported integration: {integration}")
+
+
 @router.delete("/oauth/{integration}")
 async def disconnect_integration(
     integration: str,
     current_user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    """Disconnect an OAuth integration by removing stored tokens."""
+    """Disconnect an OAuth or token-based integration by removing stored tokens."""
     deleted = oauth_service.delete_token(current_user.id, integration)
     if not deleted:
         raise HTTPException(status_code=404, detail="No connection found for this integration")

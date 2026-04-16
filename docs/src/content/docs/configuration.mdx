@@ -180,6 +180,14 @@ When `QUICKBOOKS_CLIENT_ID` and `QUICKBOOKS_CLIENT_SECRET` are set, users can co
 
 When `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` are set, users can connect their Google Calendar via the web dashboard. Once connected, the agent gains specialist calendar tools (`calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_check_availability`).
 
+## CompanyCam
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `COMPANYCAM_ACCESS_TOKEN` | | Server-level CompanyCam API token. Per-user tokens (entered via the UI or chat) take precedence. Generate at [app.companycam.com/access_tokens](https://app.companycam.com/access_tokens) |
+
+When set, all users get CompanyCam tools (`companycam_search_projects`, `companycam_upload_photo`, `companycam_create_project`). Users can also connect their own individual tokens via the Tools page or chat.
+
 ## Supplier pricing
 
 | Variable | Default | Description |

@@ -47,8 +47,10 @@ test-results/
 # Docs site
 docs/node_modules/
 docs/dist/
+docs/.astro/
 
 # OS
 .DS_Store
 Thumbs.db
 .gstack/
+backend/app/services/companycam_openapi.yaml
