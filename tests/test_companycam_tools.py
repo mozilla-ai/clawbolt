@@ -208,3 +208,557 @@ def test_companycam_auth_check_with_token() -> None:
         result = _companycam_auth_check(ctx)
 
     assert result is None
+
+
+# ---------------------------------------------------------------------------
+# New service method tests: project management
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_get_project() -> None:
+    service = CompanyCamService(access_token="test-token")
+    project = {"id": "42", "name": "Smith Residence", "status": "active"}
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(project))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.get_project("42")
+
+    assert result.id == "42"
+    assert result.name == "Smith Residence"
+
+
+@pytest.mark.asyncio()
+async def test_delete_project() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.delete = AsyncMock(return_value=_mock_response(None))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.delete_project("42")
+
+    client.delete.assert_called_once()
+
+
+@pytest.mark.asyncio()
+async def test_archive_project() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.patch = AsyncMock(return_value=_mock_response(None))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.archive_project("42")
+
+    client.patch.assert_called_once()
+
+
+@pytest.mark.asyncio()
+async def test_restore_project() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put = AsyncMock(return_value=_mock_response(None))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.restore_project("42")
+
+    client.put.assert_called_once()
+
+
+@pytest.mark.asyncio()
+async def test_update_notepad() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.put = AsyncMock(return_value=_mock_response(None))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.update_notepad("42", "Roof inspection passed")
+
+    body = client.put.call_args.kwargs.get("json", {})
+    assert body["notepad"] == "Roof inspection passed"
+
+
+# ---------------------------------------------------------------------------
+# New service method tests: project content
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_list_project_documents() -> None:
+    service = CompanyCamService(access_token="test-token")
+    docs = [{"id": "1", "name": "contract.pdf", "url": "https://example.com/c.pdf"}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(docs))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.list_project_documents("42")
+
+    assert len(result) == 1
+    assert result[0].name == "contract.pdf"
+
+
+@pytest.mark.asyncio()
+async def test_list_project_documents_pagination() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response([]))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.list_project_documents("42", page=2, per_page=25)
+
+    call_kwargs = client.get.call_args
+    params = call_kwargs.kwargs.get("params", {})
+    assert params["page"] == 2
+    assert params["per_page"] == 25
+
+
+@pytest.mark.asyncio()
+async def test_list_project_comments() -> None:
+    service = CompanyCamService(access_token="test-token")
+    comments = [{"id": "1", "content": "Looking good", "creator_name": "John"}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(comments))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.list_project_comments("42")
+
+    assert len(result) == 1
+    assert result[0].content == "Looking good"
+
+
+@pytest.mark.asyncio()
+async def test_add_project_comment() -> None:
+    service = CompanyCamService(access_token="test-token")
+    comment = {"id": "5", "content": "Done!", "creator_name": "Bot"}
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=_mock_response(comment))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.add_project_comment("42", "Done!")
+
+    assert result.id == "5"
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body == {"comment": {"content": "Done!"}}
+
+
+@pytest.mark.asyncio()
+async def test_list_project_labels() -> None:
+    service = CompanyCamService(access_token="test-token")
+    labels = [{"id": "1", "display_value": "Roofing", "value": "roofing"}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(labels))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.list_project_labels("42")
+
+    assert len(result) == 1
+    assert result[0].display_value == "Roofing"
+
+
+@pytest.mark.asyncio()
+async def test_add_project_labels() -> None:
+    service = CompanyCamService(access_token="test-token")
+    labels = [{"id": "2", "display_value": "Priority", "value": "priority"}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=_mock_response(labels))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.add_project_labels("42", ["Priority"])
+
+    assert len(result) == 1
+    assert result[0].display_value == "Priority"
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body == {"project": {"labels": ["Priority"]}}
+
+
+# ---------------------------------------------------------------------------
+# New service method tests: photo management
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_search_photos() -> None:
+    service = CompanyCamService(access_token="test-token")
+    photos = [{"id": "10", "uris": []}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(photos))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.search_photos()
+
+    assert len(result) == 1
+    assert result[0].id == "10"
+
+
+@pytest.mark.asyncio()
+async def test_search_photos_normalize() -> None:
+    """search_photos applies _normalize_photo (coordinates dict -> list)."""
+    service = CompanyCamService(access_token="test-token")
+    photos = [{"id": "10", "uris": [], "coordinates": {"lat": 1.0, "lon": 2.0}}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(photos))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.search_photos()
+
+    assert result[0].coordinates is not None
+    assert isinstance(result[0].coordinates, list)
+
+
+@pytest.mark.asyncio()
+async def test_delete_photo() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.delete = AsyncMock(return_value=_mock_response(None))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.delete_photo("100")
+
+    client.delete.assert_called_once()
+
+
+@pytest.mark.asyncio()
+async def test_list_photo_tags() -> None:
+    service = CompanyCamService(access_token="test-token")
+    tags = [{"id": "1", "display_value": "Kitchen", "value": "kitchen"}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(tags))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.list_photo_tags("100")
+
+    assert len(result) == 1
+    assert result[0].display_value == "Kitchen"
+
+
+@pytest.mark.asyncio()
+async def test_add_photo_tags() -> None:
+    service = CompanyCamService(access_token="test-token")
+    tags = [
+        {"id": "1", "display_value": "Before", "value": "before"},
+        {"id": "2", "display_value": "Kitchen", "value": "kitchen"},
+    ]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=_mock_response(tags))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.add_photo_tags("100", ["before", "kitchen"])
+
+    assert len(result) == 2
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body == {"tags": ["before", "kitchen"]}
+
+
+@pytest.mark.asyncio()
+async def test_list_photo_comments() -> None:
+    service = CompanyCamService(access_token="test-token")
+    comments = [{"id": "1", "content": "Nice shot"}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(comments))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.list_photo_comments("100")
+
+    assert len(result) == 1
+
+
+@pytest.mark.asyncio()
+async def test_add_photo_comment() -> None:
+    service = CompanyCamService(access_token="test-token")
+    comment = {"id": "3", "content": "Check this", "creator_name": "Bot"}
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=_mock_response(comment))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.add_photo_comment("100", "Check this")
+
+    assert result.id == "3"
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body == {"comment": {"content": "Check this"}}
+
+
+# ---------------------------------------------------------------------------
+# New service method tests: checklists
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_list_checklist_templates() -> None:
+    service = CompanyCamService(access_token="test-token")
+    templates = [{"id": "1", "name": "Roof Inspection"}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(templates))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.list_checklist_templates()
+
+    assert len(result) == 1
+    assert result[0].name == "Roof Inspection"
+
+
+@pytest.mark.asyncio()
+async def test_list_project_checklists() -> None:
+    service = CompanyCamService(access_token="test-token")
+    checklists = [{"id": "10", "name": "Inspection", "project_id": "42"}]
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(checklists))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.list_project_checklists("42")
+
+    assert len(result) == 1
+    assert result[0].name == "Inspection"
+
+
+@pytest.mark.asyncio()
+async def test_create_project_checklist() -> None:
+    service = CompanyCamService(access_token="test-token")
+    checklist = {"id": "20", "name": "Roof Survey", "project_id": "42"}
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=_mock_response(checklist))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.create_project_checklist("42", "tmpl-1")
+
+    assert result.id == "20"
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body["checklist_template_id"] == "tmpl-1"
+
+
+@pytest.mark.asyncio()
+async def test_get_checklist() -> None:
+    service = CompanyCamService(access_token="test-token")
+    checklist = {
+        "id": "20",
+        "name": "Roof Survey",
+        "sections": [
+            {
+                "id": "s1",
+                "title": "Exterior",
+                "tasks": [
+                    {"id": "t1", "title": "Check shingles", "completed_at": 1234},
+                    {"id": "t2", "title": "Check gutters", "completed_at": None},
+                ],
+            }
+        ],
+        "sectionless_tasks": [],
+    }
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(checklist))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.get_checklist("42", "20")
+
+    assert result.id == "20"
+    assert result.sections is not None
+    assert len(result.sections) == 1
+    assert len(result.sections[0].tasks or []) == 2
+
+
+# ---------------------------------------------------------------------------
+# New service method tests: pagination on existing methods
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_search_projects_pagination() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response([]))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.search_projects("test", page=3, per_page=10)
+
+    params = client.get.call_args.kwargs.get("params", {})
+    assert params["page"] == 3
+    assert params["per_page"] == 10
+
+
+@pytest.mark.asyncio()
+async def test_list_project_photos_pagination() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response([]))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        await service.list_project_photos("42", page=2, per_page=25)
+
+    params = client.get.call_args.kwargs.get("params", {})
+    assert params["page"] == 2
+    assert params["per_page"] == 25
+
+
+# ---------------------------------------------------------------------------
+# New service method tests: error handling
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_get_project_404() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.get = AsyncMock(return_value=_mock_response(None, status_code=404))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await service.get_project("nonexistent")
+
+
+@pytest.mark.asyncio()
+async def test_delete_photo_404() -> None:
+    service = CompanyCamService(access_token="test-token")
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.delete = AsyncMock(return_value=_mock_response(None, status_code=404))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        with pytest.raises(httpx.HTTPStatusError):
+            await service.delete_photo("nonexistent")
+
+
+# ---------------------------------------------------------------------------
+# New tool registration tests
+# ---------------------------------------------------------------------------
+
+
+def test_new_companycam_tools_registered() -> None:
+    """All new CompanyCam SubToolInfo entries should be registered."""
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
+
+    ensure_tool_modules_imported()
+    info = default_registry._factories["companycam"]
+    tool_names = {st.name for st in info.sub_tools}
+
+    expected = {
+        ToolName.COMPANYCAM_CONNECT,
+        ToolName.COMPANYCAM_SEARCH_PROJECTS,
+        ToolName.COMPANYCAM_CREATE_PROJECT,
+        ToolName.COMPANYCAM_UPDATE_PROJECT,
+        ToolName.COMPANYCAM_UPLOAD_PHOTO,
+        ToolName.COMPANYCAM_GET_PROJECT,
+        ToolName.COMPANYCAM_ARCHIVE_PROJECT,
+        ToolName.COMPANYCAM_DELETE_PROJECT,
+        ToolName.COMPANYCAM_UPDATE_NOTEPAD,
+        ToolName.COMPANYCAM_LIST_DOCUMENTS,
+        ToolName.COMPANYCAM_ADD_COMMENT,
+        ToolName.COMPANYCAM_LIST_COMMENTS,
+        ToolName.COMPANYCAM_TAG_PHOTO,
+        ToolName.COMPANYCAM_DELETE_PHOTO,
+        ToolName.COMPANYCAM_SEARCH_PHOTOS,
+        ToolName.COMPANYCAM_LIST_CHECKLISTS,
+        ToolName.COMPANYCAM_GET_CHECKLIST,
+        ToolName.COMPANYCAM_CREATE_CHECKLIST,
+    }
+
+    assert expected == tool_names
+
+
+def test_new_tool_permissions() -> None:
+    """Read-only tools should be 'always', write tools should be 'ask'."""
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
+
+    ensure_tool_modules_imported()
+    info = default_registry._factories["companycam"]
+    perms = {st.name: st.default_permission for st in info.sub_tools}
+
+    # Read-only tools should be "always"
+    for name in [
+        ToolName.COMPANYCAM_GET_PROJECT,
+        ToolName.COMPANYCAM_LIST_DOCUMENTS,
+        ToolName.COMPANYCAM_LIST_COMMENTS,
+        ToolName.COMPANYCAM_SEARCH_PHOTOS,
+        ToolName.COMPANYCAM_LIST_CHECKLISTS,
+        ToolName.COMPANYCAM_GET_CHECKLIST,
+    ]:
+        assert perms[name] == "always", f"{name} should be 'always'"
+
+    # Write tools should be "ask"
+    for name in [
+        ToolName.COMPANYCAM_ARCHIVE_PROJECT,
+        ToolName.COMPANYCAM_DELETE_PROJECT,
+        ToolName.COMPANYCAM_UPDATE_NOTEPAD,
+        ToolName.COMPANYCAM_ADD_COMMENT,
+        ToolName.COMPANYCAM_TAG_PHOTO,
+        ToolName.COMPANYCAM_DELETE_PHOTO,
+        ToolName.COMPANYCAM_CREATE_CHECKLIST,
+    ]:
+        assert perms[name] == "ask", f"{name} should be 'ask'"
