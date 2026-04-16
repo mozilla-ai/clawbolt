@@ -7,7 +7,9 @@ table (OAuth 2.0 support is planned post-MVP).
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
@@ -171,8 +173,6 @@ def _create_companycam_tools(
         tags: list[str] | None = None,
     ) -> ToolResult:
         """Upload a photo from the current conversation to a CompanyCam project."""
-        from pathlib import Path
-
         from backend.app.agent.stores import MediaStore
         from backend.app.config import settings
         from backend.app.routers.media_temp import create_temp_media_url
@@ -223,8 +223,6 @@ def _create_companycam_tools(
                     photo_uri = storage_url
                 # Local storage: read bytes from disk
                 elif storage_url and storage_url.startswith("file://"):
-                    import asyncio
-
                     local_path = Path(storage_url.removeprefix("file://"))
                     if local_path.is_file():
                         file_bytes = await asyncio.to_thread(local_path.read_bytes)
@@ -265,8 +263,6 @@ def _create_companycam_tools(
             )
 
         # Poll for processing status (CompanyCam downloads the image async)
-        import asyncio
-
         status = photo.processing_status or "pending"
         if status == "pending":
             for _ in range(3):
