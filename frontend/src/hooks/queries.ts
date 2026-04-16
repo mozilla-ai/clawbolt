@@ -132,6 +132,19 @@ export function useOAuthDisconnect() {
     mutationFn: (integration: string) => api.disconnectOAuth(integration),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.oauth });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
+    },
+  });
+}
+
+export function useTokenConnect() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ integration, token }: { integration: string; token: string }) =>
+      api.connectWithToken(integration, token),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.oauth });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.tools });
     },
   });
 }

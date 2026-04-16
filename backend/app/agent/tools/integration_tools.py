@@ -32,6 +32,7 @@ _DISPLAY_NAMES: dict[str, str] = {
     "heartbeat": "Heartbeat",
     "quickbooks": "QuickBooks Online",
     "calendar": "Google Calendar",
+    "companycam": "CompanyCam",
     "supplier_pricing": "Home Depot pricing",
 }
 

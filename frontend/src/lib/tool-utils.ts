@@ -6,22 +6,29 @@
  *
  * 1. Add an entry to DISPLAY_NAMES.
  * 2. Add sub-tool entries to SUB_TOOL_NAMES.
- * 3. If the tool requires OAuth, add it to TOOL_OAUTH_MAP.
- *    If it does NOT require OAuth (like supplier_pricing), leave it out
+ * 3. If the tool requires OAuth or token auth, add it to TOOL_OAUTH_MAP.
+ *    If it does NOT require auth (like supplier_pricing), leave it out
  *    and it will be treated as "always available."
+ * 4. If the tool uses API tokens (not OAuth), add it to TOKEN_BASED_INTEGRATIONS.
  */
 
-/** Map tool factory names to OAuth integration identifiers. Tools NOT in this
- *  map are treated as non-OAuth (always configured, always connected). */
+/** Map tool factory names to integration identifiers. Tools NOT in this
+ *  map are treated as non-connectable (always configured, always connected). */
 export const TOOL_OAUTH_MAP: Record<string, string> = {
   quickbooks: 'quickbooks',
   calendar: 'google_calendar',
+  companycam: 'companycam',
 };
+
+/** Integrations that use API tokens instead of OAuth.
+ *  These show a token input field instead of an OAuth redirect. */
+export const TOKEN_BASED_INTEGRATIONS = new Set(['companycam']);
 
 /** Human-readable display names for tool factories. */
 const DISPLAY_NAMES: Record<string, string> = {
   quickbooks: 'QuickBooks',
   calendar: 'Google Calendar',
+  companycam: 'CompanyCam',
   supplier_pricing: 'Pricing Tools',
   workspace: 'Workspace',
   profile: 'Profile',
@@ -55,6 +62,11 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   send_reply: 'Send replies',
   send_media_reply: 'Send media',
   update_permission: 'Change permissions',
+  companycam_connect: 'Connect to CompanyCam',
+  companycam_search_projects: 'Search projects',
+  companycam_create_project: 'Create project',
+  companycam_update_project: 'Update project',
+  companycam_upload_photo: 'Upload photo',
   supplier_search_products: 'Search products',
 };
 
@@ -67,10 +79,10 @@ export function subToolDisplayName(name: string): string {
 }
 
 /**
- * Determine whether a tool needs OAuth and its connection/config status.
+ * Determine whether a tool needs auth and its connection/config status.
  *
- * For OAuth tools: checks TOOL_OAUTH_MAP + oauthMap for configured/connected.
- * For non-OAuth tools: uses the `configured` field from the backend API response
+ * For connectable tools: checks TOOL_OAUTH_MAP + oauthMap for configured/connected.
+ * For non-connectable tools: uses the `configured` field from the backend API response
  * (populated from the tool's auth_check). If the backend says configured=false,
  * the tool shows as "Not configured" (e.g. missing SERPAPI_API_KEY).
  */

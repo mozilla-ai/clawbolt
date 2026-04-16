@@ -39,6 +39,13 @@ class ToolName:
     CALENDAR_DELETE_EVENT = "calendar_delete_event"
     CALENDAR_CHECK_AVAILABILITY = "calendar_check_availability"
 
+    # CompanyCam
+    COMPANYCAM_CONNECT = "companycam_connect"
+    COMPANYCAM_SEARCH_PROJECTS = "companycam_search_projects"
+    COMPANYCAM_CREATE_PROJECT = "companycam_create_project"
+    COMPANYCAM_UPDATE_PROJECT = "companycam_update_project"
+    COMPANYCAM_UPLOAD_PHOTO = "companycam_upload_photo"
+
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
 

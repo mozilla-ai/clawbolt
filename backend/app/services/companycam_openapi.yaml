@@ -1,0 +1,4155 @@
+openapi: 3.0.0
+info:
+    version: v2
+    title: Core API
+servers:
+    - url: "https://api.companycam.com/v2"
+paths:
+    /checklists:
+        get:
+            summary: "List All Checklists"
+            operationId: listChecklists
+            tags:
+                - Checklists
+            parameters:
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: completed
+                  in: query
+                  schema:
+                      type: boolean
+            responses:
+                "200":
+                    description: "List of checklists sorted by last updated"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Checklist"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /company:
+        get:
+            summary: "Retrieve Company"
+            operationId: getCurrentCompany
+            tags:
+                - Company
+            responses:
+                "200":
+                    description: "Details about the current company"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Company"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /users/current:
+        get:
+            summary: "Retrieve Current User"
+            operationId: getCurrentUser
+            tags:
+                - Users
+            responses:
+                "200":
+                    description: "Details about the current user"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/User"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /users:
+        get:
+            summary: "List All Users"
+            operationId: listUsers
+            tags:
+                - Users
+            parameters:
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of users sorted by alphabetically"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/User"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Create User"
+            operationId: createUser
+            tags:
+                - Users
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the creator
+                  required: false
+                  schema:
+                      type: string
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                user:
+                                    type: object
+                                    properties:
+                                        first_name:
+                                            type: string
+                                        last_name:
+                                            type: string
+                                        email_address:
+                                            type: string
+                                        phone_number:
+                                            type: string
+                                        password:
+                                            type: string
+                                        user_role:
+                                            type: string
+                                            description: "Role for the user. Allowed values: standard (default), restricted"
+            responses:
+                "201":
+                    description: "The created user"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/User"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /users/{id}:
+        get:
+            summary: "Retrieve User"
+            operationId: getUser
+            tags:
+                - Users
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the User
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "200":
+                    description: "Details about the user"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/User"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        put:
+            summary: "Update User"
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the editor
+                  required: false
+                  schema:
+                      type: string
+                - name: id
+                  in: path
+                  description: ID of the User
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                first_name:
+                                    type: string
+                                last_name:
+                                    type: string
+                                email_address:
+                                    type: string
+                                phone_number:
+                                    type: string
+                                password:
+                                    type: string
+            operationId: updateUser
+            tags:
+                - Users
+            responses:
+                "200":
+                    description: "The updated user"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/User"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        delete:
+            summary: "Delete User"
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the editor
+                  required: false
+                  schema:
+                      type: string
+                - name: id
+                  in: path
+                  description: ID of the User
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: deleteUser
+            tags:
+                - Users
+            responses:
+                "204":
+                    description: "No Content"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects:
+        get:
+            summary: "List Projects"
+            operationId: listProjects
+            tags:
+                - Projects
+            parameters:
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: query
+                  in: query
+                  required: false
+                  description: "An optional value to filter the projects by name or address line 1"
+                  schema:
+                      type: string
+                - name: modified_since
+                  in: query
+                  description: "An ISO8601 formatted date and time to return projects modified on or after the provided value"
+                  schema:
+                      type: string
+            responses:
+                "200":
+                    description: "List of projects sorted by most recent activity first"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Project"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Create Project"
+            operationId: createProject
+            tags:
+                - Projects
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the creator
+                  required: false
+                  schema:
+                      type: string
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                name:
+                                    description: "The name of the project"
+                                    default: "Joe Smith"
+                                    type: string
+                                address:
+                                    $ref: "#/components/schemas/Address"
+                                coordinates:
+                                    $ref: "#/components/schemas/Coordinate"
+                                geofence:
+                                    type: array
+                                    items:
+                                        $ref: "#/components/schemas/Coordinate"
+                                    example:
+                                        [
+                                            {
+                                                "lat": 28.425852468018288,
+                                                "lon": -81.47155671113255,
+                                            },
+                                            {
+                                                "lat": 18.425852468018288,
+                                                "lon": -81.47155671113255,
+                                            },
+                                            {
+                                                "lat": 8.425852468018288,
+                                                "lon": -91.47155671113255,
+                                            },
+                                            {
+                                                "lat": 28.425852468018288,
+                                                "lon": -101.47155671113255,
+                                            },
+                                        ]
+                                primary_contact:
+                                    $ref: "#/components/schemas/ProjectContactRequest"
+            responses:
+                "201":
+                    description: "The created project"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Project"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{id}:
+        get:
+            summary: "Retrieve Project"
+            operationId: getProject
+            tags:
+                - Projects
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "200":
+                    description: "Details about the project"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Project"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        put:
+            summary: "Update Project"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                name:
+                                    description: "The name of the project"
+                                    type: string
+                                address:
+                                    $ref: "#/components/schemas/Address"
+                                coordinates:
+                                    $ref: "#/components/schemas/Coordinate"
+                                geofence:
+                                    type: array
+                                    items:
+                                        $ref: "#/components/schemas/Coordinate"
+                                    example:
+                                        [
+                                            {
+                                                "lat": 28.425852468018288,
+                                                "lon": -81.47155671113255,
+                                            },
+                                            {
+                                                "lat": 18.425852468018288,
+                                                "lon": -81.47155671113255,
+                                            },
+                                            {
+                                                "lat": 8.425852468018288,
+                                                "lon": -91.47155671113255,
+                                            },
+                                            {
+                                                "lat": 28.425852468018288,
+                                                "lon": -101.47155671113255,
+                                            },
+                                        ]
+            operationId: updateProject
+            tags:
+                - Projects
+            responses:
+                "200":
+                    description: "The updated project"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Project"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        delete:
+            summary: "Delete Project"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: deleteProject
+            tags:
+                - Projects
+            responses:
+                "204":
+                    description: "No Content"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occurred"]
+    /projects/{id}/archive:
+        patch:
+            summary: "Archive Project"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: archiveProject
+            tags:
+                - Projects
+            responses:
+                "200":
+                    description: "Details about the project"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Project"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "403":
+                    description: "Forbidden"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Forbidden"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occurred"]
+    /projects/{id}/restore:
+        put:
+            summary: "Restore Project"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: restoreProject
+            tags:
+                - Projects
+            responses:
+                "200":
+                    description: "Details about the project"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Project"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/photos:
+        get:
+            summary: "List Photos"
+            operationId: listProjectPhotos
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: start_date
+                  in: query
+                  description: "A unix timestamp to return photos modified on or after the provided value"
+                  schema:
+                      type: string
+                - name: end_date
+                  in: query
+                  description: "A unix timestamp to return photos modified on or before the provided value"
+                  schema:
+                      type: string
+                - name: user_ids
+                  in: query
+                  description: "Filter results to include photos captured by one of these user IDs"
+                  schema:
+                      type: array
+                      items:
+                          type: integer
+                          format: int64
+                - name: group_ids
+                  in: query
+                  description: "Filter results to include photos captured by one of these group IDs"
+                  schema:
+                      type: array
+                      items:
+                          type: integer
+                          format: int64
+                - name: tag_ids
+                  in: query
+                  description: "Filter results to include photos captured by one of these tag IDs"
+                  schema:
+                      type: array
+                      items:
+                          type: integer
+                          format: int64
+            responses:
+                "200":
+                    description: "List of projects sorted by most recent activity first"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Photo"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Add Photo"
+            operationId: createProjectPhoto
+            tags:
+                - Projects
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the creator
+                  required: false
+                  schema:
+                      type: string
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            required:
+                                - photo
+                            properties:
+                                photo:
+                                    type: object
+                                    required:
+                                        - uri
+                                        - captured_at
+                                    properties:
+                                        coordinates:
+                                            $ref: "#/components/schemas/Coordinate"
+                                        uri:
+                                            type: string
+                                        captured_at:
+                                            description: "Unix timestamp when the Photo was captured"
+                                            type: integer
+                                            format: int32
+                                            example: 1637770053
+                                        description:
+                                            description: "A description of the photo"
+                                            type: string
+                                        tags:
+                                            type: array
+                                            items:
+                                                type: string
+            responses:
+                "201":
+                    description: "The created project photo"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Photo"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/assigned_users:
+        get:
+            summary: "List assigned users"
+            operationId: listProjectAssignedUsers
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of project assigned users"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/User"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/assigned_users/{user_id}:
+        put:
+            summary: "Assign a user to a project"
+            operationId: assignUserToProject
+            tags:
+                - Projects
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the assigner
+                  required: false
+                  schema:
+                      type: string
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: user_id
+                  in: path
+                  description: ID of the User
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "201":
+                    description: "The assigned user"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/User"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        delete:
+            summary: "Remove assigned user from project"
+            operationId: removeUserFromProject
+            tags:
+                - Projects
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the unassigner
+                  required: false
+                  schema:
+                      type: string
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: user_id
+                  in: path
+                  description: ID of the User
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "204":
+                    description: "No Content"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/notepad:
+        put:
+            summary: "Update the project notepad"
+            operationId: updateProjectNotepad
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            required:
+                                - notepad
+                            properties:
+                                notepad:
+                                    type: string
+                                    example: "An updated description of the project"
+            responses:
+                "201":
+                    description: "The project notepad"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/ProjectNotepad"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/collaborators:
+        get:
+            summary: "List project collaborators"
+            operationId: listProjectCollaborators
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of project collaborators"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/ProjectCollaborator"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occurred"]
+    /projects/{project_id}/invitations:
+        get:
+            summary: "List project invitations"
+            operationId: listProjectInvitations
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of project invitations"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/ProjectInvitation"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occurred"]
+        post:
+            summary: "Create a new project invitation for collaboration"
+            operationId: createInvitation
+            tags:
+                - Projects
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the inviter
+                  required: false
+                  schema:
+                      type: string
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "201":
+                    description: "The invitation response"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/ProjectInvitation"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occurred"]
+    /projects/{project_id}/labels:
+        get:
+            summary: "List Project Labels"
+            operationId: listProjectLabels
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of project labels sorted alphabetically"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Tag"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+
+        post:
+            summary: "Add Labels"
+            operationId: createProjectLabels
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                project:
+                                    type: object
+                                    properties:
+                                        labels:
+                                            type: array
+                                            items:
+                                                type: string
+            responses:
+                "201":
+                    description: "The created project label(s)"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Tag"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/labels/{id}:
+        delete:
+            summary: "Delete Label"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Label
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: deleteProjectLabel
+            tags:
+                - Projects
+            responses:
+                "204":
+                    description: "No Content"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/documents:
+        get:
+            summary: "List Project Documents"
+            operationId: listProjectDocuments
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of project documents sorted alphabetically"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Document"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Upload a Document"
+            operationId: createProjectDocument
+            tags:
+                - Projects
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the creator
+                  required: false
+                  schema:
+                      type: string
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                document:
+                                    type: object
+                                    properties:
+                                        name:
+                                            type: string
+                                            example: "test.txt"
+                                        attachment:
+                                            type: string
+                                            description: Base64 encoded file contents with 30 MB limit
+                                            example: "VGVzdAo="
+            responses:
+                "201":
+                    description: "The created project document"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Document"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/comments:
+        get:
+            summary: "List Project Comments"
+            operationId: listProjectComments
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of most recent project comments"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Comment"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Add Project Comment"
+            operationId: createProjectComment
+            tags:
+                - Projects
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the commenter
+                  required: false
+                  schema:
+                      type: string
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                comment:
+                                    type: object
+                                    properties:
+                                        content:
+                                            type: string
+            responses:
+                "201":
+                    description: "The created project comment"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Comment"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/checklists:
+        get:
+            summary: "List Project Checklists"
+            operationId: listProjectChecklists
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "200":
+                    description: "List of project checklists"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Checklist"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Create Checklist on Project from a Checklist Template"
+            operationId: createProjectChecklist
+            tags:
+                - Projects
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the creator
+                  required: false
+                  schema:
+                      type: string
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                checklist_template_id:
+                                    type: string
+                                    format: id
+            responses:
+                "201":
+                    description: "The created project checklist"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Checklist"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /projects/{project_id}/checklists/{id}:
+        get:
+            summary: "Retrieve Project Checklist"
+            operationId: getProjectChecklist
+            tags:
+                - Projects
+            parameters:
+                - name: project_id
+                  in: path
+                  description: ID of the Project
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: id
+                  in: path
+                  description: ID of the Checklist
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "200":
+                    description: "Details about the project checklist"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Checklist"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /photos:
+        get:
+            summary: "List Photos"
+            operationId: listPhotos
+            tags:
+                - Photos
+            parameters:
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: start_date
+                  in: query
+                  description: "A unix timestamp to return photos modified on or after the provided value"
+                  schema:
+                      type: string
+                - name: end_date
+                  in: query
+                  description: "A unix timestamp to return photos modified on or before the provided value"
+                  schema:
+                      type: string
+                - name: user_ids
+                  in: query
+                  description: "Filter results to include photos captured by one of these user IDs"
+                  schema:
+                      type: array
+                      items:
+                          type: integer
+                          format: int64
+                - name: group_ids
+                  in: query
+                  description: "Filter results to include photos captured by one of these group IDs"
+                  schema:
+                      type: array
+                      items:
+                          type: integer
+                          format: int64
+                - name: tag_ids
+                  in: query
+                  description: "Filter results to include photos captured by one of these tag IDs"
+                  schema:
+                      type: array
+                      items:
+                          type: integer
+                          format: int64
+            responses:
+                "200":
+                    description: "List of projects sorted by most recent activity first"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Photo"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /photos/{id}:
+        get:
+            summary: "Retrieve Photo"
+            operationId: getPhoto
+            tags:
+                - Photos
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Photo
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "200":
+                    description: "Details about the photo"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Photo"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        put:
+            summary: "Update Photo"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Photo
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                photo:
+                                    type: object
+                                    properties:
+                                        internal:
+                                            type: boolean
+            operationId: updatePhoto
+            tags:
+                - Photos
+            responses:
+                "201":
+                    description: "The updated photo"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/Photo"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        delete:
+            summary: "Delete Photo"
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the editor
+                  required: false
+                  schema:
+                      type: string
+                - name: id
+                  in: path
+                  description: ID of the Photo
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: deletePhoto
+            tags:
+                - Photos
+            responses:
+                "204":
+                    description: "No Content"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /photos/{photo_id}/tags:
+        get:
+            summary: "List Photo Tags"
+            operationId: listPhotoTags
+            tags:
+                - Photos
+            parameters:
+                - name: photo_id
+                  in: path
+                  description: ID of the Photo
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  required: false
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of photo tags sorted alphabetically"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Tag"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Add Tags"
+            operationId: createPhotoTags
+            tags:
+                - Photos
+            parameters:
+                - name: photo_id
+                  in: path
+                  description: ID of the Photo
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                tags:
+                                    type: array
+                                    items:
+                                        type: string
+            responses:
+                "201":
+                    description: "The created photo tag(s)"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Tag"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /photos/{photo_id}/comments:
+        get:
+            summary: "List Photo Comments"
+            operationId: listPhotoComments
+            tags:
+                - Photos
+            parameters:
+                - name: photo_id
+                  in: path
+                  description: ID of the Photo
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of photo tags sorted alphabetically"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Comment"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Add Comment"
+            operationId: createPhotoComment
+            tags:
+                - Photos
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the commenter
+                  required: false
+                  schema:
+                      type: string
+                - name: photo_id
+                  in: path
+                  description: ID of the Photo
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                comment:
+                                    type: object
+                                    properties:
+                                        content:
+                                            type: string
+            responses:
+                "201":
+                    description: "The created photo comment"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Comment"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occurred"]
+    /photos/{photo_id}/descriptions:
+        post:
+            summary: "Update Photo Description"
+            operationId: updatePhotoDescription
+            tags:
+                - Photos
+            parameters:
+                - name: photo_id
+                  in: path
+                  description: ID of the Photo
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            type: object
+                            properties:
+                                description:
+                                    type: string
+            responses:
+                "201":
+                    description: "The updated photo"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/Photo"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occurred"]
+    /tags:
+        get:
+            summary: "List All Tags"
+            operationId: listTags
+            tags:
+                - Tags
+            parameters:
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of tags sorted alphabetically"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Tag"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Create Tag"
+            operationId: createTag
+            tags:
+                - Tags
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                tag:
+                                    type: object
+                                    properties:
+                                        display_value:
+                                            type: string
+            responses:
+                "201":
+                    description: "The created photo tag(s)"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Tag"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /tags/{id}:
+        get:
+            summary: "Retrieve tag"
+            operationId: getTag
+            tags:
+                - Tags
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Tag
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "200":
+                    description: "Details about the tag"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Tag"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        put:
+            summary: "Update Tag"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Tag
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                tag:
+                                    type: object
+                                    properties:
+                                        display_value:
+                                            type: string
+            operationId: updateTag
+            tags:
+                - Tags
+            responses:
+                "201":
+                    description: "The updated tag"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/Tag"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        delete:
+            summary: "Delete a Tag"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Tag
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: deleteTag
+            tags:
+                - Tags
+            responses:
+                "204":
+                    description: "No Content"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /templates/checklists:
+        get:
+            summary: "List All Checklist Templates"
+            operationId: listChecklistTemplates
+            tags:
+                - Templates
+            responses:
+                "200":
+                    description: "List of Checklist Templates"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/ChecklistTemplate"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /groups:
+        get:
+            summary: "List Groups"
+            operationId: listGroups
+            tags:
+                - Groups
+            parameters:
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of groups sorted alphabetically"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Group"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Create Group"
+            operationId: createGroup
+            tags:
+                - Groups
+            parameters:
+                - name: X-CompanyCam-User
+                  in: header
+                  description: Email of CompanyCam user to be designated as the creator
+                  required: false
+                  schema:
+                      type: string
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                group:
+                                    type: object
+                                    properties:
+                                        name:
+                                            type: string
+                                        users:
+                                            type: array
+                                            items:
+                                                type: string
+            responses:
+                "201":
+                    description: "The created group"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Group"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /groups/{id}:
+        get:
+            summary: "Retrieve Group"
+            operationId: getGroup
+            tags:
+                - Groups
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Group
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "200":
+                    description: "Details about the group"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Group"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        put:
+            summary: "Update Group"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Group
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                group:
+                                    type: object
+                                    properties:
+                                        name:
+                                            type: string
+                                        users:
+                                            type: array
+                                            items:
+                                                type: string
+            operationId: updateGroup
+            tags:
+                - Groups
+            responses:
+                "201":
+                    description: "The updated group"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/Group"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        delete:
+            summary: "Delete a Group"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Group
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: deleteGroup
+            tags:
+                - Groups
+            responses:
+                "204":
+                    description: "No Content"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /webhooks:
+        get:
+            summary: "List Webhooks"
+            operationId: listWebhooks
+            tags:
+                - Webhooks
+            parameters:
+                - name: page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+                - name: per_page
+                  in: query
+                  schema:
+                      type: integer
+                      format: int32
+            responses:
+                "200":
+                    description: "List of webhooks"
+                    content:
+                        application/json:
+                            schema:
+                                type: array
+                                items:
+                                    $ref: "#/components/schemas/Webhook"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        post:
+            summary: "Create Webhook"
+            operationId: createWebhook
+            tags:
+                - Webhooks
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                url:
+                                    type: string
+                                scopes:
+                                    type: array
+                                    items:
+                                        type: string
+                                enabled:
+                                    type: boolean
+                                token:
+                                    type: string
+            responses:
+                "201":
+                    description: "The created webhook"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Webhook"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+    /webhooks/{id}:
+        get:
+            summary: "Retrieve Webhook"
+            operationId: getWebhook
+            tags:
+                - Webhooks
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Webhooks
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            responses:
+                "200":
+                    description: "Details about the webhooks"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Webhook"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        put:
+            summary: "Update Webhook"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Webhook
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            requestBody:
+                required: true
+                content:
+                    "application/json":
+                        schema:
+                            properties:
+                                url:
+                                    type: string
+                                scopes:
+                                    type: array
+                                    items:
+                                        type: string
+                                enabled:
+                                    type: boolean
+                                token:
+                                    type: string
+            operationId: updateWebhook
+            tags:
+                - Webhooks
+            responses:
+                "201":
+                    description: "The updated webhook"
+                    content:
+                        "application/json":
+                            schema:
+                                $ref: "#/components/schemas/Webhook"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+        delete:
+            summary: "Delete Webhook"
+            parameters:
+                - name: id
+                  in: path
+                  description: ID of the Webhook
+                  required: true
+                  schema:
+                      type: string
+                      format: id
+            operationId: deleteWebhook
+            tags:
+                - Webhooks
+            responses:
+                "204":
+                    description: "No Content"
+                "400":
+                    description: "Bad Request"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Bad Request"]
+                "404":
+                    description: "Not found"
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["Record not found"]
+                "500":
+                    description: Unexpected error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: "#/components/schemas/Error"
+                            example:
+                                errors: ["An unexpected error occured"]
+components:
+    schemas:
+        Company:
+            type: object
+            required:
+                - id
+                - name
+            properties:
+                id:
+                    type: string
+                    description: "The Company's unique ID"
+                    example: "2789583992"
+                name:
+                    type: string
+                    description: "The name of the company"
+                    example: "Psych"
+                status:
+                    type: string
+                    description: "Indicates the status of the Company."
+                    enum: ["active", "cancelled", "deleted"]
+                    example: "active"
+                address:
+                    type: string
+                    description: "The address of the company"
+                    $ref: "#/components/schemas/Address"
+                logo:
+                    type: array
+                    description: "A list of images for the different variants of the logo"
+                    items:
+                        $ref: "#/components/schemas/ImageURI"
+        User:
+            type: object
+            required:
+                - id
+            properties:
+                id:
+                    type: string
+                    example: "2789583992"
+                company_id:
+                    type: string
+                    example: "8292212"
+                email_address:
+                    type: string
+                    example: "shawn@psych.co"
+                status:
+                    type: string
+                    description: "Indicates the status of the Company."
+                    enum: ["active", "deleted"]
+                    example: "active"
+                first_name:
+                    type: string
+                    example: "Shawn"
+                last_name:
+                    type: string
+                    example: "Spencer"
+                profile_image:
+                    type: array
+                    description: "A list of images for the different variants of the user profile image"
+                    items:
+                        $ref: "#/components/schemas/ImageURI"
+                phone_number:
+                    type: string
+                    nullable: true
+                    example: "4025551212"
+                created_at:
+                    type: integer
+                    format: int32
+                    example: 1490737206
+                updated_at:
+                    type: integer
+                    format: int32
+                    example: 1490737206
+                user_url:
+                    type: string
+                    example: "https://app.companycam.com/users/1234"
+        Project:
+            type: object
+            required:
+                - id
+            properties:
+                id:
+                    type: string
+                    description: "A unique identifier for the Project."
+                    example: "94772883"
+                company_id:
+                    type: string
+                    description: "A unique identifier for the Company the Project belongs to"
+                    example: "8292212"
+                creator_id:
+                    type: string
+                    description: "The id of the entity that created the Project"
+                    example: "2789583992"
+                creator_type:
+                    type: string
+                    description: "The type of the entity that created the Project"
+                    example: "User"
+                creator_name:
+                    type: string
+                    description: "The display name of the entity that created the Project"
+                    example: "Shawn Spencer"
+                status:
+                    type: string
+                    description: "Indicates the status of the Project."
+                    enum: ["active", "deleted"]
+                    example: "active"
+                archived:
+                    type: boolean
+                    description: "Indicates whether the Project is archived"
+                    example: false
+                name:
+                    type: string
+                    description: "The title of the Project"
+                    nullable: true
+                    example: "Psych Office"
+                address:
+                    $ref: "#/components/schemas/Address"
+                coordinates:
+                    $ref: "#/components/schemas/Coordinate"
+                featured_image:
+                    type: array
+                    description: "A list of images for the different variants of the Project’s feature image."
+                    items:
+                        $ref: "#/components/schemas/ImageURI"
+                    example:
+                        - type: "original"
+                          url: "https://static.companycam.com/VuS0rPvrnNA1490797262.jpg"
+                        - type: "web"
+                          url: "https://static.companycam.com/VuS0rPvrnNA1490797262web.jpg"
+                        - type: "thumbnail"
+                          url: "https://static.companycam.com/VuS0rPvrnNA1490797262small.jpg"
+                project_url:
+                    type: string
+                    description: "The URL to the Project in the web app"
+                    example: "https://app.companycam.com/projects/1234"
+                embedded_project_url:
+                    type: string
+                    description: "The URL to an embeddable photo feed for the Project"
+                    example: "https://app.companycam.com/embed/projects/QrL2XjgF8P2dN6MPDRdV2Q"
+                integrations:
+                    type: array
+                    description: "A list of integrations associated with the Project"
+                    items:
+                        $ref: "#/components/schemas/ProjectIntegration"
+                slug:
+                    type: string
+                    description: "A unique identifier use the Project that is used to construct some public URLs"
+                    example: "QrL2XjgF8P2dN6MPDRdV2Q"
+                public:
+                    type: boolean
+                    description: "Indicates whether the Project’s timeline and other public features are enabled"
+                    example: false
+                geofence:
+                    type: array
+                    description: "The Geofence latitude and longitude"
+                    items:
+                        $ref: "#/components/schemas/Coordinate"
+                primary_contact:
+                    $ref: "#/components/schemas/ProjectContactResponse"
+                notepad:
+                    type: string
+                    description: "Notes or description of the project"
+                    example: "Be sure to let the client know when the work is finished"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Project was created"
+                    example: 1152230400
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Project was updated"
+                    example: 1395792000
+        Photo:
+            type: object
+            required:
+                - id
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID for the photo"
+                    example: "4782987471"
+                company_id:
+                    type: string
+                    description: "A unique identifier for the Company the Photo belongs to"
+                    example: "8292212"
+                creator_id:
+                    type: string
+                    description: "The id of the entity that created the Photo"
+                    example: "2789583992"
+                creator_type:
+                    type: string
+                    description: "The type of the entity that created the Photo"
+                    example: "User"
+                creator_name:
+                    type: string
+                    description: "The display name of the entity that created the Photo"
+                    example: "Shawn Spencer"
+                project_id:
+                    type: string
+                    description: "The unique ID of the project the Photo was captured at"
+                    example: "94772883"
+                processing_status:
+                    type: string
+                    description: "Indicates the Photo’s processing status."
+                    enum:
+                        [
+                            "pending",
+                            "processing",
+                            "processed",
+                            "processing_error",
+                            "duplicate",
+                        ]
+                    example: "processed"
+                coordinates:
+                    type: array
+                    description: "The coordinates where the Photo was captured"
+                    items:
+                        $ref: "#/components/schemas/Coordinate"
+                uris:
+                    type: array
+                    description: "A list of URIs for the different size variants of the photo."
+                    items:
+                        $ref: "#/components/schemas/ImageURI"
+                    example:
+                        - type: "original"
+                          url: "https://static.companycam.com/VuS0rPvrnNA1490797262.jpg"
+                        - type: "web"
+                          url: "https://static.companycam.com/VuS0rPvrnNA1490797262web.jpg"
+                        - type: "thumbnail"
+                          url: "https://static.companycam.com/VuS0rPvrnNA1490797262small.jpg"
+                hash:
+                    type: string
+                    description: "The MD5 hash of the photo"
+                    example: "00ab337b7399151e5d4aa3bd4226e8dd"
+                description:
+                    type: string
+                    description: "A description of the photo"
+                    example: "The front of the house"
+                internal:
+                    type: boolean
+                    description: "Indicates whether the photo is for internal use only and should not be used in marketing or other public materials"
+                    example: false
+                photo_url:
+                    type: string
+                    description: "The link to the photo in the web app"
+                    example: "https://app.companycam.com/photos/8675309"
+                captured_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Photo was captured"
+                    example: 1152230396
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the photo was created on the server. This may differ from the captured_at field"
+                    example: 1152230608
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the photo was last updated"
+                    example: 1152230400
+        Tag:
+            type: object
+            required:
+                - id
+            properties:
+                id:
+                    type: string
+                    description: "A unique ID for the Tag."
+                    example: "48892885"
+                company_id:
+                    type: string
+                    description: "A unique ID for the Company the Tag belongs to"
+                    example: "8292212"
+                display_value:
+                    type: string
+                    description: "The display value of the Tag. Used to display to the user"
+                    example: "Front Side"
+                value:
+                    type: string
+                    description: "The lowercase version of the display_value. This is useful for searching and sorting"
+                    example: "front side"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Tag was created on the server"
+                    example: 1152230608
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Tag was last updated"
+                    example: 1152230700
+        Group:
+            type: object
+            required:
+                - id
+            properties:
+                id:
+                    type: string
+                    description: "A unique ID for the Group."
+                    example: "3992883"
+                company_id:
+                    type: string
+                    description: "A unique ID for the Company the Group belongs to"
+                    example: "8292212"
+                name:
+                    type: string
+                    description: "The title of the Group"
+                    example: "The Psych Crew"
+                users:
+                    type: array
+                    description: "A list of the group's users"
+                    items:
+                        $ref: "#/components/schemas/User"
+                status:
+                    type: string
+                    description: "Indicates the status of the Group"
+                    enum: ["active", "deleted"]
+                    example: "active"
+                group_url:
+                    type: string
+                    description: "The link to the group in the web app"
+                    example: "https://app.companycam.com/groups/1234"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Group was created on the server"
+                    example: 1490737206
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Group was last updated"
+                    example: 1490737744
+        Webhook:
+            type: object
+            required:
+                - id
+            properties:
+                id:
+                    type: string
+                    description: "A unique ID for the Webhook."
+                company_id:
+                    type: string
+                    description: "A unique ID for the Company the Webhook belongs to"
+                url:
+                    type: string
+                    description: "The URL of the webhook, which will receive requests with data for any events fired that fall within the scopes of the Webhook."
+                scopes:
+                    type: array
+                    description: "A list of scopes covering events the Webhook is subscripted to."
+                    items:
+                        type: string
+                token:
+                    type: string
+                    description: "A string used to hash the webhook body for verification."
+                enabled:
+                    type: boolean
+                    description: "Whether or not the Webhook is enabled/active."
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Webhook was created on the server"
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Webhook was last updated"
+            example:
+                id: "42"
+                company_id: "8675309"
+                url: "https://sweet-webhooks.com/my/webhook/endpoint"
+                scopes: ["*"]
+                token: "123456"
+                enabled: true
+                created_at: 1490737206
+                updated_at: 1490737406
+        ImageURI:
+            type: object
+            required:
+                - type
+                - uri
+            properties:
+                type:
+                    type: string
+                uri:
+                    type: string
+                url:
+                    type: string
+            example:
+                type: "original"
+                uri: "https://static.companycam.com/VuS0rPvrnNA1490797262.jpg"
+                url: "https://static.companycam.com/VuS0rPvrnNA1490797262.jpg"
+        Address:
+            type: object
+            properties:
+                street_address_1:
+                    type: string
+                    nullable: true
+                street_address_2:
+                    type: string
+                    nullable: true
+                city:
+                    type: string
+                    nullable: true
+                state:
+                    type: string
+                    nullable: true
+                postal_code:
+                    type: string
+                    nullable: true
+                country:
+                    type: string
+                    nullable: true
+            example:
+                street_address_1: "808 P St"
+                city: Lincoln
+                state: NE
+                postal_code: "68508"
+                country: US
+        Checklist:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID for the Checklist"
+                    example: "4782987471"
+                company_id:
+                    type: string
+                    description: "A unique identifier for the Company the Checklist belongs to"
+                    example: "8292212"
+                project_id:
+                    type: string
+                    description: "A unique identifier for the Project the Checklist belongs to"
+                    example: "812"
+                name:
+                    type: string
+                    description: "The name for the Checklist"
+                    example: "Roof state survey"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Checklist was created on the server."
+                    example: 1152230608
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Checklist was last updated"
+                    example: 1152230400
+                completed_at:
+                    type: integer
+                    format: int32
+                    nullable: true
+                    description: "Timestamp when the Checklist was completed"
+                    example: 1232230400
+                creator_id:
+                    type: string
+                    description: "A unique identifier for the creator of the Checklist"
+                    example: "314"
+                checklist_template_id:
+                    type: string
+                    nullable: true
+                    description: "A unique identifier for the template used to create the Checklist"
+                    example: "4156"
+                is_populating:
+                    type: boolean
+                    description: "Flag indicating wether the Checklist is still being created or not"
+                    example: false
+                sectionless_tasks:
+                    type: array
+                    description: "A collection of tasks that are not associated with a section"
+                    items:
+                        $ref: "#/components/schemas/Task"
+                sections:
+                    type: array
+                    description: "A collection of sections"
+                    items:
+                        $ref: "#/components/schemas/ChecklistSection"
+        ChecklistSection:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID for the ChecklistSection"
+                    example: "4782987471"
+                todo_list_id:
+                    type: string
+                    description: "A unique identifier for the Checklist the ChecklistSection belongs to"
+                    example: "8292212"
+                creator_id:
+                    type: string
+                    description: "A unique identifier of the creator of the ChecklistSection"
+                    example: "314"
+                creator_type:
+                    type: string
+                    description: "The type of the creator of the ChecklistSection"
+                    example: "User"
+                creator_name:
+                    type: string
+                    description: "The name of the creator of the ChecklistSection"
+                    example: "314"
+                title:
+                    type: string
+                    description: "The title of the ChecklistSection"
+                    example: "Section #1"
+                position:
+                    type: integer
+                    description: "The position for the ChecklistSection within the Checklist"
+                    example: "0"
+                tasks:
+                    type: array
+                    description: "A collection of tasks associated to a ChecklistSection"
+                    items:
+                        $ref: "#/components/schemas/Task"
+        Task:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID for the Task"
+                    example: "4782987471"
+                completed_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Task was marked completed."
+                    example: 1152230608
+                completed_by_id:
+                    type: string
+                    description: "The unique ID for entity that completed the Task"
+                    example: "14365"
+                completed_by_type:
+                    type: string
+                    description: "The type of the entity that marked the Task as completed"
+                    example: "User"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Task was created on the server."
+                    example: 1152230608
+                creator_id:
+                    type: string
+                    description: "A unique identifier of the creator of the Task"
+                    example: "314"
+                creator_type:
+                    type: string
+                    description: "The type of the creator of the Task"
+                    example: "User"
+                details:
+                    type: string
+                    description: "The details of a Task"
+                    example: "Check the roof for leaks"
+                photo_capture_required:
+                    type: boolean
+                    description: "Flag indicating whether a photo is required to complete the Task"
+                    example: true
+                position:
+                    type: integer
+                    description: "The position for the Task within its ChecklistSection or Checklist"
+                    example: 2
+                todo_list_id:
+                    type: string
+                    description: "A unique identifier for the Checklist the Task belongs to"
+                    example: "4782987471"
+                todo_list_section_id:
+                    type: string
+                    description: "A unique identifier for the ChecklistSection the Task belongs to"
+                    nullable: true
+                    example: "12663"
+                title:
+                    type: string
+                    description: "The title of the Task"
+                    example: "Check the roof"
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Checklist was last updated on the server."
+                    example: 1152230608
+                sub_tasks:
+                    type: array
+                    description: "A collection of sub-tasks associated to a Task"
+                    items:
+                        $ref: "#/components/schemas/SubTask"
+                photos:
+                    type: array
+                    description: "A collection of photos associated to a Task"
+                    items:
+                        $ref: "#/components/schemas/Photo"
+        SubTask:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID for the Task"
+                    example: "4782987471"
+                label:
+                    type: string
+                    description: "The title of the Task"
+                    example: "Check the roof"
+                answer_type:
+                    type: string
+                    description: "The type of answer expected for the SubTask"
+                    enum: ["open_text", "multiple_choice", "yes_no"]
+                    example: "open_text"
+                answer_choices:
+                    type: array
+                    description: "The index from the answer_options array that were selected as answers"
+                    example: [0, 2]
+                answer_options:
+                    type: array
+                    description: "A collection of answer options for the SubTask"
+                    items:
+                        type: string
+                        example: ["Yes", "No", "Maybe"]
+                position:
+                    type: integer
+                    description: "The position for the SubTask within its Task"
+                    example: 2
+                task_id:
+                    type: string
+                    description: "A unique identifier for the Task the SubTask belongs to"
+                    example: "4782987471"
+                answer_text:
+                    type: string
+                    description: "The answer text for the SubTask when the type is open_text"
+                    example: "It was a pretty ok task"
+        ChecklistTemplate:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID for the ChecklistTemplate"
+                    example: "4782987471"
+                company_id:
+                    type: string
+                    description: "A unique identifier for the Company the ChecklistTemplate belongs to"
+                    example: "8292212"
+                name:
+                    type: string
+                    description: "The name for the ChecklistTemplate"
+                    example: "Roof state survey"
+                description:
+                    type: string
+                    description: "The description for the ChecklistTemplate"
+                    example: "A list to make sure everything was properly done"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the ChecklistTemplate was created on the server."
+                    example: 1152230608
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the ChecklistTemplate was last updated"
+                    example: 1152230400
+        Coordinate:
+            type: object
+            required:
+                - lat
+                - lon
+            properties:
+                lat:
+                    type: number
+                    format: float
+                lon:
+                    type: number
+                    format: float
+            example:
+                lat: 28.425852468018288
+                lon: -81.47155671113255
+        ProjectIntegration:
+            type: object
+            required:
+                - type
+                - relation_id
+            properties:
+                type:
+                    type: string
+                    example: "JobNimbus"
+                relation_id:
+                    type: string
+                    example: "123"
+        Comment:
+            type: object
+            required:
+                - id
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID of the comment"
+                    example: "4782987471"
+                creator_id:
+                    type: string
+                    description: "The id of the entity that created the Comment"
+                    example: "2789583992"
+                creator_type:
+                    type: string
+                    description: "The type of the entity that created the Comment"
+                    example: "User"
+                creator_name:
+                    type: string
+                    description: "The display name of the entity that created the Comment"
+                    example: "Shawn Spencer"
+                commentable_id:
+                    type: string
+                    description: "The unique ID of the entity that the comment was applied to"
+                    example: "388472672"
+                commentable_type:
+                    type: string
+                    description: "The type of the entity that the comment was applied to."
+                    example: "Photo"
+                status:
+                    type: string
+                    description: "This should always be active"
+                    example: "active"
+                content:
+                    type: string
+                    description: "The contents of the comment. This may contain whitespace characters such as newlines."
+                    example: "Have you seen this yet?"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Comment was created on the server"
+                    example: 1152230608
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Comment was last updated"
+                    example: 1152230400
+        Document:
+            type: object
+            required:
+                - id
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID of the document"
+                    example: "115"
+                creator_id:
+                    type: string
+                    description: "The unique ID of the entity that created the document"
+                    example: "8675309"
+                creator_type:
+                    type: string
+                    description: "The type of the entity that created the document"
+                    example: "User"
+                creator_name:
+                    type: string
+                    description: "The unique ID of the company that owns the document"
+                    example: "CompanyCam Developer"
+                project_id:
+                    type: string
+                    description: "The unique ID of the project the document is attached to"
+                    example: "48892885"
+                name:
+                    type: string
+                    description: "the filename of the document"
+                    example: "silver-kadabra-measurements.pdf"
+                url:
+                    type: string
+                    description: "The URL where the document can be downloaded/viewed from"
+                    example: "https://static.companycam.com/documents/8374c65e-2048-41d4-b4a7-a9c839fd388a.pdf"
+                content_type:
+                    type: string
+                    description: "The content type of the document. (e.g. application/pdf)"
+                    example: "application/pdf"
+                byte_size:
+                    type: integer
+                    format: int32
+                    description: "The size of the document in bytes."
+                    example: 3457903
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Document was created on the server"
+                    example: 1621857746
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Document was last updated"
+                    example: 1621857746
+        ProjectContactResponse:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID of the project contact"
+                    example: "115"
+                project_id:
+                    type: string
+                    description: "The unique ID of the project the contact is attached to"
+                    example: "48892885"
+                name:
+                    type: string
+                    description: "The name of the contact"
+                    example: "Joe Smith"
+                email:
+                    type: string
+                    description: "The email of the contact"
+                    example: "joe.smith@companycam.com"
+                phone_number:
+                    type: string
+                    description: "The phone of the contact"
+                    example: "402-555-1212"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Project Contact was created on the server"
+                    example: 1621857746
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the Project Contact was last updated"
+                    example: 1621857746
+        Error:
+            type: object
+            properties:
+                errors:
+                    type: array
+                    items:
+                        type: string
+                    example: ["Record not found"]
+        ProjectContactRequest:
+            type: object
+            required:
+                - name
+            properties:
+                name:
+                    type: string
+                    description: "The name of the contact"
+                    example: "Joe Smith"
+                email:
+                    type: string
+                    description: "The email of the contact"
+                    example: "joe.smith@companycam.com"
+                phone_number:
+                    type: string
+                    description: "The phone of the contact"
+                    example: "402-555-1212"
+        ProjectNotepad:
+            type: object
+            required:
+                - notepad
+            properties:
+                notepad:
+                    type: string
+            example:
+                notepad: "Be sure to let the client know when the work is finished"
+        ProjectCollaborator:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID of the collaborator"
+                    example: "48892885"
+                company_id:
+                    type: string
+                    description: "The unique ID of the collaborating company"
+                    example: "48892885"
+                project_id:
+                    type: string
+                    description: "The unique ID of the project the collaborator is a part of"
+                    example: "48892885"
+                project_invitation_id:
+                    type: string
+                    description: "The unique ID of the invitation for the collaboration"
+                    example: "48892885"
+                accepted_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the project collaboration was accepted"
+                    example: 1621857746
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the project collaboration was created on the server"
+                    example: 1621857746
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the project collaboration was last updated"
+                    example: 1621857746
+        ProjectInvitation:
+            type: object
+            properties:
+                id:
+                    type: string
+                    description: "The unique ID of invitation"
+                    example: "48892885"
+                project_id:
+                    type: string
+                    description: "The unique ID of the project"
+                    example: "48892885"
+                invite_url:
+                    type: string
+                    description: "The invite url to accept the invitation"
+                    example: "https://l.cmpy.cam/P8EfEmTSB4BbrKUgsd"
+                status:
+                    type: string
+                    description: "The status of the invitation. It will be one of `accepted`, `expired`, or `pending`"
+                    enum: ["accepted", "expired", "pending"]
+                accepted_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the project invitation was accepted"
+                    example: 1621857746
+                accepted_by_id:
+                    type: string
+                    description: "The unique ID of the company who accepted the invitation"
+                    example: "48892885"
+                expires_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the project invitation expires"
+                    example: 1621857746
+                creator_id:
+                    type: string
+                    description: "The unique ID of the user who created the invitation"
+                    example: "48892885"
+                created_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the project invitation was created on the server"
+                    example: 1621857746
+                updated_at:
+                    type: integer
+                    format: int32
+                    description: "Timestamp when the project invitation was last updated"
+                    example: 1621857749
+    securitySchemes:
+        BearerAuth:
+            type: http
+            scheme: bearer
+security:
+    - BearerAuth: []

@@ -67,3 +67,8 @@ exclude = [".claude/"]
 [tool.ty.rules]
 # Pydantic BaseSettings accepts _env_file but it's not in the type stubs
 unknown-argument = "ignore"
+
+[dependency-groups]
+dev = [
+    "datamodel-code-generator>=0.56.0",
+]

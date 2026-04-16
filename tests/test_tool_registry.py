@@ -26,6 +26,7 @@ EXPECTED_TOOL_MODULES: set[str] = {
     "backend.app.agent.tools.pricing_tools",
     "backend.app.agent.tools.quickbooks_tools",
     "backend.app.agent.tools.calendar_tools",
+    "backend.app.agent.tools.companycam_tools",
     "backend.app.agent.tools.workspace_tools",
 }
 
