@@ -53,3 +53,4 @@ docs/.astro/
 .DS_Store
 Thumbs.db
 .gstack/
+backend/app/services/companycam_openapi.yaml
