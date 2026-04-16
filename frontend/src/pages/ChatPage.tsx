@@ -7,7 +7,7 @@ import ConfirmModal from '@/components/ui/confirm-modal';
 import { Checkbox } from '@heroui/checkbox';
 import { Tooltip } from '@heroui/tooltip';
 import { Spinner } from '@heroui/spinner';
-import api from '@/api';
+import api, { ApiError } from '@/api';
 import { toast } from '@/lib/toast';
 import { useSession } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
@@ -103,9 +103,12 @@ export default function ChatPage() {
   // Fetch session history via React Query.  The activity SSE stream
   // already invalidates queries on the "done" event, so periodic
   // polling is unnecessary and wasteful.
-  const { data: sessionDetail, isPending: loadingHistoryPending, isError: historyError } = useSession(
-    activeSessionId,
-  );
+  const {
+    data: sessionDetail,
+    isPending: loadingHistoryPending,
+    isError: historyError,
+    error: sessionFetchError,
+  } = useSession(activeSessionId);
   const loadingHistory = loadingHistoryPending && !!activeSessionId;
 
   // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
@@ -162,14 +165,21 @@ export default function ChatPage() {
   // If the persisted session id no longer exists (e.g. account was purged
   // and re-created, or the session was deleted), clear it and fall back to
   // fresh-start behavior instead of showing a broken chat view.
+  // Scope to 404 only so a transient 5xx or network blip doesn't permanently
+  // drop the user's session pointer.
   useEffect(() => {
-    if (historyError && activeSessionId) {
+    if (
+      historyError &&
+      activeSessionId &&
+      sessionFetchError instanceof ApiError &&
+      sessionFetchError.status === 404
+    ) {
       clearLastSession();
       setActiveSessionId(null);
       setSearchParams({}, { replace: true });
       autoAttachDone.current = false;
     }
-  }, [historyError, activeSessionId, setSearchParams]);
+  }, [historyError, sessionFetchError, activeSessionId, setSearchParams]);
 
   // Populate messages from session history when it loads
   useEffect(() => {
