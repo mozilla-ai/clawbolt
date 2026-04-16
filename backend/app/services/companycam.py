@@ -299,7 +299,7 @@ class CompanyCamService:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{_API_BASE}/projects/{project_id}/comments",
-                json={"content": content},
+                json={"comment": {"content": content}},
                 headers=self._headers(),
             )
             resp.raise_for_status()
@@ -315,16 +315,19 @@ class CompanyCamService:
             resp.raise_for_status()
             return [Tag.model_validate(t) for t in resp.json()]
 
-    async def add_project_label(self, project_id: str, label: str) -> Tag:
-        """Add a label to a project."""
+    async def add_project_labels(self, project_id: str, labels: list[str]) -> list[Tag]:
+        """Add labels to a project."""
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{_API_BASE}/projects/{project_id}/labels",
-                json={"value": label},
+                json={"project": {"labels": labels}},
                 headers=self._headers(),
             )
             resp.raise_for_status()
-            return Tag.model_validate(resp.json())
+            data = resp.json()
+            if isinstance(data, list):
+                return [Tag.model_validate(t) for t in data]
+            return [Tag.model_validate(data)]
 
     # ------------------------------------------------------------------
     # Photo management
@@ -379,11 +382,14 @@ class CompanyCamService:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{_API_BASE}/photos/{photo_id}/tags",
-                json=[{"value": t} for t in tags],
+                json={"tags": tags},
                 headers=self._headers(),
             )
             resp.raise_for_status()
-            return [Tag.model_validate(t) for t in resp.json()]
+            data = resp.json()
+            if isinstance(data, list):
+                return [Tag.model_validate(t) for t in data]
+            return [Tag.model_validate(data)]
 
     async def list_photo_comments(
         self,
@@ -406,7 +412,7 @@ class CompanyCamService:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(
                 f"{_API_BASE}/photos/{photo_id}/comments",
-                json={"content": content},
+                json={"comment": {"content": content}},
                 headers=self._headers(),
             )
             resp.raise_for_status()

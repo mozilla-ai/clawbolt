@@ -364,6 +364,8 @@ async def test_add_project_comment() -> None:
         result = await service.add_project_comment("42", "Done!")
 
     assert result.id == "5"
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body == {"comment": {"content": "Done!"}}
 
 
 @pytest.mark.asyncio()
@@ -384,19 +386,22 @@ async def test_list_project_labels() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_add_project_label() -> None:
+async def test_add_project_labels() -> None:
     service = CompanyCamService(access_token="test-token")
-    label = {"id": "2", "display_value": "Priority", "value": "priority"}
+    labels = [{"id": "2", "display_value": "Priority", "value": "priority"}]
 
     with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
-        client.post = AsyncMock(return_value=_mock_response(label))
+        client.post = AsyncMock(return_value=_mock_response(labels))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
         mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
 
-        result = await service.add_project_label("42", "Priority")
+        result = await service.add_project_labels("42", ["Priority"])
 
-    assert result.display_value == "Priority"
+    assert len(result) == 1
+    assert result[0].display_value == "Priority"
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body == {"project": {"labels": ["Priority"]}}
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +493,8 @@ async def test_add_photo_tags() -> None:
         result = await service.add_photo_tags("100", ["before", "kitchen"])
 
     assert len(result) == 2
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body == {"tags": ["before", "kitchen"]}
 
 
 @pytest.mark.asyncio()
@@ -520,6 +527,8 @@ async def test_add_photo_comment() -> None:
         result = await service.add_photo_comment("100", "Check this")
 
     assert result.id == "3"
+    body = client.post.call_args.kwargs.get("json", {})
+    assert body == {"comment": {"content": "Check this"}}
 
 
 # ---------------------------------------------------------------------------

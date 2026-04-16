@@ -8,7 +8,9 @@ table (OAuth 2.0 support is planned post-MVP).
 from __future__ import annotations
 
 import asyncio
+import calendar
 import logging
+from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -611,15 +613,12 @@ def _create_companycam_tools(
         page: int = 1,
     ) -> ToolResult:
         """Search photos across all CompanyCam projects."""
-        import calendar
-        from datetime import datetime
-
         start_ts: int | None = None
         end_ts: int | None = None
         if start_date:
             try:
                 dt = datetime.fromisoformat(start_date)
-                start_ts = int(dt.timestamp())
+                start_ts = int(calendar.timegm(dt.timetuple()))
             except ValueError:
                 return ToolResult(
                     content=f"Invalid start_date format: {start_date}. Use ISO format.",
