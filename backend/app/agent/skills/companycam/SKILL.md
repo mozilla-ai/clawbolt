@@ -10,6 +10,7 @@ You now have access to CompanyCam tools for managing job site photo documentatio
 | companycam_search_projects | Search projects by name or address | Auto |
 | companycam_upload_photo | Upload a photo to a project | Asks user |
 | companycam_create_project | Create a new project | Asks user |
+| companycam_update_project | Rename a project or update its address | Asks user |
 
 ## Workflow: Uploading a Photo
 

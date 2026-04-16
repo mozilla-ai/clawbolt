@@ -17,6 +17,7 @@ from fastapi.responses import Response
 logger = logging.getLogger(__name__)
 
 _TOKEN_TTL_SECONDS = 300  # 5 minutes
+_MAX_ENTRIES = 20  # Cap to prevent unbounded memory growth
 _store: dict[str, tuple[bytes, str, float]] = {}  # token -> (bytes, mime_type, expires_at)
 
 router = APIRouter()
@@ -33,6 +34,10 @@ def create_temp_media_url(
     can GET this URL to download the image.
     """
     _cleanup()
+    # Evict oldest entries if at capacity
+    while len(_store) >= _MAX_ENTRIES:
+        oldest = min(_store, key=lambda k: _store[k][2])
+        del _store[oldest]
     token = secrets.token_urlsafe(32)
     _store[token] = (file_bytes, mime_type, time.time() + _TOKEN_TTL_SECONDS)
     return f"{base_url.rstrip('/')}/api/media/temp/{token}"

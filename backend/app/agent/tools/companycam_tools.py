@@ -177,6 +177,10 @@ def _create_companycam_tools(
         from backend.app.config import settings
         from backend.app.routers.media_temp import create_temp_media_url
 
+        # Sanitize LLM-supplied tags
+        if tags:
+            tags = [t.strip()[:50] for t in tags[:10] if t.strip()]
+
         file_bytes: bytes = b""
         mime_type = "image/jpeg"
         photo_uri = ""
@@ -219,9 +223,11 @@ def _create_companycam_tools(
                     photo_uri = storage_url
                 # Local storage: read bytes from disk
                 elif storage_url and storage_url.startswith("file://"):
+                    import asyncio
+
                     local_path = Path(storage_url.removeprefix("file://"))
                     if local_path.is_file():
-                        file_bytes = local_path.read_bytes()
+                        file_bytes = await asyncio.to_thread(local_path.read_bytes)
 
         if not file_bytes and not photo_uri:
             return ToolResult(
