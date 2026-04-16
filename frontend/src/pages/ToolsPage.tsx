@@ -119,7 +119,7 @@ export default function ToolsPage() {
   if (isPending && !data) {
     return (
       <div>
-        <h2 className="text-xl font-semibold font-display mb-6">Tools</h2>
+        <h2 className="text-xl font-semibold font-display mb-6">Integrations</h2>
         <Card>
           <p className="text-sm text-muted-foreground">Loading tool configuration...</p>
         </Card>
@@ -133,10 +133,8 @@ export default function ToolsPage() {
     <div>
       <h2 className="text-xl font-semibold font-display mb-6">Tools</h2>
 
-      {/* Integrations */}
       {domainTools.length > 0 && (
         <section>
-          <h3 className="text-sm font-medium mb-3">Integrations</h3>
           <div className="grid gap-3">
             {domainTools.map((tool) => {
               const oauthIntegration = TOOL_OAUTH_MAP[tool.name];

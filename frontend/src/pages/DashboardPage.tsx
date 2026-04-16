@@ -169,8 +169,19 @@ export default function DashboardPage() {
 
   return (
     <div>
-      <h2 className="text-xl font-semibold font-display mb-6">Dashboard</h2>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+      <div className="mb-6">
+        <h2 className="text-xl font-semibold font-display">Dashboard</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Setup, integrations, and admin live here. For day-to-day, just chat
+          with your assistant from your phone. No need to come back to the web
+          app for most things.
+        </p>
+      </div>
+
+      <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+        Setup
+      </h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
 
         {/* Channels */}
         <DashboardCard
@@ -202,9 +213,9 @@ export default function DashboardPage() {
           )}
         </DashboardCard>
 
-        {/* Tools */}
+        {/* Integrations */}
         <DashboardCard
-          title="Tools"
+          title="Integrations"
           description="Capabilities and integrations available to your assistant."
           configured={toolsConfigured}
           icon={<ToolsIcon />}
@@ -281,104 +292,6 @@ export default function DashboardPage() {
           )}
         </DashboardCard>
 
-        {/* Memory */}
-        <DashboardCard
-          title="Memory"
-          description="Long-term facts your assistant has learned about your business."
-          configured={memoryConfigured}
-          icon={<MemoryIcon />}
-          onClick={() => navigate('/app/memory')}
-          isLoading={memory.isPending && !memory.data}
-          isError={memory.isError && !memory.data}
-        >
-          {memoryConfigured ? (
-            <div>
-              <MarkdownPreview content={memoryContent} maxChars={300} />
-              <p className="text-xs text-muted-foreground mt-2">{wordCount} {wordCount === 1 ? 'word' : 'words'}</p>
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Chat with your assistant to build up knowledge, or add notes directly.</p>
-          )}
-        </DashboardCard>
-
-        {/* Heartbeat */}
-        <DashboardCard
-          title="Heartbeat"
-          description="Your assistant reads this to stay aware of your priorities."
-          configured={heartbeatOptIn}
-          icon={<HeartbeatIcon />}
-          onClick={() => navigate('/app/heartbeat')}
-          isLoading={false}
-          isError={false}
-        >
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-muted-foreground">Check-ins</span>
-            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
-            <div onClick={stopCardPress}>
-              <Switch
-                isSelected={heartbeatOptIn}
-                isDisabled={updateProfile.isPending}
-                onValueChange={handleHeartbeatToggle}
-                size="sm"
-                aria-label="Toggle heartbeat check-ins"
-              />
-            </div>
-          </div>
-          {heartbeatOptIn ? (
-            <div>
-              <span className="inline-flex text-xs px-2 py-0.5 rounded-full bg-success-bg text-success mb-2">
-                {heartbeatFreq}
-              </span>
-              {heartbeatText.trim() ? (
-                <MarkdownPreview content={heartbeatText} maxChars={250} className="max-h-20 md:max-h-32" />
-              ) : (
-                <p className="text-xs text-muted-foreground">No heartbeat prompt set. Add tasks and priorities to track.</p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Enable to let your assistant proactively follow up on your tasks.</p>
-          )}
-        </DashboardCard>
-
-        {/* Soul */}
-        <DashboardCard
-          title="Soul"
-          description="Guides your assistant's personality and communication style."
-          configured={soulConfigured}
-          icon={<SoulIcon />}
-          onClick={() => navigate('/app/soul')}
-          isLoading={false}
-          isError={false}
-        >
-          {soulConfigured ? (
-            <MarkdownPreview content={soulText} maxChars={300} />
-          ) : (
-            <p className="text-xs text-muted-foreground">Define how your assistant should behave, speak, and interact with clients.</p>
-          )}
-        </DashboardCard>
-
-        {/* User */}
-        <DashboardCard
-          title="User"
-          description="What your assistant knows about you."
-          configured={userConfigured}
-          icon={<UserIcon />}
-          onClick={() => navigate('/app/user')}
-          isLoading={false}
-          isError={false}
-        >
-          {userConfigured ? (
-            <div>
-              <MarkdownPreview content={userText} maxChars={300} />
-              {profile?.timezone && (
-                <p className="text-xs text-muted-foreground mt-2">{profile.timezone}</p>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Tell your assistant about yourself: your name, phone, preferences.</p>
-          )}
-        </DashboardCard>
-
         {/* Settings */}
         <DashboardCard
           title="Settings"
@@ -408,6 +321,116 @@ export default function DashboardPage() {
             </div>
           ) : (
             <p className="text-xs text-muted-foreground">Configure which AI model and provider your assistant uses.</p>
+          )}
+        </DashboardCard>
+
+      </div>
+
+      <div className="mb-3">
+        <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+          Your assistant's context
+        </h3>
+        <p className="text-xs text-muted-foreground mt-1">
+          All of this is editable from chat too. Come back here when you want a bird's-eye view.
+        </p>
+      </div>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+
+        {/* Knowledge (Memory) */}
+        <DashboardCard
+          title="Knowledge"
+          description="What your assistant knows about your business."
+          configured={memoryConfigured}
+          icon={<MemoryIcon />}
+          onClick={() => navigate('/app/memory')}
+          isLoading={memory.isPending && !memory.data}
+          isError={memory.isError && !memory.data}
+        >
+          {memoryConfigured ? (
+            <div>
+              <MarkdownPreview content={memoryContent} maxChars={300} />
+              <p className="text-xs text-muted-foreground mt-2">{wordCount} {wordCount === 1 ? 'word' : 'words'}</p>
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Chat with your assistant to build up knowledge, or add notes directly.</p>
+          )}
+        </DashboardCard>
+
+        {/* Priorities (Heartbeat) */}
+        <DashboardCard
+          title="Priorities"
+          description="What your assistant should stay aware of."
+          configured={heartbeatOptIn}
+          icon={<HeartbeatIcon />}
+          onClick={() => navigate('/app/heartbeat')}
+          isLoading={false}
+          isError={false}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs text-muted-foreground">Check-ins</span>
+            {/* eslint-disable-next-line jsx-a11y/click-events-have-key-events, jsx-a11y/no-static-element-interactions */}
+            <div onClick={stopCardPress}>
+              <Switch
+                isSelected={heartbeatOptIn}
+                isDisabled={updateProfile.isPending}
+                onValueChange={handleHeartbeatToggle}
+                size="sm"
+                aria-label="Toggle proactive check-ins"
+              />
+            </div>
+          </div>
+          {heartbeatOptIn ? (
+            <div>
+              <span className="inline-flex text-xs px-2 py-0.5 rounded-full bg-success-bg text-success mb-2">
+                {heartbeatFreq}
+              </span>
+              {heartbeatText.trim() ? (
+                <MarkdownPreview content={heartbeatText} maxChars={250} className="max-h-20 md:max-h-32" />
+              ) : (
+                <p className="text-xs text-muted-foreground">No priorities set yet. Add tasks you're tracking.</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Enable to let your assistant proactively follow up on your tasks.</p>
+          )}
+        </DashboardCard>
+
+        {/* Personality (Soul) */}
+        <DashboardCard
+          title="Personality"
+          description="Guides how your assistant behaves and communicates."
+          configured={soulConfigured}
+          icon={<SoulIcon />}
+          onClick={() => navigate('/app/soul')}
+          isLoading={false}
+          isError={false}
+        >
+          {soulConfigured ? (
+            <MarkdownPreview content={soulText} maxChars={300} />
+          ) : (
+            <p className="text-xs text-muted-foreground">Define how your assistant should behave, speak, and interact with clients.</p>
+          )}
+        </DashboardCard>
+
+        {/* About You (User) */}
+        <DashboardCard
+          title="About You"
+          description="What your assistant knows about you."
+          configured={userConfigured}
+          icon={<UserIcon />}
+          onClick={() => navigate('/app/user')}
+          isLoading={false}
+          isError={false}
+        >
+          {userConfigured ? (
+            <div>
+              <MarkdownPreview content={userText} maxChars={300} />
+              {profile?.timezone && (
+                <p className="text-xs text-muted-foreground mt-2">{profile.timezone}</p>
+              )}
+            </div>
+          ) : (
+            <p className="text-xs text-muted-foreground">Tell your assistant about yourself: your name, phone, preferences.</p>
           )}
         </DashboardCard>
 

@@ -163,16 +163,16 @@ describe('DashboardPage', () => {
     await waitFor(() => {
       expect(screen.getByText('Channels')).toBeInTheDocument();
     });
-    expect(screen.getByText('Tools')).toBeInTheDocument();
-    expect(screen.getByText('Memory')).toBeInTheDocument();
-    expect(screen.getByText('Heartbeat')).toBeInTheDocument();
-    expect(screen.getByText('Soul')).toBeInTheDocument();
-    expect(screen.getByText('User')).toBeInTheDocument();
+    expect(screen.getByText('Integrations')).toBeInTheDocument();
+    expect(screen.getByText('Knowledge')).toBeInTheDocument();
+    expect(screen.getByText('Priorities')).toBeInTheDocument();
+    expect(screen.getByText('Personality')).toBeInTheDocument();
+    expect(screen.getByText('About You')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
 
     // Descriptions are present
     expect(screen.getByText('Messaging platforms your assistant listens on.')).toBeInTheDocument();
-    expect(screen.getByText("Long-term facts your assistant has learned about your business.")).toBeInTheDocument();
+    expect(screen.getByText('What your assistant knows about your business.')).toBeInTheDocument();
   });
 
   it('shows per-channel status lines with Active for active channel', async () => {
@@ -363,7 +363,7 @@ describe('DashboardPage', () => {
     renderWithRouter(<DashboardPage />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Toggle heartbeat check-ins')).toBeInTheDocument();
+      expect(screen.getByLabelText('Toggle proactive check-ins')).toBeInTheDocument();
     });
   });
 
@@ -375,10 +375,10 @@ describe('DashboardPage', () => {
     renderWithRouter(<DashboardPage />);
 
     await waitFor(() => {
-      expect(screen.getByLabelText('Toggle heartbeat check-ins')).toBeInTheDocument();
+      expect(screen.getByLabelText('Toggle proactive check-ins')).toBeInTheDocument();
     });
 
-    const toggle = screen.getByLabelText('Toggle heartbeat check-ins');
+    const toggle = screen.getByLabelText('Toggle proactive check-ins');
     await user.click(toggle);
 
     await waitFor(() => {

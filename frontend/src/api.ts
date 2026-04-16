@@ -38,10 +38,20 @@ function _getAuthHeaders(): Record<string, string> {
   return {};
 }
 
+/** Error with an HTTP status attached, so callers can distinguish 404 from other failures. */
+export class ApiError extends Error {
+  status: number | undefined;
+  constructor(message: string, status: number | undefined) {
+    super(message);
+    this.name = 'ApiError';
+    this.status = status;
+  }
+}
+
 /** Throw a typed Error from an openapi-fetch error body. */
-function _throwApiError(error: unknown, fallback: string): never {
+function _throwApiError(error: unknown, fallback: string, status?: number): never {
   const b = error as { detail?: string };
-  throw new Error(b.detail || fallback);
+  throw new ApiError(b.detail || fallback, status);
 }
 
 // --- Auth API ---
@@ -77,10 +87,10 @@ const api = {
 
   // Sessions
   getSession: async (sessionId: string) => {
-    const { data, error } = await client.GET('/api/user/sessions/{session_id}', {
+    const { data, error, response } = await client.GET('/api/user/sessions/{session_id}', {
       params: { path: { session_id: sessionId } },
     });
-    if (error) _throwApiError(error, 'Failed to get session');
+    if (error) _throwApiError(error, 'Failed to get session', response?.status);
     return data as SessionDetailResponse;
   },
   listSessions: async (params?: { limit?: number; offset?: number; is_active?: boolean }) => {
