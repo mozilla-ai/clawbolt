@@ -275,6 +275,44 @@
         }
       }
     },
+    "/api/media/temp/{token}": {
+      "get": {
+        "summary": "Serve Temp Media",
+        "description": "Serve a temporarily staged media file. No auth required.\n\nThe token stays valid for the full TTL (5 minutes) and can be\nfetched multiple times. External services like CompanyCam may\ndownload the image more than once (original + thumbnails).",
+        "operationId": "serve_temp_media_api_media_temp__token__get",
+        "parameters": [
+          {
+            "name": "token",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Token"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/webhooks/telegram": {
       "post": {
         "summary": "Telegram Inbound",

@@ -149,6 +149,30 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/media/temp/{token}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Serve Temp Media
+         * @description Serve a temporarily staged media file. No auth required.
+         *
+         *     The token stays valid for the full TTL (5 minutes) and can be
+         *     fetched multiple times. External services like CompanyCam may
+         *     download the image more than once (original + thumbnails).
+         */
+        get: operations["serve_temp_media_api_media_temp__token__get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/webhooks/telegram": {
         parameters: {
             query?: never;
@@ -1574,6 +1598,37 @@ export interface operations {
                     "application/json": {
                         [key: string]: string;
                     };
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    serve_temp_media_api_media_temp__token__get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                token: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
                 };
             };
             /** @description Validation Error */
