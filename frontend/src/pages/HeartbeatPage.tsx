@@ -38,9 +38,9 @@ export default function HeartbeatPage() {
   return (
     <div>
       <div className="mb-4">
-        <h2 className="text-xl font-semibold font-display">Heartbeat</h2>
+        <h2 className="text-xl font-semibold font-display">Priorities</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Your assistant reads this to stay aware of your priorities.
+          Your assistant reads this to stay aware of what you're working on.
         </p>
       </div>
       <MarkdownEditor
@@ -48,7 +48,7 @@ export default function HeartbeatPage() {
         onSave={handleSave}
         isSaving={updateProfile.isPending}
         placeholder="Track tasks and priorities in markdown format, e.g. - [ ] Follow up with new leads"
-        emptyMessage="No heartbeat text yet. Click Edit to track your tasks and priorities."
+        emptyMessage="No priorities yet. Click Edit to track what you're working on."
       />
     </div>
   );

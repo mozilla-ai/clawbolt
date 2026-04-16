@@ -29,17 +29,17 @@ const NAV_TOP = [
 ] as const;
 
 const NAV_MAIN = [
-  { to: '/app/memory', label: 'Memory', icon: MemoryIcon, end: false },
   { to: '/app/channels', label: 'Channels', icon: ChannelsIcon, end: false },
-  { to: '/app/tools', label: 'Tools', icon: ToolsIcon, end: false },
+  { to: '/app/tools', label: 'Integrations', icon: ToolsIcon, end: false },
   { to: '/app/settings', label: 'Settings', icon: SettingsIcon, end: false },
 ] as const;
 
 const NAV_ADVANCED = [
-  { to: '/app/heartbeat', label: 'Heartbeat', icon: HeartbeatIcon, end: false },
-  { to: '/app/soul', label: 'Soul', icon: SoulIcon, end: false },
-  { to: '/app/user', label: 'User', icon: UserIcon, end: false },
-  { to: '/app/permissions', label: 'Permissions', icon: PermissionsIcon, end: false },
+  { to: '/app/memory', label: 'Knowledge', icon: MemoryIcon, end: false },
+  { to: '/app/heartbeat', label: 'Priorities', icon: HeartbeatIcon, end: false },
+  { to: '/app/soul', label: 'Personality', icon: SoulIcon, end: false },
+  { to: '/app/user', label: 'About You', icon: UserIcon, end: false },
+  { to: '/app/permissions', label: 'Approvals', icon: PermissionsIcon, end: false },
 ] as const;
 
 const NAV_BOTTOM = [

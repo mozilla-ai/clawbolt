@@ -163,7 +163,7 @@ export default function PermissionsPage() {
   return (
     <div>
       <div className="mb-4">
-        <h2 className="text-xl font-semibold font-display">Permissions</h2>
+        <h2 className="text-xl font-semibold font-display">Approvals</h2>
         <p className="text-sm text-muted-foreground mt-1">
           Control which actions your assistant can take freely, which require approval, and which
           are blocked.

@@ -40,10 +40,10 @@ export default function MemoryPage() {
   return (
     <div>
       <div className="mb-4">
-        <h2 className="text-xl font-semibold font-display">Memory</h2>
+        <h2 className="text-xl font-semibold font-display">Knowledge</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Long-term facts your AI assistant has learned about your business.
-          Updated automatically as you chat, or edit directly below.
+          What your assistant knows about your business. Updated automatically
+          as you chat, or edit directly below.
         </p>
       </div>
       <MarkdownEditor

@@ -38,9 +38,9 @@ export default function SoulPage() {
   return (
     <div>
       <div className="mb-4">
-        <h2 className="text-xl font-semibold font-display">Soul</h2>
+        <h2 className="text-xl font-semibold font-display">Personality</h2>
         <p className="text-sm text-muted-foreground mt-1">
-          Guides your assistant's personality and communication style.
+          Guides how your assistant behaves and communicates.
         </p>
       </div>
       <MarkdownEditor
@@ -48,7 +48,7 @@ export default function SoulPage() {
         onSave={handleSave}
         isSaving={updateProfile.isPending}
         placeholder="Describe how your assistant should behave, speak, and interact with clients. Include what it should call itself (e.g. 'Your name is Claw')..."
-        emptyMessage="No soul text yet. Click Edit to define your assistant's personality."
+        emptyMessage="Click Edit to define your assistant's personality."
       />
     </div>
   );
