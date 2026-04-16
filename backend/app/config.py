@@ -62,6 +62,9 @@ class Settings(BaseSettings):
     dropbox_access_token: str = ""
     google_drive_credentials_json: str = ""
     file_storage_base_dir: str = "data/storage"
+    # When True, the media pipeline stages bytes only and the agent drives vision,
+    # save, and organize decisions via tool calls. Default off during rollout.
+    agent_native_storage: bool = False
 
     # Agent loop
     approval_timeout_seconds: int = Field(default=120, ge=1)
@@ -298,6 +301,25 @@ def validate_imessage_backend(s: "Settings | None" = None) -> None:
             "Two iMessage backends are configured at once. "
             "Set only LINQ_API_TOKEN or only BLUEBUBBLES_SERVER_URL + "
             "BLUEBUBBLES_PASSWORD, not both."
+        )
+
+
+def validate_personal_storage_backend(s: "Settings | None" = None) -> None:
+    """Reject startup if two personal-storage backends are configured simultaneously.
+
+    The product supports a single personal storage destination per deployment
+    (local, Dropbox, or Google Drive). Allowing credentials for two at once
+    makes ``storage_provider`` ambiguous to operators. Mirrors the iMessage
+    mutual-exclusion pattern from :func:`validate_imessage_backend`.
+    """
+    s = s or settings
+    dropbox_set = bool(s.dropbox_access_token)
+    gdrive_set = bool(s.google_drive_credentials_json)
+    if dropbox_set and gdrive_set:
+        raise RuntimeError(
+            "Two personal-storage backends are configured at once. "
+            "Set only DROPBOX_ACCESS_TOKEN or only GOOGLE_DRIVE_CREDENTIALS_JSON, "
+            "not both. Choose one via STORAGE_PROVIDER."
         )
 
 

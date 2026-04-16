@@ -198,7 +198,14 @@ async def prepare_media(
     # upload_to_storage tool so the approval gate can prompt. Bytes
     # stay in media_staging across turns so the agent can still call
     # upload_to_storage after clarifying questions.
-    if storage and downloaded_media and _upload_permitted_always(user.id):
+    # In agent-native mode the agent drives save decisions via tool calls; skip
+    # the auto-save path so it doesn't front-run the agent's choice.
+    if (
+        storage
+        and downloaded_media
+        and _upload_permitted_always(user.id)
+        and not settings.agent_native_storage
+    ):
         try:
             await auto_save_media(user, storage, downloaded_media)
         except Exception:
@@ -223,14 +230,16 @@ async def build_message_context(
         media_notes.append(MEDIA_DOWNLOAD_ERROR)
 
     try:
-        pipeline_result = await process_message_media(message.body, downloaded_media)
+        pipeline_result = await process_message_media(
+            message.body, downloaded_media, user_id=user.id
+        )
     except Exception:
         logger.exception(
             "Media pipeline failed for message seq %d, user %s",
             message.seq,
             user.id,
         )
-        pipeline_result = await process_message_media(message.body, [])
+        pipeline_result = await process_message_media(message.body, [], user_id=user.id)
         if downloaded_media:
             media_notes.append(VISION_UNAVAILABLE_NOTE)
 

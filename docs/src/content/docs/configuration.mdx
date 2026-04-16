@@ -91,6 +91,7 @@ When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage c
 | `GOOGLE_DRIVE_CREDENTIALS_JSON` | | Google Drive OAuth credentials JSON (when using Google Drive) |
 | `CLAWBOLT_DATA_DIR` | `./data` | Host path bind-mounted to `/app/data` (Docker Compose only) |
 | `FILE_STORAGE_BASE_DIR` | `data/storage` | Base directory for local file storage |
+| `AGENT_NATIVE_STORAGE` | `false` | When on, the agent drives per-photo vision/save/discard decisions via tool calls instead of the hardcoded media pipeline. |
 
 See [Storage Providers](../deployment/storage/) for setup instructions.
 

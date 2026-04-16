@@ -23,6 +23,7 @@ EXPECTED_TOOL_MODULES: set[str] = {
     "backend.app.agent.tools.heartbeat_tools",
     "backend.app.agent.tools.file_tools",
     "backend.app.agent.tools.integration_tools",
+    "backend.app.agent.tools.media_tools",
     "backend.app.agent.tools.pricing_tools",
     "backend.app.agent.tools.quickbooks_tools",
     "backend.app.agent.tools.calendar_tools",

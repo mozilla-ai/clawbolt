@@ -268,6 +268,7 @@ async def test_file_tools_wired_when_storage_configured(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
+    mock_settings.agent_native_storage = False
     mock_get_storage.return_value = MockStorageBackend()
     mock_amessages.return_value = make_text_response("File saved!")  # type: ignore[union-attr]
 
@@ -299,6 +300,7 @@ async def test_file_tools_skipped_when_no_storage(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
+    mock_settings.agent_native_storage = False
     mock_amessages.return_value = make_text_response("No file tools!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -506,6 +508,7 @@ async def test_storage_exception_skips_file_tools(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
+    mock_settings.agent_native_storage = False
     mock_get_storage.side_effect = RuntimeError("Storage backend init failed")
     mock_amessages.return_value = make_text_response("No file tools due to error!")  # type: ignore[union-attr]
 
@@ -841,6 +844,7 @@ async def test_auto_save_persists_media_when_permission_always(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
+    mock_settings.agent_native_storage = False
     mock_storage = MockStorageBackend()
     mock_get_storage.return_value = mock_storage
     mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
@@ -899,6 +903,7 @@ async def test_auto_save_skipped_when_permission_ask(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
+    mock_settings.agent_native_storage = False
     mock_storage = MockStorageBackend()
     mock_get_storage.return_value = mock_storage
     mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
@@ -951,6 +956,7 @@ async def test_auto_save_skipped_when_permission_deny(
     mock_settings.google_drive_credentials_json = ""
     mock_settings.llm_model = "test-model"
     mock_settings.llm_provider = "test-provider"
+    mock_settings.agent_native_storage = False
     mock_storage = MockStorageBackend()
     mock_get_storage.return_value = mock_storage
     mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
