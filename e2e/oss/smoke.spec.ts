@@ -40,9 +40,15 @@ test.describe('OSS Smoke Tests', () => {
     await page.goto('/app/dashboard');
     await waitForAppReady(page);
 
+    // Primary nav items (visible by default).
     await expect(page.getByRole('link', { name: /chat/i })).toBeVisible();
-    await expect(page.getByRole('link', { name: /memory/i })).toBeVisible();
     await expect(page.getByRole('link', { name: /channels/i })).toBeVisible();
+    await expect(page.getByRole('link', { name: /integrations/i })).toBeVisible();
     await expect(page.getByRole('link', { name: /settings/i })).toBeVisible();
+
+    // Knowledge (formerly Memory) sits under the collapsed "Advanced" fold.
+    await expect(page.getByRole('link', { name: /knowledge/i })).not.toBeVisible();
+    await page.getByRole('button', { name: /advanced/i }).click();
+    await expect(page.getByRole('link', { name: /knowledge/i })).toBeVisible();
   });
 });
