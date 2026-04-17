@@ -32,7 +32,7 @@ uv run ty check --python .venv backend/ tests/ alembic/
 ## Tech Stack
 
 - Python 3.11+, FastAPI, SQLAlchemy 2.0, Pydantic v2
-- any-llm-sdk (LLM provider abstraction via `acompletion`)
+- any-llm-sdk (LLM provider abstraction via `amessages`)
 - Telegram Bot API for messaging (via python-telegram-bot)
 - Dropbox/Google Drive for file storage
 - PostgreSQL for all data persistence, Alembic for migrations
@@ -80,7 +80,7 @@ Until this project has its first production release, you do not need to be conce
 - SQLAlchemy 2.0 `mapped_column` style for all ORM models
 - Pydantic v2 for all data classes and request/response schemas
 - All routes `async def`
-- All LLM calls via any-llm `acompletion` (async)
+- All LLM calls via any-llm `amessages` (async)
 - Never use `BaseHTTPMiddleware` for streaming endpoints -- use pure ASGI middleware
 - Conventional commit prefixes: `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `ci:`, `chore:`
 - Every data endpoint uses `Depends(get_current_user)` with `user_id` scoping
@@ -104,7 +104,7 @@ Until this project has its first production release, you do not need to be conce
 - **Auth plugin infrastructure**: base.py (ABC), loader.py (dynamic import), dependencies.py (get_current_user), scoping.py (row-level auth). OSS is single-tenant; premium adds multi-tenant auth via plugin.
 - **`user_id` scoping** on every data class and endpoint from day one
 - **Message bus**: async inbound/outbound queues in `bus.py`. Channels publish inbound messages; the agent publishes outbound replies. The ``ChannelManager`` dispatches outbound messages to the correct channel.
-- **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `acompletion`) -> tool execution -> reply
+- **Agent loop**: Telegram webhook -> media pipeline -> tool-calling loop (any-llm `amessages`) -> tool execution -> reply
 - **Memory**: Freeform per-user MEMORY.md managed via workspace tools, backed by `memory_documents` table with automatic compaction
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
 
