@@ -98,8 +98,14 @@ async def test_analyze_image_with_context() -> None:
 
 @pytest.mark.integration()
 @skip_without_anthropic_key
-async def test_pipeline_processes_real_image() -> None:
-    """Full media pipeline should produce a combined context with real vision output."""
+async def test_pipeline_stages_image_for_agent() -> None:
+    """Media pipeline should stage images and surface handles in the combined context.
+
+    With agent-native storage, vision is deferred to the agent (analyze_photo tool).
+    The pipeline stages the bytes and returns a handle so the agent can reference them.
+    """
+    from backend.app.agent import media_staging
+
     png_bytes = _make_png(width=8, height=8, color=(200, 200, 200))
 
     media = DownloadedMedia(
@@ -109,25 +115,24 @@ async def test_pipeline_processes_real_image() -> None:
         filename="test_image.png",
     )
 
-    with patch("backend.app.media.vision.settings") as mock_settings:
-        mock_settings.vision_model = _VISION_MODEL
-        mock_settings.llm_model = _VISION_MODEL
-        mock_settings.vision_provider = ""
-        mock_settings.llm_provider = "anthropic"
-        mock_settings.llm_api_base = None
-        mock_settings.llm_max_tokens_vision = 1000
+    user_id = "test-vision-integration"
+    # Pre-stage the media so the pipeline can find the handle
+    media_staging.stage(user_id, media.original_url, media.content, media.mime_type)
 
-        result = await process_message_media(
-            text_body="Here's a photo of the job site",
-            media_items=[media],
-        )
+    result = await process_message_media(
+        text_body="Here's a photo of the job site",
+        media_items=[media],
+        user_id=user_id,
+    )
 
     assert len(result.media_results) == 1
     assert result.media_results[0].category == "image"
-    # Vision should have produced real text, not the fallback
-    assert result.media_results[0].extracted_text != "[Photo - vision analysis not available]"
-    assert len(result.media_results[0].extracted_text) > 0
+    # Vision is deferred to the agent; pipeline returns empty extracted_text
+    assert result.media_results[0].extracted_text == ""
+    # But the handle should be present for the agent to reference
+    assert result.media_results[0].handle is not None
     assert "Photo 1" in result.combined_context
+    assert "analyze_photo" in result.combined_context
 
 
 @pytest.mark.integration()

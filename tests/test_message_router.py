@@ -87,7 +87,8 @@ async def test_message_with_photo(
     inbound_message: StoredMessage,
     mock_download_media: AsyncMock,
 ) -> None:
-    """Message with photo should download, process via vision, then agent."""
+    """Message with photo: pipeline downloads + stages. The agent decides
+    whether to call analyze_photo via the tool (not exercised here)."""
     from backend.app.media.download import DownloadedMedia
 
     mock_download_media.return_value = DownloadedMedia(
@@ -96,7 +97,6 @@ async def test_message_with_photo(
         original_url="AgACAgIAAxkBAAI",
         filename="photo.jpg",
     )
-    mock_vision.return_value = "A 12x12 composite deck area."
     mock_amessages.return_value = make_text_response("Looks like a great deck project!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -110,7 +110,8 @@ async def test_message_with_photo(
 
     assert response.reply_text == "Looks like a great deck project!"
     mock_download_media.assert_called_once()
-    mock_vision.assert_called_once()
+    # Vision is not called from the pipeline; the agent owns that decision.
+    assert mock_vision.await_count == 0
 
 
 @pytest.mark.asyncio()
@@ -812,167 +813,6 @@ async def test_typing_indicator_failure_does_not_block_processing(
 # ---------------------------------------------------------------------------
 # Auto-save media respects permissions
 # ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-@patch("backend.app.agent.router.get_storage_service")
-@patch("backend.app.agent.router.settings")
-async def test_auto_save_persists_media_when_permission_always(
-    mock_settings: MagicMock,
-    mock_get_storage: MagicMock,
-    mock_amessages: object,
-    test_user: User,
-    conversation: SessionState,
-    inbound_message: StoredMessage,
-    mock_download_media: AsyncMock,
-) -> None:
-    """Downloaded media should be auto-saved when upload_to_storage is 'always'."""
-    from backend.app.media.download import DownloadedMedia
-
-    mock_download_media.return_value = DownloadedMedia(
-        content=b"auto-saved-image",
-        mime_type="image/jpeg",
-        original_url="AgACAgIAAxkBAAI",
-        filename="photo.jpg",
-    )
-    mock_settings.storage_provider = "local"
-    mock_settings.dropbox_access_token = ""
-    mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "test-model"
-    mock_settings.llm_provider = "test-provider"
-    mock_storage = MockStorageBackend()
-    mock_get_storage.return_value = mock_storage
-    mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
-
-    with (
-        patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision,
-        patch(
-            "backend.app.agent.router._upload_permitted_always",
-            return_value=True,
-        ),
-    ):
-        mock_vision.return_value = "A photo."
-        await handle_inbound_message(
-            user=test_user,
-            session=conversation,
-            message=inbound_message,
-            media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
-            channel="telegram",
-            download_media=mock_download_media,
-        )
-
-    assert len(mock_storage.files) >= 1
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-@patch("backend.app.agent.router.get_storage_service")
-@patch("backend.app.agent.router.settings")
-async def test_auto_save_skipped_when_permission_ask(
-    mock_settings: MagicMock,
-    mock_get_storage: MagicMock,
-    mock_amessages: object,
-    test_user: User,
-    conversation: SessionState,
-    inbound_message: StoredMessage,
-    mock_download_media: AsyncMock,
-) -> None:
-    """Media must NOT be auto-saved when upload_to_storage is 'ask'.
-
-    When the user wants to be asked before saving, auto-save is skipped
-    and file persistence is deferred to the agent's upload_to_storage
-    tool which goes through the approval gate.
-
-    Regression test for the permission bypass bug.
-    """
-    from backend.app.media.download import DownloadedMedia
-
-    mock_download_media.return_value = DownloadedMedia(
-        content=b"image-bytes",
-        mime_type="image/jpeg",
-        original_url="AgACAgIAAxkBAAI",
-        filename="photo.jpg",
-    )
-    mock_settings.storage_provider = "local"
-    mock_settings.dropbox_access_token = ""
-    mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "test-model"
-    mock_settings.llm_provider = "test-provider"
-    mock_storage = MockStorageBackend()
-    mock_get_storage.return_value = mock_storage
-    mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
-
-    with (
-        patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision,
-        patch(
-            "backend.app.agent.router._upload_permitted_always",
-            return_value=False,
-        ),
-    ):
-        mock_vision.return_value = "A photo."
-        await handle_inbound_message(
-            user=test_user,
-            session=conversation,
-            message=inbound_message,
-            media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
-            channel="telegram",
-            download_media=mock_download_media,
-        )
-
-    # No files written -- the agent loop handles it via the tool.
-    assert len(mock_storage.files) == 0
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-@patch("backend.app.agent.router.get_storage_service")
-@patch("backend.app.agent.router.settings")
-async def test_auto_save_skipped_when_permission_deny(
-    mock_settings: MagicMock,
-    mock_get_storage: MagicMock,
-    mock_amessages: object,
-    test_user: User,
-    conversation: SessionState,
-    inbound_message: StoredMessage,
-    mock_download_media: AsyncMock,
-) -> None:
-    """Media must NOT be auto-saved when upload_to_storage is 'deny'."""
-    from backend.app.media.download import DownloadedMedia
-
-    mock_download_media.return_value = DownloadedMedia(
-        content=b"image-bytes",
-        mime_type="image/jpeg",
-        original_url="AgACAgIAAxkBAAI",
-        filename="photo.jpg",
-    )
-    mock_settings.storage_provider = "local"
-    mock_settings.dropbox_access_token = ""
-    mock_settings.google_drive_credentials_json = ""
-    mock_settings.llm_model = "test-model"
-    mock_settings.llm_provider = "test-provider"
-    mock_storage = MockStorageBackend()
-    mock_get_storage.return_value = mock_storage
-    mock_amessages.return_value = make_text_response("Got it!")  # type: ignore[union-attr]
-
-    with (
-        patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision,
-        patch(
-            "backend.app.agent.router._upload_permitted_always",
-            return_value=False,
-        ),
-    ):
-        mock_vision.return_value = "A photo."
-        await handle_inbound_message(
-            user=test_user,
-            session=conversation,
-            message=inbound_message,
-            media_urls=[("AgACAgIAAxkBAAI", "image/jpeg")],
-            channel="telegram",
-            download_media=mock_download_media,
-        )
-
-    assert len(mock_storage.files) == 0
 
 
 # ---------------------------------------------------------------------------

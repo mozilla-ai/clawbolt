@@ -301,6 +301,25 @@ def validate_imessage_backend(s: "Settings | None" = None) -> None:
         )
 
 
+def validate_personal_storage_backend(s: "Settings | None" = None) -> None:
+    """Reject startup if two personal-storage backends are configured simultaneously.
+
+    The product supports a single personal storage destination per deployment
+    (local, Dropbox, or Google Drive). Allowing credentials for two at once
+    makes ``storage_provider`` ambiguous to operators. Mirrors the iMessage
+    mutual-exclusion pattern from :func:`validate_imessage_backend`.
+    """
+    s = s or settings
+    dropbox_set = bool(s.dropbox_access_token)
+    gdrive_set = bool(s.google_drive_credentials_json)
+    if dropbox_set and gdrive_set:
+        raise RuntimeError(
+            "Two personal-storage backends are configured at once. "
+            "Set only DROPBOX_ACCESS_TOKEN or only GOOGLE_DRIVE_CREDENTIALS_JSON, "
+            "not both. Choose one via STORAGE_PROVIDER."
+        )
+
+
 def log_config_warnings(s: Settings | None = None) -> list[str]:
     """Log warnings for unusual but valid config values. Returns the warnings."""
     s = s or settings

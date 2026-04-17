@@ -22,6 +22,7 @@ from backend.app.config import (
     log_config_warnings,
     settings,
     validate_imessage_backend,
+    validate_personal_storage_backend,
 )
 from backend.app.database import SessionLocal, get_engine
 from backend.app.models import ChannelRoute, User
@@ -187,6 +188,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     _verify_database()
     _enforce_single_channel()
     validate_imessage_backend()
+    validate_personal_storage_backend()
     log_config_warnings()
     await _verify_llm_settings()
     heartbeat_scheduler.start()

@@ -113,7 +113,6 @@ async def test_partial_media_success(
             Exception("Download failed"),
         ]
     )
-    mock_vision.return_value = "A nice deck photo."
     mock_amessages.return_value = make_text_response("I can see the deck!")  # type: ignore[union-attr]
 
     response = await handle_inbound_message(
@@ -128,9 +127,10 @@ async def test_partial_media_success(
         download_media=mock_download,
     )
 
-    # Agent should still work with the one successful download
+    # Agent should still work with the one successful download. Vision is the
+    # agent's call (via analyze_photo); the pipeline doesn't run it.
     assert response.reply_text == "I can see the deck!"
-    mock_vision.assert_called_once()
+    assert mock_vision.await_count == 0
 
 
 @pytest.mark.asyncio()

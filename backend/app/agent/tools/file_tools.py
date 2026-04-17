@@ -14,7 +14,7 @@ from backend.app.agent.dto import slugify as _store_slugify
 from backend.app.agent.stores import MediaStore
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
-from backend.app.media.download import MIME_EXTENSIONS, DownloadedMedia
+from backend.app.media.download import MIME_EXTENSIONS
 from backend.app.models import User
 from backend.app.services.storage_service import StorageBackend
 
@@ -151,48 +151,6 @@ def _extension_from_mime(mime_type: str) -> str:
     """Get file extension from MIME type."""
     dotted = MIME_EXTENSIONS.get(mime_type, ".bin")
     return dotted.lstrip(".")
-
-
-async def auto_save_media(
-    user: User,
-    storage: StorageBackend,
-    downloaded_media: list[DownloadedMedia],
-) -> list[str]:
-    """Auto-save downloaded media to storage before the agent loop.
-
-    Persists all inbound media to /Unsorted/{date}/ immediately after
-    download. Only called when the ``upload_to_storage`` permission is
-    ``always``; callers must check the permission level first.
-
-    Returns a list of storage URLs for saved files.
-    """
-    if not downloaded_media:
-        return []
-
-    today = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d")
-    folder_path = f"/Unsorted/{today}"
-    await storage.create_folder(folder_path)
-
-    media_store = MediaStore(user.id)
-    saved_urls: list[str] = []
-    for media in downloaded_media:
-        extension = _extension_from_mime(media.mime_type)
-
-        existing_count = await media_store.count_by_path_prefix(folder_path)
-
-        filename = f"file_{existing_count + 1:03d}.{extension}"
-        storage_url = await storage.upload_file(media.content, folder_path, filename)
-
-        await media_store.create(
-            original_url=media.original_url,
-            mime_type=media.mime_type,
-            storage_url=storage_url,
-            storage_path=f"{folder_path}/{filename}",
-        )
-        saved_urls.append(storage_url)
-        media_staging.evict(user.id, media.original_url)
-
-    return saved_urls
 
 
 def create_file_tools(
