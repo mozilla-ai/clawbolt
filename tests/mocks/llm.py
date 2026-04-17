@@ -25,9 +25,27 @@ def make_vision_response(
     return _make_text_message_response(description)
 
 
-def make_text_response(content: str = "I'll help you with that.") -> MessageResponse:
-    """Build a mock any-llm MessageResponse for text calls."""
-    return _make_text_message_response(content)
+def make_text_response(
+    content: str = "I'll help you with that.",
+    *,
+    input_tokens: int = 0,
+    output_tokens: int = 0,
+    cache_creation_input_tokens: int | None = None,
+    cache_read_input_tokens: int | None = None,
+) -> MessageResponse:
+    """Build a mock any-llm MessageResponse for text calls.
+
+    Optional token fields let cache-aware tests assert rollup behavior.
+    """
+    resp = _make_text_message_response(content)
+    if input_tokens or output_tokens:
+        resp.usage.input_tokens = input_tokens
+        resp.usage.output_tokens = output_tokens
+    if cache_creation_input_tokens is not None:
+        resp.usage.cache_creation_input_tokens = cache_creation_input_tokens
+    if cache_read_input_tokens is not None:
+        resp.usage.cache_read_input_tokens = cache_read_input_tokens
+    return resp
 
 
 def make_tool_call_response(
