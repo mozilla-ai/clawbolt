@@ -1,13 +1,13 @@
-"""Deterministic receipt rendering for outbound replies on plain-text channels.
+"""Deterministic receipt rendering for outbound replies.
 
-Channels without a structured tool-call UI (iMessage, SMS, Telegram) get a
-compact receipt block appended to the reply for every write-side tool that
-populated a ``ToolReceipt``. The receipt text is generated from real API
-output by code, not by the LLM, so the contractor has trustworthy evidence
-that the claimed action actually happened.
+Every outbound reply gets a compact receipt block appended for each
+write-side tool that populated a ``ToolReceipt``. The receipt text is
+generated from real API output by code, not by the LLM, so the user has
+trustworthy evidence that the claimed action actually happened.
 
-Read-side tools and tools that did not return a receipt contribute nothing
-to the block. A message with no receipts produces no footer at all.
+Read-side tools and tools that did not return a receipt contribute
+nothing to the block. A message with no receipts produces no footer at
+all.
 """
 
 from __future__ import annotations
@@ -16,10 +16,12 @@ from backend.app.agent.context import StoredToolInteraction
 
 _SUMMARY_SEPARATOR = "\n\n"
 
-# Upper bound on the receipt block length for SMS-friendly delivery. Past
-# this, the tail collapses to "+K more" so a runaway tool count cannot push
-# a reply past multipart SMS thresholds.
-_MAX_RECEIPTS_CHARS = 320
+# Upper bound on the receipt block length. Past this, the tail collapses
+# to ``+K more`` so a truly runaway tool count (dozens of actions in one
+# turn) does not produce a runaway message. iMessage and the web chat
+# have no hard length limit; this cap is mainly a safety valve for SMS
+# (Linq) where each 160-char segment costs money.
+_MAX_RECEIPTS_CHARS = 2000
 
 
 def render_receipt_line(action: str, target: str, url: str | None) -> str:

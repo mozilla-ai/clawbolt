@@ -45,7 +45,6 @@ from backend.app.agent.tools.registry import (
     default_registry,
     ensure_tool_modules_imported,
 )
-from backend.app.channels import get_channel
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
@@ -527,13 +526,7 @@ async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
             ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in ctx.response.tool_calls
         )
         if not sent_reply and ctx.response.reply_text:
-            content = ctx.response.reply_text
-            try:
-                channel_obj = get_channel(ctx.channel)
-            except KeyError:
-                channel_obj = None
-            if channel_obj is None or not channel_obj.shows_tool_calls_in_ui:
-                content = append_receipts(content, ctx.response.tool_calls)
+            content = append_receipts(ctx.response.reply_text, ctx.response.tool_calls)
             outbound = OutboundMessage(
                 channel=ctx.channel,
                 chat_id=ctx.to_address,

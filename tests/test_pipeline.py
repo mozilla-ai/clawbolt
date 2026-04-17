@@ -361,10 +361,10 @@ async def test_dispatch_reply_appends_receipt_for_imessage_write_tool() -> None:
 
 
 @pytest.mark.asyncio
-async def test_dispatch_reply_does_not_append_receipt_for_webchat() -> None:
-    """Webchat renders a structured tool-call panel from the stored
-    tool_interactions_json, so the plain-text receipt block would
-    duplicate that UI and clutter the chat."""
+async def test_dispatch_reply_also_appends_receipt_for_webchat() -> None:
+    """Receipts now ship on every channel, including the web dashboard,
+    so the admin chat and the contractor's iMessage thread show the
+    same evidence of what actually happened."""
     from unittest.mock import AsyncMock
 
     response = _make_response_with_receipt(
@@ -386,7 +386,9 @@ async def test_dispatch_reply_does_not_append_receipt_for_webchat() -> None:
     assert mock_publish.await_count == 1
     assert mock_publish.await_args is not None
     outbound = mock_publish.await_args.args[0]
-    assert outbound.content == "Done."
+    assert outbound.content.startswith("Done.")
+    assert "- Uploaded photo to CompanyCam project Davis" in outbound.content
+    assert "https://companycam.com/p/abc123" in outbound.content
 
 
 @pytest.mark.asyncio

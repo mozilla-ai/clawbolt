@@ -54,12 +54,6 @@ class BaseChannel(ABC):
     # retry loop (which is only useful for local dev tunnels).
     webhook_registered: bool = False
 
-    # Channels that render a separate tool-call UI (e.g. the web dashboard)
-    # set this to True. Plain-text channels (iMessage, Telegram, SMS) leave
-    # it False so the outbound pipeline appends a deterministic tool-call
-    # summary to the reply body.
-    shows_tool_calls_in_ui: bool = False
-
     @property
     @abstractmethod
     def name(self) -> str:
