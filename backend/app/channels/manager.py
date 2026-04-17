@@ -108,6 +108,27 @@ class ChannelManager:
                 inbound.channel,
                 inbound.sender_id,
             )
+            # Send an error reply so the user isn't left with a dangling
+            # typing indicator and no response.
+            try:
+                from backend.app.bus import OutboundMessage, message_bus
+
+                await message_bus.publish_outbound(
+                    OutboundMessage(
+                        channel=inbound.channel,
+                        chat_id=inbound.sender_id,
+                        content=(
+                            "Sorry, something went wrong processing your message. Please try again."
+                        ),
+                        request_id=inbound.request_id,
+                    )
+                )
+            except Exception:
+                logger.debug(
+                    "Failed to send error fallback for %s/%s",
+                    inbound.channel,
+                    inbound.sender_id,
+                )
 
     async def _run_outbound_dispatcher(self) -> None:
         """Loop: consume outbound messages and route to channels."""

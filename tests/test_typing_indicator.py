@@ -1,4 +1,4 @@
-"""Tests for typing indicator integration with the agent loop and heartbeat."""
+"""Tests for typing indicator integration with the agent loop, heartbeat, and ingestion."""
 
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -8,10 +8,12 @@ from pydantic import BaseModel
 
 from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.events import AgentEndEvent, ToolExecutionStartEvent, TurnStartEvent
+from backend.app.agent.file_store import SessionState, StoredMessage
 from backend.app.agent.heartbeat import evaluate_heartbeat_need
+from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.agent.router import _create_activity_forwarder
 from backend.app.agent.tools.base import Tool, ToolResult
-from backend.app.bus import MessageBus, OutboundMessage
+from backend.app.bus import MessageBus, OutboundMessage, message_bus
 from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
 
@@ -474,3 +476,81 @@ async def test_heartbeat_works_without_channel(
     # Should not raise when no channel is provided
     decision = await evaluate_heartbeat_need(test_user)
     assert decision.action == "skip"
+
+
+# ---------------------------------------------------------------------------
+# Early typing indicator (ingestion) tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_early_typing_indicator_published_on_inbound() -> None:
+    """process_inbound_from_bus should publish a typing indicator before dispatch."""
+    inbound = InboundMessage(
+        channel="bluebubbles",
+        sender_id="+15551234567",
+        text="hello",
+    )
+
+    mock_user = User(id="1", channel_identifier="+15551234567", phone="")
+    mock_session = SessionState(session_id="sess-1", user_id="1")
+    mock_message = StoredMessage(direction="inbound", body="hello")
+
+    with (
+        patch(
+            "backend.app.agent.ingestion._get_or_create_user",
+            new_callable=AsyncMock,
+            return_value=mock_user,
+        ),
+        patch(
+            "backend.app.agent.ingestion.get_approval_gate",
+        ) as mock_gate,
+        patch(
+            "backend.app.agent.ingestion.get_or_create_conversation",
+            new_callable=AsyncMock,
+            return_value=(mock_session, True),
+        ),
+        patch(
+            "backend.app.agent.ingestion.get_session_store",
+        ) as mock_store_fn,
+        patch(
+            "backend.app.agent.ingestion.settings",
+        ) as mock_settings,
+        patch(
+            "backend.app.agent.ingestion._dispatch_to_pipeline",
+            new_callable=AsyncMock,
+        ) as mock_dispatch,
+    ):
+        mock_gate.return_value.has_pending.return_value = False
+        mock_session_store = AsyncMock()
+        mock_session_store.add_message.return_value = mock_message
+        mock_store_fn.return_value = mock_session_store
+        mock_settings.message_batch_window_ms = 0
+
+        await process_inbound_from_bus(inbound)
+
+        # A typing indicator should have been published to the bus
+        typing_found = False
+        while not message_bus.outbound.empty():
+            outbound = message_bus.outbound.get_nowait()
+            if outbound.is_typing_indicator:
+                assert outbound.channel == "bluebubbles"
+                assert outbound.chat_id == "+15551234567"
+                typing_found = True
+                break
+        assert typing_found, "Expected an early typing indicator on the outbound bus"
+
+        # Pipeline dispatch should still have been called
+        mock_dispatch.assert_called_once()
+
+
+@pytest.mark.asyncio()
+async def test_early_typing_indicator_swallows_bus_errors() -> None:
+    """_send_early_typing_indicator should not raise even when the bus fails."""
+    from backend.app.agent.ingestion import _send_early_typing_indicator
+
+    with patch("backend.app.bus.message_bus") as mock_bus:
+        mock_bus.publish_outbound = AsyncMock(side_effect=RuntimeError("bus exploded"))
+
+        # Should not raise
+        await _send_early_typing_indicator("bluebubbles", "+15551234567")
