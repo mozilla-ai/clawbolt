@@ -21,6 +21,7 @@ dependencies = [
     "cryptography>=42.0",
     "cachetools>=5.3",
     "Pillow>=10.0",
+    "simpleeval>=1.0",
 ]
 
 [project.optional-dependencies]

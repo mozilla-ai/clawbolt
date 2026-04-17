@@ -18,6 +18,7 @@ def _reset_import_guard() -> None:
 
 
 EXPECTED_TOOL_MODULES: set[str] = {
+    "backend.app.agent.tools.calculator_tools",
     "backend.app.agent.tools.memory_tools",
     "backend.app.agent.tools.messaging_tools",
     "backend.app.agent.tools.heartbeat_tools",
