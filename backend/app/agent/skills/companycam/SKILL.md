@@ -6,7 +6,6 @@ You now have access to CompanyCam tools for managing job site photo documentatio
 
 | Tool | Purpose | Approval |
 |------|---------|----------|
-| companycam_connect | Connect with an API token | Asks user |
 | companycam_search_projects | Search projects by name or address | Auto |
 | companycam_upload_photo | Upload a photo to a project | Asks user |
 | companycam_create_project | Create a new project | Asks user |
@@ -29,4 +28,4 @@ Derive tags from the conversation context:
 
 ## Connection
 
-Users connect by providing their CompanyCam API token. They can generate one at app.companycam.com/access_tokens. Use `companycam_connect` to validate and store the token.
+Users connect via OAuth. Use `manage_integration(action='connect', target='companycam')` to start the authorization flow. The user will be redirected to CompanyCam to grant access.

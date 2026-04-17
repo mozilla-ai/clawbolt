@@ -4,9 +4,9 @@ import Button from '@/components/ui/button';
 import { Switch } from '@heroui/switch';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
-import { displayName, subToolDisplayName, TOOL_OAUTH_MAP, TOKEN_BASED_INTEGRATIONS, getToolOAuthStatus } from '@/lib/tool-utils';
+import { displayName, subToolDisplayName, TOOL_OAUTH_MAP, getToolOAuthStatus } from '@/lib/tool-utils';
 import { IntegrationIcon } from '@/components/integration-icons';
-import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useTokenConnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
+import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useOAuthDisconnect, useCalendarList, useCalendarConfig, useUpdateCalendarConfig } from '@/hooks/queries';
 import api from '@/api';
 import type { ToolConfigEntryResponse, OAuthStatusEntry, SubToolEntryResponse } from '@/types';
 
@@ -44,10 +44,8 @@ export default function ToolsPage() {
   const updateMutation = useUpdateToolConfig();
   const { data: oauthData } = useOAuthStatus();
   const disconnectMutation = useOAuthDisconnect();
-  const tokenConnectMutation = useTokenConnect();
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [connectingIntegration, setConnectingIntegration] = useState<string | null>(null);
-  const [tokenInputs, setTokenInputs] = useState<Record<string, string>>({});
 
   const tools = data?.tools ?? [];
   const oauthMap: Record<string, OAuthStatusEntry> = {};
@@ -140,8 +138,6 @@ export default function ToolsPage() {
               const oauthIntegration = TOOL_OAUTH_MAP[tool.name];
               const { needsOAuth, isConfigured, isConnected } = getToolOAuthStatus(tool.name, oauthMap, tool.configured);
 
-              const isTokenBased = TOKEN_BASED_INTEGRATIONS.has(tool.name);
-
               return (
                 <Card key={tool.name}>
                   <div className="flex items-start justify-between gap-4">
@@ -180,7 +176,7 @@ export default function ToolsPage() {
                           Disconnect
                         </Button>
                       )}
-                      {needsOAuth && !isConnected && !isTokenBased && (
+                      {needsOAuth && !isConnected && (
                         <Button
                           size="sm"
                           onClick={() => void handleConnect(oauthIntegration!)}
@@ -192,48 +188,6 @@ export default function ToolsPage() {
                       )}
                     </div>
                   </div>
-
-                  {/* Token-based connection input */}
-                  {isTokenBased && !isConnected && (
-                    <div className="mt-3 pt-3 border-t border-border">
-                      <label className="block text-xs text-muted-foreground mb-1.5">
-                        API token
-                        {tool.name === 'companycam' && (
-                          <span> (generate at <a href="https://app.companycam.com/access_tokens" target="_blank" rel="noreferrer" className="text-primary hover:underline">app.companycam.com</a>)</span>
-                        )}
-                      </label>
-                      <div className="flex gap-2">
-                        <input
-                          type="password"
-                          placeholder="Paste your API token"
-                          value={tokenInputs[tool.name] ?? ''}
-                          onChange={(e) => setTokenInputs((prev) => ({ ...prev, [tool.name]: e.target.value }))}
-                          className="flex-1 text-sm px-2.5 py-1.5 rounded-md border border-border bg-background"
-                        />
-                        <Button
-                          size="sm"
-                          disabled={!tokenInputs[tool.name]?.trim() || tokenConnectMutation.isPending}
-                          isLoading={tokenConnectMutation.isPending}
-                          onClick={() => {
-                            const token = tokenInputs[tool.name]?.trim();
-                            if (!token) return;
-                            tokenConnectMutation.mutate(
-                              { integration: oauthIntegration!, token },
-                              {
-                                onSuccess: () => {
-                                  toast.success(`${displayName(tool.name)} connected`);
-                                  setTokenInputs((prev) => ({ ...prev, [tool.name]: '' }));
-                                },
-                                onError: (e) => toast.error(e.message),
-                              },
-                            );
-                          }}
-                        >
-                          Connect
-                        </Button>
-                      </div>
-                    </div>
-                  )}
 
                   {/* Enable/disable toggle: show when connected (OAuth) or always (non-OAuth) */}
                   {isConnected && (

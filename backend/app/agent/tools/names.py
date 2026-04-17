@@ -43,7 +43,6 @@ class ToolName:
     CALENDAR_CHECK_AVAILABILITY = "calendar_check_availability"
 
     # CompanyCam
-    COMPANYCAM_CONNECT = "companycam_connect"
     COMPANYCAM_SEARCH_PROJECTS = "companycam_search_projects"
     COMPANYCAM_CREATE_PROJECT = "companycam_create_project"
     COMPANYCAM_UPDATE_PROJECT = "companycam_update_project"

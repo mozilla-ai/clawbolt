@@ -1,8 +1,8 @@
 """CompanyCam tools for the agent.
 
-Provides tools to connect to CompanyCam, search/create projects, and upload
-photos. The connection uses a per-user API token stored in the oauth_tokens
-table (OAuth 2.0 support is planned post-MVP).
+Provides tools to search/create projects, upload photos, and manage job
+documentation via CompanyCam. Authentication uses the standard OAuth 2.0
+authorization code flow (same as Google Calendar and QuickBooks).
 """
 
 from __future__ import annotations
@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.services.companycam import CompanyCamService, get_photo_url
-from backend.app.services.oauth import OAuthTokenData, oauth_service
+from backend.app.services.oauth import oauth_service
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -32,10 +32,6 @@ _INTEGRATION = "companycam"
 # ---------------------------------------------------------------------------
 # Parameter models
 # ---------------------------------------------------------------------------
-
-
-class CompanyCamConnectParams(BaseModel):
-    api_token: str = Field(description="The user's CompanyCam API access token")
 
 
 class CompanyCamSearchParams(BaseModel):
@@ -146,18 +142,11 @@ class CompanyCamCreateChecklistParams(BaseModel):
 # ---------------------------------------------------------------------------
 
 
-def _load_service(user_id: str) -> CompanyCamService | None:
-    """Load a CompanyCamService for the user.
-
-    Priority: per-user token (oauth_tokens) > server-level env var.
-    """
-    from backend.app.config import settings
-
-    token = oauth_service.load_token(user_id, _INTEGRATION)
+async def _load_service(user_id: str) -> CompanyCamService | None:
+    """Load a CompanyCamService for the user using OAuth token (auto-refreshed)."""
+    token = await oauth_service.get_valid_token(user_id, _INTEGRATION)
     if token and token.access_token:
         return CompanyCamService(access_token=token.access_token)
-    if settings.companycam_access_token:
-        return CompanyCamService(access_token=settings.companycam_access_token)
     return None
 
 
@@ -950,64 +939,6 @@ def _create_companycam_tools(
 
 
 # ---------------------------------------------------------------------------
-# Connect tool (separate, always available when integration is registered)
-# ---------------------------------------------------------------------------
-
-
-def _create_connect_tool(user_id: str) -> Tool:
-    """Create the companycam_connect tool for storing an API token."""
-
-    async def companycam_connect(api_token: str) -> ToolResult:
-        """Validate and store a CompanyCam API token for this user."""
-        service = CompanyCamService(access_token=api_token)
-        try:
-            user_info = await service.validate_token()
-        except Exception as exc:
-            logger.warning("CompanyCam token validation failed: %s", exc)
-            return ToolResult(
-                content=(
-                    "That token didn't work. CompanyCam returned an error. "
-                    "Double-check the token and try again."
-                ),
-                is_error=True,
-                error_kind=ToolErrorKind.AUTH,
-            )
-
-        token_data = OAuthTokenData(
-            access_token=api_token,
-            token_type="Bearer",
-        )
-        oauth_service.save_token(user_id, _INTEGRATION, token_data)
-
-        display_name = user_info.first_name or ""
-        if display_name:
-            display_name = f" ({display_name})"
-        logger.info("CompanyCam connected for user %s", user_id)
-        return ToolResult(
-            content=(
-                f"CompanyCam connected successfully{display_name}. "
-                "You can now search projects, upload photos, and create new projects. "
-                "The connection will be active starting with your next message."
-            ),
-        )
-
-    return Tool(
-        name=ToolName.COMPANYCAM_CONNECT,
-        description=(
-            "Connect to CompanyCam by providing an API access token. "
-            "The user can generate a token at app.companycam.com/access_tokens."
-        ),
-        function=companycam_connect,
-        params_model=CompanyCamConnectParams,
-        usage_hint=(
-            "When the user wants to connect CompanyCam, ask for their API token. "
-            "They can generate one at app.companycam.com/access_tokens. "
-            "Call this tool with the token to validate and store it."
-        ),
-    )
-
-
-# ---------------------------------------------------------------------------
 # Auth check, factory, and registration
 # ---------------------------------------------------------------------------
 
@@ -1017,35 +948,31 @@ def _companycam_auth_check(ctx: ToolContext) -> str | None:
 
     Returns None when connected (tools are available).
     Returns a reason string when not connected (tells the agent how to help).
-    Checks per-user token first, then server-level env var.
     """
     from backend.app.config import settings
 
-    token = oauth_service.load_token(ctx.user.id, _INTEGRATION)
-    if token and token.access_token:
-        return None
-    if settings.companycam_access_token:
+    if not settings.companycam_client_id or not settings.companycam_client_secret:
+        return None  # Not configured server-side, hide tools
+    if oauth_service.is_connected(ctx.user.id, _INTEGRATION):
         return None
     return (
         "CompanyCam is not connected. "
-        "Ask the user for their CompanyCam API token "
-        "(they can generate one at app.companycam.com/access_tokens), "
-        "then call companycam_connect with the token."
+        "Use manage_integration(action='connect', target='companycam') "
+        "to start the OAuth authorization flow."
     )
 
 
 async def _companycam_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for CompanyCam tools."""
-    tools: list[Tool] = []
+    from backend.app.config import settings
 
-    service = _load_service(ctx.user.id)
-    if service is not None:
-        tools.extend(_create_companycam_tools(service, ctx))
+    if not settings.companycam_client_id or not settings.companycam_client_secret:
+        return []
 
-    # The connect tool is always available so users can connect
-    tools.append(_create_connect_tool(ctx.user.id))
-
-    return tools
+    service = await _load_service(ctx.user.id)
+    if service is None:
+        return []
+    return _create_companycam_tools(service, ctx)
 
 
 def _register() -> None:
@@ -1060,11 +987,6 @@ def _register() -> None:
             "documents, comments, checklists, and tags"
         ),
         sub_tools=[
-            SubToolInfo(
-                ToolName.COMPANYCAM_CONNECT,
-                "Connect to CompanyCam with an API token",
-                default_permission="ask",
-            ),
             SubToolInfo(
                 ToolName.COMPANYCAM_SEARCH_PROJECTS,
                 "Search CompanyCam projects by name or address",

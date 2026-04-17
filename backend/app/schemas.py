@@ -345,16 +345,6 @@ class OAuthAuthorizeResponse(BaseModel):
     integration: str
 
 
-class TokenConnectRequest(BaseModel):
-    token: str = Field(description="API access token for the integration")
-
-
-class TokenConnectResponse(BaseModel):
-    status: str
-    integration: str
-    display_name: str = ""
-
-
 # ---------------------------------------------------------------------------
 # Calendar config
 # ---------------------------------------------------------------------------

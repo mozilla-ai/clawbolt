@@ -40,6 +40,7 @@ _DISPLAY_NAMES: dict[str, str] = {
 _TOOL_OAUTH_MAP: dict[str, str] = {
     "calendar": "google_calendar",
     "quickbooks": "quickbooks",
+    "companycam": "companycam",
 }
 
 
