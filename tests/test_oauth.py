@@ -21,6 +21,7 @@ from backend.app.services.oauth import (
     OAuthService,
     OAuthTokenData,
     _generate_pkce_pair,
+    get_companycam_oauth_config,
     get_google_calendar_oauth_config,
     get_oauth_config,
     get_quickbooks_oauth_config,
@@ -482,6 +483,41 @@ def test_google_calendar_auth_url_includes_access_type_offline(
     assert "prompt=consent" in url
 
 
+def test_companycam_oauth_config_not_configured() -> None:
+    """When companycam client_id/secret are empty, config should be None."""
+    with (
+        patch.object(settings, "companycam_client_id", ""),
+        patch.object(settings, "companycam_client_secret", ""),
+    ):
+        config = get_companycam_oauth_config()
+    assert config is None
+
+
+def test_companycam_oauth_config_configured() -> None:
+    """When companycam client_id/secret are set, config should be returned."""
+    with (
+        patch.object(settings, "companycam_client_id", "cc-cid"),
+        patch.object(settings, "companycam_client_secret", "cc-csec"),
+    ):
+        config = get_companycam_oauth_config()
+    assert config is not None
+    assert config.client_id == "cc-cid"
+    assert config.integration == "companycam"
+    assert config.use_pkce is False
+    assert config.scopes == ["read", "write", "destroy"]
+
+
+def test_get_oauth_config_dispatches_companycam() -> None:
+    """get_oauth_config('companycam') should return CompanyCam config."""
+    with (
+        patch.object(settings, "companycam_client_id", "cc-cid"),
+        patch.object(settings, "companycam_client_secret", "cc-csec"),
+    ):
+        config = get_oauth_config("companycam")
+    assert config is not None
+    assert config.integration == "companycam"
+
+
 def test_get_oauth_config_dispatches_google_calendar() -> None:
     """get_oauth_config('google_calendar') should return Google Calendar config."""
     with (
@@ -594,6 +630,7 @@ def test_oauth_status_endpoint(client: TestClient) -> None:
     assert "integrations" in data
     names = [e["integration"] for e in data["integrations"]]
     assert "quickbooks" in names
+    assert "companycam" in names
 
 
 def test_oauth_authorize_endpoint(client: TestClient) -> None:

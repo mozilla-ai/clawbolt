@@ -169,8 +169,8 @@ def test_companycam_tools_registered() -> None:
     assert "companycam" in default_registry.factory_names
 
 
-def test_companycam_auth_check_no_token() -> None:
-    """Auth check should return a reason when no token is stored and no env var."""
+def test_companycam_auth_check_not_connected() -> None:
+    """Auth check should return a reason when OAuth is not connected."""
     from backend.app.agent.tools.companycam_tools import _companycam_auth_check
     from backend.app.config import settings
 
@@ -179,32 +179,54 @@ def test_companycam_auth_check_no_token() -> None:
     ctx = MagicMock()
     ctx.user = user
 
-    original = settings.companycam_access_token
-    try:
-        settings.companycam_access_token = ""
-        with patch("backend.app.agent.tools.companycam_tools.oauth_service") as mock_oauth:
-            mock_oauth.load_token.return_value = None
-            result = _companycam_auth_check(ctx)
-    finally:
-        settings.companycam_access_token = original
+    with (
+        patch.object(settings, "companycam_client_id", "cid"),
+        patch.object(settings, "companycam_client_secret", "csec"),
+        patch("backend.app.agent.tools.companycam_tools.oauth_service") as mock_oauth,
+    ):
+        mock_oauth.is_connected.return_value = False
+        result = _companycam_auth_check(ctx)
 
     assert result is not None
     assert "not connected" in result.lower()
+    assert "manage_integration" in result
 
 
-def test_companycam_auth_check_with_token() -> None:
-    """Auth check should return None when a token is stored."""
+def test_companycam_auth_check_connected() -> None:
+    """Auth check should return None when OAuth is connected."""
     from backend.app.agent.tools.companycam_tools import _companycam_auth_check
+    from backend.app.config import settings
 
     user = MagicMock()
-    user.id = "test-user-with-token"
+    user.id = "test-user-connected"
     ctx = MagicMock()
     ctx.user = user
 
-    with patch("backend.app.agent.tools.companycam_tools.oauth_service") as mock_oauth:
-        token = MagicMock()
-        token.access_token = "valid-token"
-        mock_oauth.load_token.return_value = token
+    with (
+        patch.object(settings, "companycam_client_id", "cid"),
+        patch.object(settings, "companycam_client_secret", "csec"),
+        patch("backend.app.agent.tools.companycam_tools.oauth_service") as mock_oauth,
+    ):
+        mock_oauth.is_connected.return_value = True
+        result = _companycam_auth_check(ctx)
+
+    assert result is None
+
+
+def test_companycam_auth_check_not_configured() -> None:
+    """Auth check should return None (hide tools) when OAuth creds are not configured."""
+    from backend.app.agent.tools.companycam_tools import _companycam_auth_check
+    from backend.app.config import settings
+
+    user = MagicMock()
+    user.id = "test-user"
+    ctx = MagicMock()
+    ctx.user = user
+
+    with (
+        patch.object(settings, "companycam_client_id", ""),
+        patch.object(settings, "companycam_client_secret", ""),
+    ):
         result = _companycam_auth_check(ctx)
 
     assert result is None
@@ -708,7 +730,6 @@ def test_new_companycam_tools_registered() -> None:
     tool_names = {st.name for st in info.sub_tools}
 
     expected = {
-        ToolName.COMPANYCAM_CONNECT,
         ToolName.COMPANYCAM_SEARCH_PROJECTS,
         ToolName.COMPANYCAM_CREATE_PROJECT,
         ToolName.COMPANYCAM_UPDATE_PROJECT,

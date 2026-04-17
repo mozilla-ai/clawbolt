@@ -46,7 +46,7 @@
     "/api/oauth/status": {
       "get": {
         "summary": "Get Oauth Status",
-        "description": "Return connection status for all OAuth and token-based integrations.",
+        "description": "Return connection status for all OAuth integrations.",
         "operationId": "get_oauth_status_api_oauth_status_get",
         "responses": {
           "200": {
@@ -181,60 +181,10 @@
         }
       }
     },
-    "/api/oauth/{integration}/token": {
-      "post": {
-        "summary": "Connect With Token",
-        "description": "Connect a token-based integration by validating and storing an API token.",
-        "operationId": "connect_with_token_api_oauth__integration__token_post",
-        "parameters": [
-          {
-            "name": "integration",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Integration"
-            }
-          }
-        ],
-        "requestBody": {
-          "required": true,
-          "content": {
-            "application/json": {
-              "schema": {
-                "$ref": "#/components/schemas/TokenConnectRequest"
-              }
-            }
-          }
-        },
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/TokenConnectResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
     "/api/oauth/{integration}": {
       "delete": {
         "summary": "Disconnect Integration",
-        "description": "Disconnect an OAuth or token-based integration by removing stored tokens.",
+        "description": "Disconnect an OAuth integration by removing stored tokens.",
         "operationId": "disconnect_integration_api_oauth__integration__delete",
         "parameters": [
           {
@@ -2683,43 +2633,6 @@
           "bot_link"
         ],
         "title": "TelegramBotInfoResponse"
-      },
-      "TokenConnectRequest": {
-        "properties": {
-          "token": {
-            "type": "string",
-            "title": "Token",
-            "description": "API access token for the integration"
-          }
-        },
-        "type": "object",
-        "required": [
-          "token"
-        ],
-        "title": "TokenConnectRequest"
-      },
-      "TokenConnectResponse": {
-        "properties": {
-          "status": {
-            "type": "string",
-            "title": "Status"
-          },
-          "integration": {
-            "type": "string",
-            "title": "Integration"
-          },
-          "display_name": {
-            "type": "string",
-            "title": "Display Name",
-            "default": ""
-          }
-        },
-        "type": "object",
-        "required": [
-          "status",
-          "integration"
-        ],
-        "title": "TokenConnectResponse"
       },
       "ToolConfigEntryResponse": {
         "properties": {
