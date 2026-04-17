@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -22,6 +23,9 @@ from backend.app.agent.router import (
     run_pipeline,
 )
 from backend.app.media.download import DownloadedMedia
+
+if TYPE_CHECKING:
+    from backend.app.agent.core import AgentResponse
 
 
 @pytest.mark.asyncio
@@ -258,14 +262,42 @@ async def test_prepare_media_step_preserves_pre_downloaded_media() -> None:
 # ---------------------------------------------------------------------------
 
 
-async def _drain_outbound() -> list:
-    """Pull every queued OutboundMessage so the test sees a clean bus."""
-    from backend.app.bus import message_bus
+def _make_response_with_tool(
+    *,
+    reply_text: str,
+    tool_name: str,
+    is_error: bool = False,
+) -> AgentResponse:
+    """Build an AgentResponse with a single tool call for summary tests."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.core import AgentResponse
 
-    drained = []
-    while not message_bus.outbound.empty():
-        drained.append(message_bus.outbound.get_nowait())
-    return drained
+    return AgentResponse(
+        reply_text=reply_text,
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id="tc-1",
+                name=tool_name,
+                args={},
+                result="ok",
+                is_error=is_error,
+            )
+        ],
+    )
+
+
+def _make_ctx(
+    *, channel: str, response: AgentResponse, to_address: str = "+15555555555"
+) -> PipelineContext:
+    return PipelineContext(
+        user=None,  # type: ignore[arg-type]
+        session=None,  # type: ignore[arg-type]
+        message=None,  # type: ignore[arg-type]
+        media_urls=[],
+        channel=channel,
+        to_address=to_address,
+        response=response,
+    )
 
 
 @pytest.mark.asyncio
@@ -273,39 +305,25 @@ async def test_dispatch_reply_appends_tool_summary_for_imessage() -> None:
     """On plain-text channels (bluebubbles iMessage), the outbound body
     must carry a deterministic tool-call summary so the user can see what
     actually ran, independent of whatever the LLM said in text."""
-    from backend.app.agent.context import StoredToolInteraction
-    from backend.app.agent.core import AgentResponse
+    from unittest.mock import AsyncMock
 
-    await _drain_outbound()
-
-    response = AgentResponse(
+    response = _make_response_with_tool(
         reply_text="Done uploading your photo.",
-        tool_calls=[
-            StoredToolInteraction(
-                tool_call_id="tc-1",
-                name="companycam_upload_photo",
-                args={},
-                result="ok",
-                is_error=False,
-            )
-        ],
+        tool_name="companycam_upload_photo",
     )
-    ctx = PipelineContext(
-        user=None,  # type: ignore[arg-type]
-        session=None,  # type: ignore[arg-type]
-        message=None,  # type: ignore[arg-type]
-        media_urls=[],
-        channel="bluebubbles",
-        to_address="+15555555555",
-        response=response,
-    )
+    ctx = _make_ctx(channel="bluebubbles", response=response)
 
-    await dispatch_reply_step(ctx)
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
 
-    outbound = await _drain_outbound()
-    assert len(outbound) == 1
-    assert "Done uploading your photo." in outbound[0].content
-    assert "Tools used: companycam_upload_photo" in outbound[0].content
+    assert mock_publish.await_count == 1
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert "Done uploading your photo." in outbound.content
+    assert "Tools used: CompanyCam: upload photo" in outbound.content
 
 
 @pytest.mark.asyncio
@@ -313,77 +331,50 @@ async def test_dispatch_reply_does_not_append_summary_for_webchat() -> None:
     """Webchat renders a structured tool-call panel from the stored
     tool_interactions_json, so the plain-text summary would duplicate
     that UI and clutter the chat."""
-    from backend.app.agent.context import StoredToolInteraction
-    from backend.app.agent.core import AgentResponse
+    from unittest.mock import AsyncMock
 
-    await _drain_outbound()
-
-    response = AgentResponse(
+    response = _make_response_with_tool(
         reply_text="Done.",
-        tool_calls=[
-            StoredToolInteraction(
-                tool_call_id="tc-1",
-                name="companycam_upload_photo",
-                args={},
-                result="ok",
-                is_error=False,
-            )
-        ],
+        tool_name="companycam_upload_photo",
     )
-    ctx = PipelineContext(
-        user=None,  # type: ignore[arg-type]
-        session=None,  # type: ignore[arg-type]
-        message=None,  # type: ignore[arg-type]
-        media_urls=[],
-        channel="webchat",
-        to_address="user-1",
-        response=response,
-        request_id="req-1",
-    )
+    ctx = _make_ctx(channel="webchat", response=response, to_address="user-1")
+    ctx.request_id = "req-1"
 
-    await dispatch_reply_step(ctx)
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
 
-    outbound = await _drain_outbound()
-    assert len(outbound) == 1
-    assert outbound[0].content == "Done."
+    assert mock_publish.await_count == 1
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert outbound.content == "Done."
 
 
 @pytest.mark.asyncio
 async def test_dispatch_reply_flags_failed_tools_in_summary() -> None:
     """Failed tool calls must be annotated so the user can see when a
     declared action did not actually complete."""
-    from backend.app.agent.context import StoredToolInteraction
-    from backend.app.agent.core import AgentResponse
+    from unittest.mock import AsyncMock
 
-    await _drain_outbound()
-
-    response = AgentResponse(
+    response = _make_response_with_tool(
         reply_text="Working on it.",
-        tool_calls=[
-            StoredToolInteraction(
-                tool_call_id="tc-1",
-                name="qb_create_invoice",
-                args={},
-                result="quickbooks auth expired",
-                is_error=True,
-            )
-        ],
+        tool_name="qb_create_invoice",
+        is_error=True,
     )
-    ctx = PipelineContext(
-        user=None,  # type: ignore[arg-type]
-        session=None,  # type: ignore[arg-type]
-        message=None,  # type: ignore[arg-type]
-        media_urls=[],
-        channel="bluebubbles",
-        to_address="+15555555555",
-        response=response,
-    )
+    ctx = _make_ctx(channel="bluebubbles", response=response)
 
-    await dispatch_reply_step(ctx)
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
 
-    outbound = await _drain_outbound()
-    assert len(outbound) == 1
-    assert "qb_create_invoice (failed)" in outbound[0].content
+    assert mock_publish.await_count == 1
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert "QuickBooks: create invoice (failed)" in outbound.content
 
 
 # ---------------------------------------------------------------------------

@@ -60,3 +60,20 @@ You: Keep your responses short and casual. I'm usually
 
 Clawbolt: Got it. I'll keep things brief.
 ```
+
+## Check the "Tools used:" footer
+
+When your assistant performs real actions (uploading photos, creating invoices, adding calendar events) a short footer appears under the reply listing what actually ran:
+
+```
+Clawbolt: Added the kitchen photo to the Davis project
+          and flagged the electrical inspection.
+
+          ---
+          Tools used: CompanyCam: upload photo,
+          Calendar: create event
+```
+
+The footer is generated from the actions your assistant actually took, not from what it claims in text. If the reply says "done" but the footer is missing or shows `(failed)`, the action did not complete. Tell your assistant to try again and confirm the footer shows the expected tool on the next reply.
+
+The web dashboard shows this information in a separate tool-call panel, so the footer only appears on text-based channels (iMessage, SMS, Telegram).
