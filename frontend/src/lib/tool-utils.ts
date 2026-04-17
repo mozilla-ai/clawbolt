@@ -6,10 +6,9 @@
  *
  * 1. Add an entry to DISPLAY_NAMES.
  * 2. Add sub-tool entries to SUB_TOOL_NAMES.
- * 3. If the tool requires OAuth or token auth, add it to TOOL_OAUTH_MAP.
+ * 3. If the tool requires OAuth, add it to TOOL_OAUTH_MAP.
  *    If it does NOT require auth (like supplier_pricing), leave it out
  *    and it will be treated as "always available."
- * 4. If the tool uses API tokens (not OAuth), add it to TOKEN_BASED_INTEGRATIONS.
  */
 
 /** Map tool factory names to integration identifiers. Tools NOT in this
@@ -19,10 +18,6 @@ export const TOOL_OAUTH_MAP: Record<string, string> = {
   calendar: 'google_calendar',
   companycam: 'companycam',
 };
-
-/** Integrations that use API tokens instead of OAuth.
- *  These show a token input field instead of an OAuth redirect. */
-export const TOKEN_BASED_INTEGRATIONS = new Set(['companycam']);
 
 /** Human-readable display names for tool factories. */
 const DISPLAY_NAMES: Record<string, string> = {
@@ -62,7 +57,6 @@ const SUB_TOOL_NAMES: Record<string, string> = {
   send_reply: 'Send replies',
   send_media_reply: 'Send media',
   update_permission: 'Change permissions',
-  companycam_connect: 'Connect to CompanyCam',
   companycam_search_projects: 'Search projects',
   companycam_create_project: 'Create project',
   companycam_update_project: 'Update project',

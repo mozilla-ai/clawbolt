@@ -645,8 +645,13 @@ GOOGLE_CALENDAR_SCOPES = [
     "https://www.googleapis.com/auth/calendar.readonly",
 ]
 
+# CompanyCam OAuth 2.0 endpoints
+COMPANYCAM_AUTHORIZE_URL = "https://app.companycam.com/oauth/authorize"
+COMPANYCAM_TOKEN_URL = "https://app.companycam.com/oauth/token"
+COMPANYCAM_SCOPES = ["read", "write", "destroy"]
+
 # Registry of all supported OAuth integrations.
-_OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar")
+_OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar", "companycam")
 
 
 def get_quickbooks_oauth_config() -> OAuthConfig | None:
@@ -677,12 +682,28 @@ def get_google_calendar_oauth_config() -> OAuthConfig | None:
     return config if config.is_configured else None
 
 
+def get_companycam_oauth_config() -> OAuthConfig | None:
+    """Build the CompanyCam OAuth config from settings."""
+    config = OAuthConfig(
+        integration="companycam",
+        client_id=settings.companycam_client_id,
+        client_secret=settings.companycam_client_secret,
+        authorize_url=COMPANYCAM_AUTHORIZE_URL,
+        token_url=COMPANYCAM_TOKEN_URL,
+        scopes=COMPANYCAM_SCOPES,
+        use_pkce=False,
+    )
+    return config if config.is_configured else None
+
+
 def get_oauth_config(integration: str) -> OAuthConfig | None:
     """Return the OAuth config for the named integration, or None."""
     if integration == "quickbooks":
         return get_quickbooks_oauth_config()
     if integration == "google_calendar":
         return get_google_calendar_oauth_config()
+    if integration == "companycam":
+        return get_companycam_oauth_config()
     return None
 
 
