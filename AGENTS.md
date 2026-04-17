@@ -108,6 +108,41 @@ Until this project has its first production release, you do not need to be conce
 - **Memory**: Freeform per-user MEMORY.md managed via workspace tools, backed by `memory_documents` table with automatic compaction
 - **Services**: External services abstracted behind service classes in `backend/app/services/`
 
+## Adding a New Agent Tool
+
+The agent's capabilities are extended by adding tools. Tools follow a factory/registry pattern with auto-discovery.
+
+### Core vs. Specialist
+
+- **Core tools** (`core=True`): Always available to the agent on every message. Use for universal capabilities (math, messaging, files, workspace). No activation step needed.
+- **Specialist tools** (`core=False`): Activated on demand via the `list_capabilities` meta-tool. Use for integrations and domain-specific features (calendar, QuickBooks, CompanyCam). Keeps the initial tool schema small.
+
+### Checklist for adding a tool
+
+1. **Create the tool module** at `backend/app/agent/tools/<name>_tools.py`. Follow the pattern in `heartbeat_tools.py` (simplest example): Pydantic params model, async tool function returning `ToolResult`, factory function, and `_register()` called at module level. The `_tools` suffix is required for auto-discovery.
+
+2. **Add tool name constants** to `backend/app/agent/tools/names.py` in the `ToolName` class. All tool name strings must be defined here to prevent silent breakage on renames.
+
+3. **Register in the dashboard** at `backend/app/routers/user_tools.py`:
+   - Add the factory name to `_CORE_FACTORIES` (if core) so it cannot be disabled
+   - Add a `_FACTORY_META` entry with a description (and `domain_group`/`domain_group_order` if specialist)
+
+4. **Add to the registry test** at `tests/test_tool_registry.py`: add `"backend.app.agent.tools.<name>_tools"` to `EXPECTED_TOOL_MODULES`.
+
+5. **Write tests** at `tests/test_<name>_tools.py`. Call the factory function directly (e.g., `_create_calculator_tools()`) and invoke the tool function. No database needed for stateless tools.
+
+6. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is injected into the conversation when the LLM activates the category via `list_capabilities`. Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose.
+
+### Key files
+
+| File | Purpose |
+|---|---|
+| `backend/app/agent/tools/base.py` | `Tool`, `ToolResult`, `ToolErrorKind` definitions |
+| `backend/app/agent/tools/names.py` | All tool name constants (`ToolName` class) |
+| `backend/app/agent/tools/registry.py` | `ToolRegistry`, `ToolFactory`, `ToolContext`, auto-discovery |
+| `backend/app/agent/skills/loader.py` | SKILL.md loader (`get_skill_instructions`) |
+| `backend/app/routers/user_tools.py` | Dashboard wiring (`_CORE_FACTORIES`, `_FACTORY_META`) |
+
 ## Definition of Done
 
 Every change must pass all checks before it's considered complete:

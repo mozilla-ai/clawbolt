@@ -30,7 +30,16 @@ ensure_tool_modules_imported()
 
 # Factories whose tools are always available and cannot be disabled.
 _CORE_FACTORIES: frozenset[str] = frozenset(
-    {"workspace", "profile", "memory", "messaging", "file", "heartbeat", "integration"}
+    {
+        "calculator",
+        "workspace",
+        "profile",
+        "memory",
+        "messaging",
+        "file",
+        "heartbeat",
+        "integration",
+    }
 )
 
 # Consolidated metadata for each factory group: description, display group,
@@ -44,6 +53,7 @@ class _FactoryMeta(NamedTuple):
 
 
 _FACTORY_META: dict[str, _FactoryMeta] = {
+    "calculator": _FactoryMeta("Evaluate mathematical expressions"),
     "workspace": _FactoryMeta("Read, write, and edit markdown files in the workspace"),
     "profile": _FactoryMeta("View and update user profile information"),
     "memory": _FactoryMeta("Save, recall, and forget long-term facts"),
