@@ -289,10 +289,16 @@ class ToolRegistry:
         When *excluded_tool_names* is provided, individual tools whose names
         appear in the set are filtered out after creation.
 
+        Factories are iterated in sorted factory-name order so the resulting
+        tool schema sequence is deterministic across process restarts. The
+        Anthropic tools cache key is order-sensitive, so a stable prefix
+        depends on stable ordering regardless of module import order.
+
         Factories may be sync or async callables.
         """
         tools: list[Tool] = []
-        for name, factory in self._factories.items():
+        for name in sorted(self._factories):
+            factory = self._factories[name]
             if selected_factories is not None and name not in selected_factories:
                 logger.debug("Skipping %s: not selected for this message", name)
                 continue

@@ -95,6 +95,8 @@ class AgentResponse:
     is_error_fallback: bool = False
     total_input_tokens: int = 0
     total_output_tokens: int = 0
+    total_cache_creation_input_tokens: int = 0
+    total_cache_read_input_tokens: int = 0
     system_prompt: str = ""
 
 
@@ -130,6 +132,11 @@ class ClawboltAgent:
         self._session_id = session_id
         self._excluded_tool_names = excluded_tool_names
         self._request_id = request_id
+        # Previous round's tool-name sequence, used to detect when a newly
+        # built tool list fails to preserve the prefix (which busts the
+        # Anthropic tools prompt cache). The list is append-only by design;
+        # a non-monotonic change is logged as a warning.
+        self._prev_tool_names: list[str] = []
         self._reactive_trim_dropped: list[AgentMessage] = []
         # Remembers ASK decisions within a single agent run so the user is not
         # re-prompted for the same (tool, resource) if the LLM retries or
@@ -235,6 +242,36 @@ class ClawboltAgent:
             self.user.id if self.user else "N/A",
             ", ".join(sorted(self._tools_by_name.keys())),
         )
+
+    def _log_tool_prefix_stability(self, round_number: int) -> None:
+        """Warn if the current tool-name sequence fails to preserve the prior
+        prefix, which would bust the Anthropic tools prompt cache.
+
+        The tool list is meant to grow append-only as specialists activate.
+        Any reorder, removal, or mid-list insert would reset the cache for
+        the tools block. Emits a DEBUG line on normal growth and a WARNING
+        when the prefix diverges.
+        """
+        current = [t.name for t in self.tools]
+        prev = self._prev_tool_names
+        if prev and current[: len(prev)] != prev:
+            logger.warning(
+                "Tool prefix changed non-monotonically at round %d, "
+                "prompt cache for tools is likely invalidated. "
+                "prev=%s current=%s",
+                round_number,
+                prev,
+                current,
+            )
+        elif len(current) > len(prev):
+            added = current[len(prev) :]
+            logger.debug(
+                "Tool list grew at round %d: added=%s (total=%d)",
+                round_number,
+                added,
+                len(current),
+            )
+        self._prev_tool_names = current
 
     async def _activate_specialist(self, factory_name: str) -> None:
         """Activate a specialist tool factory, injecting its tools for the next round.
@@ -808,6 +845,8 @@ class ClawboltAgent:
         _empty_reply_retried = False
         _total_input_tokens = 0
         _total_output_tokens = 0
+        _total_cache_creation_tokens = 0
+        _total_cache_read_tokens = 0
 
         for _round in range(MAX_TOOL_ROUNDS):
             logger.debug(
@@ -819,6 +858,7 @@ class ClawboltAgent:
             # Rebuild tool schemas each round so dynamically activated
             # specialist tools are visible to the LLM.
             tool_schemas = [tool_to_function_schema(t) for t in self.tools] if self.tools else None
+            self._log_tool_prefix_stability(_round)
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(
                 messages, tool_schemas, llm_kwargs, max_tokens=max_tokens
@@ -829,10 +869,16 @@ class ClawboltAgent:
                 self._last_input_tokens = response.usage.input_tokens
                 _total_input_tokens += response.usage.input_tokens
                 _total_output_tokens += response.usage.output_tokens or 0
+                cache_create = response.usage.cache_creation_input_tokens or 0
+                cache_read = response.usage.cache_read_input_tokens or 0
+                _total_cache_creation_tokens += cache_create
+                _total_cache_read_tokens += cache_read
                 logger.debug(
-                    "LLM usage: input_tokens=%d output_tokens=%d",
+                    "LLM usage: input_tokens=%d output_tokens=%d cache_create=%d cache_read=%d",
                     response.usage.input_tokens,
                     response.usage.output_tokens or 0,
+                    cache_create,
+                    cache_read,
                 )
 
             # Guard: skip error responses to prevent context poisoning.
@@ -869,6 +915,8 @@ class ClawboltAgent:
                     is_error_fallback=True,
                     total_input_tokens=_total_input_tokens,
                     total_output_tokens=_total_output_tokens,
+                    total_cache_creation_input_tokens=_total_cache_creation_tokens,
+                    total_cache_read_input_tokens=_total_cache_read_tokens,
                     system_prompt=system_prompt,
                 )
 
@@ -1001,6 +1049,18 @@ class ClawboltAgent:
             actions_taken or "(none)",
             len(reply_text),
         )
+        _cacheable_total = _total_cache_creation_tokens + _total_cache_read_tokens
+        _cache_hit_ratio = _total_cache_read_tokens / _cacheable_total if _cacheable_total else 0.0
+        logger.info(
+            "Agent turn cache summary: user=%s input=%d output=%d "
+            "cache_create=%d cache_read=%d hit_ratio=%.2f",
+            self.user.id,
+            _total_input_tokens,
+            _total_output_tokens,
+            _total_cache_creation_tokens,
+            _total_cache_read_tokens,
+            _cache_hit_ratio,
+        )
         await self._emit(
             AgentEndEvent(
                 reply_text=reply_text,
@@ -1016,6 +1076,8 @@ class ClawboltAgent:
             tool_calls=tool_call_records,
             total_input_tokens=_total_input_tokens,
             total_output_tokens=_total_output_tokens,
+            total_cache_creation_input_tokens=_total_cache_creation_tokens,
+            total_cache_read_input_tokens=_total_cache_read_tokens,
             system_prompt=system_prompt,
         )
 

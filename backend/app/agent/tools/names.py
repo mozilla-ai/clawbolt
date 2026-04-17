@@ -66,6 +66,9 @@ class ToolName:
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
 
+    # Calculator
+    CALCULATE = "calculate"
+
     # Meta-tools
     LIST_CAPABILITIES = "list_capabilities"
     MANAGE_INTEGRATION = "manage_integration"

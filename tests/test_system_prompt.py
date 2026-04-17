@@ -260,6 +260,44 @@ class TestBuildAgentSystemPrompt:
         assert "Recall Behavior" in result
 
     @pytest.mark.asyncio
+    async def test_tool_guidelines_live_after_cache_boundary(self) -> None:
+        """Tool guidelines must sit in the dynamic suffix so that specialist
+        activation mid-conversation does not bust the stable system-prompt
+        cache. They should appear after CACHE_BOUNDARY, never inside
+        Instructions."""
+        user = MagicMock()
+        user.soul_text = "I'm Bolt."
+        user.user_text = ""
+        user.id = 1
+        user.timezone = ""
+
+        tool = MagicMock()
+        tool.usage_hint = "Use save_fact for memories"
+
+        with patch(
+            "backend.app.agent.system_prompt.build_memory_context",
+            new_callable=AsyncMock,
+            return_value="",
+        ):
+            result = await build_agent_system_prompt(
+                user=user,
+                tools=[tool],
+                message_context="hello",
+            )
+
+        marker = SystemPromptBuilder.CACHE_BOUNDARY.strip()
+        assert marker in result
+        boundary_idx = result.index(marker)
+        guidelines_idx = result.index("Tool Guidelines")
+        assert guidelines_idx > boundary_idx
+        # The stable Instructions block (everything before the boundary)
+        # must not leak the tool hints, or activating a new specialist
+        # would invalidate the cached prefix.
+        stable_prefix = result[:boundary_idx]
+        assert "Tool Guidelines" not in stable_prefix
+        assert "save_fact" not in stable_prefix
+
+    @pytest.mark.asyncio
     async def test_preamble_is_generic(self) -> None:
         """Agent prompt preamble should be generic (no assistant_name)."""
         user = MagicMock()

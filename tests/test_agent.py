@@ -2112,3 +2112,88 @@ async def test_truncated_response_increases_max_tokens(
     first_max = first_call.kwargs["max_tokens"]
     second_max = second_call.kwargs["max_tokens"]
     assert second_max > first_max
+
+
+def _tool_stub(name: str) -> Tool:
+    async def _noop(**_: object) -> ToolResult:
+        return ToolResult(content="")
+
+    return Tool(name=name, description="", function=_noop, params_model=_EmptyParams)
+
+
+def test_tool_prefix_logs_debug_on_append(
+    caplog: pytest.LogCaptureFixture, test_user: User
+) -> None:
+    """Appending a specialist tool to the end should log a growth debug line,
+    never the cache-bust warning."""
+    agent = ClawboltAgent(user=test_user)
+    agent.tools = [_tool_stub("core_a"), _tool_stub("core_b")]
+    with caplog.at_level(logging.DEBUG, logger="backend.app.agent.core"):
+        agent._log_tool_prefix_stability(round_number=0)
+        agent.tools = [_tool_stub("core_a"), _tool_stub("core_b"), _tool_stub("calendar_list")]
+        agent._log_tool_prefix_stability(round_number=1)
+    assert not any("non-monotonically" in rec.message for rec in caplog.records)
+    assert any("added=['calendar_list']" in rec.message for rec in caplog.records)
+
+
+def test_tool_prefix_warns_on_reorder(caplog: pytest.LogCaptureFixture, test_user: User) -> None:
+    """Reordering the tool list between rounds should surface a warning so
+    a prompt-cache regression can be spotted in logs."""
+    agent = ClawboltAgent(user=test_user)
+    agent.tools = [_tool_stub("core_a"), _tool_stub("core_b")]
+    with caplog.at_level(logging.WARNING, logger="backend.app.agent.core"):
+        agent._log_tool_prefix_stability(round_number=0)
+        # Re-ordered on round 1 (core_b moved before core_a).
+        agent.tools = [_tool_stub("core_b"), _tool_stub("core_a")]
+        agent._log_tool_prefix_stability(round_number=1)
+    assert any(
+        "non-monotonically" in rec.message and rec.levelname == "WARNING" for rec in caplog.records
+    )
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_response_rolls_up_cache_tokens_across_rounds(
+    mock_amessages: object, test_user: User
+) -> None:
+    """AgentResponse should sum cache_creation/cache_read tokens across multi-round
+    LLM calls so callers can verify prompt caching end-to-end."""
+
+    async def remember_preference(**_: object) -> ToolResult:
+        return ToolResult(content="saved")
+
+    tool = Tool(
+        name="remember_preference",
+        description="Save a user preference",
+        function=remember_preference,
+        params_model=_KeyValueParams,
+    )
+
+    # Round 1: tool call, first-turn cache creation only (cache miss).
+    tool_response = make_tool_call_response(
+        [{"name": "remember_preference", "arguments": {"key": "rate", "value": "75"}}]
+    )
+    tool_response.usage.input_tokens = 1000
+    tool_response.usage.output_tokens = 50
+    tool_response.usage.cache_creation_input_tokens = 800
+    tool_response.usage.cache_read_input_tokens = 0
+
+    # Round 2: follow-up text, cache hit on stable prefix.
+    followup = make_text_response(
+        "Got it!",
+        input_tokens=1200,
+        output_tokens=20,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=800,
+    )
+
+    mock_amessages.side_effect = [tool_response, followup]  # type: ignore[union-attr]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("remember my rate is $75", system_prompt_override="sys")
+
+    assert response.total_input_tokens == 2200
+    assert response.total_output_tokens == 70
+    assert response.total_cache_creation_input_tokens == 800
+    assert response.total_cache_read_input_tokens == 800
