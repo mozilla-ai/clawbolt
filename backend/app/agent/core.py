@@ -51,6 +51,7 @@ from backend.app.agent.tool_errors import (
     build_error_hint,
     format_validation_error,
 )
+from backend.app.agent.tool_summary import render_receipt_line
 from backend.app.agent.tools.base import (
     Tool,
     ToolErrorKind,
@@ -747,6 +748,21 @@ class ClawboltAgent:
                         action=result.receipt.action,
                         target=result.receipt.target,
                         url=result.receipt.url,
+                    )
+                    # Echo the rendered receipt back to the LLM inside the
+                    # tool result. The LLM sees the exact text the user will
+                    # receive and can write a reply that adds value rather
+                    # than restating the receipt. Generic across all tools:
+                    # any tool that returns a receipt opts into this behavior
+                    # automatically.
+                    rendered = render_receipt_line(
+                        result.receipt.action,
+                        result.receipt.target,
+                        result.receipt.url,
+                    )
+                    result_str += (
+                        "\n\nThe following has been appended to the reply "
+                        f"the user sees:\n{rendered}"
                     )
                 tool_call_records.append(
                     StoredToolInteraction(

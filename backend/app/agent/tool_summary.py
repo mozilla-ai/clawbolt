@@ -22,8 +22,13 @@ _SUMMARY_SEPARATOR = "\n\n"
 _MAX_RECEIPTS_CHARS = 320
 
 
-def _render_receipt_line(action: str, target: str, url: str | None) -> str:
-    """Render one receipt as 1-2 plain-text lines."""
+def render_receipt_line(action: str, target: str, url: str | None) -> str:
+    """Render one receipt as 1-2 plain-text lines.
+
+    Used both when assembling the user-facing block and when echoing the
+    rendered line back to the LLM inside the tool result (so the LLM knows
+    exactly what will be shown and does not restate it).
+    """
     head = f"- {action} {target}".rstrip()
     if url:
         return f"{head}\n  {url}"
@@ -41,7 +46,7 @@ def _collect_receipts(tool_calls: list[StoredToolInteraction]) -> list[str]:
             continue
         if not tc.receipt.action or not tc.receipt.target:
             continue
-        lines.append(_render_receipt_line(tc.receipt.action, tc.receipt.target, tc.receipt.url))
+        lines.append(render_receipt_line(tc.receipt.action, tc.receipt.target, tc.receipt.url))
     return lines
 
 

@@ -320,6 +320,119 @@ async def test_agent_tool_loop_includes_tool_results_in_followup(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
+async def test_agent_echoes_rendered_receipt_into_tool_result(
+    mock_amessages: object, test_user: User
+) -> None:
+    """Tools that return a ToolReceipt should have the rendered receipt
+    appended to their tool_result content on the LLM side. The LLM needs
+    to see exactly what will be shown to the user so it can write a reply
+    that adds value rather than restating the receipt.
+    """
+    from backend.app.agent.tools.base import ToolReceipt
+
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_rcpt",
+                "name": "fake_write_tool",
+                "arguments": json.dumps({"query": "anything"}),
+            }
+        ]
+    )
+    followup_response = make_text_response("Done. Ready for the next one.")
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+
+    mock_fn = AsyncMock(
+        return_value=ToolResult(
+            content="Estimate created. Id: 161. Total: $0.00.",
+            receipt=ToolReceipt(
+                action="Created QuickBooks estimate for",
+                target="Jane Smith, $0.00",
+                url="https://app.sandbox.qbo.intuit.com/app/estimate?txnId=161",
+            ),
+        )
+    )
+    tool = Tool(
+        name="fake_write_tool",
+        description="Fake write tool with a receipt",
+        function=mock_fn,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    await agent.process_message("Make a new estimate for Jane Smith")
+
+    followup_call = mock_amessages.call_args_list[1]  # type: ignore[union-attr]
+    messages = followup_call.kwargs["messages"]
+    tool_result_msgs = [
+        m for m in messages if m.get("role") == "user" and isinstance(m.get("content"), list)
+    ]
+    assert len(tool_result_msgs) == 1
+    content = tool_result_msgs[0]["content"][0]["content"]
+    # The LLM must see the rendered receipt line plus the note framing it
+    # as something already sent to the user, so it does not restate.
+    assert "appended to the reply the user sees" in content
+    assert "Created QuickBooks estimate for Jane Smith, $0.00" in content
+    assert "https://app.sandbox.qbo.intuit.com/app/estimate?txnId=161" in content
+    # The original tool content is preserved so the LLM can reason about
+    # the machine-readable result.
+    assert "Id: 161" in content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_does_not_echo_receipt_when_tool_errored(
+    mock_amessages: object, test_user: User
+) -> None:
+    """Failed tool calls must not produce a rendered-receipt echo. The
+    confirmation line only exists when the action actually succeeded."""
+    from backend.app.agent.tools.base import ToolErrorKind, ToolReceipt
+
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_err",
+                "name": "fake_write_tool",
+                "arguments": json.dumps({"query": "anything"}),
+            }
+        ]
+    )
+    followup_response = make_text_response("Could not create it: reconnect QuickBooks.")
+    mock_amessages.side_effect = [tool_response, followup_response]  # type: ignore[union-attr]
+
+    mock_fn = AsyncMock(
+        return_value=ToolResult(
+            content="QuickBooks auth expired.",
+            is_error=True,
+            error_kind=ToolErrorKind.AUTH,
+            # An errored tool technically should not populate a receipt,
+            # but even if it does, the echo must not fire.
+            receipt=ToolReceipt(action="Created estimate for", target="Jane Smith"),
+        )
+    )
+    tool = Tool(
+        name="fake_write_tool",
+        description="Fake write tool",
+        function=mock_fn,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    await agent.process_message("Make a new estimate")
+
+    followup_call = mock_amessages.call_args_list[1]  # type: ignore[union-attr]
+    messages = followup_call.kwargs["messages"]
+    tool_result_msgs = [
+        m for m in messages if m.get("role") == "user" and isinstance(m.get("content"), list)
+    ]
+    content = tool_result_msgs[0]["content"][0]["content"]
+    assert "appended to the reply the user sees" not in content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
 async def test_agent_multi_round_tool_calls(mock_amessages: object, test_user: User) -> None:
     """Agent should support multiple rounds of tool calls, not just one."""
     # Round 1: LLM calls recall_facts
