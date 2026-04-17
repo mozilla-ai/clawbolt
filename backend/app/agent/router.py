@@ -35,6 +35,7 @@ from backend.app.agent.onboarding import (
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.skills.loader import load_all_skills
 from backend.app.agent.stores import ToolConfigStore
+from backend.app.agent.tool_summary import append_tool_call_summary
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
 from backend.app.agent.tools.names import ToolName
@@ -44,6 +45,7 @@ from backend.app.agent.tools.registry import (
     default_registry,
     ensure_tool_modules_imported,
 )
+from backend.app.channels import get_channel
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
@@ -526,10 +528,17 @@ async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
             ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in ctx.response.tool_calls
         )
         if not sent_reply and ctx.response.reply_text:
+            content = ctx.response.reply_text
+            try:
+                channel_obj = get_channel(ctx.channel)
+            except KeyError:
+                channel_obj = None
+            if channel_obj is None or not channel_obj.shows_tool_calls_in_ui:
+                content = append_tool_call_summary(content, ctx.response.tool_calls)
             outbound = OutboundMessage(
                 channel=ctx.channel,
                 chat_id=ctx.to_address,
-                content=ctx.response.reply_text,
+                content=content,
                 request_id=ctx.request_id,
             )
             await message_bus.publish_outbound(outbound)

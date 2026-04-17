@@ -161,11 +161,19 @@ def create_list_capabilities_tool(
 
         if _activated is not None and category in _activated:
             return ToolResult(
-                content=f'Category "{category}" is already active. Tools are available now.',
+                content=(
+                    f'Category "{category}" is already active. No action has been performed. '
+                    "Call the specific tool now to actually do the work the user asked for."
+                ),
             )
 
         activation_msg = (
-            f'Category "{category}" activated. Tools are available in your next response.'
+            f'Category "{category}" activated: the tools are now callable, '
+            "but no work has been done yet. To actually perform the user's "
+            "request, call the specific tool (for example upload_photo, "
+            "qb_create_invoice) in your next response. Do not tell the user "
+            "an action is complete until the corresponding tool has run and "
+            "returned a successful result."
         )
         disabled_for_cat = _disabled_subs.get(category, [])
         if disabled_for_cat:

@@ -49,6 +49,11 @@ class WebChatChannel(BaseChannel):
     responses are delivered through the message bus / SSE.
     """
 
+    # The dashboard renders a structured tool-call panel from
+    # StoredMessage.tool_interactions_json, so we skip the plain-text
+    # summary that plain messaging channels get.
+    shows_tool_calls_in_ui = True
+
     @property
     def name(self) -> str:
         return "webchat"

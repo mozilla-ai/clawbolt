@@ -254,6 +254,139 @@ async def test_prepare_media_step_preserves_pre_downloaded_media() -> None:
 
 
 # ---------------------------------------------------------------------------
+# dispatch_reply_step: tool-call summary routing
+# ---------------------------------------------------------------------------
+
+
+async def _drain_outbound() -> list:
+    """Pull every queued OutboundMessage so the test sees a clean bus."""
+    from backend.app.bus import message_bus
+
+    drained = []
+    while not message_bus.outbound.empty():
+        drained.append(message_bus.outbound.get_nowait())
+    return drained
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_appends_tool_summary_for_imessage() -> None:
+    """On plain-text channels (bluebubbles iMessage), the outbound body
+    must carry a deterministic tool-call summary so the user can see what
+    actually ran, independent of whatever the LLM said in text."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.core import AgentResponse
+
+    await _drain_outbound()
+
+    response = AgentResponse(
+        reply_text="Done uploading your photo.",
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id="tc-1",
+                name="companycam_upload_photo",
+                args={},
+                result="ok",
+                is_error=False,
+            )
+        ],
+    )
+    ctx = PipelineContext(
+        user=None,  # type: ignore[arg-type]
+        session=None,  # type: ignore[arg-type]
+        message=None,  # type: ignore[arg-type]
+        media_urls=[],
+        channel="bluebubbles",
+        to_address="+15555555555",
+        response=response,
+    )
+
+    await dispatch_reply_step(ctx)
+
+    outbound = await _drain_outbound()
+    assert len(outbound) == 1
+    assert "Done uploading your photo." in outbound[0].content
+    assert "Tools used: companycam_upload_photo" in outbound[0].content
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_does_not_append_summary_for_webchat() -> None:
+    """Webchat renders a structured tool-call panel from the stored
+    tool_interactions_json, so the plain-text summary would duplicate
+    that UI and clutter the chat."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.core import AgentResponse
+
+    await _drain_outbound()
+
+    response = AgentResponse(
+        reply_text="Done.",
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id="tc-1",
+                name="companycam_upload_photo",
+                args={},
+                result="ok",
+                is_error=False,
+            )
+        ],
+    )
+    ctx = PipelineContext(
+        user=None,  # type: ignore[arg-type]
+        session=None,  # type: ignore[arg-type]
+        message=None,  # type: ignore[arg-type]
+        media_urls=[],
+        channel="webchat",
+        to_address="user-1",
+        response=response,
+        request_id="req-1",
+    )
+
+    await dispatch_reply_step(ctx)
+
+    outbound = await _drain_outbound()
+    assert len(outbound) == 1
+    assert outbound[0].content == "Done."
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_flags_failed_tools_in_summary() -> None:
+    """Failed tool calls must be annotated so the user can see when a
+    declared action did not actually complete."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.core import AgentResponse
+
+    await _drain_outbound()
+
+    response = AgentResponse(
+        reply_text="Working on it.",
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id="tc-1",
+                name="qb_create_invoice",
+                args={},
+                result="quickbooks auth expired",
+                is_error=True,
+            )
+        ],
+    )
+    ctx = PipelineContext(
+        user=None,  # type: ignore[arg-type]
+        session=None,  # type: ignore[arg-type]
+        message=None,  # type: ignore[arg-type]
+        media_urls=[],
+        channel="bluebubbles",
+        to_address="+15555555555",
+        response=response,
+    )
+
+    await dispatch_reply_step(ctx)
+
+    outbound = await _drain_outbound()
+    assert len(outbound) == 1
+    assert "qb_create_invoice (failed)" in outbound[0].content
+
+
+# ---------------------------------------------------------------------------
 # build_pipeline() tests
 # ---------------------------------------------------------------------------
 
