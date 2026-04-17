@@ -249,7 +249,7 @@ class ClawboltAgent:
 
         The tool list is meant to grow append-only as specialists activate.
         Any reorder, removal, or mid-list insert would reset the cache for
-        the tools block. Emits an INFO line on normal growth and a WARNING
+        the tools block. Emits a DEBUG line on normal growth and a WARNING
         when the prefix diverges.
         """
         current = [t.name for t in self.tools]
