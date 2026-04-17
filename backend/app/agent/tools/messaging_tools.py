@@ -14,12 +14,6 @@ if TYPE_CHECKING:
     from backend.app.bus import OutboundMessage
 
 
-class SendReplyParams(BaseModel):
-    """Parameters for the send_reply tool."""
-
-    message: str = Field(description="The message text to send")
-
-
 class SendMediaReplyParams(BaseModel):
     """Parameters for the send_media_reply tool."""
 
@@ -33,20 +27,6 @@ def create_messaging_tools(
     to_address: str,
 ) -> list[Tool]:
     """Create messaging tools for the agent."""
-
-    async def send_reply(message: str) -> ToolResult:
-        """Send a text reply to the user."""
-        from backend.app.bus import OutboundMessage as OMsg
-
-        if not message or not message.strip():
-            return ToolResult(
-                content="Error: message cannot be empty.",
-                is_error=True,
-                error_kind=ToolErrorKind.VALIDATION,
-            )
-        outbound = OMsg(channel=channel, chat_id=to_address, content=message)
-        await publish_outbound(outbound)
-        return ToolResult(content="Sent message")
 
     async def send_media_reply(message: str, media_url: str) -> ToolResult:
         """Send a reply with a media attachment."""
@@ -78,18 +58,6 @@ def create_messaging_tools(
 
     return [
         Tool(
-            name=ToolName.SEND_REPLY,
-            description="Send a text reply to the user.",
-            function=send_reply,
-            params_model=SendReplyParams,
-            tags={ToolTags.SENDS_REPLY},
-            usage_hint="Use this to send a text message to the user.",
-            approval_policy=ApprovalPolicy(
-                default_level=PermissionLevel.ALWAYS,
-                description_builder=lambda args: "Send a text message",
-            ),
-        ),
-        Tool(
             name=ToolName.SEND_MEDIA_REPLY,
             description="Send a reply with a media attachment (e.g., PDF estimate).",
             function=send_media_reply,
@@ -120,12 +88,6 @@ def _register() -> None:
         _messaging_factory,
         requires_outbound=True,
         sub_tools=[
-            SubToolInfo(
-                ToolName.SEND_REPLY,
-                "Send text replies to the user",
-                default_permission="always",
-                hidden_in_permissions=True,
-            ),
             SubToolInfo(
                 ToolName.SEND_MEDIA_REPLY,
                 "Send replies with media attachments",

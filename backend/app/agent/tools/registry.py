@@ -58,9 +58,9 @@ class SubToolInfo:
     # When True, this sub-tool is omitted from the dashboard Permissions
     # page. The tool still runs normally and still respects stored
     # permission overrides -- the flag only hides UI chrome for tools the
-    # user shouldn't have to think about (e.g. send_reply, whose default
-    # level should always be ALWAYS because it's the agent's core
-    # messaging path).
+    # user shouldn't have to think about (e.g. send_media_reply, whose
+    # default level should always be ALWAYS because it's the agent's
+    # media delivery path).
     hidden_in_permissions: bool = False
 
     def __post_init__(self) -> None:

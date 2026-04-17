@@ -8,7 +8,6 @@ when a tool is renamed.
 
 class ToolName:
     # Messaging
-    SEND_REPLY = "send_reply"
     SEND_MEDIA_REPLY = "send_media_reply"
 
     # Heartbeat

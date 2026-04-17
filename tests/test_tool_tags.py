@@ -76,7 +76,7 @@ def test_tool_default_tags_empty() -> None:
 def test_tool_with_single_tag() -> None:
     """A tool can be created with a single tag."""
     tool = Tool(
-        name="send_reply",
+        name="send_media_reply",
         description="Send a reply",
         function=lambda: None,
         params_model=_EmptyParams,
@@ -111,9 +111,12 @@ def test_tool_tags_do_not_leak_between_instances() -> None:
 
 
 def test_messaging_tools_have_sends_reply_tag() -> None:
-    """send_reply and send_media_reply should have SENDS_REPLY tag."""
+    """send_media_reply should have the SENDS_REPLY tag so the dispatch
+    layer can suppress a duplicate text send when the agent delivers via
+    media tool."""
     publish_outbound = AsyncMock()
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="+15550001234")
+    assert tools, "messaging factory returned no tools"
     for tool in tools:
         assert ToolTags.SENDS_REPLY in tool.tags, f"{tool.name} missing SENDS_REPLY tag"
 
@@ -130,7 +133,7 @@ async def test_agent_tool_call_records_include_tags(
     tool_response = make_tool_call_response(
         tool_calls=[
             {
-                "name": "send_reply",
+                "name": "send_media_reply",
                 "arguments": json.dumps({"key": "rate", "value": "$50/hr"}),
             }
         ]
@@ -140,7 +143,7 @@ async def test_agent_tool_call_records_include_tags(
 
     mock_fn = AsyncMock(return_value=ToolResult(content="Sent rate = $50/hr"))
     tool = Tool(
-        name="send_reply",
+        name="send_media_reply",
         description="Send a reply",
         function=mock_fn,
         params_model=_KeyValueParams,

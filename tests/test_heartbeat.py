@@ -852,7 +852,7 @@ class TestRunHeartbeatForUser:
             channel="telegram",
             chat_id="+15559990000",
         )
-        # Outbound message was published (no send_reply tool call, so fallback delivery)
+        # Outbound message was published (no SENDS_REPLY tool call, so fallback delivery)
         mock_bus.publish_outbound.assert_awaited_once()
         mock_outbound_msg.assert_called_once_with(
             channel="telegram",
@@ -2610,8 +2610,9 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
 
 @pytest.mark.asyncio()
 async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User) -> None:
-    """When the agent already sent via send_reply, the heartbeat runner should
-    not publish the reply_text again (regression test for #921)."""
+    """When the agent already sent via a SENDS_REPLY tool (send_media_reply),
+    the heartbeat runner should not publish the reply_text again
+    (regression test for #921)."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.core import AgentResponse
     from backend.app.agent.tools.base import ToolTags
@@ -2621,9 +2622,12 @@ async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User)
         tool_calls=[
             StoredToolInteraction(
                 tool_call_id="tc_1",
-                name="send_reply",
-                args={"message": "Here is your joke."},
-                result="Sent message",
+                name="send_media_reply",
+                args={
+                    "message": "Here is your joke.",
+                    "media_url": "https://example.com/joke.png",
+                },
+                result="Sent media message",
                 is_error=False,
                 tags={ToolTags.SENDS_REPLY},
             )
@@ -2667,7 +2671,7 @@ async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User)
 
 @pytest.mark.asyncio()
 async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -> None:
-    """When the agent sent via send_reply but produced no reply_text,
+    """When the agent sent via a SENDS_REPLY tool but produced no reply_text,
     the runner should still log the heartbeat (#921)."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.core import AgentResponse
@@ -2678,9 +2682,12 @@ async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -
         tool_calls=[
             StoredToolInteraction(
                 tool_call_id="tc_1",
-                name="send_reply",
-                args={"message": "Here is your joke."},
-                result="Sent message",
+                name="send_media_reply",
+                args={
+                    "message": "Here is your joke.",
+                    "media_url": "https://example.com/joke.png",
+                },
+                result="Sent media message",
                 is_error=False,
                 tags={ToolTags.SENDS_REPLY},
             )
@@ -2723,9 +2730,11 @@ async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -
 
 
 @pytest.mark.asyncio()
-async def test_heartbeat_auto_approves_messaging_tools(user: User) -> None:
-    """Heartbeat Phase 2 should clear approval_policy on messaging tools so
-    send_reply executes without prompting the user (regression test for #932)."""
+async def test_heartbeat_auto_approves_send_media_reply(user: User) -> None:
+    """Heartbeat Phase 2 should clear approval_policy on send_media_reply so
+    the agent can deliver attachments without prompting the user
+    (regression test for #932). Plain text replies go through
+    response.reply_text directly and don't need approval."""
     from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
     from backend.app.agent.tools.base import Tool, ToolResult, ToolTags
     from backend.app.agent.tools.names import ToolName
@@ -2736,18 +2745,6 @@ async def test_heartbeat_auto_approves_messaging_tools(user: User) -> None:
     async def _noop(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
 
-    # Create mock tools that mimic the real messaging tool definitions
-    send_reply_tool = Tool(
-        name=ToolName.SEND_REPLY,
-        description="Send a text reply",
-        function=_noop,
-        params_model=_EmptyParams,
-        tags={ToolTags.SENDS_REPLY},
-        approval_policy=ApprovalPolicy(
-            default_level=PermissionLevel.ASK,
-            description_builder=lambda args: "Send a text message",
-        ),
-    )
     send_media_tool = Tool(
         name=ToolName.SEND_MEDIA_REPLY,
         description="Send media reply",
@@ -2766,7 +2763,7 @@ async def test_heartbeat_auto_approves_messaging_tools(user: User) -> None:
         params_model=_EmptyParams,
         approval_policy=ApprovalPolicy(default_level=PermissionLevel.ALWAYS),
     )
-    core_tools = [send_reply_tool, send_media_tool, other_tool]
+    core_tools = [send_media_tool, other_tool]
 
     mock_agent_cls = MagicMock()
     mock_agent = MagicMock()
@@ -2798,14 +2795,9 @@ async def test_heartbeat_auto_approves_messaging_tools(user: User) -> None:
 
         await execute_heartbeat_tasks(user, "Send daily joke", channel="sms", chat_id="+1555")
 
-    # Messaging tools should have approval_policy cleared so they auto-execute
-    assert send_reply_tool.approval_policy is None, (
-        "send_reply should have approval_policy=None in heartbeat context"
-    )
     assert send_media_tool.approval_policy is None, (
         "send_media_reply should have approval_policy=None in heartbeat context"
     )
-    # Non-messaging tools should keep their approval_policy unchanged
     assert other_tool.approval_policy is not None, (
         "non-messaging tools should retain their approval_policy"
     )

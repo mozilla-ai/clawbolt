@@ -34,7 +34,7 @@ def _build_test_registry() -> ToolRegistry:
     """Build a registry with 3 core and 3 specialist factories."""
     registry = ToolRegistry()
     # Core factories
-    registry.register("messaging", lambda ctx: [_make_tool("send_reply")])
+    registry.register("messaging", lambda ctx: [_make_tool("send_media_reply")])
     registry.register("workspace", lambda ctx: [_make_tool("read_file"), _make_tool("write_file")])
     # Specialist factories
     registry.register(
@@ -86,7 +86,7 @@ class TestCreateCoreTools:
         ctx = ToolContext(user=User(id="1"))
         tools = await registry.create_core_tools(ctx)
         names = {t.name for t in tools}
-        assert names == {"send_reply", "read_file", "write_file"}
+        assert names == {"send_media_reply", "read_file", "write_file"}
 
     @pytest.mark.asyncio()
     async def test_specialist_tools_excluded(self) -> None:
@@ -337,7 +337,9 @@ class TestDynamicToolActivation:
         )
         agent.register_tools(await registry.create_core_tools(ctx))
 
-        calls = [ToolCallRequest(id="call_1", name="send_reply", arguments={"message": "hello"})]
+        calls = [
+            ToolCallRequest(id="call_1", name="send_media_reply", arguments={"message": "hello"})
+        ]
         activated = await agent._check_specialist_activations(calls)
         assert not activated
 

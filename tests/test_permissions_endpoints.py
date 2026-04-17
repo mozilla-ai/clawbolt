@@ -26,19 +26,19 @@ def test_update_permissions(client: TestClient, test_user: User) -> None:
     parsed = json.loads(resp.json()["content"])
 
     # Modify a permission
-    parsed["tools"]["send_reply"] = "deny"
+    parsed["tools"]["send_media_reply"] = "deny"
     resp = client.put(
         "/api/user/permissions",
         json={"content": json.dumps(parsed)},
     )
     assert resp.status_code == 200
     updated = json.loads(resp.json()["content"])
-    assert updated["tools"]["send_reply"] == "deny"
+    assert updated["tools"]["send_media_reply"] == "deny"
 
     # Verify it persisted
     resp2 = client.get("/api/user/permissions")
     persisted = json.loads(resp2.json()["content"])
-    assert persisted["tools"]["send_reply"] == "deny"
+    assert persisted["tools"]["send_media_reply"] == "deny"
 
 
 def test_update_permissions_invalid_json(client: TestClient, test_user: User) -> None:
@@ -63,14 +63,14 @@ def test_update_permissions_non_dict(client: TestClient, test_user: User) -> Non
 
 def test_update_permissions_invalid_level(client: TestClient, test_user: User) -> None:
     """PUT with an invalid permission level returns 400."""
-    payload = {"version": 1, "tools": {"send_reply": "yolo"}, "resources": {}}
+    payload = {"version": 1, "tools": {"send_media_reply": "yolo"}, "resources": {}}
     resp = client.put(
         "/api/user/permissions",
         json={"content": json.dumps(payload)},
     )
     assert resp.status_code == 400
     assert "Invalid permission level" in resp.json()["detail"]
-    assert "send_reply" in resp.json()["detail"]
+    assert "send_media_reply" in resp.json()["detail"]
 
 
 def test_update_permissions_invalid_tools_type(client: TestClient, test_user: User) -> None:

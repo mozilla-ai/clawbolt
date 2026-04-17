@@ -549,11 +549,12 @@ async def execute_heartbeat_tasks(
         excluded_tool_names=disabled_sub_tools or None,
     )
 
-    # Auto-approve messaging tools for heartbeat context (#932).
+    # Auto-approve the media-delivery tool in heartbeat context (#932).
     # Phase 1 already decided to send this message; asking the user for
     # permission to deliver it sends a confusing approval prompt as the
-    # heartbeat message itself.
-    _HEARTBEAT_AUTO_APPROVE = {ToolName.SEND_REPLY, ToolName.SEND_MEDIA_REPLY}
+    # heartbeat message itself. Plain text replies go through reply_text
+    # directly and don't need approval at all.
+    _HEARTBEAT_AUTO_APPROVE = {ToolName.SEND_MEDIA_REPLY}
     for tool in tools:
         if tool.name in _HEARTBEAT_AUTO_APPROVE:
             tool.approval_policy = None
@@ -591,11 +592,9 @@ async def execute_heartbeat_tasks(
     heartbeat_max_tokens = max(settings.llm_max_tokens_agent, 1024)
 
     # Prefix the task so the agent knows to execute it rather than
-    # treating it as a user conversation message.
-    task_context = (
-        "Execute this scheduled task now. Use send_reply to deliver "
-        "the result to the user.\n\n" + tasks
-    )
+    # treating it as a user conversation message. Write the result as
+    # plain text; the system delivers it as the outbound message.
+    task_context = "Execute this scheduled task now and write the result to the user.\n\n" + tasks
 
     try:
         response: AgentResponse = await agent.process_message(
@@ -716,9 +715,9 @@ async def run_heartbeat_for_user(
     # -- Phase 2: execute tasks via full agent loop --
     response = await execute_heartbeat_tasks(user, decision.tasks, channel=channel, chat_id=chat_id)
 
-    # Check if the agent already delivered via send_reply before checking
-    # reply_text, so tool-based sends are still logged even when the LLM
-    # produces no trailing text.
+    # Check whether a SENDS_REPLY-tagged tool (currently send_media_reply)
+    # already delivered the message before relying on reply_text. Tool-based
+    # sends are logged even when the LLM produces no trailing text.
     sent_reply = response is not None and any(
         ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in response.tool_calls
     )

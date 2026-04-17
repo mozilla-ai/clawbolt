@@ -154,11 +154,11 @@ class TestApprovalStoreComplete:
         store = ApprovalStore()
         # Start with a partial file
         store._save(
-            "backfill-user", {"version": 1, "tools": {"send_reply": "deny"}, "resources": {}}
+            "backfill-user", {"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}}
         )
         data = store.ensure_complete("backfill-user")
-        # send_reply should keep its override
-        assert data["tools"]["send_reply"] == "deny"
+        # send_media_reply should keep its override
+        assert data["tools"]["send_media_reply"] == "deny"
         # Other tools should have been backfilled
         assert len(data["tools"]) > 1
 
@@ -169,24 +169,24 @@ class TestApprovalStoreComplete:
             "preserve-user",
             {
                 "version": 1,
-                "tools": {"send_reply": "deny", "read_file": "ask"},
+                "tools": {"send_media_reply": "deny", "read_file": "ask"},
                 "resources": {"web_fetch": {"evil.com": "deny"}},
             },
         )
         data = store.ensure_complete("preserve-user")
-        assert data["tools"]["send_reply"] == "deny"
+        assert data["tools"]["send_media_reply"] == "deny"
         assert data["tools"]["read_file"] == "ask"
         assert data["resources"]["web_fetch"]["evil.com"] == "deny"
 
     def test_reset_permissions_writes_defaults(self, tmp_path: object) -> None:
         """reset_permissions replaces everything with defaults."""
         store = ApprovalStore()
-        store.set_permission("reset-user", "send_reply", PermissionLevel.DENY)
+        store.set_permission("reset-user", "send_media_reply", PermissionLevel.DENY)
         store.reset_permissions("reset-user")
         data = store._load("reset-user")
-        # send_reply should be back to its default, not deny
+        # send_media_reply should be back to its default, not deny
         defaults = store.generate_defaults("reset-user")
-        assert data["tools"]["send_reply"] == defaults["tools"]["send_reply"]
+        assert data["tools"]["send_media_reply"] == defaults["tools"]["send_media_reply"]
 
     def test_set_permission_preserves_complete_file(self, tmp_path: object) -> None:
         """set_permission does not lose other entries."""
@@ -195,11 +195,11 @@ class TestApprovalStoreComplete:
         defaults = store.generate_defaults("set-perm-user")
         original_count = len(defaults["tools"])
 
-        store.set_permission("set-perm-user", "send_reply", PermissionLevel.DENY)
+        store.set_permission("set-perm-user", "send_media_reply", PermissionLevel.DENY)
         data = store._load("set-perm-user")
         # All tools should still be present
         assert len(data["tools"]) >= original_count
-        assert data["tools"]["send_reply"] == "deny"
+        assert data["tools"]["send_media_reply"] == "deny"
 
 
 # ---------------------------------------------------------------------------

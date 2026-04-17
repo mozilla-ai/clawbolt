@@ -142,11 +142,6 @@ def build_proactive_section() -> str:
     return load_prompt("proactive")
 
 
-def build_recall_section() -> str:
-    """Build the recall behavior section content."""
-    return load_prompt("recall")
-
-
 def to_local_time(
     now: datetime.datetime,
     tz_name: str,
@@ -245,7 +240,6 @@ async def build_agent_system_prompt(
     builder.add_section("Instructions", build_instructions_section())
 
     builder.add_section("Proactive Messaging", build_proactive_section())
-    builder.add_section("Recall Behavior", build_recall_section())
 
     # Dynamic sections: content changes between turns, placed after the
     # stable prefix so prompt caching can reuse the stable portion. Tool

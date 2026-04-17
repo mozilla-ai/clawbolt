@@ -596,7 +596,7 @@ async def test_agent_processing_failure_dispatches_fallback_via_bus(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-async def test_send_reply_failure_still_stores_outbound(
+async def test_outbound_message_is_persisted_in_session(
     mock_amessages: object,
     test_user: User,
     conversation: SessionState,
@@ -1152,8 +1152,9 @@ async def test_error_fallback_dispatched_but_not_stored(
 
 
 @pytest.mark.asyncio()
-async def test_dispatch_reply_step_suppresses_when_send_reply_succeeds() -> None:
-    """Auto-reply should be suppressed when a SENDS_REPLY tool succeeded."""
+async def test_dispatch_reply_step_suppresses_when_sends_reply_tool_succeeds() -> None:
+    """Auto-reply should be suppressed when a SENDS_REPLY tool (send_media_reply)
+    succeeded. The tool already published to the bus; reply_text would duplicate."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.core import AgentResponse
     from backend.app.agent.file_store import SessionState, StoredMessage
@@ -1163,7 +1164,9 @@ async def test_dispatch_reply_step_suppresses_when_send_reply_succeeds() -> None
     response = AgentResponse(
         reply_text="Fallback text",
         tool_calls=[
-            StoredToolInteraction(name="send_reply", tags={ToolTags.SENDS_REPLY}, is_error=False),
+            StoredToolInteraction(
+                name="send_media_reply", tags={ToolTags.SENDS_REPLY}, is_error=False
+            ),
         ],
     )
     ctx = PipelineContext(
@@ -1178,12 +1181,12 @@ async def test_dispatch_reply_step_suppresses_when_send_reply_succeeds() -> None
 
     await dispatch_reply_step(ctx)
 
-    # Bus should be empty since send_reply already sent the message
+    # Bus should be empty since send_media_reply already sent the message
     assert message_bus.outbound.empty()
 
 
 @pytest.mark.asyncio()
-async def test_dispatch_reply_step_sends_when_send_reply_fails() -> None:
+async def test_dispatch_reply_step_sends_when_sends_reply_tool_fails() -> None:
     """Auto-reply should be dispatched via bus when the SENDS_REPLY tool failed."""
     from backend.app.agent.context import StoredToolInteraction
     from backend.app.agent.core import AgentResponse
@@ -1194,7 +1197,9 @@ async def test_dispatch_reply_step_sends_when_send_reply_fails() -> None:
     response = AgentResponse(
         reply_text="Fallback text",
         tool_calls=[
-            StoredToolInteraction(name="send_reply", tags={ToolTags.SENDS_REPLY}, is_error=True),
+            StoredToolInteraction(
+                name="send_media_reply", tags={ToolTags.SENDS_REPLY}, is_error=True
+            ),
         ],
     )
     ctx = PipelineContext(

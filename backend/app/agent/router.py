@@ -355,7 +355,6 @@ async def run_agent(
 
         _onboarding_auto_tools = (
             ToolName.DELETE_FILE,
-            ToolName.SEND_REPLY,
             ToolName.SEND_MEDIA_REPLY,
         )
         store = get_approval_store()

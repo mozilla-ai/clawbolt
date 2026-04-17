@@ -14,7 +14,6 @@ from backend.app.agent.system_prompt import (
     build_instructions_section,
     build_memory_section,
     build_proactive_section,
-    build_recall_section,
     build_time_user_context,
     build_tool_guidelines_section,
     to_local_time,
@@ -220,12 +219,6 @@ class TestSectionBuilders:
         assert "proactively" in result
         assert "HEARTBEAT.md" in result
 
-    def test_build_recall_section(self) -> None:
-        """Should contain recall behavior rules."""
-        result = build_recall_section()
-        assert "Check your memory section" in result
-        assert "don't make things up" in result
-
 
 class TestBuildAgentSystemPrompt:
     @pytest.mark.asyncio
@@ -257,7 +250,6 @@ class TestBuildAgentSystemPrompt:
         assert "Tool Guidelines" in result
         assert "save_fact" in result
         assert "Proactive Messaging" in result
-        assert "Recall Behavior" in result
 
     @pytest.mark.asyncio
     async def test_tool_guidelines_live_after_cache_boundary(self) -> None:
