@@ -1,16 +1,15 @@
 """Agent-invoked media tools for vision and deliberate discard decisions.
 
-These tools make the agent the driver of per-photo decisions when
-``agent_native_storage`` is on. The hardcoded media pipeline still stages
-bytes; the agent decides whether to analyze or discard them.
+The media pipeline stages inbound bytes; the agent decides per-photo whether
+to analyze, save, route, or discard via tool calls.
 
 ``analyze_photo`` runs vision on a staged photo and caches the result
 per-handle for the session so re-asking returns the same answer instantly.
 
-``discard_media`` releases staged bytes and is idempotent. It requires
-``ApprovalPolicy.ASK`` unless the caller quotes a user phrase in the
-``reason`` argument, a cheap defense against adversarial image content
-that tries to talk the agent into calling it.
+``discard_media`` releases staged bytes and is idempotent. Always gated by
+``ApprovalPolicy.ASK`` so the user confirms before the bytes are dropped;
+the tool description instructs the agent to only call it when the current
+turn's text explicitly asks to skip saving.
 """
 
 from __future__ import annotations
@@ -24,7 +23,6 @@ from backend.app.agent import media_staging
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
-from backend.app.config import settings
 from backend.app.media.pipeline import run_vision_on_media
 
 if TYPE_CHECKING:
@@ -63,33 +61,6 @@ class DiscardMediaParams(BaseModel):
     )
 
 
-def _reason_has_quoted_phrase(reason: str) -> bool:
-    """Return True when ``reason`` contains a plausibly user-quoted phrase.
-
-    Cheap prompt-injection defense: adversarial image content can tell the
-    agent to call ``discard_media`` for other files, but it cannot fabricate
-    a quoted snippet of something the user actually said in this turn.
-    We treat any pair of quote characters with text between them as a
-    user-quoted phrase. This is permissive by design: the approval gate is
-    a belt-and-suspenders check, not the sole defense.
-    """
-    if not reason:
-        return False
-    # Straight-quote pairs (same char opens and closes).
-    for q in ('"', "'"):
-        idx = reason.find(q)
-        if idx != -1 and reason.find(q, idx + 1) > idx:
-            return True
-    # Curly-quote pairs (iOS keyboards substitute these): opening char
-    # followed anywhere by the matching closing char counts.
-    curly_pairs = (("\u201c", "\u201d"), ("\u2018", "\u2019"))
-    for opener, closer in curly_pairs:
-        oi = reason.find(opener)
-        if oi != -1 and reason.find(closer, oi + 1) > oi:
-            return True
-    return False
-
-
 def create_media_tools(
     user_id: str,
     turn_text: str,
@@ -121,6 +92,18 @@ def create_media_tools(
                 error_kind=ToolErrorKind.PERMISSION,
             )
 
+        # Vision only supports images. PDFs and other documents would crash
+        # the image compressor or confuse the vision LLM.
+        if not mime.startswith("image/"):
+            return ToolResult(
+                content=(
+                    f"Handle {handle!r} is {mime}, not an image. "
+                    "analyze_photo only works on photos."
+                ),
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+
         # Extend TTL on reference so long agent sessions don't evict mid-turn.
         media_staging.touch(handle)
 
@@ -131,6 +114,17 @@ def create_media_tools(
         return ToolResult(content=description)
 
     async def discard_media(handle: str, reason: str) -> ToolResult:
+        # Defense in depth: same cross-user ownership check as analyze_photo.
+        # Handles are unguessable in practice but we still scope every
+        # destructive operation to the current user.
+        entry = media_staging.get_by_handle(handle)
+        if entry is not None and entry[0] != user_id:
+            return ToolResult(
+                content=f"Handle {handle!r} does not belong to the current user.",
+                is_error=True,
+                error_kind=ToolErrorKind.PERMISSION,
+            )
+
         removed = media_staging.evict_by_handle(handle)
         if not removed:
             # Idempotent: a second call (or a call after expiry) reports
@@ -179,9 +173,7 @@ def create_media_tools(
 
 
 def _media_factory(ctx: ToolContext) -> list[Tool]:
-    """Factory for agent-native media tools. Gated on flag + staged media."""
-    if not settings.agent_native_storage:
-        return []
+    """Factory for agent-native media tools. Gated on presence of staged media."""
     has_downloaded = bool(ctx.downloaded_media)
     has_staged = bool(media_staging.get_all_for_user(ctx.user.id))
     if not has_downloaded and not has_staged:
@@ -189,8 +181,7 @@ def _media_factory(ctx: ToolContext) -> list[Tool]:
     # Per-turn analysis cache. Scoped to the factory call so it lives for the
     # duration of the agent loop for this message.
     analyze_cache: dict[str, str] = {}
-    turn_text = ""
-    return create_media_tools(ctx.user.id, turn_text, analyze_cache)
+    return create_media_tools(ctx.user.id, ctx.turn_text, analyze_cache)
 
 
 def _register() -> None:

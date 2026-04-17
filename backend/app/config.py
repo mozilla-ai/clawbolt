@@ -62,9 +62,6 @@ class Settings(BaseSettings):
     dropbox_access_token: str = ""
     google_drive_credentials_json: str = ""
     file_storage_base_dir: str = "data/storage"
-    # When True, the media pipeline stages bytes only and the agent drives vision,
-    # save, and organize decisions via tool calls. Default off during rollout.
-    agent_native_storage: bool = False
 
     # Agent loop
     approval_timeout_seconds: int = Field(default=120, ge=1)

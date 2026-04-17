@@ -18,7 +18,6 @@ from backend.app.agent import media_staging
 from backend.app.agent.tools import media_tools
 from backend.app.agent.tools.media_tools import (
     _media_factory,
-    _reason_has_quoted_phrase,
     create_media_tools,
 )
 from backend.app.agent.tools.names import ToolName
@@ -42,19 +41,6 @@ def _clear_staging_between_tests(test_user: User) -> Generator[None]:
     media_staging.clear_user(test_user.id)
     media_staging.clear_user("user-a")
     media_staging.clear_user("user-b")
-
-
-@pytest.fixture()
-def agent_native_on() -> Generator[None]:
-    """Turn on the agent_native_storage flag for the duration of a test."""
-    from backend.app.config import settings
-
-    prior = settings.agent_native_storage
-    settings.agent_native_storage = True
-    try:
-        yield
-    finally:
-        settings.agent_native_storage = prior
 
 
 def _make_media(url: str = "https://example.com/media") -> DownloadedMedia:
@@ -155,21 +141,9 @@ def test_get_handle_for_roundtrip(test_user: User) -> None:
 
 @pytest.mark.asyncio()
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
-async def test_flag_off_preserves_vision_behavior(mock_vision: AsyncMock, test_user: User) -> None:
-    """Regression: with the flag off, vision still runs unconditionally."""
-    mock_vision.return_value = "Deck with weathering."
-    result = await process_message_media("check this deck", [_make_media()], user_id=test_user.id)
-    assert mock_vision.await_count == 1
-    assert result.media_results[0].extracted_text == "Deck with weathering."
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
-async def test_flag_on_skips_vision(
-    mock_vision: AsyncMock, test_user: User, agent_native_on: None
-) -> None:
-    """Flag on: pipeline stages bytes and labels the context with a handle,
-    but does not call the vision LLM."""
+async def test_pipeline_skips_vision(mock_vision: AsyncMock, test_user: User) -> None:
+    """Pipeline stages bytes and labels the context with a handle, but does
+    not call the vision LLM. Vision is the agent's decision via analyze_photo."""
     media_staging.stage(test_user.id, "url-1", b"bytes", "image/jpeg")
     result = await process_message_media("hi", [_make_media("url-1")], user_id=test_user.id)
     assert mock_vision.await_count == 0
@@ -182,10 +156,8 @@ async def test_flag_on_skips_vision(
 
 @pytest.mark.asyncio()
 @patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock)
-async def test_flag_on_empty_extracted_text(
-    mock_vision: AsyncMock, test_user: User, agent_native_on: None
-) -> None:
-    """Flag on: ProcessedMedia.extracted_text is empty so nothing leaks into
+async def test_pipeline_empty_extracted_text(mock_vision: AsyncMock, test_user: User) -> None:
+    """ProcessedMedia.extracted_text is empty so nothing leaks into
     conversation history before the agent decides."""
     media_staging.stage(test_user.id, "url-2", b"b", "image/jpeg")
     result = await process_message_media("", [_make_media("url-2")], user_id=test_user.id)
@@ -289,23 +261,6 @@ async def test_discard_media_idempotent(test_user: User) -> None:
     assert "already discarded" in r2.content or "not staged" in r2.content
 
 
-def test_reason_with_quoted_phrase_skips_ask() -> None:
-    """The prompt-injection guard: quoted text in the reason unlocks auto-approve."""
-    assert _reason_has_quoted_phrase('user said "don\'t save this"') is True
-    assert _reason_has_quoted_phrase("user said 'skip this'") is True
-    # Curly quotes from iOS keyboards should also count.
-    assert _reason_has_quoted_phrase("user said \u201cdrop\u201d") is True
-
-
-def test_reason_without_quoted_phrase_requires_ask() -> None:
-    """No quoted text means an adversarial image may have talked the agent
-    into the call; fall back to the approval prompt."""
-    assert _reason_has_quoted_phrase("seemed unneeded") is False
-    assert _reason_has_quoted_phrase("") is False
-    # Single stray quote is not a pair.
-    assert _reason_has_quoted_phrase('contains only one " char') is False
-
-
 @pytest.mark.asyncio()
 async def test_discard_media_missing_handle_returns_idempotent_success(
     test_user: User,
@@ -322,19 +277,13 @@ async def test_discard_media_missing_handle_returns_idempotent_success(
 # ---------------------------------------------------------------------------
 
 
-def test_media_factory_returns_empty_when_flag_off(test_user: User) -> None:
-    media_staging.stage(test_user.id, "url-1", b"b", "image/jpeg")
-    ctx = ToolContext(user=test_user, downloaded_media=[_make_media("url-1")])
-    assert _media_factory(ctx) == []
-
-
-def test_media_factory_returns_empty_when_no_staged(test_user: User, agent_native_on: None) -> None:
-    """Even with the flag on, no media = no tool surface (avoid prompt bloat)."""
+def test_media_factory_returns_empty_when_no_media(test_user: User) -> None:
+    """No media attached and none staged = no tool surface (avoid prompt bloat)."""
     ctx = ToolContext(user=test_user, downloaded_media=[])
     assert _media_factory(ctx) == []
 
 
-def test_media_factory_registers_tools_when_staged(test_user: User, agent_native_on: None) -> None:
+def test_media_factory_registers_tools_when_staged(test_user: User) -> None:
     media_staging.stage(test_user.id, "url-1", b"b", "image/jpeg")
     ctx = ToolContext(user=test_user, downloaded_media=[_make_media("url-1")])
     tools = _media_factory(ctx)
@@ -343,9 +292,7 @@ def test_media_factory_registers_tools_when_staged(test_user: User, agent_native
     assert ToolName.DISCARD_MEDIA in names
 
 
-def test_media_factory_registers_when_staged_without_current_downloads(
-    test_user: User, agent_native_on: None
-) -> None:
+def test_media_factory_registers_when_staged_without_current_downloads(test_user: User) -> None:
     """Agent may call analyze_photo on a later turn that has no new attachments."""
     media_staging.stage(test_user.id, "url-1", b"b", "image/jpeg")
     ctx = ToolContext(user=test_user, downloaded_media=[])

@@ -5,11 +5,9 @@ from backend.app.agent.file_store import slugify as _slugify
 from backend.app.agent.tools.file_tools import (
     _build_client_folder,
     _build_filename,
-    auto_save_media,
     build_folder_path,
     create_file_tools,
 )
-from backend.app.media.download import DownloadedMedia
 from backend.app.models import User
 from tests.mocks.storage import MockStorageBackend
 
@@ -263,93 +261,6 @@ async def test_upload_creates_folder(
     assert len(storage.folders) == 1
     assert "Fence Client" in storage.folders[0]
     assert "/photos" in storage.folders[0]
-
-
-# ---------------------------------------------------------------------------
-# auto_save_media tests
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio()
-async def test_auto_save_creates_media_file_records(
-    test_user: User,
-) -> None:
-    """auto_save_media should return storage paths for each downloaded file."""
-    storage = MockStorageBackend()
-    media = [
-        DownloadedMedia(
-            content=b"image-bytes",
-            mime_type="image/jpeg",
-            original_url="file_id_1",
-            filename="photo.jpg",
-        ),
-        DownloadedMedia(
-            content=b"pdf-bytes",
-            mime_type="application/pdf",
-            original_url="file_id_2",
-            filename="doc.pdf",
-        ),
-    ]
-
-    saved = await auto_save_media(test_user, storage, media)
-
-    assert len(saved) == 2
-    assert len(storage.files) == 2
-
-    # saved is now list[str] (storage paths)
-    assert any("/Unsorted/" in p for p in saved)
-    assert any(p.endswith(".jpg") for p in saved)
-    assert any(p.endswith(".pdf") for p in saved)
-
-
-@pytest.mark.asyncio()
-async def test_auto_save_sequential_filenames(
-    test_user: User,
-) -> None:
-    """auto_save_media should produce sequential filenames."""
-    storage = MockStorageBackend()
-    media = [
-        DownloadedMedia(
-            content=b"img1", mime_type="image/jpeg", original_url="f1", filename="a.jpg"
-        ),
-        DownloadedMedia(
-            content=b"img2", mime_type="image/jpeg", original_url="f2", filename="b.jpg"
-        ),
-    ]
-
-    saved = await auto_save_media(test_user, storage, media)
-
-    assert "file_001.jpg" in saved[0]
-    assert "file_002.jpg" in saved[1]
-
-
-@pytest.mark.asyncio()
-async def test_auto_save_empty_media_returns_empty(
-    test_user: User,
-) -> None:
-    """auto_save_media with no media should return empty list."""
-    storage = MockStorageBackend()
-    saved = await auto_save_media(test_user, storage, [])
-    assert saved == []
-    assert len(storage.files) == 0
-
-
-@pytest.mark.asyncio()
-async def test_auto_save_creates_unsorted_folder(
-    test_user: User,
-) -> None:
-    """auto_save_media should create the Unsorted/{date} folder."""
-    storage = MockStorageBackend()
-    media = [
-        DownloadedMedia(
-            content=b"img", mime_type="image/jpeg", original_url="f1", filename="a.jpg"
-        ),
-    ]
-
-    await auto_save_media(test_user, storage, media)
-
-    assert len(storage.folders) == 1
-    assert storage.folders[0].startswith("/Unsorted/")
 
 
 # ---------------------------------------------------------------------------

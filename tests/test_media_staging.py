@@ -21,7 +21,7 @@ from backend.app.agent.core import ClawboltAgent
 from backend.app.agent.llm_parsing import ParsedToolCall
 from backend.app.agent.messages import ToolCallRequest
 from backend.app.agent.tools.base import Tool, ToolResult
-from backend.app.agent.tools.file_tools import _file_factory, auto_save_media, create_file_tools
+from backend.app.agent.tools.file_tools import _file_factory, create_file_tools
 from backend.app.agent.tools.registry import ToolContext
 from backend.app.media.download import DownloadedMedia
 from backend.app.models import User
@@ -179,22 +179,6 @@ async def test_upload_evicts_staged_entry(test_user: User) -> None:
         client_name="Jane",
     )
     assert result.is_error is False
-    assert media_staging.get_all_for_user(test_user.id) == {}
-
-
-@pytest.mark.asyncio()
-async def test_auto_save_evicts_staged_entry(test_user: User) -> None:
-    """Auto-save (ALWAYS permission) should also evict staged bytes."""
-    media_staging.stage(test_user.id, "bb_photo", b"bytes", "image/jpeg")
-
-    storage = MockStorageBackend()
-    media = DownloadedMedia(
-        content=b"bytes",
-        mime_type="image/jpeg",
-        original_url="bb_photo",
-        filename="photo.jpg",
-    )
-    await auto_save_media(test_user, storage, [media])
     assert media_staging.get_all_for_user(test_user.id) == {}
 
 

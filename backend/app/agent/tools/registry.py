@@ -46,6 +46,9 @@ class ToolContext:
     channel: str = ""
     to_address: str = ""
     downloaded_media: list[DownloadedMedia] = field(default_factory=list)
+    # Current turn's message text, used by media tools so analyze_photo can
+    # fall back to the caption when the agent doesn't pass an explicit context.
+    turn_text: str = ""
 
 
 @dataclass

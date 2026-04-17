@@ -1,22 +1,26 @@
 """In-memory staging cache for inbound media bytes.
 
 Holds downloaded media content keyed by ``(user_id, original_url)`` for a
-TTL window so tools like ``upload_to_storage`` can find the bytes even when
-the agent calls them on a turn after the attachment arrived. Scoped per-user
+TTL window so agent tools (``analyze_photo``, ``upload_to_storage``,
+``discard_media``, etc.) can find the bytes across turns. Scoped per-user
 and per-process; not durable.
 
-When ``agent_native_storage`` is on, each staged entry also gets a short
-handle token (``media_XXXXXX``) so tools can reference the bytes without
-passing raw channel URLs through the prompt. Handle lookup works alongside
-the legacy URL-keyed API.
+Each staged entry gets a short handle token (``media_XXXXXX``) so tools
+can reference the bytes without passing raw channel URLs through the
+prompt. Both lookup styles work; the handle-based API is what the agent
+sees.
 """
 
 from __future__ import annotations
 
+import logging
 import secrets
 import time
 
+logger = logging.getLogger(__name__)
+
 STAGING_TTL_SECONDS = 86400  # 24h: long agent sessions can span multiple hours
+STAGING_MAX_PER_USER = 50  # Cap memory growth: oldest-expiring entry is evicted on overflow
 
 
 _cache: dict[str, dict[str, tuple[bytes, str, float, str]]] = {}
@@ -25,8 +29,16 @@ _handles: dict[str, tuple[str, str]] = {}
 
 
 def _mint_handle() -> str:
-    """Generate a short opaque handle token for a staged media item."""
-    return f"media_{secrets.token_urlsafe(6)}"
+    """Generate a short opaque handle token for a staged media item.
+
+    Collisions on 48 bits of entropy are astronomically unlikely, but a
+    retry loop is free insurance against silent cross-user overwrite of
+    the ``_handles`` index.
+    """
+    while True:
+        handle = f"media_{secrets.token_urlsafe(6)}"
+        if handle not in _handles:
+            return handle
 
 
 def stage(user_id: str, original_url: str, content: bytes, mime_type: str) -> str | None:
@@ -34,11 +46,14 @@ def stage(user_id: str, original_url: str, content: bytes, mime_type: str) -> st
 
     Returns the handle token for the staged entry, or ``None`` when staging
     was skipped (empty url or empty content). Safe to call repeatedly for
-    the same ``original_url`` — the handle is stable across re-stage within
+    the same ``original_url``, the handle is stable across re-stage within
     the same user's scope.
     """
     if not original_url or not content:
         return None
+    # Purge first so re-stage of an expired URL doesn't resurrect a stale
+    # handle that may no longer be indexed in _handles.
+    _purge_expired()
     expires_at = time.monotonic() + STAGING_TTL_SECONDS
     user_items = _cache.setdefault(user_id, {})
     existing = user_items.get(original_url)
@@ -48,8 +63,31 @@ def stage(user_id: str, original_url: str, content: bytes, mime_type: str) -> st
         handle = _mint_handle()
         _handles[handle] = (user_id, original_url)
     user_items[original_url] = (content, mime_type, expires_at, handle)
-    _purge_expired()
+    _enforce_per_user_cap(user_id)
     return handle
+
+
+def _enforce_per_user_cap(user_id: str) -> None:
+    """Evict the soonest-expiring entry when a user exceeds the per-user cap.
+
+    Prevents unbounded memory growth when a single contractor sends hundreds
+    of photos within the TTL window. The eviction is silent at the API level
+    but logs a warning.
+    """
+    user_items = _cache.get(user_id)
+    if not user_items or len(user_items) <= STAGING_MAX_PER_USER:
+        return
+    # Drop entries with the smallest expires_at until within cap.
+    while len(user_items) > STAGING_MAX_PER_USER:
+        oldest_url = min(user_items, key=lambda url: user_items[url][2])
+        _content, _mime, _exp, handle = user_items.pop(oldest_url)
+        _handles.pop(handle, None)
+        logger.warning(
+            "media_staging cap reached for user %s, evicted %s (handle=%s)",
+            user_id,
+            oldest_url,
+            handle,
+        )
 
 
 def get_all_for_user(user_id: str) -> dict[str, bytes]:

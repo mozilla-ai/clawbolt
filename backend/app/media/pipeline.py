@@ -3,7 +3,6 @@ import logging
 from dataclasses import dataclass
 
 from backend.app.agent import media_staging
-from backend.app.config import settings
 from backend.app.media.download import DownloadedMedia, classify_media
 from backend.app.media.vision import analyze_image
 
@@ -38,10 +37,10 @@ class PipelineResult:
 async def run_vision_on_media(content: bytes, mime_type: str, text_body: str = "") -> str:
     """Run vision analysis on media bytes with optional caption context.
 
-    Extracted from the pipeline so both the flag-off auto-vision path and the
-    agent-invoked ``analyze_photo`` tool share one code path. Returns the
-    analysis text; falls back to :data:`VISION_FALLBACK` on error so callers
-    always get a non-empty string.
+    Invoked by the ``analyze_photo`` tool when the agent decides vision is
+    worth running on a staged photo. Returns the analysis text; falls back
+    to :data:`VISION_FALLBACK` on error so callers always get a non-empty
+    string.
     """
     try:
         return await analyze_image(content, mime_type, context=text_body)
@@ -52,23 +51,18 @@ async def run_vision_on_media(content: bytes, mime_type: str, text_body: str = "
 
 async def _process_single_media(
     media: DownloadedMedia,
-    index: int,
-    context: str = "",
-    skip_vision: bool = False,
     handle: str | None = None,
 ) -> ProcessedMedia:
-    """Process a single media item based on its type."""
+    """Classify a staged media item for the combined context.
+
+    Vision is NOT run here. The agent invokes ``analyze_photo(handle)`` when
+    it decides a photo description is worth the call.
+    """
     category = classify_media(media.mime_type)
-    logger.debug("Media classified: %s → %s", media.mime_type, category)
-    extracted_text = ""
+    logger.debug("Media classified: %s -> %s", media.mime_type, category)
 
     if category == "image":
-        if skip_vision:
-            # Agent-native mode: defer vision to the analyze_photo tool so the
-            # agent decides per-photo whether analysis is worth the call.
-            extracted_text = ""
-        else:
-            extracted_text = await run_vision_on_media(media.content, media.mime_type, context)
+        extracted_text = ""
     else:
         logger.info("Skipping unsupported media type: %s", media.mime_type)
         extracted_text = f"[{category.title()} file - processing not available]"
@@ -87,37 +81,33 @@ async def process_message_media(
     media_items: list[DownloadedMedia],
     user_id: str | None = None,
 ) -> PipelineResult:
-    """Process all media in a message and combine into unified context.
+    """Classify all media in a message and build the agent's combined context.
 
-    When :attr:`settings.agent_native_storage` is on, vision is deferred to the
-    agent (``analyze_photo`` tool). Each media item still gets classified and
-    staged, but ``extracted_text`` is empty and the combined context surfaces
-    the staging handle so the agent knows what to reference.
+    Vision is deferred to the agent (``analyze_photo`` tool) on every inbound
+    message. Each media item gets classified and paired with its staging
+    handle so the combined context surfaces what the agent can reference.
     """
     logger.info("Processing %d media item(s)", len(media_items))
-    skip_vision = bool(settings.agent_native_storage)
 
-    handles: list[str | None] = []
-    for m in media_items:
-        handle = (
-            media_staging.get_handle_for(user_id, m.original_url)
-            if user_id and skip_vision
-            else None
+    if media_items and not user_id:
+        logger.warning(
+            "process_message_media: user_id is missing; %d media item(s) "
+            "will not be surfaced to the agent via a handle",
+            len(media_items),
         )
-        handles.append(handle)
 
-    tasks = [
-        _process_single_media(m, i, context=text_body, skip_vision=skip_vision, handle=handles[i])
-        for i, m in enumerate(media_items)
+    handles: list[str | None] = [
+        media_staging.get_handle_for(user_id, m.original_url) if user_id else None
+        for m in media_items
     ]
-    media_results = await asyncio.gather(*tasks)
-    media_results = list(media_results)
+
+    tasks = [_process_single_media(m, handle=handles[i]) for i, m in enumerate(media_items)]
+    media_results = list(await asyncio.gather(*tasks))
     logger.info(
         "Media processing complete: %s",
         ", ".join(f"{r.category} ({len(r.extracted_text)} chars)" for r in media_results),
     )
 
-    # Build combined context
     parts: list[str] = []
     if text_body:
         parts.append(f"[Text message]: {text_body!r}")
@@ -125,9 +115,7 @@ async def process_message_media(
         label = _format_label(result.category, i + 1, result.handle)
         if result.extracted_text:
             parts.append(f"[{label}]: {result.extracted_text}")
-        elif skip_vision and result.category == "image" and result.handle:
-            # Agent-native mode: surface the handle so the agent can call
-            # analyze_photo(handle) if it decides vision is needed.
+        elif result.category == "image" and result.handle:
             parts.append(
                 f"[{label}]: (staged, call analyze_photo(handle={result.handle!r})"
                 " if you need a description)"
