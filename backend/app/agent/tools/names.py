@@ -18,6 +18,10 @@ class ToolName:
     UPLOAD_TO_STORAGE = "upload_to_storage"
     ORGANIZE_FILE = "organize_file"
 
+    # Media (agent-native storage)
+    ANALYZE_PHOTO = "analyze_photo"
+    DISCARD_MEDIA = "discard_media"
+
     # Workspace files
     READ_FILE = "read_file"
     WRITE_FILE = "write_file"

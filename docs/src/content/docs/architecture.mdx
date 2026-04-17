@@ -75,6 +75,7 @@ The agent has access to these tool groups:
 | Workspace | `read_file`, `write_file`, `edit_file`, `delete_file` | Read/write markdown files (MEMORY.md, USER.md, SOUL.md, etc.) |
 | Heartbeat | `get_heartbeat`, `update_heartbeat` | Read and update heartbeat notes |
 | Files | `upload_to_storage`, `organize_file` | Store and organize files in cloud storage |
+| Media | `analyze_photo`, `discard_media` | Agent-native photo handling (describe or discard staged photos) |
 | QuickBooks | `qb_query`, `qb_create`, `qb_update`, `qb_send` | Query, create, update, and send QuickBooks entities (specialist) |
 | Calendar | `calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_check_availability` | Read and manage Google Calendar events (specialist) |
 
@@ -85,6 +86,10 @@ Tool selection is context-aware: the registry picks relevant tools based on mess
 ### Channel abstraction
 
 The async message bus (`bus.py`) decouples the agent from delivery mechanics. Channels publish inbound messages to the bus and the `ChannelManager` dispatches outbound replies to the correct channel. The agent only interacts with the bus, never with channel implementations directly. Current channels are Telegram and two interchangeable iMessage backends: Linq (hosted iMessage/RCS/SMS) and BlueBubbles (self-hosted iMessage bridge). Users see whichever iMessage backend the operator configures as a single unified "iMessage" option in the UI. New channels can be added without modifying the agent.
+
+### Agent-native media handling
+
+The media pipeline stages photo bytes in memory and classifies them, but does not run vision or auto-save. The agent receives a short handle (`media_XXXXXX`) for each staged photo in its combined context and decides per-photo which tools to call (`analyze_photo`, `upload_to_storage`, `push_to_companycam_project`, `discard_media`). Staging bytes have a 24h TTL and a 50-entry per-user cap; oldest-expiring entries are evicted first when the cap is hit.
 
 ### Storage abstraction
 

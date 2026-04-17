@@ -126,7 +126,20 @@ def build_instructions_section() -> str:
     Trade-specific guidance is handled by the soul prompt (identity section),
     so this section only contains universal behavioral rules.
     """
-    return load_prompt("instructions")
+    body = load_prompt("instructions")
+    body += (
+        "\n\n## Media handling\n"
+        "When the user sends a photo, the attachment appears in your context"
+        " with a handle like `media_ab12cd`. Decide per-photo based on the"
+        " conversation. Call analyze_photo if vision would help you"
+        " understand or route the content. Call upload_to_storage when the"
+        " photo belongs in the user's personal storage. Call"
+        " push_to_companycam_project for jobsite documentation. Call"
+        " discard_media when the user explicitly asks you not to save."
+        " Skipping all of these on a photo is fine if the user hasn't asked"
+        " for anything file-related."
+    )
+    return body
 
 
 def build_tool_guidelines_section(tools: list[Tool]) -> str:
