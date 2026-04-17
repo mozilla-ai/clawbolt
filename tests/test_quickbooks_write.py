@@ -414,3 +414,50 @@ def test_quickbooks_tools_count() -> None:
 
     names = {t.name for t in tools}
     assert names == {"qb_query", "qb_create", "qb_update", "qb_send"}
+
+
+# ---------------------------------------------------------------------------
+# Receipts
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_qb_create_invoice_returns_receipt() -> None:
+    """Write-side QB tools must populate a ToolReceipt so plain-text
+    channels can confirm the mutation without relying on LLM text."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_create")
+
+    result = await fn(
+        entity_type="Invoice",
+        data={
+            "CustomerRef": {"value": "1", "name": "Johnson"},
+            "Line": [
+                {
+                    "Amount": 2560.00,
+                    "DetailType": "SalesItemLineDetail",
+                    "Description": "Bathroom remodel",
+                    "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 2560.0},
+                }
+            ],
+        },
+    )
+
+    assert result.receipt is not None
+    assert result.receipt.action == "Created QuickBooks invoice for"
+    assert "Johnson" in result.receipt.target
+    assert "$2,560.00" in result.receipt.target
+
+
+@pytest.mark.asyncio()
+async def test_qb_query_does_not_return_a_receipt() -> None:
+    """Read-side queries return data which is self-verifying. They must
+    not populate a receipt because no external state mutated."""
+    svc = FakeQBService()
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_query")
+
+    result = await fn(query="SELECT * FROM Invoice MAXRESULTS 5")
+
+    assert result.receipt is None

@@ -1,24 +1,28 @@
-"""Tests for the deterministic tool-call summary formatter.
+"""Tests for the deterministic receipt renderer.
 
-The summary is the failsafe that lets a user on a plain-text channel
-(iMessage, SMS, Telegram) see which tools actually ran, independent of
-whatever the LLM claims in its reply text.
+Write-side tools populate ``ToolReceipt`` objects. The receipt text and
+deep link are generated from real API output by code, not by the LLM, so
+a contractor on iMessage has trustworthy evidence that a claimed action
+actually happened. Read-side tools contribute nothing to the block.
 """
 
 from __future__ import annotations
 
-from backend.app.agent.context import StoredToolInteraction
+from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
 from backend.app.agent.tool_summary import (
-    _MAX_SUMMARY_CHARS,
-    append_tool_call_summary,
-    format_tool_call_summary,
+    _MAX_RECEIPTS_CHARS,
+    append_receipts,
+    format_receipts_block,
 )
-from backend.app.agent.tools.base import ToolTags
-from backend.app.agent.tools.names import ToolName
 
 
-def _tc(
-    name: str, *, is_error: bool = False, tags: set[str] | None = None
+def _tc_with_receipt(
+    name: str,
+    action: str,
+    target: str,
+    url: str | None = None,
+    *,
+    is_error: bool = False,
 ) -> StoredToolInteraction:
     return StoredToolInteraction(
         tool_call_id=f"id-{name}",
@@ -26,112 +30,167 @@ def _tc(
         args={},
         result="",
         is_error=is_error,
-        tags=tags or set(),
+        receipt=StoredToolReceipt(action=action, target=target, url=url),
+    )
+
+
+def _tc_no_receipt(name: str, *, is_error: bool = False) -> StoredToolInteraction:
+    return StoredToolInteraction(
+        tool_call_id=f"id-{name}",
+        name=name,
+        args={},
+        result="",
+        is_error=is_error,
+        receipt=None,
     )
 
 
 def test_empty_list_returns_empty_string() -> None:
-    assert format_tool_call_summary([]) == ""
+    assert format_receipts_block([]) == ""
 
 
-def test_single_tool_renders_label() -> None:
-    summary = format_tool_call_summary([_tc("upload_photo")])
-    assert summary == "Tools used: upload photo"
+def test_tool_without_receipt_contributes_nothing() -> None:
+    """Read-side tools (qb_query, calendar_list_events, etc.) don't set
+    a receipt. They must produce no footer line."""
+    block = format_receipts_block([_tc_no_receipt("qb_query")])
+    assert block == ""
 
 
-def test_multiple_tools_are_comma_separated() -> None:
-    summary = format_tool_call_summary([_tc("upload_photo"), _tc("qb_create_invoice")])
-    assert summary == "Tools used: upload photo, QuickBooks: create invoice"
-
-
-def test_failed_tool_is_annotated() -> None:
-    summary = format_tool_call_summary(
-        [_tc("upload_photo"), _tc("qb_create_invoice", is_error=True)]
+def test_single_receipt_renders_action_target_url() -> None:
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_upload_photo",
+                action="Uploaded photo to CompanyCam project",
+                target="Davis",
+                url="https://companycam.com/p/abc123",
+            )
+        ]
     )
-    assert summary == "Tools used: upload photo, QuickBooks: create invoice (failed)"
-
-
-def test_companycam_prefix_is_prettified() -> None:
-    summary = format_tool_call_summary([_tc("companycam_upload_photo")])
-    assert summary == "Tools used: CompanyCam: upload photo"
-
-
-def test_quickbooks_prefix_variant_is_prettified() -> None:
-    """Both ``qb_`` and ``quickbooks_`` prefixes should render as
-    'QuickBooks:' so internal naming churn does not leak to users."""
-    short = format_tool_call_summary([_tc("qb_create_invoice")])
-    full = format_tool_call_summary([_tc("quickbooks_create_invoice")])
-    assert short == "Tools used: QuickBooks: create invoice"
-    assert full == "Tools used: QuickBooks: create invoice"
-
-
-def test_unknown_prefix_falls_back_to_underscore_replacement() -> None:
-    """Tools without a known integration prefix still get underscores
-    replaced with spaces so they read as natural language."""
-    summary = format_tool_call_summary([_tc("memory_recall_facts")])
-    assert summary == "Tools used: memory recall facts"
-
-
-def test_list_capabilities_is_hidden() -> None:
-    """list_capabilities is infrastructure, not a user-facing action.
-    Surfacing it in the summary would add noise."""
-    summary = format_tool_call_summary([_tc(ToolName.LIST_CAPABILITIES), _tc("upload_photo")])
-    assert summary == "Tools used: upload photo"
-
-
-def test_only_hidden_tools_returns_empty_string() -> None:
-    summary = format_tool_call_summary([_tc(ToolName.LIST_CAPABILITIES)])
-    assert summary == ""
-
-
-def test_sends_reply_tagged_tools_are_hidden() -> None:
-    """A tool tagged SENDS_REPLY IS the reply; listing it would be
-    redundant and confusing ('Tools used: send_message' after a send_message
-    reply)."""
-    summary = format_tool_call_summary([_tc("send_message", tags={ToolTags.SENDS_REPLY})])
-    assert summary == ""
-
-
-def test_append_preserves_reply_and_separates_summary() -> None:
-    body = append_tool_call_summary("Done.", [_tc("upload_photo")])
-    assert body.startswith("Done.")
-    assert body.endswith("Tools used: upload photo")
-    assert "\n\n---\n" in body
-
-
-def test_append_returns_reply_unchanged_when_nothing_to_summarize() -> None:
-    body = append_tool_call_summary("Done.", [])
-    assert body == "Done."
-
-
-def test_append_returns_reply_unchanged_when_only_hidden_tools() -> None:
-    body = append_tool_call_summary(
-        "Here's what I know.",
-        [_tc(ToolName.LIST_CAPABILITIES)],
+    assert block == (
+        "- Uploaded photo to CompanyCam project Davis\n  https://companycam.com/p/abc123"
     )
-    assert body == "Here's what I know."
+
+
+def test_receipt_without_url_omits_link_line() -> None:
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "calendar_delete_event",
+                action="Canceled calendar event",
+                target="abc123",
+            )
+        ]
+    )
+    assert block == "- Canceled calendar event abc123"
+
+
+def test_multiple_receipts_one_per_line() -> None:
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_upload_photo",
+                action="Uploaded photo to CompanyCam project",
+                target="Davis",
+                url="https://companycam.com/p/1",
+            ),
+            _tc_with_receipt(
+                "qb_create",
+                action="Created QuickBooks invoice for",
+                target="Johnson, $2,560.00",
+                url="https://app.qbo.intuit.com/app/invoice?txnId=4782",
+            ),
+        ]
+    )
+    assert "Uploaded photo to CompanyCam project Davis" in block
+    assert "Created QuickBooks invoice for Johnson, $2,560.00" in block
+    assert "https://companycam.com/p/1" in block
+    assert "https://app.qbo.intuit.com/app/invoice?txnId=4782" in block
+
+
+def test_failed_tool_receipt_is_suppressed() -> None:
+    """A receipt on a failed tool means the action did NOT succeed. We
+    never show those \u2014 failures belong in the LLM's reply text, not in a
+    confirmation block that implies success."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "qb_create",
+                action="Created QuickBooks invoice for",
+                target="Johnson, $2,560.00",
+                is_error=True,
+            )
+        ]
+    )
+    assert block == ""
+
+
+def test_receipt_with_empty_action_or_target_is_skipped() -> None:
+    """A malformed receipt \u2014 missing action or target \u2014 should not
+    produce a footer line. This protects the user-facing output if a tool
+    tries to return a half-populated receipt."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt("x", action="", target="whatever"),
+            _tc_with_receipt("y", action="Did something", target=""),
+        ]
+    )
+    assert block == ""
+
+
+def test_append_preserves_reply_and_separates_block() -> None:
+    body = append_receipts(
+        "Kitchen demo looks good.",
+        [
+            _tc_with_receipt(
+                "companycam_upload_photo",
+                action="Uploaded photo to CompanyCam project",
+                target="Davis",
+                url="https://companycam.com/p/1",
+            )
+        ],
+    )
+    assert body.startswith("Kitchen demo looks good.")
+    assert "- Uploaded photo to CompanyCam project Davis" in body
+    assert "https://companycam.com/p/1" in body
+
+
+def test_append_returns_reply_unchanged_when_no_receipts() -> None:
+    body = append_receipts("Here's what I found.", [_tc_no_receipt("qb_query")])
+    assert body == "Here's what I found."
 
 
 def test_append_handles_empty_reply_text() -> None:
-    """If reply_text is empty but tools ran, the summary still ships
-    as the message body (rather than a stray separator with nothing above)."""
-    body = append_tool_call_summary("", [_tc("upload_photo")])
-    assert body == "Tools used: upload photo"
+    """If the LLM returned no text but a mutation ran, the receipt block
+    still ships so the user sees the confirmation."""
+    body = append_receipts(
+        "",
+        [
+            _tc_with_receipt(
+                "companycam_create_project",
+                action="Created CompanyCam project",
+                target="Davis bathroom remodel",
+                url="https://companycam.com/p/new",
+            )
+        ],
+    )
+    assert body == (
+        "- Created CompanyCam project Davis bathroom remodel\n  https://companycam.com/p/new"
+    )
 
 
-def test_summary_caps_long_tool_lists_with_more_suffix() -> None:
-    """A runaway tool count should not blow past SMS multipart thresholds.
-    Past the cap, remaining tools collapse into ``(+K more)``."""
-    many = [_tc(f"companycam_step_{i}") for i in range(30)]
-    summary = format_tool_call_summary(many)
-    assert summary.startswith("Tools used: ")
-    assert "(+" in summary and "more)" in summary
-    assert len(summary) <= _MAX_SUMMARY_CHARS + len("Tools used: ")
-
-
-def test_summary_under_cap_lists_all_tools() -> None:
-    """Short lists are listed in full, no truncation."""
-    few = [_tc("upload_photo"), _tc("qb_create_invoice")]
-    summary = format_tool_call_summary(few)
-    assert "(+" not in summary
-    assert "more)" not in summary
+def test_block_caps_long_receipt_lists_with_more_suffix() -> None:
+    """A runaway mutation count collapses into a tail summary so plain-text
+    channels never exceed the SMS-friendly budget."""
+    many = [
+        _tc_with_receipt(
+            f"companycam_step_{i}",
+            action="Created step",
+            target=f"Step {i} with a reasonably long target description",
+            url=f"https://companycam.com/step/{i}",
+        )
+        for i in range(40)
+    ]
+    block = format_receipts_block(many)
+    assert "(+" in block and "more)" in block
+    assert len(block) <= _MAX_RECEIPTS_CHARS

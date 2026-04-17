@@ -1,123 +1,86 @@
-"""Deterministic formatter for tool-call summaries appended to outbound messages.
+"""Deterministic receipt rendering for outbound replies on plain-text channels.
 
-Channels that do not render a separate tool-call UI (SMS/iMessage, Telegram)
-receive a compact, deterministic summary so the user can see which tools
-actually ran, independent of anything the LLM claims in its text. This is
-the failsafe when the model hallucinates "I uploaded the photo" without
-emitting the matching tool call.
+Channels without a structured tool-call UI (iMessage, SMS, Telegram) get a
+compact receipt block appended to the reply for every write-side tool that
+populated a ``ToolReceipt``. The receipt text is generated from real API
+output by code, not by the LLM, so the contractor has trustworthy evidence
+that the claimed action actually happened.
+
+Read-side tools and tools that did not return a receipt contribute nothing
+to the block. A message with no receipts produces no footer at all.
 """
 
 from __future__ import annotations
 
 from backend.app.agent.context import StoredToolInteraction
-from backend.app.agent.tools.base import ToolTags
-from backend.app.agent.tools.names import ToolName
 
-# Tools that are infrastructure, not user-visible actions. They get excluded
-# from the summary because listing them adds noise without helping the user
-# understand what was done to their data.
-_HIDDEN_TOOL_NAMES: frozenset[str] = frozenset(
-    {
-        ToolName.LIST_CAPABILITIES,
-    }
-)
+_SUMMARY_SEPARATOR = "\n\n"
 
-# Integration prefixes mapped to a user-facing label. Order matters only for
-# readability; prefix matching is exact by the longest match (no overlap
-# today, but keep the lookup deterministic).
-_INTEGRATION_PREFIXES: tuple[tuple[str, str], ...] = (
-    ("companycam_", "CompanyCam: "),
-    ("quickbooks_", "QuickBooks: "),
-    ("qb_", "QuickBooks: "),
-    ("calendar_", "Calendar: "),
-    ("gdrive_", "Google Drive: "),
-    ("dropbox_", "Dropbox: "),
-    ("telegram_", "Telegram: "),
-)
-
-_SUMMARY_HEADER = "Tools used: "
-_SUMMARY_SEPARATOR = "\n\n---\n"
-
-# Maximum characters of tool names to include. Past this we fall back to
-# "first N, +K more" so the summary doesn't push an SMS past a multipart
-# threshold. The cap is generous so small multi-tool sessions stay fully
-# listed; the overflow path only kicks in for runaway tool counts.
-_MAX_SUMMARY_CHARS = 240
+# Upper bound on the receipt block length for SMS-friendly delivery. Past
+# this, the tail collapses to "+K more" so a runaway tool count cannot push
+# a reply past multipart SMS thresholds.
+_MAX_RECEIPTS_CHARS = 320
 
 
-def _prettify_tool_name(tool_name: str) -> str:
-    """Return a user-facing label for a tool's internal name.
+def _render_receipt_line(action: str, target: str, url: str | None) -> str:
+    """Render one receipt as 1-2 plain-text lines."""
+    head = f"- {action} {target}".rstrip()
+    if url:
+        return f"{head}\n  {url}"
+    return head
 
-    Internal names are implementation identifiers like ``companycam_upload_photo``.
-    The summary shows them to end users on plain-text channels, so we strip
-    known integration prefixes and replace underscores with spaces.
+
+def _collect_receipts(tool_calls: list[StoredToolInteraction]) -> list[str]:
+    """Return rendered receipt lines for every successful tool call that
+    populated a ``ToolReceipt``. Errors and read-side tools contribute
+    nothing.
     """
-    for prefix, label in _INTEGRATION_PREFIXES:
-        if tool_name.startswith(prefix):
-            rest = tool_name[len(prefix) :].replace("_", " ")
-            return f"{label}{rest}"
-    return tool_name.replace("_", " ")
-
-
-def _visible_labels(tool_calls: list[StoredToolInteraction]) -> list[str]:
-    """Filter infrastructure/reply tools and return user-facing labels."""
-    labels: list[str] = []
+    lines: list[str] = []
     for tc in tool_calls:
-        if tc.name in _HIDDEN_TOOL_NAMES:
+        if tc.is_error or tc.receipt is None:
             continue
-        if ToolTags.SENDS_REPLY in tc.tags:
+        if not tc.receipt.action or not tc.receipt.target:
             continue
-        label = _prettify_tool_name(tc.name)
-        if tc.is_error:
-            label = f"{label} (failed)"
-        labels.append(label)
-    return labels
+        lines.append(_render_receipt_line(tc.receipt.action, tc.receipt.target, tc.receipt.url))
+    return lines
 
 
-def _truncate_labels(labels: list[str]) -> str:
-    """Join labels with commas, falling back to ``+K more`` if the result
-    exceeds ``_MAX_SUMMARY_CHARS``. We keep as many labels as fit and
-    append a count of the remainder so the user still gets an accurate
-    picture of how many tools ran.
+def _truncate_block(lines: list[str]) -> str:
+    """Join receipt lines, falling back to a ``+K more`` suffix when the
+    block exceeds ``_MAX_RECEIPTS_CHARS``. The first receipts are kept
+    intact so the most recent action is still legible.
     """
-    full = ", ".join(labels)
-    if len(full) <= _MAX_SUMMARY_CHARS:
+    full = "\n".join(lines)
+    if len(full) <= _MAX_RECEIPTS_CHARS:
         return full
     kept: list[str] = []
     running = 0
-    for idx, label in enumerate(labels):
-        remaining_suffix = f" (+{len(labels) - idx} more)"
-        addition = (2 if kept else 0) + len(label)
-        if running + addition + len(remaining_suffix) > _MAX_SUMMARY_CHARS:
-            return ", ".join(kept) + f" (+{len(labels) - idx} more)"
-        kept.append(label)
+    for idx, line in enumerate(lines):
+        suffix = f"\n(+{len(lines) - idx} more)"
+        addition = (1 if kept else 0) + len(line)
+        if running + addition + len(suffix) > _MAX_RECEIPTS_CHARS:
+            return "\n".join(kept) + f"\n(+{len(lines) - idx} more)"
+        kept.append(line)
         running += addition
-    return ", ".join(kept)
+    return "\n".join(kept)
 
 
-def format_tool_call_summary(tool_calls: list[StoredToolInteraction]) -> str:
-    """Return a single-line summary of tool calls, or empty string if none apply.
-
-    The summary omits infrastructure tools (``list_capabilities``) and tools
-    tagged ``SENDS_REPLY`` (those tools ARE the reply text, so listing them
-    would be redundant). Failed calls are annotated with ``(failed)``. When
-    the label list would exceed ``_MAX_SUMMARY_CHARS``, the tail is replaced
-    with ``(+K more)`` to stay SMS-friendly.
-    """
-    labels = _visible_labels(tool_calls)
-    if not labels:
+def format_receipts_block(tool_calls: list[StoredToolInteraction]) -> str:
+    """Return the full receipt block or an empty string if nothing applies."""
+    lines = _collect_receipts(tool_calls)
+    if not lines:
         return ""
-    return _SUMMARY_HEADER + _truncate_labels(labels)
+    return _truncate_block(lines)
 
 
-def append_tool_call_summary(reply_text: str, tool_calls: list[StoredToolInteraction]) -> str:
-    """Append a tool-call summary to ``reply_text`` if any visible tools ran.
-
-    Returns ``reply_text`` unchanged when there is nothing to summarize.
+def append_receipts(reply_text: str, tool_calls: list[StoredToolInteraction]) -> str:
+    """Append a receipt block to ``reply_text`` if any write-side tool
+    returned a receipt. Returns ``reply_text`` unchanged when there is
+    nothing to confirm.
     """
-    summary = format_tool_call_summary(tool_calls)
-    if not summary:
+    block = format_receipts_block(tool_calls)
+    if not block:
         return reply_text
     if not reply_text:
-        return summary
-    return f"{reply_text}{_SUMMARY_SEPARATOR}{summary}"
+        return block
+    return f"{reply_text}{_SUMMARY_SEPARATOR}{block}"

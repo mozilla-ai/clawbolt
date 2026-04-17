@@ -61,19 +61,24 @@ You: Keep your responses short and casual. I'm usually
 Clawbolt: Got it. I'll keep things brief.
 ```
 
-## Check the "Tools used:" footer
+## Check for the confirmation block
 
-When your assistant performs real actions (uploading photos, creating invoices, adding calendar events) a short footer appears under the reply listing what actually ran:
+When your assistant performs a real action (uploading a photo, creating an invoice, scheduling a job) a short confirmation appears under the reply with a tappable link to the thing it just did:
 
 ```
-Clawbolt: Added the kitchen photo to the Davis project
-          and flagged the electrical inspection.
+Clawbolt: Kitchen demo looks good. Added the photo to
+          Davis and drafted the Johnson invoice.
 
-          ---
-          Tools used: CompanyCam: upload photo,
-          Calendar: create event
+          - Uploaded photo to CompanyCam project Davis
+            companycam.com/p/abc123
+          - Created QuickBooks invoice for Johnson, $2,560.00
+            app.qbo.intuit.com/app/invoice?txnId=4782
 ```
 
-The footer is generated from the actions your assistant actually took, not from what it claims in text. If the reply says "done" but the footer is missing or shows `(failed)`, the action did not complete. Tell your assistant to try again and confirm the footer shows the expected tool on the next reply.
+Each line is generated from the actual API response, not from anything the assistant wrote itself. The link goes straight to the photo, invoice, or event in its real app. Tap to verify.
 
-The web dashboard shows this information in a separate tool-call panel, so the footer only appears on text-based channels (iMessage, SMS, Telegram).
+**If the reply says "done" but there is no confirmation line for what you asked about, the action did not happen.** Ask again. Your assistant will either complete it (and show the line) or explain why it can't (for example, "QuickBooks signed me out, please reconnect").
+
+Read-only questions ("What's the Davis estimate?", "Any appointments tomorrow?") don't produce a confirmation block. The data in the reply is the answer. The confirmation block is only for things that change something in CompanyCam, QuickBooks, Google Calendar, or your storage.
+
+The web dashboard shows this information in a separate tool-call panel, so the confirmation block only appears on text-based channels (iMessage, SMS, Telegram).

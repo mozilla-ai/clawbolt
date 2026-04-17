@@ -23,7 +23,7 @@ from backend.app.agent.approval import (
     get_approval_gate,
     get_approval_store,
 )
-from backend.app.agent.context import StoredToolInteraction
+from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentEvent,
@@ -741,6 +741,13 @@ class ClawboltAgent:
                     actions_taken.append(f"Failed: {tool_name}")
                 else:
                     actions_taken.append(f"Called {tool_name}")
+                stored_receipt = None
+                if not is_error and result.receipt is not None:
+                    stored_receipt = StoredToolReceipt(
+                        action=result.receipt.action,
+                        target=result.receipt.target,
+                        url=result.receipt.url,
+                    )
                 tool_call_records.append(
                     StoredToolInteraction(
                         tool_call_id=tc_req.id,
@@ -749,6 +756,7 @@ class ClawboltAgent:
                         result=result_str,
                         is_error=is_error,
                         tags=set(tool_tags),
+                        receipt=stored_receipt,
                     )
                 )
             except Exception:

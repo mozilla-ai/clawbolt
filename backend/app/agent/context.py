@@ -29,6 +29,19 @@ DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 _background_tasks: set[asyncio.Task[None]] = set()
 
 
+class StoredToolReceipt(BaseModel):
+    """Schema for the optional ``ToolReceipt`` attached to a tool result.
+
+    Write-side tools populate this so plain-text channels can render a
+    deterministic, human-readable confirmation line tied to a real deep
+    link from the API response.
+    """
+
+    action: str = ""
+    target: str = ""
+    url: str | None = None
+
+
 class StoredToolInteraction(BaseModel):
     """Schema for tool interaction records stored in StoredMessage.tool_interactions_json."""
 
@@ -38,6 +51,7 @@ class StoredToolInteraction(BaseModel):
     result: str = ""
     is_error: bool = False
     tags: set[str] = Field(default_factory=set, exclude=True)
+    receipt: StoredToolReceipt | None = None
 
 
 async def _run_compaction_in_background(

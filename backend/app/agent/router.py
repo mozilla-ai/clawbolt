@@ -35,7 +35,7 @@ from backend.app.agent.onboarding import (
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.skills.loader import load_all_skills
 from backend.app.agent.stores import ToolConfigStore
-from backend.app.agent.tool_summary import append_tool_call_summary
+from backend.app.agent.tool_summary import append_receipts
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.file_tools import auto_save_media
 from backend.app.agent.tools.names import ToolName
@@ -534,7 +534,7 @@ async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
             except KeyError:
                 channel_obj = None
             if channel_obj is None or not channel_obj.shows_tool_calls_in_ui:
-                content = append_tool_call_summary(content, ctx.response.tool_calls)
+                content = append_receipts(content, ctx.response.tool_calls)
             outbound = OutboundMessage(
                 channel=ctx.channel,
                 chat_id=ctx.to_address,
