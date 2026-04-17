@@ -242,20 +242,20 @@ async def build_agent_system_prompt(
 
     builder.add_section("About Your User", build_user_section(user))
 
-    tool_guidelines = build_tool_guidelines_section(tools)
-    if tool_guidelines:
-        instructions = (
-            build_instructions_section() + "\n" + "\n## Tool Guidelines\n" + tool_guidelines
-        )
-    else:
-        instructions = build_instructions_section()
-    builder.add_section("Instructions", instructions)
+    builder.add_section("Instructions", build_instructions_section())
 
     builder.add_section("Proactive Messaging", build_proactive_section())
     builder.add_section("Recall Behavior", build_recall_section())
 
     # Dynamic sections: content changes between turns, placed after the
-    # stable prefix so prompt caching can reuse the stable portion.
+    # stable prefix so prompt caching can reuse the stable portion. Tool
+    # guidelines are dynamic because newly activated specialists append
+    # their usage hints mid-conversation. Keeping them out of Instructions
+    # prevents that activation from busting the stable system-prompt cache.
+    tool_guidelines = build_tool_guidelines_section(tools)
+    if tool_guidelines:
+        builder.add_section("Tool Guidelines", tool_guidelines, dynamic=True)
+
     memory = await build_memory_section(user.id, query=message_context)
     builder.add_section("Your Memory", memory, dynamic=True)
 
