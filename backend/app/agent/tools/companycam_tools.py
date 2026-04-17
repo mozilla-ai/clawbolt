@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.services.companycam import CompanyCamService, get_photo_url
 from backend.app.services.oauth import OAuthTokenData, oauth_service
@@ -211,6 +211,11 @@ def _create_companycam_tools(
 
         return ToolResult(
             content=(f"Created CompanyCam project: {project.name or name} (ID: {project.id})"),
+            receipt=ToolReceipt(
+                action="Created CompanyCam project",
+                target=project.name or name,
+                url=project.project_url or None,
+            ),
         )
 
     async def companycam_update_project(
@@ -241,6 +246,11 @@ def _create_companycam_tools(
 
         return ToolResult(
             content=f"Updated CompanyCam project: {project.name or ''} (ID: {project_id})",
+            receipt=ToolReceipt(
+                action="Updated CompanyCam project",
+                target=project.name or project_id,
+                url=project.project_url or None,
+            ),
         )
 
     async def companycam_upload_photo(
@@ -376,6 +386,11 @@ def _create_companycam_tools(
         if status == "duplicate":
             return ToolResult(
                 content=f"CompanyCam detected this as a duplicate photo (ID: {photo.id}).",
+                receipt=ToolReceipt(
+                    action="Photo already in CompanyCam project",
+                    target=project_id,
+                    url=url or None,
+                ),
             )
 
         status_note = ""
@@ -383,6 +398,11 @@ def _create_companycam_tools(
             status_note = " (still processing, may take a moment to appear)"
         return ToolResult(
             content=f"Photo uploaded to CompanyCam project {project_id}: {url}{status_note}",
+            receipt=ToolReceipt(
+                action="Uploaded photo to CompanyCam project",
+                target=project_id,
+                url=url or None,
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -434,7 +454,13 @@ def _create_companycam_tools(
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
-        return ToolResult(content=f"Project {project_id} archived successfully.")
+        return ToolResult(
+            content=f"Project {project_id} archived successfully.",
+            receipt=ToolReceipt(
+                action="Archived CompanyCam project",
+                target=project_id,
+            ),
+        )
 
     async def companycam_delete_project(project_id: str) -> ToolResult:
         """Permanently delete a CompanyCam project. Cannot be undone."""
@@ -447,7 +473,13 @@ def _create_companycam_tools(
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
-        return ToolResult(content=f"Project {project_id} permanently deleted.")
+        return ToolResult(
+            content=f"Project {project_id} permanently deleted.",
+            receipt=ToolReceipt(
+                action="Deleted CompanyCam project",
+                target=project_id,
+            ),
+        )
 
     async def companycam_update_notepad(
         project_id: str,
@@ -465,6 +497,10 @@ def _create_companycam_tools(
             )
         return ToolResult(
             content=f"Notepad updated on project {project_id}.",
+            receipt=ToolReceipt(
+                action="Updated notepad on CompanyCam project",
+                target=project_id,
+            ),
         )
 
     # ------------------------------------------------------------------
@@ -521,6 +557,10 @@ def _create_companycam_tools(
             )
         return ToolResult(
             content=f"Comment added to {target_type} {target_id} (ID: {comment.id}).",
+            receipt=ToolReceipt(
+                action=f"Commented on CompanyCam {target_type}",
+                target=target_id,
+            ),
         )
 
     async def companycam_list_comments(
@@ -591,6 +631,10 @@ def _create_companycam_tools(
         tag_names = [t.display_value or t.value or "?" for t in result_tags]
         return ToolResult(
             content=f"Tagged photo {photo_id} with: {', '.join(tag_names)}",
+            receipt=ToolReceipt(
+                action="Tagged CompanyCam photo",
+                target=f"{photo_id} ({', '.join(tag_names)})",
+            ),
         )
 
     async def companycam_delete_photo(photo_id: str) -> ToolResult:
@@ -604,7 +648,13 @@ def _create_companycam_tools(
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
-        return ToolResult(content=f"Photo {photo_id} permanently deleted.")
+        return ToolResult(
+            content=f"Photo {photo_id} permanently deleted.",
+            receipt=ToolReceipt(
+                action="Deleted CompanyCam photo",
+                target=photo_id,
+            ),
+        )
 
     async def companycam_search_photos(
         project_id: str = "",
@@ -736,6 +786,10 @@ def _create_companycam_tools(
             content=(
                 f"Created checklist '{cl.name or 'Untitled'}' (ID: {cl.id}) "
                 f"on project {project_id}."
+            ),
+            receipt=ToolReceipt(
+                action="Created CompanyCam checklist",
+                target=f"{cl.name or 'Untitled'} on project {project_id}",
             ),
         )
 

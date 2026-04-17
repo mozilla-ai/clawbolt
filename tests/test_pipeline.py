@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
 from unittest.mock import patch
 
 import pytest
@@ -22,6 +23,9 @@ from backend.app.agent.router import (
     run_pipeline,
 )
 from backend.app.media.download import DownloadedMedia
+
+if TYPE_CHECKING:
+    from backend.app.agent.core import AgentResponse
 
 
 @pytest.mark.asyncio
@@ -251,6 +255,193 @@ async def test_prepare_media_step_preserves_pre_downloaded_media() -> None:
 
     assert len(result.downloaded_media) == 1
     assert result.downloaded_media[0] is pre_downloaded
+
+
+# ---------------------------------------------------------------------------
+# dispatch_reply_step: receipt rendering on plain-text channels
+# ---------------------------------------------------------------------------
+
+
+def _make_response_with_receipt(
+    *,
+    reply_text: str,
+    tool_name: str,
+    action: str,
+    target: str,
+    url: str | None = None,
+    is_error: bool = False,
+) -> AgentResponse:
+    """Build an AgentResponse with a single tool call that may carry a receipt."""
+    from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
+    from backend.app.agent.core import AgentResponse
+
+    receipt = None if is_error else StoredToolReceipt(action=action, target=target, url=url)
+    return AgentResponse(
+        reply_text=reply_text,
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id="tc-1",
+                name=tool_name,
+                args={},
+                result="ok",
+                is_error=is_error,
+                receipt=receipt,
+            )
+        ],
+    )
+
+
+def _make_response_without_receipt(
+    *,
+    reply_text: str,
+    tool_name: str,
+    is_error: bool = False,
+) -> AgentResponse:
+    """Build an AgentResponse for a read-side tool that has no receipt."""
+    from backend.app.agent.context import StoredToolInteraction
+    from backend.app.agent.core import AgentResponse
+
+    return AgentResponse(
+        reply_text=reply_text,
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id="tc-1",
+                name=tool_name,
+                args={},
+                result="ok",
+                is_error=is_error,
+                receipt=None,
+            )
+        ],
+    )
+
+
+def _make_ctx(
+    *, channel: str, response: AgentResponse, to_address: str = "+15555555555"
+) -> PipelineContext:
+    return PipelineContext(
+        user=None,  # type: ignore[arg-type]
+        session=None,  # type: ignore[arg-type]
+        message=None,  # type: ignore[arg-type]
+        media_urls=[],
+        channel=channel,
+        to_address=to_address,
+        response=response,
+    )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_appends_receipt_for_imessage_write_tool() -> None:
+    """On plain-text channels (bluebubbles iMessage), the outbound body
+    must carry a deterministic receipt line generated from real tool
+    output, not anything the LLM said."""
+    from unittest.mock import AsyncMock
+
+    response = _make_response_with_receipt(
+        reply_text="Kitchen demo looks good.",
+        tool_name="companycam_upload_photo",
+        action="Uploaded photo to CompanyCam project",
+        target="Davis",
+        url="https://companycam.com/p/abc123",
+    )
+    ctx = _make_ctx(channel="bluebubbles", response=response)
+
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
+
+    assert mock_publish.await_count == 1
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert "Kitchen demo looks good." in outbound.content
+    assert "- Uploaded photo to CompanyCam project Davis" in outbound.content
+    assert "https://companycam.com/p/abc123" in outbound.content
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_also_appends_receipt_for_webchat() -> None:
+    """Receipts now ship on every channel, including the web dashboard,
+    so the admin chat and the contractor's iMessage thread show the
+    same evidence of what actually happened."""
+    from unittest.mock import AsyncMock
+
+    response = _make_response_with_receipt(
+        reply_text="Done.",
+        tool_name="companycam_upload_photo",
+        action="Uploaded photo to CompanyCam project",
+        target="Davis",
+        url="https://companycam.com/p/abc123",
+    )
+    ctx = _make_ctx(channel="webchat", response=response, to_address="user-1")
+    ctx.request_id = "req-1"
+
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
+
+    assert mock_publish.await_count == 1
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert outbound.content.startswith("Done.")
+    assert "- Uploaded photo to CompanyCam project Davis" in outbound.content
+    assert "https://companycam.com/p/abc123" in outbound.content
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_omits_receipt_for_failed_mutation() -> None:
+    """A mutation that errored did NOT actually happen. The receipt
+    block must not imply success; failures live in the reply text."""
+    from unittest.mock import AsyncMock
+
+    response = _make_response_with_receipt(
+        reply_text="QuickBooks logged me out. Can you reconnect?",
+        tool_name="qb_create",
+        action="Created QuickBooks invoice for",
+        target="Johnson",
+        is_error=True,
+    )
+    ctx = _make_ctx(channel="bluebubbles", response=response)
+
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
+
+    assert mock_publish.await_count == 1
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert outbound.content == "QuickBooks logged me out. Can you reconnect?"
+    assert "- Created" not in outbound.content
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_omits_receipt_for_read_tool() -> None:
+    """Read-side tools (qb_query, calendar_list_events, memory recall)
+    return data which is self-verifying. They don't populate a receipt
+    and must not produce a footer line."""
+    from unittest.mock import AsyncMock
+
+    response = _make_response_without_receipt(
+        reply_text="Davis estimate total is $2,360.",
+        tool_name="qb_query",
+    )
+    ctx = _make_ctx(channel="bluebubbles", response=response)
+
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
+
+    assert mock_publish.await_count == 1
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert outbound.content == "Davis estimate total is $2,360."
 
 
 # ---------------------------------------------------------------------------

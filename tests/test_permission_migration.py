@@ -32,13 +32,17 @@ def test_migrate_auto_to_always_in_tools(
 ) -> None:
     """Migration rewrites 'auto' -> 'always' in the tools section."""
     perm_file = tmp_path / "PERMISSIONS.json"
-    data = {"version": 1, "tools": {"send_reply": "auto", "read_file": "auto"}, "resources": {}}
+    data = {
+        "version": 1,
+        "tools": {"send_media_reply": "auto", "read_file": "auto"},
+        "resources": {},
+    }
     perm_file.write_text(json.dumps(data))
 
     assert migrate_file(perm_file, "auto", "always") is True
 
     result = json.loads(perm_file.read_text())
-    assert result["tools"]["send_reply"] == "always"
+    assert result["tools"]["send_media_reply"] == "always"
     assert result["tools"]["read_file"] == "always"
 
 
@@ -67,7 +71,11 @@ def test_migrate_no_change_when_already_always(
 ) -> None:
     """Migration is a no-op when all values are already 'always'."""
     perm_file = tmp_path / "PERMISSIONS.json"
-    data = {"version": 1, "tools": {"read_file": "always", "send_reply": "ask"}, "resources": {}}
+    data = {
+        "version": 1,
+        "tools": {"read_file": "always", "send_media_reply": "ask"},
+        "resources": {},
+    }
     perm_file.write_text(json.dumps(data))
 
     assert migrate_file(perm_file, "auto", "always") is False
@@ -80,7 +88,7 @@ def test_migrate_preserves_ask_and_deny(
     perm_file = tmp_path / "PERMISSIONS.json"
     data = {
         "version": 1,
-        "tools": {"send_reply": "ask", "blocked_tool": "deny", "read_file": "auto"},
+        "tools": {"send_media_reply": "ask", "blocked_tool": "deny", "read_file": "auto"},
         "resources": {},
     }
     perm_file.write_text(json.dumps(data))
@@ -88,7 +96,7 @@ def test_migrate_preserves_ask_and_deny(
     migrate_file(perm_file, "auto", "always")
 
     result = json.loads(perm_file.read_text())
-    assert result["tools"]["send_reply"] == "ask"
+    assert result["tools"]["send_media_reply"] == "ask"
     assert result["tools"]["blocked_tool"] == "deny"
     assert result["tools"]["read_file"] == "always"
 

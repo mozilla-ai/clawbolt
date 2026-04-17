@@ -80,7 +80,14 @@ class TestStoredToolInteractionModel:
             tags={"SAVES_MEMORY"},
         )
         dumped = model.model_dump()
-        assert set(dumped.keys()) == {"tool_call_id", "name", "args", "result", "is_error"}
+        assert set(dumped.keys()) == {
+            "tool_call_id",
+            "name",
+            "args",
+            "result",
+            "is_error",
+            "receipt",
+        }
         assert "tags" not in dumped
 
     def test_round_trip_json(self) -> None:

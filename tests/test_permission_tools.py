@@ -69,23 +69,23 @@ async def test_edit_permissions_json(tmp_path: object) -> None:
     read_tool = next(t for t in tools if t.name == ToolName.READ_FILE)
     edit_tool = next(t for t in tools if t.name == ToolName.EDIT_FILE)
 
-    # Sanity: read returns the default-seeded send_reply level.
+    # Sanity: read returns the default-seeded send_media_reply level.
     result = await read_tool.function("PERMISSIONS.json")
     assert not result.is_error
-    # send_reply defaults to always since the messaging-tools flip.
+    # send_media_reply defaults to always since the messaging-tools flip.
     original = json.loads(result.content)
-    assert original["tools"]["send_reply"] == "always"
+    assert original["tools"]["send_media_reply"] == "always"
 
-    # Flip send_reply from always to deny.
+    # Flip send_media_reply from always to deny.
     result = await edit_tool.function(
-        "PERMISSIONS.json", '"send_reply": "always"', '"send_reply": "deny"'
+        "PERMISSIONS.json", '"send_media_reply": "always"', '"send_media_reply": "deny"'
     )
     assert not result.is_error
     assert "Updated" in result.content
 
     result = await read_tool.function("PERMISSIONS.json")
     data = json.loads(result.content)
-    assert data["tools"]["send_reply"] == "deny"
+    assert data["tools"]["send_media_reply"] == "deny"
 
 
 async def test_write_permissions_json(tmp_path: object) -> None:
@@ -100,13 +100,13 @@ async def test_write_permissions_json(tmp_path: object) -> None:
 
     # Minified input must be stored as indented JSON so later edit_file
     # calls have a stable shape to match against.
-    minified = '{"version": 1, "tools": {"send_reply": "deny"}, "resources": {}}'
+    minified = '{"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}}'
     result = await write_tool.function("PERMISSIONS.json", minified)
     assert not result.is_error
 
     result = await read_tool.function("PERMISSIONS.json")
     data = json.loads(result.content)
-    assert data["tools"]["send_reply"] == "deny"
+    assert data["tools"]["send_media_reply"] == "deny"
     # Indented: newlines plus a 2-space prefix on nested keys.
     assert "\n" in result.content
     assert '  "tools"' in result.content

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.services.oauth import (
@@ -189,6 +189,58 @@ def _extract_entity_type(args: dict[str, Any]) -> str | None:
     return str(args["entity_type"]) if args.get("entity_type") else None
 
 
+# Entity types that have a public QBO web UI page we can deep-link to.
+_WEB_LINKABLE_ENTITIES: dict[str, str] = {
+    "Invoice": "invoice",
+    "Estimate": "estimate",
+    "Customer": "customerdetail",
+}
+
+
+def _build_qbo_url(qb_service: QuickBooksService, entity_type: str, entity_id: str) -> str | None:
+    """Build a deep link into the QuickBooks Online web UI for an entity.
+
+    Returns ``None`` for entity types without a known web UI path. The link
+    always points at the real entity ID returned by the API, so no LLM text
+    is involved.
+    """
+    path = _WEB_LINKABLE_ENTITIES.get(entity_type)
+    if not path or not entity_id or entity_id == "?":
+        return None
+    qbo_service = qb_service if isinstance(qb_service, QuickBooksOnlineService) else None
+    if qbo_service is None:
+        return None
+    is_prod = "sandbox" not in qbo_service._api_base
+    host = "app.qbo.intuit.com" if is_prod else "app.sandbox.qbo.intuit.com"
+    if entity_type == "Customer":
+        return f"https://{host}/app/{path}?nameId={entity_id}"
+    return f"https://{host}/app/{path}?txnId={entity_id}"
+
+
+def _receipt_target(entity_type: str, result: dict[str, Any]) -> str:
+    """Best-effort human-readable target string for a QB entity result."""
+    total = result.get("TotalAmt")
+    name = result.get("DisplayName") or ""
+    doc_num = result.get("DocNumber") or ""
+    entity_id = result.get("Id", "")
+    if entity_type in ("Invoice", "Estimate"):
+        customer_ref = result.get("CustomerRef") or {}
+        customer = customer_ref.get("name", "") if isinstance(customer_ref, dict) else ""
+        bits: list[str] = []
+        if customer:
+            bits.append(customer)
+        if total is not None:
+            bits.append(f"${total:,.2f}")
+        if not bits and doc_num:
+            bits.append(f"#{doc_num}")
+        if not bits:
+            bits.append(f"ID {entity_id}")
+        return ", ".join(bits)
+    if entity_type == "Customer":
+        return name or f"ID {entity_id}"
+    return name or doc_num or f"ID {entity_id}"
+
+
 def _extract_send_email(args: dict[str, Any]) -> str | None:
     """Extract the email recipient from qb_send arguments."""
     return str(args["email"]) if args.get("email") else None
@@ -285,7 +337,14 @@ def create_quickbooks_tools(
         if display_name:
             parts.append(f"Name: {display_name}")
 
-        return ToolResult(content=" | ".join(parts))
+        return ToolResult(
+            content=" | ".join(parts),
+            receipt=ToolReceipt(
+                action=f"Created QuickBooks {entity_type.lower()} for",
+                target=_receipt_target(entity_type, result),
+                url=_build_qbo_url(qb_service, entity_type, str(entity_id)),
+            ),
+        )
 
     async def qb_update(entity_type: str, data: dict[str, Any]) -> ToolResult:
         """Update an existing entity in QuickBooks Online."""
@@ -327,7 +386,14 @@ def create_quickbooks_tools(
         if display_name:
             parts.append(f"Name: {display_name}")
 
-        return ToolResult(content=" | ".join(parts))
+        return ToolResult(
+            content=" | ".join(parts),
+            receipt=ToolReceipt(
+                action=f"Updated QuickBooks {entity_type.lower()} for",
+                target=_receipt_target(entity_type, result),
+                url=_build_qbo_url(qb_service, entity_type, str(entity_id)),
+            ),
+        )
 
     async def qb_send(entity_type: str, entity_id: str, email: str) -> ToolResult:
         """Send an invoice or estimate via QuickBooks email."""
@@ -349,7 +415,14 @@ def create_quickbooks_tools(
                 error_kind=ToolErrorKind.SERVICE,
             )
 
-        return ToolResult(content=f"{entity_type} {entity_id} sent to {email} via QuickBooks.")
+        return ToolResult(
+            content=f"{entity_type} {entity_id} sent to {email} via QuickBooks.",
+            receipt=ToolReceipt(
+                action=f"Emailed QuickBooks {entity_type.lower()} to",
+                target=email,
+                url=_build_qbo_url(qb_service, entity_type, entity_id),
+            ),
+        )
 
     return [
         Tool(

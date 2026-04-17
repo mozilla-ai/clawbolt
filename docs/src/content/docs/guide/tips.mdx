@@ -78,3 +78,25 @@ You: Keep your responses short and casual. I'm usually
 
 Clawbolt: Got it. I'll keep things brief.
 ```
+
+## Check for the confirmation block
+
+When your assistant performs a real action (uploading a photo, creating an invoice, scheduling a job) a short confirmation appears under the reply with a tappable link to the thing it just did:
+
+```
+Clawbolt: Kitchen demo looks good. Added the photo to
+          Davis and drafted the Johnson invoice.
+
+          - Uploaded photo to CompanyCam project Davis
+            companycam.com/p/abc123
+          - Created QuickBooks invoice for Johnson, $2,560.00
+            app.qbo.intuit.com/app/invoice?txnId=4782
+```
+
+Each line is generated from the actual API response, not from anything the assistant wrote itself. The link goes straight to the photo, invoice, or event in its real app. Tap to verify.
+
+**If the reply says "done" but there is no confirmation line for what you asked about, the action did not happen.** Ask again. Your assistant will either complete it (and show the line) or explain why it can't (for example, "QuickBooks signed me out, please reconnect").
+
+Read-only questions ("What's the Davis estimate?", "Any appointments tomorrow?") don't produce a confirmation block. The data in the reply is the answer. The confirmation block is only for things that change something in CompanyCam, QuickBooks, Google Calendar, or your storage.
+
+The same confirmation block appears everywhere your assistant talks to you: iMessage, SMS, Telegram, and the web dashboard. Whatever thread you're reading, the evidence is the same.

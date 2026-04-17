@@ -9,7 +9,6 @@ ALL_PROMPT_NAMES = [
     "compaction",
     "instructions",
     "proactive",
-    "recall",
     "heartbeat_preamble",
     "heartbeat_rules",
     "default_soul",
@@ -38,20 +37,19 @@ def test_load_prompt_content_sanity() -> None:
     """Verify key substrings are present in a few prompts."""
     assert "concise" in load_prompt("instructions")
     assert "JSON" in load_prompt("compaction")
-    assert "new user" in load_prompt("bootstrap") or "user" in load_prompt("bootstrap")
+    assert "tradesperson" in load_prompt("bootstrap")
 
 
-def test_bootstrap_defaults_to_clawbolt_name() -> None:
-    """Bootstrap prompt should introduce the assistant as Clawbolt by default."""
+def test_bootstrap_identifies_as_clawbolt() -> None:
+    """Bootstrap prompt should tell the LLM its default identity is Clawbolt."""
     bootstrap = load_prompt("bootstrap")
-    assert "You are Clawbolt" in bootstrap
-    assert "I'm Clawbolt" in bootstrap
+    assert "Clawbolt" in bootstrap
 
 
 def test_bootstrap_offers_rename_option() -> None:
     """Bootstrap prompt should tell the user they can rename the assistant."""
     bootstrap = load_prompt("bootstrap")
-    assert "different name" in bootstrap
+    assert "rename" in bootstrap
 
 
 def test_default_soul_includes_clawbolt_name() -> None:

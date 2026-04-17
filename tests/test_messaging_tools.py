@@ -13,51 +13,12 @@ def publish_outbound() -> AsyncMock:
 
 
 @pytest.mark.asyncio()
-async def test_send_reply_tool(publish_outbound: AsyncMock) -> None:
-    """send_reply tool should publish an OutboundMessage and return confirmation."""
-    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
-    send_reply = tools[0].function
-    result = await send_reply(message="Your estimate is ready!")
-    assert "Sent message" in result.content
-    assert result.is_error is False
-    publish_outbound.assert_called_once()
-    msg: OutboundMessage = publish_outbound.call_args[0][0]
-    assert msg.chat_id == "123456789"
-    assert msg.content == "Your estimate is ready!"
-    assert msg.channel == "telegram"
-
-
-@pytest.mark.asyncio()
-async def test_send_reply_rejects_empty_message(publish_outbound: AsyncMock) -> None:
-    """send_reply should return error for empty messages."""
-    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
-    send_reply = tools[0].function
-    result = await send_reply(message="")
-    assert "Error" in result.content
-    assert result.is_error is True
-    publish_outbound.assert_not_called()
-
-
-@pytest.mark.asyncio()
-async def test_send_reply_rejects_whitespace_message(
-    publish_outbound: AsyncMock,
-) -> None:
-    """send_reply should return error for whitespace-only messages."""
-    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
-    send_reply = tools[0].function
-    result = await send_reply(message="   ")
-    assert "Error" in result.content
-    assert result.is_error is True
-    publish_outbound.assert_not_called()
-
-
-@pytest.mark.asyncio()
 async def test_send_media_reply_rejects_empty_url(
     publish_outbound: AsyncMock,
 ) -> None:
     """send_media_reply should return error for empty media_url."""
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
-    send_media_reply = tools[1].function
+    send_media_reply = tools[0].function
     result = await send_media_reply(message="Here's your file", media_url="")
     assert "Error" in result.content
     assert result.is_error is True
@@ -68,7 +29,7 @@ async def test_send_media_reply_rejects_empty_url(
 async def test_send_media_reply_tool(publish_outbound: AsyncMock) -> None:
     """send_media_reply tool should publish an OutboundMessage with media."""
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
-    send_media_reply = tools[1].function
+    send_media_reply = tools[0].function
     result = await send_media_reply(
         message="Here's your estimate", media_url="https://example.com/estimate.pdf"
     )
@@ -92,7 +53,7 @@ async def test_send_media_reply_accepts_local_file(
     pdf.write_bytes(b"%PDF-1.4 test")
 
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
-    send_media_reply = tools[1].function
+    send_media_reply = tools[0].function
     result = await send_media_reply(message="Here's your estimate", media_url=str(pdf))
     assert result.is_error is False
     assert "Sent media message" in result.content
@@ -103,7 +64,7 @@ async def test_send_media_reply_accepts_local_file(
 async def test_send_media_reply_rejects_invalid_url(publish_outbound: AsyncMock) -> None:
     """send_media_reply should reject a URL without protocol that isn't a local file."""
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
-    send_media_reply = tools[1].function
+    send_media_reply = tools[0].function
     result = await send_media_reply(
         message="Here's your file",
         media_url="data/estimates/nonexistent/EST-0001.pdf",
@@ -117,7 +78,7 @@ async def test_send_media_reply_rejects_invalid_url(publish_outbound: AsyncMock)
 async def test_send_media_reply_rejects_bare_domain(publish_outbound: AsyncMock) -> None:
     """send_media_reply should reject a URL like 'example.com/file.pdf' (no protocol)."""
     tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
-    send_media_reply = tools[1].function
+    send_media_reply = tools[0].function
     result = await send_media_reply(
         message="Here's your file",
         media_url="example.com/estimate.pdf",
@@ -125,3 +86,14 @@ async def test_send_media_reply_rejects_bare_domain(publish_outbound: AsyncMock)
     assert result.is_error is True
     assert "not a valid URL" in result.content
     publish_outbound.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_create_messaging_tools_exposes_only_send_media_reply(
+    publish_outbound: AsyncMock,
+) -> None:
+    """The messaging factory should yield only the media-delivery tool.
+    Plain-text replies go through ``response.reply_text`` directly, so
+    send_reply was removed."""
+    tools = create_messaging_tools(publish_outbound, channel="telegram", to_address="123456789")
+    assert {t.name for t in tools} == {"send_media_reply"}

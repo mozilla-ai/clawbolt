@@ -71,7 +71,7 @@ The agent has access to these tool groups:
 
 | Tool group | Tools | Purpose |
 |------------|-------|---------|
-| Messaging | `send_reply`, `send_media_reply` | Send text or media messages back to the user |
+| Messaging | `send_media_reply` | Attach a file or image to the reply. Plain text replies flow through the LLM's response text automatically. |
 | Workspace | `read_file`, `write_file`, `edit_file`, `delete_file` | Read/write markdown files (MEMORY.md, USER.md, SOUL.md, etc.) |
 | Heartbeat | `get_heartbeat`, `update_heartbeat` | Read and update heartbeat notes |
 | Files | `upload_to_storage`, `organize_file` | Store and organize files in cloud storage |

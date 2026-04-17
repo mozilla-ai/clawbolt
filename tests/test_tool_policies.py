@@ -51,12 +51,6 @@ class TestWorkspaceToolPolicies:
 
 
 class TestMessagingToolPolicies:
-    def test_send_reply_is_always(self) -> None:
-        tools = create_messaging_tools(AsyncMock(), "telegram", "123")
-        tool = _find_tool(tools, ToolName.SEND_REPLY)
-        assert tool.approval_policy is not None
-        assert tool.approval_policy.default_level == PermissionLevel.ALWAYS
-
     def test_send_media_reply_is_always(self) -> None:
         tools = create_messaging_tools(AsyncMock(), "telegram", "123")
         tool = _find_tool(tools, ToolName.SEND_MEDIA_REPLY)

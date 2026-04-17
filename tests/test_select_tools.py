@@ -34,7 +34,7 @@ def _build_test_registry() -> ToolRegistry:
     """Build a registry with 3 core and 3 specialist factories."""
     registry = ToolRegistry()
     # Core factories
-    registry.register("messaging", lambda ctx: [_make_tool("send_reply")])
+    registry.register("messaging", lambda ctx: [_make_tool("send_media_reply")])
     registry.register("workspace", lambda ctx: [_make_tool("read_file"), _make_tool("write_file")])
     # Specialist factories
     registry.register(
@@ -86,7 +86,7 @@ class TestCreateCoreTools:
         ctx = ToolContext(user=User(id="1"))
         tools = await registry.create_core_tools(ctx)
         names = {t.name for t in tools}
-        assert names == {"send_reply", "read_file", "write_file"}
+        assert names == {"send_media_reply", "read_file", "write_file"}
 
     @pytest.mark.asyncio()
     async def test_specialist_tools_excluded(self) -> None:
@@ -194,7 +194,7 @@ class TestListCapabilitiesTool:
         # First call: should return the full activation message
         result = await tool.function(category="estimate")
         assert "activated" in result.content.lower()
-        assert "tools are available" in result.content.lower()
+        assert "no work has been done yet" in result.content.lower()
 
         # Mark as activated (normally done by the agent loop)
         activated.add("estimate")
@@ -205,6 +205,31 @@ class TestListCapabilitiesTool:
         assert not result2.is_error
         # Should NOT contain the full activation message again
         assert len(result2.content) < len(result.content)
+
+    @pytest.mark.asyncio
+    async def test_activation_warns_against_hallucinating_completion(self) -> None:
+        """The activation message must explicitly say that no work has been
+        done yet. Without this, the LLM occasionally treats specialist
+        activation as completion and replies 'I uploaded the photo' without
+        ever calling the actual upload tool.
+        """
+        tool = create_list_capabilities_tool({"companycam": "Photo uploads"})
+        result = await tool.function(category="companycam")
+        lower = result.content.lower()
+        assert "no work has been done yet" in lower
+        assert "call the specific tool" in lower
+
+    @pytest.mark.asyncio
+    async def test_already_active_warns_against_hallucinating_completion(self) -> None:
+        """The 'already active' branch also has to discourage hallucinated
+        completion, since the LLM may loop back to it."""
+        summaries = {"companycam": "Photo uploads"}
+        activated: set[str] = {"companycam"}
+        tool = create_list_capabilities_tool(summaries, activated_specialists=activated)
+        result = await tool.function(category="companycam")
+        lower = result.content.lower()
+        assert "no action has been performed" in lower
+        assert "call the specific tool" in lower
 
 
 class TestDefaultRegistryCoreSpecialistSplit:
@@ -312,7 +337,9 @@ class TestDynamicToolActivation:
         )
         agent.register_tools(await registry.create_core_tools(ctx))
 
-        calls = [ToolCallRequest(id="call_1", name="send_reply", arguments={"message": "hello"})]
+        calls = [
+            ToolCallRequest(id="call_1", name="send_media_reply", arguments={"message": "hello"})
+        ]
         activated = await agent._check_specialist_activations(calls)
         assert not activated
 

@@ -23,7 +23,7 @@ from backend.app.agent.approval import (
     get_approval_gate,
     get_approval_store,
 )
-from backend.app.agent.context import StoredToolInteraction
+from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
 from backend.app.agent.events import (
     AgentEndEvent,
     AgentEvent,
@@ -51,6 +51,7 @@ from backend.app.agent.tool_errors import (
     build_error_hint,
     format_validation_error,
 )
+from backend.app.agent.tool_summary import render_receipt_line
 from backend.app.agent.tools.base import (
     Tool,
     ToolErrorKind,
@@ -741,6 +742,28 @@ class ClawboltAgent:
                     actions_taken.append(f"Failed: {tool_name}")
                 else:
                     actions_taken.append(f"Called {tool_name}")
+                stored_receipt = None
+                if not is_error and result.receipt is not None:
+                    stored_receipt = StoredToolReceipt(
+                        action=result.receipt.action,
+                        target=result.receipt.target,
+                        url=result.receipt.url,
+                    )
+                    # Echo the rendered receipt back to the LLM inside the
+                    # tool result. The LLM sees the exact text the user will
+                    # receive and can write a reply that adds value rather
+                    # than restating the receipt. Generic across all tools:
+                    # any tool that returns a receipt opts into this behavior
+                    # automatically.
+                    rendered = render_receipt_line(
+                        result.receipt.action,
+                        result.receipt.target,
+                        result.receipt.url,
+                    )
+                    result_str += (
+                        "\n\nThe following has been appended to the reply "
+                        f"the user sees:\n{rendered}"
+                    )
                 tool_call_records.append(
                     StoredToolInteraction(
                         tool_call_id=tc_req.id,
@@ -749,6 +772,7 @@ class ClawboltAgent:
                         result=result_str,
                         is_error=is_error,
                         tags=set(tool_tags),
+                        receipt=stored_receipt,
                     )
                 )
             except Exception:

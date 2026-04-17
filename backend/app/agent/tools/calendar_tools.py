@@ -13,7 +13,7 @@ import httpx
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
-from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
+from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.database import SessionLocal
@@ -491,7 +491,11 @@ def create_calendar_tools(
                 f"{event.start.strftime('%Y-%m-%d %H:%M')} - "
                 f"{event.end.strftime('%H:%M')} | "
                 f"id: {event.id}"
-            )
+            ),
+            receipt=ToolReceipt(
+                action="Scheduled calendar event",
+                target=(f"{event.title} on {event.start.strftime('%Y-%m-%d %H:%M')}"),
+            ),
         )
 
     async def calendar_update_event(
@@ -564,7 +568,11 @@ def create_calendar_tools(
                 f"{event.start.strftime('%Y-%m-%d %H:%M')} - "
                 f"{event.end.strftime('%H:%M')} | "
                 f"id: {event.id}"
-            )
+            ),
+            receipt=ToolReceipt(
+                action="Updated calendar event",
+                target=(f"{event.title} on {event.start.strftime('%Y-%m-%d %H:%M')}"),
+            ),
         )
 
     async def calendar_delete_event(
@@ -597,7 +605,13 @@ def create_calendar_tools(
                 error_kind=ToolErrorKind.SERVICE,
             )
 
-        return ToolResult(content=f"Event {event_id} deleted.")
+        return ToolResult(
+            content=f"Event {event_id} deleted.",
+            receipt=ToolReceipt(
+                action="Canceled calendar event",
+                target=event_id,
+            ),
+        )
 
     async def calendar_check_availability(
         start_date: str, end_date: str, calendar_id: str = ""

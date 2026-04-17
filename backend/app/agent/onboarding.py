@@ -138,7 +138,7 @@ def build_onboarding_system_prompt(
     builder.add_section("Onboarding", base)
 
     # Include tool guidelines and instructions so the model knows how
-    # to communicate (reply with text, when to use send_reply, etc.).
+    # to communicate (reply with text, how to attach media, etc.).
     tool_guidelines = build_tool_guidelines_section(tools or [])
     instructions = build_instructions_section()
     if tool_guidelines:

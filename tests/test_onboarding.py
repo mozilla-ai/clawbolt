@@ -197,26 +197,27 @@ def test_build_onboarding_system_prompt_includes_instructions() -> None:
     user = User(id="7", user_id="instructions-test", phone="+15550005555")
     _create_bootstrap(user)
 
-    class _SendReplyParams(BaseModel):
+    class _SendMediaParams(BaseModel):
         message: str
+        media_url: str
 
     async def dummy(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
 
     tools = [
         Tool(
-            name="send_reply",
-            description="Send a text reply to the user.",
+            name="send_media_reply",
+            description="Send a reply with a media attachment.",
             function=dummy,
-            params_model=_SendReplyParams,
-            usage_hint="Use this to send a text message to the user.",
+            params_model=_SendMediaParams,
+            usage_hint="When sending estimates or files, use this to send media.",
         ),
     ]
     prompt = build_onboarding_system_prompt(user, tools=tools)
     # Should include the communication instruction from instructions.md
     assert "Reply directly with text" in prompt
     # Should include tool usage hint
-    assert "send a text message" in prompt.lower()
+    assert "media" in prompt.lower()
 
 
 # --- Fixtures ---
@@ -310,7 +311,9 @@ async def test_onboarding_uses_onboarding_prompt(
     assert response.reply_text == "Welcome to Clawbolt! What's your name?"
     call_args = mock_amessages.call_args  # type: ignore[union-attr]
     system_msg = extract_system_text(call_args.kwargs["system"])
-    assert "new user" in system_msg
+    # bootstrap.md content anchors the onboarding prompt; check for a line
+    # that's specific to it and unlikely to appear in the regular prompt.
+    assert "first conversation" in system_msg or "blank slate" in system_msg
 
 
 @pytest.mark.asyncio()

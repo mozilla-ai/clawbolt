@@ -14,7 +14,7 @@ from backend.app.agent.tools.heartbeat_tools import (
     GetHeartbeatParams,
     UpdateHeartbeatParams,
 )
-from backend.app.agent.tools.messaging_tools import SendMediaReplyParams, SendReplyParams
+from backend.app.agent.tools.messaging_tools import SendMediaReplyParams
 from backend.app.agent.tools.workspace_tools import DeleteFileParams
 from backend.app.models import User
 from tests.mocks.llm import make_text_response, make_tool_call_response
@@ -63,7 +63,6 @@ def test_tool_to_function_schema_uses_params_model() -> None:
 
 def test_messaging_tool_param_models_exist() -> None:
     """Messaging tool param models should be importable and valid BaseModels."""
-    assert issubclass(SendReplyParams, BaseModel)
     assert issubclass(SendMediaReplyParams, BaseModel)
 
 
