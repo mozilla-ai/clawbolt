@@ -69,13 +69,38 @@ def test_is_onboarding_needed_new_user() -> None:
     assert is_onboarding_needed(user) is True
 
 
-def test_is_onboarding_needed_no_bootstrap() -> None:
-    """User without BOOTSTRAP.md should not need onboarding."""
+def test_is_onboarding_needed_self_heals_missing_bootstrap() -> None:
+    """Missing BOOTSTRAP.md is self-healed for a user with no profile evidence.
+
+    Regression: previously a missing BOOTSTRAP.md silently returned False,
+    so a user whose file was wiped (e.g. OAuth re-login after admin delete,
+    ephemeral disk loss) would never get onboarded.
+    """
     user = User(id="2", user_id="no-bootstrap-user", phone="+15550002222")
-    # Ensure user dir exists but no BOOTSTRAP.md
     cdir = Path(settings.data_dir) / str(user.id)
     cdir.mkdir(parents=True, exist_ok=True)
+    bootstrap = cdir / "BOOTSTRAP.md"
+    assert not bootstrap.exists()
+
+    assert is_onboarding_needed(user) is True
+    assert bootstrap.exists()
+
+
+def test_is_onboarding_needed_no_selfheal_when_heuristic_complete() -> None:
+    """Missing BOOTSTRAP.md is NOT re-created when heuristic says onboarded."""
+    user = User(
+        id="2b",
+        user_id="truly-prepopulated",
+        phone="+15550002223",
+        user_text="# User\n\n- Name: Nathan\n- Trade: GC\n",
+    )
+    cdir = Path(settings.data_dir) / str(user.id)
+    cdir.mkdir(parents=True, exist_ok=True)
+    bootstrap = cdir / "BOOTSTRAP.md"
+    assert not bootstrap.exists()
+
     assert is_onboarding_needed(user) is False
+    assert not bootstrap.exists()
 
 
 def test_is_onboarding_needed_complete_profile(test_user: User) -> None:
@@ -144,13 +169,15 @@ def test_provision_skips_bootstrap_when_onboarding_complete() -> None:
         db.close()
 
 
-def test_is_onboarding_needed_bootstrap_deleted() -> None:
-    """After BOOTSTRAP.md is deleted, onboarding is not needed."""
+def test_is_onboarding_needed_bootstrap_deleted_selfheals() -> None:
+    """Deleting BOOTSTRAP.md for an un-onboarded user re-creates it (self-heal)."""
     user = User(id="4", user_id="deleted-bootstrap-user", phone="+15550003333")
     _create_bootstrap(user)
     assert is_onboarding_needed(user) is True
     _remove_bootstrap(user)
-    assert is_onboarding_needed(user) is False
+    # Self-heal: no heuristic evidence, so BOOTSTRAP.md is re-written
+    assert is_onboarding_needed(user) is True
+    assert (Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md").exists()
 
 
 def test_build_onboarding_system_prompt_new_user() -> None:
@@ -411,11 +438,13 @@ async def test_complete_profile_uses_normal_prompt(
 async def test_prepopulated_user_gets_onboarding_complete(
     mock_amessages: object,
 ) -> None:
-    """User without BOOTSTRAP.md should get onboarding_complete=True.
+    """User with heuristic evidence of a prior profile gets onboarding_complete=True.
 
-    Regression test for #180: when BOOTSTRAP.md doesn't exist,
-    is_onboarding_needed() returns False but onboarding_complete was never set
-    because the 'if onboarding:' block was skipped entirely.
+    Covers migrated users whose onboarding_complete flag was never flipped
+    but whose user_text already has a real name. The OnboardingSubscriber
+    "pre-populated" branch requires heuristic evidence so that users with
+    a genuinely empty profile still go through onboarding (via the
+    is_onboarding_needed self-heal).
     """
     db = _db_module.SessionLocal()
     try:
@@ -425,6 +454,7 @@ async def test_prepopulated_user_gets_onboarding_complete(
                 user_id="prepopulated-user",
                 channel_identifier="888888888",
                 preferred_channel="telegram",
+                user_text="# User\n\n- Name: Nathan\n- Trade: GC\n",
             )
         )
         db.commit()
@@ -437,10 +467,9 @@ async def test_prepopulated_user_gets_onboarding_complete(
         channel_identifier="888888888",
         preferred_channel="telegram",
         onboarding_complete=False,
+        user_text="# User\n\n- Name: Nathan\n- Trade: GC\n",
     )
-    # No BOOTSTRAP.md created, so not onboarding
-
-    # Sanity: flag is not set but onboarding is not needed
+    # No BOOTSTRAP.md; heuristic should say not-needed
     assert not user.onboarding_complete
     assert not is_onboarding_needed(user)
 
@@ -487,6 +516,77 @@ async def test_prepopulated_user_gets_onboarding_complete(
 
 
 @pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_empty_user_without_bootstrap_self_heals_and_onboards(
+    mock_amessages: object,
+) -> None:
+    """An empty user with no BOOTSTRAP.md self-heals and enters onboarding.
+
+    Regression: previously such a user was auto-marked onboarding_complete=True
+    (the "pre-populated" branch fired on empty profiles too). This hid the
+    real bug where BOOTSTRAP.md had been wiped (e.g. OAuth re-login after
+    admin delete) and silently skipped onboarding forever.
+    """
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="30b",
+                user_id="empty-user",
+                channel_identifier="888888889",
+                preferred_channel="telegram",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    user = User(
+        id="30b",
+        user_id="empty-user",
+        channel_identifier="888888889",
+        preferred_channel="telegram",
+        onboarding_complete=False,
+    )
+    # No BOOTSTRAP.md yet, no user_text / soul_text
+
+    session = SessionState(
+        session_id="empty-user-session",
+        user_id=user.id,
+        is_active=True,
+        messages=[
+            StoredMessage(direction="inbound", body="hi", seq=1),
+        ],
+    )
+    _ensure_session_on_disk(user, session)
+    message = StoredMessage(direction="inbound", body="hi", seq=1)
+
+    mock_amessages.return_value = make_text_response("Hi there!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        user=user,
+        session=session,
+        message=message,
+        media_urls=[],
+        channel="telegram",
+    )
+
+    # BOOTSTRAP.md should have been re-created by the self-heal
+    assert (Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md").exists()
+
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
+    assert refreshed is not None
+    # Still onboarding: flag was NOT auto-flipped
+    assert refreshed.onboarding_complete is False
+
+
+@pytest.mark.asyncio()
 @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
 @patch("backend.app.agent.core.amessages")
 async def test_prepopulated_user_included_in_heartbeat(
@@ -506,6 +606,7 @@ async def test_prepopulated_user_included_in_heartbeat(
                 channel_identifier="777777777",
                 preferred_channel="telegram",
                 heartbeat_text="- Check weather for outdoor jobs",
+                user_text="# User\n\n- Name: Jake\n- Trade: roofer\n",
             )
         )
         db.commit()
@@ -519,6 +620,7 @@ async def test_prepopulated_user_included_in_heartbeat(
         channel_identifier="777777777",
         preferred_channel="telegram",
         onboarding_complete=False,
+        user_text="# User\n\n- Name: Jake\n- Trade: roofer\n",
     )
 
     session = SessionState(
