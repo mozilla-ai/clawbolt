@@ -18,7 +18,6 @@ logger = logging.getLogger(__name__)
 
 QBO_SANDBOX_BASE = "https://sandbox-quickbooks.api.intuit.com"
 QBO_PRODUCTION_BASE = "https://quickbooks.api.intuit.com"
-QBO_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 
 
 class QuickBooksService(ABC):
@@ -55,6 +54,7 @@ class QuickBooksOnlineService(QuickBooksService):
         refresh_token: str,
         environment: str = "sandbox",
         on_token_refresh: Callable[[str, str, float], None] | None = None,
+        token_url: str = "",
     ) -> None:
         self._client_id = client_id
         self._client_secret = client_secret
@@ -62,6 +62,7 @@ class QuickBooksOnlineService(QuickBooksService):
         self._access_token = access_token
         self._refresh_token = refresh_token
         self._on_token_refresh = on_token_refresh
+        self._token_url = token_url or "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
         self._token_expires_at = 0.0
         base = QBO_PRODUCTION_BASE if environment == "production" else QBO_SANDBOX_BASE
         self._api_base = f"{base}/v3/company/{realm_id}"
@@ -70,7 +71,7 @@ class QuickBooksOnlineService(QuickBooksService):
         """Refresh the OAuth2 access token using the refresh token."""
         logger.info("Refreshing QuickBooks access token")
         resp = await client.post(
-            QBO_TOKEN_URL,
+            self._token_url,
             data={
                 "grant_type": "refresh_token",
                 "refresh_token": self._refresh_token,
@@ -86,6 +87,23 @@ class QuickBooksOnlineService(QuickBooksService):
             self._token_expires_at = time.time() + data["expires_in"]
         if self._on_token_refresh:
             self._on_token_refresh(self._access_token, self._refresh_token, self._token_expires_at)
+
+    @staticmethod
+    def _log_intuit_tid(resp: httpx.Response, *, level: int = logging.DEBUG) -> str:
+        """Extract and log the intuit_tid header for request tracing.
+
+        Returns the tid value (empty string when absent) so callers can
+        include it in error messages forwarded to the user.
+        """
+        tid = resp.headers.get("intuit_tid", "")
+        if tid:
+            logger.log(
+                level,
+                "QBO response: status=%s intuit_tid=%s",
+                resp.status_code,
+                tid,
+            )
+        return tid
 
     async def _request(
         self,
@@ -105,13 +123,20 @@ class QuickBooksOnlineService(QuickBooksService):
 
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.request(method, url, headers=headers, json=json, params=params)
+            self._log_intuit_tid(resp)
 
             if resp.status_code == 401:
                 await self._refresh_access_token(client)
                 headers["Authorization"] = f"Bearer {self._access_token}"
                 resp = await client.request(method, url, headers=headers, json=json, params=params)
+                self._log_intuit_tid(resp)
 
-            resp.raise_for_status()
+            try:
+                resp.raise_for_status()
+            except httpx.HTTPStatusError:
+                self._log_intuit_tid(resp, level=logging.WARNING)
+                raise
+
             return resp.json()
 
     async def query(self, query_str: str) -> list[dict[str, Any]]:
