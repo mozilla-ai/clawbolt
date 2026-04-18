@@ -30,11 +30,15 @@ def provision_user(user: User, db: object | None = None) -> None:
     populated when onboarding completes (see ``OnboardingSubscriber``).
     Creates the on-disk data directory for BOOTSTRAP.md and other files
     that still live on the filesystem.
+
+    Idempotent: safe to call on returning users. Only seeds fields that
+    are currently empty and only writes BOOTSTRAP.md if missing and the
+    user is not already onboarded.
     """
     from sqlalchemy.orm import Session as SASession
 
     # Seed DB text columns with default templates
-    needs_commit = False
+    seeded: list[str] = []
     own_session = db is None
     if own_session:
         db = SessionLocal()
@@ -45,11 +49,11 @@ def provision_user(user: User, db: object | None = None) -> None:
         if db_user is not None:
             if not db_user.soul_text:
                 db_user.soul_text = f"# Soul\n\n{load_prompt('default_soul')}\n"
-                needs_commit = True
+                seeded.append("soul_text")
             if not db_user.user_text:
                 db_user.user_text = f"# User\n\n{load_prompt('default_user')}\n"
-                needs_commit = True
-            if needs_commit:
+                seeded.append("user_text")
+            if seeded:
                 db.commit()
                 db.refresh(db_user)
                 # Update the in-memory user object so callers see the seeded values
@@ -64,8 +68,20 @@ def provision_user(user: User, db: object | None = None) -> None:
     user_dir.mkdir(parents=True, exist_ok=True)
 
     bootstrap_path = user_dir / "BOOTSTRAP.md"
+    bootstrap_written = False
     if not bootstrap_path.exists() and not user.onboarding_complete:
         bootstrap_path.write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
+        bootstrap_written = True
+
+    logger.info(
+        "provision_user(user=%s): seeded=%s bootstrap_written=%s "
+        "onboarding_complete=%s data_dir=%s",
+        user.id,
+        seeded or "none",
+        bootstrap_written,
+        user.onboarding_complete,
+        user_dir,
+    )
 
 
 def _user_to_dto(user: User) -> UserData:
