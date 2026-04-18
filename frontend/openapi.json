@@ -2931,21 +2931,11 @@
               }
             ],
             "title": "Heartbeat Max Daily"
-          },
-          "onboarding_complete": {
-            "anyOf": [
-              {
-                "type": "boolean"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Onboarding Complete"
           }
         },
         "type": "object",
-        "title": "UserProfileUpdate"
+        "title": "UserProfileUpdate",
+        "description": "Fields the client is allowed to update on the current user.\n\n``onboarding_complete`` is deliberately not writable here. It is owned by\nthe backend (set by ``OnboardingSubscriber`` when the LLM deletes\nBOOTSTRAP.md or heuristic evidence appears) so the conversational\nonboarding can't be short-circuited by the UI."
       },
       "ValidationError": {
         "properties": {

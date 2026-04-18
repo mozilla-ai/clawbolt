@@ -1,23 +1,20 @@
 import { useState, useEffect, useRef } from 'react';
-import { useNavigate, useOutletContext } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
-import { useUpdateProfile, useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
+import { useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { getVisibleChannels, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
 import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
 import api from '@/api';
-import type { AppShellContext } from '@/layouts/AppShell';
 
 type Selection = ChannelKey | 'none';
 
 export default function GetStartedPage() {
-  const { reloadProfile } = useOutletContext<AppShellContext>();
   const navigate = useNavigate();
   const { isPremium } = useAuth();
-  const updateProfile = useUpdateProfile();
   const { data: channelConfig } = useChannelConfig();
   const { data: routesData } = useChannelRoutes();
   const visibleChannels = getVisibleChannels(channelConfig);
@@ -124,16 +121,8 @@ export default function GetStartedPage() {
   };
 
   const handleDismiss = () => {
-    updateProfile.mutate(
-      { onboarding_complete: true },
-      {
-        onSuccess: () => {
-          reloadProfile();
-          navigate('/app/chat', { replace: true });
-        },
-        onError: (e) => toast.error(e.message),
-      },
-    );
+    try { sessionStorage.setItem('getStartedDismissed', '1'); } catch { /* ignore */ }
+    navigate('/app/chat', { replace: true });
   };
 
   // Determine Step 2 heading based on selection
@@ -326,8 +315,6 @@ export default function GetStartedPage() {
         <Button
           variant="primary"
           onClick={handleDismiss}
-          disabled={updateProfile.isPending}
-          isLoading={updateProfile.isPending}
         >
           Got it, take me to chat
         </Button>

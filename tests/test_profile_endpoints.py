@@ -53,14 +53,29 @@ def test_update_profile_soul_text(client: TestClient) -> None:
     assert data["soul_text"] == "Be friendly."
 
 
-def test_update_profile_onboarding_complete(client: TestClient) -> None:
-    """PUT /api/user/profile can set onboarding_complete flag."""
+def test_update_profile_ignores_onboarding_complete(client: TestClient) -> None:
+    """PUT /api/user/profile cannot set onboarding_complete.
+
+    The flag is backend-owned (flipped by OnboardingSubscriber when the
+    LLM deletes BOOTSTRAP.md) so the UI can't short-circuit the
+    conversational onboarding by toggling it directly.
+    """
+    # Sending only onboarding_complete = empty body after field stripping.
     resp = client.put(
         "/api/user/profile",
-        json={"onboarding_complete": True},
+        json={"onboarding_complete": False},
+    )
+    assert resp.status_code == 400
+
+    # The flag stays at its fixture default (True) even when bundled with
+    # a legitimate field: onboarding_complete is silently dropped.
+    resp = client.put(
+        "/api/user/profile",
+        json={"onboarding_complete": False, "phone": "+15551111111"},
     )
     assert resp.status_code == 200
     data = resp.json()
+    assert data["phone"] == "+15551111111"
     assert data["onboarding_complete"] is True
 
 

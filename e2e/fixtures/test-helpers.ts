@@ -1,5 +1,6 @@
 import type { Page } from '@playwright/test';
 import { expect } from '@playwright/test';
+import { execFileSync } from 'node:child_process';
 
 /**
  * Wait for the OSS app to be fully loaded.
@@ -21,18 +22,33 @@ export async function navigateToChat(page: Page): Promise<void> {
 }
 
 /**
- * Complete onboarding by marking onboarding_complete=true via the API.
- * This avoids the get-started redirect so tests can go straight to /app/dashboard.
+ * Mark the OSS single-tenant user as onboarded so tests can skip the
+ * get-started redirect and exercise the dashboard experience.
+ *
+ * onboarding_complete is backend-owned (flipped by OnboardingSubscriber
+ * when the LLM deletes BOOTSTRAP.md or heuristic evidence appears), so
+ * there is no HTTP endpoint to flip it directly. For tests we write the
+ * flag to the database the server is already using.
+ *
+ * The baseUrl parameter is accepted for backward compatibility but unused.
  */
 export async function completeOnboarding(baseUrl: string): Promise<void> {
-  const res = await fetch(`${baseUrl}/api/user/profile`, {
-    method: 'PUT',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ onboarding_complete: true }),
-  });
+  // Ensure the OSS single-tenant user exists before updating it. GET
+  // /api/user/profile triggers get_current_user, which lazily creates
+  // the local user on first access.
+  const res = await fetch(`${baseUrl}/api/user/profile`);
   if (!res.ok) {
-    throw new Error(`Failed to complete onboarding: ${res.status} ${await res.text()}`);
+    throw new Error(`Failed to ensure user exists: ${res.status} ${await res.text()}`);
   }
+
+  const dbUrl =
+    process.env.DATABASE_URL ??
+    'postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_e2e';
+  execFileSync(
+    'psql',
+    [dbUrl, '-v', 'ON_ERROR_STOP=1', '-c', 'UPDATE users SET onboarding_complete = true;'],
+    { stdio: 'pipe' },
+  );
 }
 
 /**
