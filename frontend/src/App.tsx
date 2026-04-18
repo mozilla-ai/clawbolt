@@ -24,10 +24,19 @@ const ToolsPage = lazy(() => import('@/pages/ToolsPage'));
 const OAuthCallbackPage = lazy(() => import('@/pages/OAuthCallbackPage'));
 const GetStartedPage = lazy(() => import('@/pages/GetStartedPage'));
 
-/** Redirect index to get-started if onboarding is incomplete, otherwise to dashboard. */
+/** Redirect index to get-started if onboarding is incomplete, otherwise to dashboard.
+ *
+ * Once the user dismisses the Get Started card, we set a sessionStorage flag so
+ * a refresh or tab reopen within the same session skips straight to chat
+ * instead of bouncing back to the wizard while the LLM still works through
+ * its BOOTSTRAP.md conversation.
+ */
 function DefaultRedirect() {
   const { profile } = useOutletContext<AppShellContext>();
   if (profile && !profile.onboarding_complete) {
+    if (sessionStorage.getItem('getStartedDismissed') === '1') {
+      return <Navigate to="/app/chat" replace />;
+    }
     return <Navigate to="/app/get-started" replace />;
   }
   return <Navigate to="/app/dashboard" replace />;

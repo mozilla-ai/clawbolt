@@ -1325,7 +1325,15 @@ export interface components {
             /** Updated At */
             updated_at: string;
         };
-        /** UserProfileUpdate */
+        /**
+         * UserProfileUpdate
+         * @description Fields the client is allowed to update on the current user.
+         *
+         *     ``onboarding_complete`` is deliberately not writable here. It is owned by
+         *     the backend (set by ``OnboardingSubscriber`` when the LLM deletes
+         *     BOOTSTRAP.md or heuristic evidence appears) so the conversational
+         *     onboarding can't be short-circuited by the UI.
+         */
         UserProfileUpdate: {
             /** Phone */
             phone?: string | null;
@@ -1343,8 +1351,6 @@ export interface components {
             heartbeat_frequency?: string | null;
             /** Heartbeat Max Daily */
             heartbeat_max_daily?: number | null;
-            /** Onboarding Complete */
-            onboarding_complete?: boolean | null;
         };
         /** ValidationError */
         ValidationError: {
