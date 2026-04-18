@@ -454,6 +454,11 @@ class PendingApprovalRow(Base):
     One row per user (composite key would be excessive: the current gate
     allows only one pending approval per user). A new request overwrites
     an older one via upsert, matching in-memory semantics.
+
+    No FK / ORM relationship to ``User``: approvals are a transient
+    recovery aid, not part of the user's durable state, and the startup
+    cleanup already drops rows older than ``_ORPHAN_MAX_AGE``. A deleted
+    user's row will be swept on the next restart without a cascade.
     """
 
     __tablename__ = "pending_approvals"

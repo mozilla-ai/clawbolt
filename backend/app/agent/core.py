@@ -256,6 +256,12 @@ class ClawboltAgent:
         name sequence diverges from the cached prefix. Since specialist
         activation only appends, in the common case this cache hits for
         every round after the first.
+
+        Callers (``_call_llm_with_retry`` via ``apply_tool_caching``)
+        may mutate the last entry to stamp a ``cache_control`` marker.
+        That mutation is idempotent when re-applied to the already-stamped
+        dict, so sharing the same list across rounds is safe and we
+        intentionally do not copy on return.
         """
         if not self.tools:
             self._cached_tool_schemas = None

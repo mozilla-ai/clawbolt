@@ -376,6 +376,102 @@ class TestApprovalGate:
             assert db.get(PendingApprovalRow, test_user.id) is None
 
     @pytest.mark.asyncio()
+    async def test_cleanup_drops_malformed_rows_without_publishing(self, test_user: User) -> None:
+        """Rows missing channel or chat_id cannot be delivered anywhere,
+        so they should be deleted with a warning rather than left lingering."""
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="orphan with no channel",
+                    channel="",
+                    chat_id="",
+                )
+            )
+            db.commit()
+
+        published: list[OutboundMessage] = []
+
+        async def _publish(msg: OutboundMessage) -> None:
+            published.append(msg)
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 0
+        assert published == [], "no message should be sent for a malformed row"
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is None
+
+    @pytest.mark.asyncio()
+    async def test_cleanup_drops_expired_rows_when_publish_fails(self, test_user: User) -> None:
+        """If publish keeps failing on an orphan older than the TTL, the row
+        must still be deleted so a permanently broken channel cannot keep
+        the retry loop alive forever."""
+        from datetime import UTC, datetime, timedelta
+
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="stale orphan",
+                    channel="telegram",
+                    chat_id="chat_expired",
+                    created_at=datetime.now(UTC) - timedelta(days=1),
+                )
+            )
+            db.commit()
+
+        async def _publish(_msg: OutboundMessage) -> None:
+            raise RuntimeError("simulated channel failure")
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 0
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is None
+
+    @pytest.mark.asyncio()
+    async def test_cleanup_keeps_fresh_rows_when_publish_fails(self, test_user: User) -> None:
+        """A fresh orphan whose publish fails should stay in the table so a
+        later restart can retry. Only expired rows are force-deleted."""
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="fresh orphan",
+                    channel="telegram",
+                    chat_id="chat_fresh",
+                )
+            )
+            db.commit()
+
+        async def _publish(_msg: OutboundMessage) -> None:
+            raise RuntimeError("transient channel failure")
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 0
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is not None, (
+                "fresh rows must survive a failed publish"
+            )
+
+    @pytest.mark.asyncio()
     async def test_has_pending(self) -> None:
         gate = ApprovalGate()
         assert not gate.has_pending("1")

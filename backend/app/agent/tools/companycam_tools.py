@@ -44,11 +44,16 @@ async def _load_service(user_id: str) -> CompanyCamService | None:
 
 
 def _create_companycam_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool]:
-    """Assemble the full CompanyCam tool list from the domain modules."""
+    """Assemble the full CompanyCam tool list from the domain modules.
+
+    Only ``build_photo_tools`` needs the ``ToolContext`` (for the user's
+    downloaded media staging); project and checklist tools talk purely
+    to the CompanyCam service.
+    """
     return [
-        *build_project_tools(service, ctx),
+        *build_project_tools(service),
         *build_photo_tools(service, ctx),
-        *build_checklist_tools(service, ctx),
+        *build_checklist_tools(service),
     ]
 
 

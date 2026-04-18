@@ -20,7 +20,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -523,6 +523,9 @@ def _delete_pending_row(user_id: str) -> None:
         logger.exception("Failed to delete pending approval row for user %s", user_id)
 
 
+_ORPHAN_MAX_AGE = timedelta(hours=1)
+
+
 async def cleanup_orphaned_approvals(
     publish_outbound: Callable[[OutboundMessage], Awaitable[None]],
 ) -> int:
@@ -532,24 +535,45 @@ async def cleanup_orphaned_approvals(
     that was waiting when the previous worker died. The originating agent
     coroutine is gone and can't be resumed, so the best we can do is tell
     the user their prior request was interrupted and clear the row. Returns
-    the number of orphans cleaned up.
+    the number of orphans for which a recovery message was successfully
+    delivered.
+
+    Rows are always deleted by the end of this call:
+      * Malformed rows (missing channel or chat_id) are deleted with a
+        warning; no message is sent because we have nowhere to send it.
+      * Rows older than ``_ORPHAN_MAX_AGE`` are deleted whether or not
+        publish succeeds, so a permanently-broken channel can't keep the
+        row (and its retry attempts) around forever.
+      * Fresh rows whose publish fails stay in the table for a later
+        restart to retry. The age gate caps how long that can loop.
     """
     from backend.app.bus import OutboundMessage as OMsg
 
     try:
         with db_session() as db:
             rows = db.query(PendingApprovalRow).all()
-            orphans = [
-                (r.user_id, r.tool_name, r.channel, r.chat_id)
-                for r in rows
-                if r.channel and r.chat_id
-            ]
+            snapshot = [(r.user_id, r.tool_name, r.channel, r.chat_id, r.created_at) for r in rows]
     except Exception:
         logger.exception("Failed to load orphaned approvals on startup")
         return 0
 
+    now = datetime.now(UTC)
     recovered = 0
-    for user_id, tool_name, channel, chat_id in orphans:
+    for user_id, tool_name, channel, chat_id, created_at in snapshot:
+        if not channel or not chat_id:
+            logger.warning(
+                "Dropping malformed pending_approvals row for user %s tool %s: "
+                "channel=%r chat_id=%r",
+                user_id,
+                tool_name,
+                channel,
+                chat_id,
+            )
+            _delete_pending_row(user_id)
+            continue
+
+        expired = created_at is not None and (now - created_at) > _ORPHAN_MAX_AGE
+
         try:
             await publish_outbound(
                 OMsg(
@@ -575,6 +599,15 @@ async def cleanup_orphaned_approvals(
                 user_id,
                 tool_name,
             )
+            if expired:
+                logger.warning(
+                    "Dropping expired pending_approvals row for user %s tool %s "
+                    "(age > %s); publish kept failing",
+                    user_id,
+                    tool_name,
+                    _ORPHAN_MAX_AGE,
+                )
+                _delete_pending_row(user_id)
     return recovered
 
 

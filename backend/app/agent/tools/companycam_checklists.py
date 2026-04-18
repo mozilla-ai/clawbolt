@@ -2,13 +2,12 @@
 
 Implements list/get/create for CompanyCam project checklists. Built by
 the factory in ``companycam_tools`` which passes the authenticated
-service and context.
+service.
 """
 
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.companycam_params import (
@@ -19,16 +18,14 @@ from backend.app.agent.tools.companycam_params import (
 from backend.app.agent.tools.names import ToolName
 from backend.app.services.companycam import CompanyCamService
 
-if TYPE_CHECKING:
-    from backend.app.agent.tools.registry import ToolContext
-
 logger = logging.getLogger(__name__)
 
 
-def build_checklist_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool]:
+def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
     """Return the CompanyCam checklist Tool instances.
 
-    Behaviour is identical to the original combined factory.
+    These tools only interact with the CompanyCam service, so the
+    builder does not need the agent's ``ToolContext``.
     """
 
     async def companycam_list_checklists(project_id: str) -> ToolResult:
@@ -106,8 +103,6 @@ def build_checklist_tools(service: CompanyCamService, ctx: ToolContext) -> list[
                 target=f"{cl.name or 'Untitled'} on project {project_id}",
             ),
         )
-
-    _ = ctx
 
     return [
         Tool(

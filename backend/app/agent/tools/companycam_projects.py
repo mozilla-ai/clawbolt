@@ -8,7 +8,6 @@ delete), the notepad, and document listing. Built by the factory in
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.companycam_params import (
@@ -24,17 +23,14 @@ from backend.app.agent.tools.companycam_params import (
 from backend.app.agent.tools.names import ToolName
 from backend.app.services.companycam import CompanyCamService
 
-if TYPE_CHECKING:
-    from backend.app.agent.tools.registry import ToolContext
-
 logger = logging.getLogger(__name__)
 
 
-def build_project_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool]:
+def build_project_tools(service: CompanyCamService) -> list[Tool]:
     """Return the CompanyCam project-management Tool instances.
 
-    Each inner function closes over *service* and *ctx* in the same way
-    the original single-file factory did; the behaviour is identical.
+    These tools only interact with the CompanyCam service, so the
+    builder does not need the agent's ``ToolContext``.
     """
 
     async def companycam_search_projects(query: str) -> ToolResult:
@@ -233,11 +229,6 @@ def build_project_tools(service: CompanyCamService, ctx: ToolContext) -> list[To
         if len(docs) >= 50:
             lines.append(f"(Page {page}. More results may be available on the next page.)")
         return ToolResult(content="\n".join(lines))
-
-    # ctx is part of the interface but unused in this group; referenced here
-    # so linters do not flag the parameter while preserving the uniform
-    # signature across the three _tools groups.
-    _ = ctx
 
     return [
         Tool(
