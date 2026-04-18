@@ -191,6 +191,14 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     validate_imessage_backend()
     validate_personal_storage_backend()
     log_config_warnings()
+
+    # Warm the Intuit discovery document cache so QuickBooks OAuth
+    # endpoints are resolved from the discovery document rather than
+    # hardcoded URLs.
+    from backend.app.services.oauth import warm_intuit_discovery
+
+    await warm_intuit_discovery()
+
     await _verify_llm_settings()
     heartbeat_scheduler.start()
 

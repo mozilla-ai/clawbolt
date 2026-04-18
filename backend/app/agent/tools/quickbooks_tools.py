@@ -14,6 +14,7 @@ from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolR
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.services.oauth import (
+    _get_intuit_endpoints,
     oauth_service,
 )
 from backend.app.services.quickbooks_service import (
@@ -516,6 +517,7 @@ async def _get_quickbooks_service_for_user(user_id: str) -> QuickBooksService | 
     """Build a QuickBooks service using OAuth tokens for the given user."""
     token = await oauth_service.get_valid_token(user_id, "quickbooks")
     if token and token.access_token and token.realm_id:
+        _, token_url = _get_intuit_endpoints()
         return QuickBooksOnlineService(
             client_id=settings.quickbooks_client_id,
             client_secret=settings.quickbooks_client_secret,
@@ -524,6 +526,7 @@ async def _get_quickbooks_service_for_user(user_id: str) -> QuickBooksService | 
             refresh_token=token.refresh_token,
             environment=settings.quickbooks_environment,
             on_token_refresh=oauth_service.build_on_refresh_callback(user_id, "quickbooks"),
+            token_url=token_url,
         )
     return None
 
