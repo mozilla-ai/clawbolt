@@ -191,7 +191,7 @@ class Coordinate(BaseModel):
 
 class ProjectIntegration(BaseModel):
     type: Annotated[str, Field(examples=["JobNimbus"])]
-    relation_id: Annotated[str, Field(examples=["123"])]
+    relation_id: Annotated[str | None, Field(examples=["123"])] = None
 
 
 class Comment(BaseModel):
