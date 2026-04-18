@@ -121,7 +121,7 @@ export default function GetStartedPage() {
   };
 
   const handleDismiss = () => {
-    sessionStorage.setItem('getStartedDismissed', '1');
+    try { sessionStorage.setItem('getStartedDismissed', '1'); } catch { /* ignore */ }
     navigate('/app/chat', { replace: true });
   };
 

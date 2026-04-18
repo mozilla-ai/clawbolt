@@ -34,7 +34,9 @@ const GetStartedPage = lazy(() => import('@/pages/GetStartedPage'));
 function DefaultRedirect() {
   const { profile } = useOutletContext<AppShellContext>();
   if (profile && !profile.onboarding_complete) {
-    if (sessionStorage.getItem('getStartedDismissed') === '1') {
+    let dismissed = false;
+    try { dismissed = sessionStorage.getItem('getStartedDismissed') === '1'; } catch { /* ignore */ }
+    if (dismissed) {
       return <Navigate to="/app/chat" replace />;
     }
     return <Navigate to="/app/get-started" replace />;
