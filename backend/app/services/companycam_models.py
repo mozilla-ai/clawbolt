@@ -87,8 +87,8 @@ class Webhook(BaseModel):
 
 
 class ImageURI(BaseModel):
-    type: str
-    uri: str
+    type: str | None = None
+    uri: str | None = None
     url: str | None = None
 
 
@@ -190,7 +190,7 @@ class Coordinate(BaseModel):
 
 
 class ProjectIntegration(BaseModel):
-    type: Annotated[str, Field(examples=["JobNimbus"])]
+    type: Annotated[str | None, Field(examples=["JobNimbus"])] = None
     relation_id: Annotated[str | None, Field(examples=["123"])] = None
 
 
@@ -513,7 +513,9 @@ class ProjectInvitation(BaseModel):
 
 class Company(BaseModel):
     id: Annotated[str, Field(description="The Company's unique ID", examples=["2789583992"])]
-    name: Annotated[str, Field(description="The name of the company", examples=["Psych"])]
+    name: Annotated[
+        str | None, Field(description="The name of the company", examples=["Psych"])
+    ] = None
     status: Annotated[
         Literal["active", "cancelled", "deleted"] | None,
         Field(description="Indicates the status of the Company.", examples=["active"]),

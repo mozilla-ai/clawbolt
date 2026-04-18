@@ -179,6 +179,28 @@ def test_get_photo_url_no_uris() -> None:
     assert "42" in get_photo_url(photo)
 
 
+def test_get_photo_url_null_uri_skipped() -> None:
+    """Regression: ImageURI with null uri should be skipped."""
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    photo = Photo(
+        id="1",
+        uris=[
+            ImageURI(type="original", uri=None),
+            ImageURI(type="web", uri="https://cc.com/web.jpg"),
+        ],
+    )
+    assert get_photo_url(photo) == "https://cc.com/web.jpg"
+
+
+def test_get_photo_url_all_null_uris_fallback() -> None:
+    """Regression: if all ImageURI.uri are null, fall back to API URL."""
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    photo = Photo(id="42", uris=[ImageURI(type="original")])
+    assert "42" in get_photo_url(photo)
+
+
 # ---------------------------------------------------------------------------
 # Tool registration tests
 # ---------------------------------------------------------------------------
