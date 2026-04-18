@@ -51,6 +51,14 @@ class UserProfileResponse(BaseModel):
 
 
 class UserProfileUpdate(BaseModel):
+    """Fields the client is allowed to update on the current user.
+
+    ``onboarding_complete`` is deliberately not writable here. It is owned by
+    the backend (set by ``OnboardingSubscriber`` when the LLM deletes
+    BOOTSTRAP.md or heuristic evidence appears) so the conversational
+    onboarding can't be short-circuited by the UI.
+    """
+
     phone: str | None = None
     timezone: str | None = None
     soul_text: str | None = None
@@ -59,7 +67,6 @@ class UserProfileUpdate(BaseModel):
     heartbeat_opt_in: bool | None = None
     heartbeat_frequency: str | None = None
     heartbeat_max_daily: int | None = Field(default=None, ge=0)
-    onboarding_complete: bool | None = None
 
 
 # ---------------------------------------------------------------------------
