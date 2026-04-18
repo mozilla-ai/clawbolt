@@ -65,8 +65,24 @@ async def _run_compaction_in_background(
 
     This is designed to be fired as a background task via asyncio.create_task
     so it does not block message processing.
+
+    Re-reads ``last_compacted_seq`` from the database before running so that
+    if another worker (or a previous crashed run) already compacted through
+    ``max_message_seq``, we skip the LLM call. This prevents duplicate
+    HISTORY.md append entries and wasted LLM spend when compaction raced.
     """
     try:
+        fresh = session_store.load_session(session.session_id)
+        current_watermark = fresh.last_compacted_seq if fresh is not None else 0
+        if max_message_seq <= current_watermark:
+            logger.info(
+                "Skipping compaction for session %s: already compacted through seq %d (requested %d)",
+                session.session_id,
+                current_watermark,
+                max_message_seq,
+            )
+            return
+
         saved, compacted_seq = await compact_session(
             user_id, trimmed_agent_messages, max_message_seq=max_message_seq
         )

@@ -476,7 +476,9 @@ def get_photo_url(photo: Photo) -> str:
     """Extract the best available URL from a CompanyCam photo."""
     if photo.uris:
         for uri_entry in photo.uris:
-            if uri_entry.type == "original":
+            if uri_entry.type == "original" and uri_entry.uri:
                 return uri_entry.uri
-        return photo.uris[0].uri
+        for uri_entry in photo.uris:
+            if uri_entry.uri:
+                return uri_entry.uri
     return f"{_API_BASE}/photos/{photo.id}"

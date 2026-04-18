@@ -523,6 +523,7 @@ async def _get_quickbooks_service_for_user(user_id: str) -> QuickBooksService | 
             access_token=token.access_token,
             refresh_token=token.refresh_token,
             environment=settings.quickbooks_environment,
+            on_token_refresh=oauth_service.build_on_refresh_callback(user_id, "quickbooks"),
         )
     return None
 

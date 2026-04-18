@@ -86,6 +86,29 @@ async def test_create_project() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_create_project_with_null_integration_relation_id() -> None:
+    """Regression: CompanyCam API returns integrations with relation_id=null."""
+    service = CompanyCamService(access_token="test-token")
+    created = {
+        "id": "99",
+        "name": "New Project",
+        "integrations": [{"type": "Clawbolt", "relation_id": None}],
+    }
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=_mock_response(created))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.create_project("New Project", "123 Main St")
+
+    assert result.id == "99"
+    assert result.integrations is not None
+    assert result.integrations[0].relation_id is None
+
+
+@pytest.mark.asyncio()
 async def test_upload_photo() -> None:
     service = CompanyCamService(access_token="test-token")
     photo = {
@@ -153,6 +176,28 @@ def test_get_photo_url_no_uris() -> None:
     from backend.app.services.companycam_models import Photo
 
     photo = Photo(id="42", uris=[])
+    assert "42" in get_photo_url(photo)
+
+
+def test_get_photo_url_null_uri_skipped() -> None:
+    """Regression: ImageURI with null uri should be skipped."""
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    photo = Photo(
+        id="1",
+        uris=[
+            ImageURI(type="original", uri=None),
+            ImageURI(type="web", uri="https://cc.com/web.jpg"),
+        ],
+    )
+    assert get_photo_url(photo) == "https://cc.com/web.jpg"
+
+
+def test_get_photo_url_all_null_uris_fallback() -> None:
+    """Regression: if all ImageURI.uri are null, fall back to API URL."""
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    photo = Photo(id="42", uris=[ImageURI(type="original")])
     assert "42" in get_photo_url(photo)
 
 

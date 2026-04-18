@@ -16,11 +16,12 @@ from __future__ import annotations
 import asyncio
 import datetime
 import logging
+import random
 import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
-from any_llm import amessages
+from any_llm import RateLimitError, amessages
 from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
 from sqlalchemy.orm import Session
@@ -435,27 +436,45 @@ async def evaluate_heartbeat_need(
     provider = settings.heartbeat_provider or settings.llm_provider
 
     time_context = build_time_user_context(user)
-    response = cast(
-        MessageResponse,
-        await amessages(
-            model=model,
-            provider=provider,
-            api_base=settings.llm_api_base,
-            system=prepare_system_with_caching(prompt),
-            messages=[
-                {
-                    "role": "user",
-                    "content": (
-                        f"{time_context}\n\n"
-                        "Review the context above and decide whether any tasks need attention."
-                    ),
-                },
-            ],
-            tools=[HEARTBEAT_DECISION_TOOL],
-            max_tokens=settings.llm_max_tokens_heartbeat,
-            thinking=reasoning_effort_to_thinking(settings.reasoning_effort),
-        ),
-    )
+    max_retries = settings.llm_max_retries
+    response: MessageResponse | None = None
+    for attempt in range(max_retries):
+        try:
+            response = cast(
+                MessageResponse,
+                await amessages(
+                    model=model,
+                    provider=provider,
+                    api_base=settings.llm_api_base,
+                    system=prepare_system_with_caching(prompt),
+                    messages=[
+                        {
+                            "role": "user",
+                            "content": (
+                                f"{time_context}\n\n"
+                                "Review the context above and decide whether any tasks need attention."
+                            ),
+                        },
+                    ],
+                    tools=[HEARTBEAT_DECISION_TOOL],
+                    max_tokens=settings.llm_max_tokens_heartbeat,
+                    thinking=reasoning_effort_to_thinking(settings.reasoning_effort),
+                ),
+            )
+            break
+        except RateLimitError:
+            if attempt == max_retries - 1:
+                raise
+            delay = (2**attempt) + random.uniform(0, 1)
+            logger.warning(
+                "Heartbeat rate limited, retrying in %.1fs (attempt %d/%d)",
+                delay,
+                attempt + 1,
+                max_retries,
+            )
+            await asyncio.sleep(delay)
+    if response is None:
+        raise RuntimeError("Heartbeat LLM retry loop exited without response")
 
     log_llm_usage(user.id, model, response, "heartbeat_decision")
     logger.debug(

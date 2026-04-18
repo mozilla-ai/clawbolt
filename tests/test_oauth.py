@@ -169,6 +169,58 @@ def test_save_and_load_token(oauth_svc: OAuthService, test_user: User) -> None:
     assert loaded.realm_id == "realm-1"
 
 
+def test_build_on_refresh_callback_persists_rotated_refresh_token(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """The callback wired into provider services must persist refreshed tokens.
+
+    Regression: QuickBooks/Google Calendar rotate refresh_token on some
+    refreshes. If the callback does not save the new value back to the DB,
+    subsequent tool calls load the stale refresh_token and re-auth fails.
+    """
+    original = OAuthTokenData(
+        access_token="at-old",
+        refresh_token="rt-old",
+        realm_id="realm-1",
+        scopes=["scope.a", "scope.b"],
+        expires_at=time.time() + 3600,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", original)
+
+    callback = oauth_svc.build_on_refresh_callback(test_user.id, "quickbooks")
+    new_expires = time.time() + 7200
+    callback("at-new", "rt-new", new_expires)
+
+    reloaded = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert reloaded is not None
+    assert reloaded.access_token == "at-new"
+    assert reloaded.refresh_token == "rt-new"
+    assert reloaded.realm_id == "realm-1"
+    assert reloaded.scopes == ["scope.a", "scope.b"]
+    assert abs(reloaded.expires_at - new_expires) < 1
+
+
+def test_build_on_refresh_callback_preserves_refresh_token_when_empty(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """When a provider refresh returns no new refresh_token, the callback
+    must keep the existing one rather than wiping it."""
+    original = OAuthTokenData(
+        access_token="at-old",
+        refresh_token="rt-original",
+        expires_at=time.time() + 3600,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", original)
+
+    callback = oauth_svc.build_on_refresh_callback(test_user.id, "quickbooks")
+    callback("at-new", "", time.time() + 7200)
+
+    reloaded = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert reloaded is not None
+    assert reloaded.access_token == "at-new"
+    assert reloaded.refresh_token == "rt-original"
+
+
 def test_save_token_upsert(oauth_svc: OAuthService, test_user: User) -> None:
     """Saving a token twice should update the existing row, not create a duplicate."""
     token1 = OAuthTokenData(access_token="first")

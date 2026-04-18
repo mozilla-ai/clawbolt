@@ -12,7 +12,7 @@ import logging
 import uuid
 from typing import Any
 
-from sqlalchemy import func
+from sqlalchemy import func, text
 from sqlalchemy.exc import IntegrityError
 
 from backend.app.agent.dto import SessionState, StoredMessage
@@ -140,9 +140,20 @@ class SessionStore:
         Sessions are persistent: the most recent active session is always
         reused regardless of age. Pass ``force_new=True`` to explicitly
         start a new conversation.
+
+        Concurrent messages on different channels for the same user would
+        otherwise race and produce two active sessions (no uniqueness
+        constraint exists on ``(user_id, is_active=True)``). We serialize
+        with a transaction-scoped Postgres advisory lock keyed on user_id
+        so whichever caller wins the lock either reuses or creates, and
+        the runner-up sees the winner's row.
         """
         db = SessionLocal()
         try:
+            db.execute(
+                text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+                {"k": f"session_create:{self.user_id}"},
+            )
             if not force_new:
                 cs = (
                     db.query(ChatSession)

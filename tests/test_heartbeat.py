@@ -737,6 +737,48 @@ class TestEvaluateHeartbeatNeed:
         assert "tools" in kwargs
         assert kwargs["tools"] == [HEARTBEAT_DECISION_TOOL]
 
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.asyncio.sleep", new_callable=AsyncMock)
+    @patch("backend.app.agent.heartbeat.log_llm_usage")
+    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.amessages")
+    async def test_rate_limit_error_is_retried(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        mock_build_prompt: AsyncMock,
+        mock_log_usage: MagicMock,
+        mock_sleep: AsyncMock,
+        user: User,
+    ) -> None:
+        """A transient RateLimitError on the Phase 1 LLM call should retry
+        rather than crash the heartbeat tick."""
+        from any_llm import RateLimitError
+
+        self._setup_mocks(
+            mock_llm,
+            mock_settings,
+            mock_get_session_store,
+            mock_heartbeat_store_cls,
+            mock_build_prompt,
+        )
+        mock_settings.llm_max_retries = 3
+        success_response = _make_decision_tool_call(
+            action="skip", tasks="", reasoning="ok after retry"
+        )
+        mock_llm.side_effect = [RateLimitError("rate limited"), success_response]
+
+        decision = await evaluate_heartbeat_need(user)
+
+        assert decision.action == "skip"
+        assert mock_llm.call_count == 2
+        assert mock_sleep.await_count == 1
+
 
 # ---------------------------------------------------------------------------
 # run_heartbeat_for_user
