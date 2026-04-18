@@ -20,6 +20,7 @@ import json
 import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from enum import StrEnum
 from fnmatch import fnmatch
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -31,7 +32,7 @@ from sqlalchemy import text
 
 from backend.app.config import settings
 from backend.app.database import db_session
-from backend.app.models import UserPermissionSet
+from backend.app.models import PendingApprovalRow, UserPermissionSet
 
 if TYPE_CHECKING:
     from backend.app.bus import OutboundMessage
@@ -394,12 +395,20 @@ class ApprovalGate:
         prompt is built from *tool_name* and *description*.
 
         Returns ``DENIED`` on timeout.
+
+        The pending request is also persisted to ``pending_approvals`` so
+        that if this worker crashes before the user replies, a fresh
+        worker can detect the orphan on startup, notify the user, and
+        clean up. The in-memory ``_pending`` dict is still the source of
+        truth for wake-up signalling within a live worker; the DB row is
+        only consulted when a worker boots.
         """
         if timeout is None:
             timeout = float(settings.approval_timeout_seconds)
 
         pending = PendingApproval(tool_name=tool_name, description=description)
         self._pending[user_id] = pending
+        _persist_pending_row(user_id, tool_name, description, channel, chat_id)
 
         if prompt is None:
             prompt = format_approval_message(tool_name, description)
@@ -410,6 +419,7 @@ class ApprovalGate:
         except Exception:
             logger.exception("Failed to send approval prompt to user %s", user_id)
             self._pending.pop(user_id, None)
+            _delete_pending_row(user_id)
             return ApprovalDecision.DENIED
 
         try:
@@ -424,10 +434,22 @@ class ApprovalGate:
                 tool_name,
             )
             self._pending.pop(user_id, None)
+            _delete_pending_row(user_id)
             return ApprovalDecision.DENIED
 
-        decision = pending.decision or ApprovalDecision.DENIED
+        if pending.decision is None:
+            logger.error(
+                "Approval event fired without a decision for user %s, tool %s. "
+                "Defaulting to DENIED. This indicates resolve() did not set "
+                "pending.decision before event.set().",
+                user_id,
+                tool_name,
+            )
+            decision = ApprovalDecision.DENIED
+        else:
+            decision = pending.decision
         self._pending.pop(user_id, None)
+        _delete_pending_row(user_id)
         return decision
 
     def resolve(self, user_id: str, decision: ApprovalDecision) -> bool:
@@ -441,6 +463,119 @@ class ApprovalGate:
         pending.decision = decision
         pending.event.set()
         return True
+
+
+# ---------------------------------------------------------------------------
+# Persistence for orphan detection
+# ---------------------------------------------------------------------------
+
+
+def _persist_pending_row(
+    user_id: str,
+    tool_name: str,
+    description: str,
+    channel: str,
+    chat_id: str,
+) -> None:
+    """Upsert a pending_approvals row before the prompt is sent.
+
+    Failures are logged but never raised: persistence is a recovery aid,
+    not a correctness prerequisite. The in-memory gate still drives
+    the live wake-up flow.
+    """
+    try:
+        with db_session() as db:
+            existing = db.get(PendingApprovalRow, user_id)
+            if existing is None:
+                db.add(
+                    PendingApprovalRow(
+                        user_id=user_id,
+                        tool_name=tool_name,
+                        description=description,
+                        channel=channel,
+                        chat_id=chat_id,
+                    )
+                )
+            else:
+                existing.tool_name = tool_name
+                existing.description = description
+                existing.channel = channel
+                existing.chat_id = chat_id
+                existing.created_at = datetime.now(UTC)
+            db.commit()
+    except Exception:
+        logger.exception(
+            "Failed to persist pending approval row for user %s tool %s",
+            user_id,
+            tool_name,
+        )
+
+
+def _delete_pending_row(user_id: str) -> None:
+    """Delete a pending_approvals row. Logs and swallows errors."""
+    try:
+        with db_session() as db:
+            row = db.get(PendingApprovalRow, user_id)
+            if row is not None:
+                db.delete(row)
+                db.commit()
+    except Exception:
+        logger.exception("Failed to delete pending approval row for user %s", user_id)
+
+
+async def cleanup_orphaned_approvals(
+    publish_outbound: Callable[[OutboundMessage], Awaitable[None]],
+) -> int:
+    """Send a recovery message for every orphaned pending_approvals row.
+
+    Called once on worker startup. Each row represents an approval request
+    that was waiting when the previous worker died. The originating agent
+    coroutine is gone and can't be resumed, so the best we can do is tell
+    the user their prior request was interrupted and clear the row. Returns
+    the number of orphans cleaned up.
+    """
+    from backend.app.bus import OutboundMessage as OMsg
+
+    try:
+        with db_session() as db:
+            rows = db.query(PendingApprovalRow).all()
+            orphans = [
+                (r.user_id, r.tool_name, r.channel, r.chat_id)
+                for r in rows
+                if r.channel and r.chat_id
+            ]
+    except Exception:
+        logger.exception("Failed to load orphaned approvals on startup")
+        return 0
+
+    recovered = 0
+    for user_id, tool_name, channel, chat_id in orphans:
+        try:
+            await publish_outbound(
+                OMsg(
+                    channel=channel,
+                    chat_id=chat_id,
+                    content=(
+                        "My previous approval request was interrupted and I didn't "
+                        "get your reply. Please resend your last message if you still "
+                        "want me to act on it."
+                    ),
+                )
+            )
+            _delete_pending_row(user_id)
+            recovered += 1
+            logger.info(
+                "Recovered orphaned approval for user %s (tool=%s)",
+                user_id,
+                tool_name,
+            )
+        except Exception:
+            logger.exception(
+                "Failed to recover orphaned approval for user %s tool %s",
+                user_id,
+                tool_name,
+            )
+    return recovered
 
 
 # ---------------------------------------------------------------------------

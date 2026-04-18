@@ -301,6 +301,81 @@ class TestApprovalGate:
         assert gate.resolve("999", ApprovalDecision.APPROVED) is False
 
     @pytest.mark.asyncio()
+    async def test_request_approval_persists_row_and_cleans_up_on_resolve(
+        self, test_user: User
+    ) -> None:
+        """An in-flight approval must leave a pending_approvals row so that a
+        fresh worker can notify the user after a crash; resolving cleanly
+        must delete the row so it does not look orphaned on next restart.
+        """
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        gate = ApprovalGate()
+        mock_publish = AsyncMock()
+
+        async def _observe_and_resolve() -> None:
+            await asyncio.sleep(0.01)
+            with db_session() as db:
+                row = db.get(PendingApprovalRow, test_user.id)
+                assert row is not None, "row should exist while approval is in flight"
+                assert row.tool_name == "write_file"
+                assert row.channel == "telegram"
+            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+
+        task = asyncio.create_task(_observe_and_resolve())
+        decision = await gate.request_approval(
+            user_id=test_user.id,
+            tool_name="write_file",
+            description="write a file",
+            publish_outbound=mock_publish,
+            channel="telegram",
+            chat_id="chat_1",
+            timeout=5.0,
+        )
+        await task
+        assert decision == ApprovalDecision.APPROVED
+
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is None, (
+                "row must be deleted once the approval resolves"
+            )
+
+    @pytest.mark.asyncio()
+    async def test_cleanup_orphaned_approvals_notifies_and_clears(self, test_user: User) -> None:
+        """On worker startup, every pending_approvals row (orphaned from a
+        prior crash) gets a recovery message and is deleted."""
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="write a file",
+                    channel="telegram",
+                    chat_id="chat_99",
+                )
+            )
+            db.commit()
+
+        published: list[OutboundMessage] = []
+
+        async def _publish(msg: OutboundMessage) -> None:
+            published.append(msg)
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 1
+        assert len(published) == 1
+        assert published[0].chat_id == "chat_99"
+        assert "interrupted" in published[0].content.lower()
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is None
+
+    @pytest.mark.asyncio()
     async def test_has_pending(self) -> None:
         gate = ApprovalGate()
         assert not gate.has_pending("1")

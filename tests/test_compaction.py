@@ -875,3 +875,103 @@ async def test_get_or_create_conversation_no_consolidation_when_disabled() -> No
 
     assert is_new
     mock_consolidate.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_run_compaction_skips_when_watermark_already_advanced() -> None:
+    """If last_compacted_seq is already >= max_message_seq (e.g. another worker
+    already compacted these messages, or a previous run crashed between
+    compact_session and update_compaction_seq), we must not re-run compaction.
+
+    Without this guard, the LLM rewrites MEMORY.md again and, worse, appends
+    a duplicate entry to HISTORY.md every time.
+    """
+    from backend.app.agent.context import _run_compaction_in_background
+
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            user_id="compaction-watermark-race",
+            phone="+15550007777",
+            channel_identifier="777",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
+
+    session_store = get_session_store(user.id)
+    session, _ = await session_store.get_or_create_session()
+    await session_store.add_message(session, MessageDirection.INBOUND, "msg 1")
+    await session_store.add_message(session, MessageDirection.OUTBOUND, "msg 2")
+    await session_store.update_compaction_seq(session, 5)
+
+    stale_session_view = session_store.load_session(session.session_id)
+    assert stale_session_view is not None
+    stale_session_view.last_compacted_seq = 0
+
+    messages: list[AgentMessage] = [UserMessage(content="msg 1"), AssistantMessage(content="msg 2")]
+
+    with patch("backend.app.agent.context.compact_session", new_callable=AsyncMock) as mock_compact:
+        await _run_compaction_in_background(
+            session_store, stale_session_view, user.id, messages, max_message_seq=3
+        )
+
+    mock_compact.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
+    """Two concurrent get_or_create_session calls for the same user must not
+    create two active sessions.
+
+    Regression: there is no uniqueness constraint on (user_id, is_active=True),
+    so without serialization both callers see 'no session' and both insert.
+    The advisory lock in get_or_create_session should serialize them so the
+    second caller sees the first's committed row.
+    """
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            user_id="concurrent-session-race",
+            phone="+15550008888",
+            channel_identifier="888",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
+
+    session_store = get_session_store(user.id)
+
+    results = await asyncio.gather(
+        session_store.get_or_create_session(),
+        session_store.get_or_create_session(),
+    )
+    session_a, is_new_a = results[0]
+    session_b, is_new_b = results[1]
+
+    assert session_a.session_id == session_b.session_id, (
+        "concurrent callers should converge on the same session"
+    )
+    assert is_new_a != is_new_b, (
+        "exactly one caller should have created the session; the other reused it"
+    )
+
+    db = _db_module.SessionLocal()
+    try:
+        from backend.app.models import ChatSession as CS
+
+        active_count = db.query(CS).filter_by(user_id=user.id, is_active=True).count()
+    finally:
+        db.close()
+
+    assert active_count == 1, f"expected 1 active session, got {active_count}"
