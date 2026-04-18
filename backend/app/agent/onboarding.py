@@ -70,15 +70,60 @@ def is_onboarding_complete_heuristic(user: User) -> bool:
 def is_onboarding_needed(user: User) -> bool:
     """Check if user needs onboarding.
 
-    Returns False once onboarding_complete is set, or if BOOTSTRAP.md
-    no longer exists in the user's directory, or if heuristic evidence
-    shows the user has already completed onboarding.
+    Returns False once onboarding_complete is set, or if heuristic evidence
+    shows the user has already completed onboarding (real name in user_text
+    or a custom soul_text).
+
+    Self-heal: if onboarding_complete is False and the heuristic shows no
+    evidence of a prior onboarding, a missing BOOTSTRAP.md is re-written
+    from the default template. This recovers from accidental deletions or
+    a re-signup after an admin purge where the on-disk file was wiped but
+    the user's onboarding flag remained False. Without this, a missing
+    BOOTSTRAP.md would silently skip onboarding forever.
     """
     if user.onboarding_complete:
+        logger.debug(
+            "is_onboarding_needed(user=%s)=False: onboarding_complete flag set",
+            user.id,
+        )
         return False
-    if not _bootstrap_path(user).exists():
+
+    if is_onboarding_complete_heuristic(user):
+        logger.debug(
+            "is_onboarding_needed(user=%s)=False: heuristic detected existing profile "
+            "(name_set=%s custom_soul=%s)",
+            user.id,
+            _has_real_user_profile(user),
+            _has_custom_soul(user),
+        )
         return False
-    return not is_onboarding_complete_heuristic(user)
+
+    bootstrap = _bootstrap_path(user)
+    if not bootstrap.exists():
+        try:
+            bootstrap.parent.mkdir(parents=True, exist_ok=True)
+            bootstrap.write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
+            logger.warning(
+                "is_onboarding_needed(user=%s): BOOTSTRAP.md was missing but user "
+                "has no onboarding evidence; re-created from template. This usually "
+                "means provision_user did not run (OAuth re-login after admin delete?) "
+                "or the file was wiped from disk. Onboarding will proceed.",
+                user.id,
+            )
+        except OSError:
+            logger.exception(
+                "is_onboarding_needed(user=%s): failed to re-create BOOTSTRAP.md; "
+                "skipping onboarding this turn",
+                user.id,
+            )
+            return False
+
+    logger.debug(
+        "is_onboarding_needed(user=%s)=True: onboarding_complete=False, "
+        "no heuristic evidence, BOOTSTRAP.md present",
+        user.id,
+    )
+    return True
 
 
 def _get_tool_capability_descriptions() -> list[str]:
@@ -226,11 +271,19 @@ class OnboardingSubscriber:
             self._user.onboarding_complete = True
             return
 
-        # Pre-populated user: BOOTSTRAP.md doesn't exist but flag was never set
-        if not is_onboarding_needed(self._user):
+        # Pre-populated user: not in onboarding this turn, and heuristic shows
+        # positive evidence of a prior profile (name set or custom soul). This
+        # catches migrated users whose onboarding_complete flag was never
+        # flipped. Requires heuristic evidence. A bare user with no profile
+        # data must go through onboarding via the self-heal in
+        # is_onboarding_needed.
+        if not self._was_onboarding and is_onboarding_complete_heuristic(self._user):
             logger.info(
-                "Onboarding complete for user %s: pre-populated user",
+                "Onboarding complete for user %s: pre-populated profile detected "
+                "(name_set=%s custom_soul=%s)",
                 self._user.id,
+                _has_real_user_profile(self._user),
+                _has_custom_soul(self._user),
             )
             db = SessionLocal()
             try:
