@@ -954,6 +954,7 @@ async def _calendar_factory(ctx: ToolContext) -> list[Tool]:
         client_id=settings.google_calendar_client_id,
         client_secret=settings.google_calendar_client_secret,
         token_expires_at=token.expires_at or 0.0,
+        on_token_refresh=oauth_service.build_on_refresh_callback(ctx.user.id, "google_calendar"),
     )
     enabled_calendars = _get_enabled_calendars(ctx.user.id)
     return create_calendar_tools(

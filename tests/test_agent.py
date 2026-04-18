@@ -58,6 +58,61 @@ class _DescriptionParams(BaseModel):
     description: str
 
 
+def test_tool_schemas_cached_across_rounds_when_tools_unchanged(
+    test_user: User,
+) -> None:
+    """Calling _get_or_build_tool_schemas twice without mutating the tool list
+    must return the identical list instance. Rebuilding fresh each round
+    forces every tool's Pydantic schema to regenerate for no reason and
+    risks busting the Anthropic prompt cache on the tools block.
+    """
+
+    async def noop(**_: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    tools = [
+        Tool(name="t1", description="one", function=noop, params_model=_EmptyParams),
+        Tool(name="t2", description="two", function=noop, params_model=_EmptyParams),
+    ]
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools(tools)
+
+    first = agent._get_or_build_tool_schemas()
+    second = agent._get_or_build_tool_schemas()
+
+    assert first is not None
+    assert first is second, "cached schemas should be reused when tools are unchanged"
+
+
+def test_tool_schemas_rebuilt_after_specialist_activation(
+    test_user: User,
+) -> None:
+    """When a specialist appends a new tool, the cached schema list must be
+    invalidated so the LLM sees the new tool in subsequent rounds."""
+
+    async def noop(**_: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools(
+        [Tool(name="t1", description="one", function=noop, params_model=_EmptyParams)]
+    )
+
+    first = agent._get_or_build_tool_schemas()
+    assert first is not None
+    assert [s["name"] for s in first] == ["t1"]
+
+    # Simulate specialist activation appending a tool.
+    new_tool = Tool(name="t2", description="two", function=noop, params_model=_EmptyParams)
+    agent.tools.append(new_tool)
+    agent._tools_by_name[new_tool.name] = new_tool
+
+    second = agent._get_or_build_tool_schemas()
+    assert second is not None
+    assert second is not first
+    assert [s["name"] for s in second] == ["t1", "t2"]
+
+
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_agent_responds_to_message(mock_amessages: object, test_user: User) -> None:

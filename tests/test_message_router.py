@@ -230,6 +230,49 @@ async def test_media_download_failure_still_processes_text(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
+async def test_partial_media_download_failure_surfaces_note(
+    mock_amessages: object,
+    test_user: User,
+    conversation: SessionState,
+    inbound_message: StoredMessage,
+) -> None:
+    """When some media downloads succeed and some fail, the processed context
+    must include a system note so the agent knows and can tell the user.
+
+    Regression: previously only the all-failed case added a note, and partial
+    failures were silently dropped.
+    """
+    from backend.app.media.download import DownloadedMedia
+
+    first = DownloadedMedia(
+        content=b"image-bytes",
+        mime_type="image/jpeg",
+        original_url="file_id_1",
+        filename="photo1.jpg",
+    )
+
+    async def _download(file_id: str) -> DownloadedMedia:
+        if file_id == "file_id_1":
+            return first
+        raise RuntimeError("transient download failure")
+
+    mock_amessages.return_value = make_text_response("Thanks!")  # type: ignore[union-attr]
+
+    await handle_inbound_message(
+        user=test_user,
+        session=conversation,
+        message=inbound_message,
+        media_urls=[("file_id_1", "image/jpeg"), ("file_id_2", "image/jpeg")],
+        channel="telegram",
+        download_media=_download,
+    )
+
+    assert inbound_message.processed_context
+    assert "couldn't download 1 of the 2 attachments" in inbound_message.processed_context
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
 async def test_processed_context_saved_to_message(
     mock_amessages: object,
     test_user: User,
@@ -396,46 +439,6 @@ async def test_media_download_failure_adds_system_note_to_context(
     )
 
     assert "couldn't download" in inbound_message.processed_context.lower()
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_multiple_media_partial_download_failure_no_download_note(
-    mock_amessages: object,
-    test_user: User,
-    conversation: SessionState,
-    inbound_message: StoredMessage,
-) -> None:
-    """When some media downloads succeed and others fail, no download-failure note is added."""
-    from backend.app.media.download import DownloadedMedia
-
-    mock_download = AsyncMock(
-        side_effect=[
-            DownloadedMedia(
-                content=b"image-bytes",
-                mime_type="image/jpeg",
-                original_url="file_ok",
-                filename="photo.jpg",
-            ),
-            Exception("Download failed for second file"),
-        ]
-    )
-    mock_amessages.return_value = make_text_response("Got one photo!")  # type: ignore[union-attr]
-
-    with patch("backend.app.media.pipeline.analyze_image", new_callable=AsyncMock) as mock_vision:
-        mock_vision.return_value = "A photo of a deck."
-        response = await handle_inbound_message(
-            user=test_user,
-            session=conversation,
-            message=inbound_message,
-            media_urls=[("file_ok", "image/jpeg"), ("file_bad", "image/png")],
-            channel="telegram",
-            download_media=mock_download,
-        )
-
-    assert response.reply_text == "Got one photo!"
-    # downloaded_media is not empty, so the "couldn't download" note is NOT added
-    assert "couldn't download" not in inbound_message.processed_context.lower()
 
 
 @pytest.mark.asyncio()

@@ -13,6 +13,7 @@ import json
 import logging
 import secrets
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -374,6 +375,44 @@ class OAuthService:
         # Expired but has a refresh token: still considered "connected"
         # because get_valid_token() will refresh it on next use.
         return bool(token.refresh_token)
+
+    def build_on_refresh_callback(
+        self,
+        user_id: str,
+        integration: str,
+    ) -> Callable[[str, str, float], None]:
+        """Return a callback that persists tokens refreshed mid-call by a service.
+
+        Provider services (QuickBooks, Google Calendar) refresh on 401 and
+        rotate ``refresh_token`` for some providers. Without persisting, the
+        rotated refresh token is lost and the next tool call loads the stale
+        one from the DB, causing refresh to fail.
+
+        The callback preserves fields the service does not know about
+        (realm_id, scopes, extra) by loading the current row before saving.
+        """
+
+        def _persist(access_token: str, refresh_token: str, expires_at: float) -> None:
+            current = self.load_token(user_id, integration)
+            if current is None:
+                logger.warning(
+                    "on_refresh callback fired for missing token: user=%s integration=%s",
+                    user_id,
+                    integration,
+                )
+                return
+            current.access_token = access_token
+            if refresh_token:
+                current.refresh_token = refresh_token
+            current.expires_at = expires_at
+            self.save_token(user_id, integration, current)
+            logger.info(
+                "Persisted mid-call token refresh: user=%s integration=%s",
+                user_id,
+                integration,
+            )
+
+        return _persist
 
     # -- Token refresh with error classification --------------------------------
 

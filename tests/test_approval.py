@@ -301,6 +301,177 @@ class TestApprovalGate:
         assert gate.resolve("999", ApprovalDecision.APPROVED) is False
 
     @pytest.mark.asyncio()
+    async def test_request_approval_persists_row_and_cleans_up_on_resolve(
+        self, test_user: User
+    ) -> None:
+        """An in-flight approval must leave a pending_approvals row so that a
+        fresh worker can notify the user after a crash; resolving cleanly
+        must delete the row so it does not look orphaned on next restart.
+        """
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        gate = ApprovalGate()
+        mock_publish = AsyncMock()
+
+        async def _observe_and_resolve() -> None:
+            await asyncio.sleep(0.01)
+            with db_session() as db:
+                row = db.get(PendingApprovalRow, test_user.id)
+                assert row is not None, "row should exist while approval is in flight"
+                assert row.tool_name == "write_file"
+                assert row.channel == "telegram"
+            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+
+        task = asyncio.create_task(_observe_and_resolve())
+        decision = await gate.request_approval(
+            user_id=test_user.id,
+            tool_name="write_file",
+            description="write a file",
+            publish_outbound=mock_publish,
+            channel="telegram",
+            chat_id="chat_1",
+            timeout=5.0,
+        )
+        await task
+        assert decision == ApprovalDecision.APPROVED
+
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is None, (
+                "row must be deleted once the approval resolves"
+            )
+
+    @pytest.mark.asyncio()
+    async def test_cleanup_orphaned_approvals_notifies_and_clears(self, test_user: User) -> None:
+        """On worker startup, every pending_approvals row (orphaned from a
+        prior crash) gets a recovery message and is deleted."""
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="write a file",
+                    channel="telegram",
+                    chat_id="chat_99",
+                )
+            )
+            db.commit()
+
+        published: list[OutboundMessage] = []
+
+        async def _publish(msg: OutboundMessage) -> None:
+            published.append(msg)
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 1
+        assert len(published) == 1
+        assert published[0].chat_id == "chat_99"
+        assert "interrupted" in published[0].content.lower()
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is None
+
+    @pytest.mark.asyncio()
+    async def test_cleanup_drops_malformed_rows_without_publishing(self, test_user: User) -> None:
+        """Rows missing channel or chat_id cannot be delivered anywhere,
+        so they should be deleted with a warning rather than left lingering."""
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="orphan with no channel",
+                    channel="",
+                    chat_id="",
+                )
+            )
+            db.commit()
+
+        published: list[OutboundMessage] = []
+
+        async def _publish(msg: OutboundMessage) -> None:
+            published.append(msg)
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 0
+        assert published == [], "no message should be sent for a malformed row"
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is None
+
+    @pytest.mark.asyncio()
+    async def test_cleanup_drops_expired_rows_when_publish_fails(self, test_user: User) -> None:
+        """If publish keeps failing on an orphan older than the TTL, the row
+        must still be deleted so a permanently broken channel cannot keep
+        the retry loop alive forever."""
+        from datetime import UTC, datetime, timedelta
+
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="stale orphan",
+                    channel="telegram",
+                    chat_id="chat_expired",
+                    created_at=datetime.now(UTC) - timedelta(days=1),
+                )
+            )
+            db.commit()
+
+        async def _publish(_msg: OutboundMessage) -> None:
+            raise RuntimeError("simulated channel failure")
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 0
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is None
+
+    @pytest.mark.asyncio()
+    async def test_cleanup_keeps_fresh_rows_when_publish_fails(self, test_user: User) -> None:
+        """A fresh orphan whose publish fails should stay in the table so a
+        later restart can retry. Only expired rows are force-deleted."""
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="fresh orphan",
+                    channel="telegram",
+                    chat_id="chat_fresh",
+                )
+            )
+            db.commit()
+
+        async def _publish(_msg: OutboundMessage) -> None:
+            raise RuntimeError("transient channel failure")
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 0
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is not None, (
+                "fresh rows must survive a failed publish"
+            )
+
+    @pytest.mark.asyncio()
     async def test_has_pending(self) -> None:
         gate = ApprovalGate()
         assert not gate.has_pending("1")

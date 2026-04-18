@@ -11,6 +11,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 
+from backend.app.agent.approval import cleanup_orphaned_approvals
 from backend.app.agent.heartbeat import heartbeat_scheduler
 from backend.app.channels import get_manager, register_channel
 from backend.app.channels.bluebubbles import BlueBubblesChannel
@@ -227,6 +228,17 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # Start all registered channels concurrently.
     manager = get_manager()
     channel_tasks = await manager.start_all()
+
+    # Notify users whose approval requests were in flight when the previous
+    # worker died. Runs after channels are up so outbound delivery works.
+    try:
+        from backend.app.bus import message_bus
+
+        recovered = await cleanup_orphaned_approvals(message_bus.publish_outbound)
+        if recovered:
+            logger.info("Recovered %d orphaned approval request(s) on startup", recovered)
+    except Exception:
+        logger.exception("Orphaned approval cleanup failed on startup")
 
     yield
 

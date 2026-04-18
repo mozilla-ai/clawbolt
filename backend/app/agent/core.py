@@ -138,6 +138,11 @@ class ClawboltAgent:
         # Anthropic tools prompt cache). The list is append-only by design;
         # a non-monotonic change is logged as a warning.
         self._prev_tool_names: list[str] = []
+        # Cached Anthropic tool schemas keyed by the tool-name sequence that
+        # produced them. Rebuilt only when the tool list grows (specialist
+        # activation); otherwise the same list instance is reused across
+        # rounds to avoid recomputing identical JSON schemas every turn.
+        self._cached_tool_schemas: list[dict[str, Any]] | None = None
         self._reactive_trim_dropped: list[AgentMessage] = []
         # Remembers ASK decisions within a single agent run so the user is not
         # re-prompted for the same (tool, resource) if the LLM retries or
@@ -243,6 +248,33 @@ class ClawboltAgent:
             self.user.id if self.user else "N/A",
             ", ".join(sorted(self._tools_by_name.keys())),
         )
+
+    def _get_or_build_tool_schemas(self) -> list[dict[str, Any]] | None:
+        """Return Anthropic tool schemas, rebuilding only when tools changed.
+
+        The cached list is invalidated whenever ``self.tools`` grows or the
+        name sequence diverges from the cached prefix. Since specialist
+        activation only appends, in the common case this cache hits for
+        every round after the first.
+
+        Callers (``_call_llm_with_retry`` via ``apply_tool_caching``)
+        may mutate the last entry to stamp a ``cache_control`` marker.
+        That mutation is idempotent when re-applied to the already-stamped
+        dict, so sharing the same list across rounds is safe and we
+        intentionally do not copy on return.
+        """
+        if not self.tools:
+            self._cached_tool_schemas = None
+            return None
+        cached = self._cached_tool_schemas
+        current_names = [t.name for t in self.tools]
+        if cached is not None and len(cached) == len(current_names):
+            cached_names = [entry["name"] for entry in cached]
+            if cached_names == current_names:
+                return cached
+        schemas = [tool_to_function_schema(t) for t in self.tools]
+        self._cached_tool_schemas = schemas
+        return schemas
 
     def _log_tool_prefix_stability(self, round_number: int) -> None:
         """Warn if the current tool-name sequence fails to preserve the prior
@@ -879,9 +911,11 @@ class ClawboltAgent:
                 MAX_TOOL_ROUNDS,
                 len(messages),
             )
-            # Rebuild tool schemas each round so dynamically activated
-            # specialist tools are visible to the LLM.
-            tool_schemas = [tool_to_function_schema(t) for t in self.tools] if self.tools else None
+            # Rebuild tool schemas only when the tool list changed
+            # (specialist activation appends new tools). Otherwise reuse the
+            # cached list so identical rounds don't re-serialize every
+            # Pydantic params model.
+            tool_schemas = self._get_or_build_tool_schemas()
             self._log_tool_prefix_stability(_round)
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(

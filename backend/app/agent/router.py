@@ -63,6 +63,10 @@ AUTH_ERROR_FALLBACK = (
 MEDIA_DOWNLOAD_ERROR = (
     "I couldn't download your attachment(s). The rest of your message came through fine."
 )
+MEDIA_DOWNLOAD_PARTIAL_ERROR = (
+    "I couldn't download {failed} of the {total} attachments you sent. "
+    "I'll work with the ones that came through."
+)
 VISION_UNAVAILABLE_NOTE = (
     "Vision analysis was unavailable for the attached media. "
     "The user may have sent a photo or document that could "
@@ -131,9 +135,9 @@ def init_storage(user: User) -> StorageBackend | None:
         return None
     try:
         return get_storage_service(user=user)
-    except Exception:
+    except (ValueError, OSError, RuntimeError):
         logger.exception("Storage backend %r failed to initialize", settings.storage_provider)
-    return None
+        return None
 
 
 async def prepare_media(
@@ -184,6 +188,13 @@ async def build_message_context(
     media_notes: list[str] = []
     if media_urls and not downloaded_media:
         media_notes.append(MEDIA_DOWNLOAD_ERROR)
+    elif media_urls and len(downloaded_media) < len(media_urls):
+        media_notes.append(
+            MEDIA_DOWNLOAD_PARTIAL_ERROR.format(
+                failed=len(media_urls) - len(downloaded_media),
+                total=len(media_urls),
+            )
+        )
 
     try:
         pipeline_result = await process_message_media(
