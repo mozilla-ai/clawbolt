@@ -202,7 +202,13 @@ def test_block_caps_long_receipt_lists_with_more_suffix() -> None:
 
 
 def test_same_url_receipts_are_grouped() -> None:
-    """Multiple actions on the same entity collapse into one block."""
+    """Multiple actions on the same entity collapse into one block.
+
+    The block subject is the most informative target: a real name wins
+    over the generic 'project' / 'photo' / 'checklist' fallbacks used
+    by archive/delete/notepad tools. Users see 'Smith Residence', not
+    'project', even when the last action was archive.
+    """
     block = format_receipts_block(
         [
             _tc_with_receipt(
@@ -225,21 +231,40 @@ def test_same_url_receipts_are_grouped() -> None:
             ),
         ]
     )
-    # Subject is the final entry's target, which carried the real name.
-    # Wait — last entry's target is "project", a fallback. The current
-    # design uses the final entry's target verbatim. The test should
-    # reflect that actual behavior (see the CompanyCam tool rewrites:
-    # archive/notepad use "project" as a generic fallback). Users still
-    # get the URL to click, which is the real goal.
     lines = block.split("\n")
     # Three lines: subject, verb list, url.
     assert len(lines) == 3
+    # Subject is the real name from the create receipt.
+    assert lines[0] == "- Smith Residence"
     assert lines[2] == "  https://app.companycam.com/projects/94772883"
     # Verb list contains all three verbs joined with ' · '.
     assert "created" in lines[1]
     assert "updated notepad" in lines[1]
     assert "archived" in lines[1]
     assert lines[1].count(" · ") == 2
+
+
+def test_grouped_subject_falls_back_to_last_when_all_generic() -> None:
+    """If every entry has a generic fallback target, keep the last one
+    so behaviour is stable (no picking semantics to debate)."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_update_notepad",
+                action="Updated notepad on CompanyCam project",
+                target="project",
+                url="https://app.companycam.com/projects/1",
+            ),
+            _tc_with_receipt(
+                "companycam_archive_project",
+                action="Archived CompanyCam project",
+                target="project",
+                url="https://app.companycam.com/projects/1",
+            ),
+        ]
+    )
+    lines = block.split("\n")
+    assert lines[0] == "- project"
 
 
 def test_grouped_block_preserves_distinct_targets() -> None:

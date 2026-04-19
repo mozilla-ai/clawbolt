@@ -79,6 +79,30 @@ _VERB_SUFFIXES: tuple[str, ...] = (
     " companycam",
 )
 
+# Generic fallback words a tool may use for ``target`` when it doesn't
+# have a human name for the entity (archive_project, delete_photo, etc.).
+# When grouping, prefer any real name over these.
+_GENERIC_TARGETS: frozenset[str] = frozenset({"project", "photo", "checklist", "comment"})
+
+
+def _pick_group_subject(entries: list[tuple[str, str]]) -> str:
+    """Pick the most informative target across a bucket of receipts.
+
+    Real names (e.g. "Smith Residence", "kitchen demo") win over the
+    generic fallback words used by archive/delete/notepad tools. When
+    every entry is generic, keep the last entry's target so behaviour
+    is stable.
+
+    This is what lets `create Smith Residence + update_notepad + archive`
+    render with "Smith Residence" as the block subject instead of the
+    generic "project" from the archive receipt.
+    """
+    for _action, target in entries:
+        cleaned = _scrub(target)
+        if cleaned and cleaned not in _GENERIC_TARGETS:
+            return target
+    return entries[-1][1]
+
 
 def _verb_phrase(action: str) -> str:
     """Reduce an action string to the bare verb for a grouped receipt."""
@@ -98,19 +122,20 @@ def _render_group(
     """Render a set of same-URL receipts as one three-line block.
 
     ``entries`` is a list of (action, target) pairs, ordered by their
-    original appearance. The final target wins (most informative: it's
-    the entity's state after the last action). Each entry contributes a
-    verb phrase to the joined second line, with a parenthesised target
-    when the per-entry target differs from the final target.
+    original appearance. ``target`` is the chosen block subject (see
+    ``_pick_group_subject``). Each entry contributes a verb phrase to
+    the joined second line, with a parenthesised target when the
+    per-entry target differs from the subject.
     """
+    clean_subject = _scrub(target)
     verbs: list[str] = []
     for action, entry_target in entries:
         verb = _verb_phrase(action)
         clean_entry_target = _scrub(entry_target)
         if (
             clean_entry_target
-            and clean_entry_target != target
-            and clean_entry_target not in ("photo", "project")
+            and clean_entry_target != clean_subject
+            and clean_entry_target not in _GENERIC_TARGETS
         ):
             verb = f"{verb} ({clean_entry_target})"
         if verb:
@@ -178,8 +203,7 @@ def _collect_receipts(tool_calls: list[StoredToolInteraction]) -> list[str]:
             action, target = entries[0]
             lines.append(render_receipt_line(action, target, url))
         else:
-            final_target = entries[-1][1]
-            lines.append(_render_group(entries, final_target, url))
+            lines.append(_render_group(entries, _pick_group_subject(entries), url))
 
     return lines
 
