@@ -23,6 +23,13 @@ from backend.app.agent.tools.companycam_params import (
     CompanyCamTagPhotoParams,
     CompanyCamUploadPhotoParams,
 )
+from backend.app.agent.tools.companycam_receipts import (
+    comment_target,
+    photo_target,
+    photo_url,
+    project_url,
+    tags_target,
+)
 from backend.app.agent.tools.names import ToolName
 from backend.app.services.companycam import CompanyCamService, get_photo_url
 
@@ -176,9 +183,9 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             return ToolResult(
                 content=f"CompanyCam detected this as a duplicate photo (ID: {photo.id}).",
                 receipt=ToolReceipt(
-                    action="Photo already in CompanyCam project",
-                    target=project_id,
-                    url=url or None,
+                    action="Photo already in CompanyCam",
+                    target=photo_target(photo),
+                    url=url or photo_url(photo.id),
                 ),
             )
 
@@ -188,9 +195,9 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         return ToolResult(
             content=f"Photo uploaded to CompanyCam project {project_id}: {url}{status_note}",
             receipt=ToolReceipt(
-                action="Uploaded photo to CompanyCam project",
-                target=project_id,
-                url=url or None,
+                action="Uploaded photo to CompanyCam",
+                target=photo_target(photo),
+                url=url or photo_url(photo.id),
             ),
         )
 
@@ -218,11 +225,13 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
+        parent_url = project_url(target_id) if target_type == "project" else photo_url(target_id)
         return ToolResult(
             content=f"Comment added to {target_type} {target_id} (ID: {comment.id}).",
             receipt=ToolReceipt(
                 action=f"Commented on CompanyCam {target_type}",
-                target=target_id,
+                target=comment_target(content),
+                url=parent_url,
             ),
         )
 
@@ -292,7 +301,8 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             content=f"Tagged photo {photo_id} with: {', '.join(tag_names)}",
             receipt=ToolReceipt(
                 action="Tagged CompanyCam photo",
-                target=f"{photo_id} ({', '.join(tag_names)})",
+                target=tags_target(tag_names),
+                url=photo_url(photo_id),
             ),
         )
 
@@ -311,7 +321,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             content=f"Photo {photo_id} permanently deleted.",
             receipt=ToolReceipt(
                 action="Deleted CompanyCam photo",
-                target=photo_id,
+                target=photo_target(None),
             ),
         )
 
