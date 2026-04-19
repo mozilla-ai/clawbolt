@@ -8,6 +8,8 @@ that could forge a fake receipt line.
 
 from __future__ import annotations
 
+from typing import Any
+
 from backend.app.agent.tools.companycam_receipts import (
     _sanitize,
     comment_target,
@@ -153,6 +155,20 @@ def test_tags_target_empty_falls_back_to_word() -> None:
     assert tags_target([""]) == "photo"
 
 
+def test_tags_target_dedupes_preserving_order() -> None:
+    """Duplicate tags collapse to one entry, first-seen wins."""
+    assert tags_target(["kitchen", "demo", "kitchen"]) == "kitchen, demo"
+    # Dedup happens after sanitization and length capping.
+    assert tags_target(["kitchen", "Kitchen"]) == "kitchen, Kitchen"  # case-sensitive dedup
+
+
+def test_tags_target_dedupes_then_caps_at_three() -> None:
+    """Dedup runs before the 3-tag cap so 'kitchen, kitchen, a, b, c, d'
+    collapses to 'kitchen, a, b +2 more' rather than losing real tags."""
+    out = tags_target(["kitchen", "kitchen", "a", "b", "c", "d"])
+    assert out == "kitchen, a, b +2 more"
+
+
 # ---------------------------------------------------------------------------
 # _sanitize internals
 # ---------------------------------------------------------------------------
@@ -176,3 +192,24 @@ def test_sanitize_returns_empty_for_blank_input() -> None:
     assert _sanitize("", 10) == ""
     assert _sanitize("   ", 10) == ""
     assert _sanitize("\n\n\n", 10) == ""
+
+
+# ---------------------------------------------------------------------------
+# Settings-driven web base (EU / sandbox readiness)
+# ---------------------------------------------------------------------------
+
+
+def test_project_url_honors_settings_web_base(monkeypatch: Any) -> None:
+    """The web base is pulled from settings so future EU / sandbox
+    deployments can override without code changes."""
+    from backend.app.config import settings
+
+    monkeypatch.setattr(settings, "companycam_web_base", "https://eu.app.companycam.com")
+    assert project_url("94772883") == "https://eu.app.companycam.com/projects/94772883"
+
+
+def test_project_url_strips_trailing_slash_on_web_base(monkeypatch: Any) -> None:
+    from backend.app.config import settings
+
+    monkeypatch.setattr(settings, "companycam_web_base", "https://app.companycam.com/")
+    assert project_url("94772883") == "https://app.companycam.com/projects/94772883"

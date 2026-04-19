@@ -13,10 +13,8 @@ from __future__ import annotations
 
 import re
 
+from backend.app.config import settings
 from backend.app.services.companycam_models import Photo, Project
-
-_WEB_BASE = "https://app.companycam.com"
-# TODO: pull from settings if CompanyCam ever ships EU or sandbox hosts.
 
 # CompanyCam entity ids are numeric strings. Gate URL construction on this
 # so a garbled id from the API or a confused LLM cannot poison the URL
@@ -46,12 +44,17 @@ def _sanitize(text: str, max_chars: int) -> str:
     return flat[: max_chars - 1].rstrip() + "\u2026"
 
 
+def _web_base() -> str:
+    """Return the CompanyCam web base URL from settings, without a trailing slash."""
+    return settings.companycam_web_base.rstrip("/")
+
+
 def project_url(project_id: str) -> str | None:
     """Return the web URL for a CompanyCam project, or None when the id
     is missing or not a numeric string."""
     if not project_id or not _ID_RE.match(project_id):
         return None
-    return f"{_WEB_BASE}/projects/{project_id}"
+    return f"{_web_base()}/projects/{project_id}"
 
 
 def photo_url(photo_id: str) -> str | None:
@@ -59,7 +62,7 @@ def photo_url(photo_id: str) -> str | None:
     missing or not a numeric string."""
     if not photo_id or not _ID_RE.match(photo_id):
         return None
-    return f"{_WEB_BASE}/photos/{photo_id}"
+    return f"{_web_base()}/photos/{photo_id}"
 
 
 def project_target(project: Project | None) -> str:
@@ -88,11 +91,15 @@ def comment_target(content: str) -> str:
 def tags_target(tag_names: list[str]) -> str:
     """Human-readable target for a tag-photo receipt.
 
-    Caps each tag at 25 chars and the list at 3 tags + '+N more' so a
-    tag run cannot blow up the footer.
+    Caps each tag at 25 chars, dedupes while preserving insertion order,
+    and truncates the list at 3 tags + '+N more' so a tag run cannot
+    blow up the footer.
     """
     cleaned = [_sanitize(name, 25) for name in tag_names if name]
     cleaned = [name for name in cleaned if name]
+    # Order-preserving dedupe so ["kitchen", "kitchen", "demo"] collapses
+    # to ["kitchen", "demo"] without re-sorting.
+    cleaned = list(dict.fromkeys(cleaned))
     if not cleaned:
         return "photo"
     if len(cleaned) <= 3:

@@ -378,6 +378,86 @@ def test_receipt_injection_via_newline_is_defused_at_render() -> None:
     assert block.endswith("  https://app.companycam.com/projects/1")
 
 
+def test_verb_phrase_strips_unseen_companycam_suffixes() -> None:
+    """New CompanyCam tools with novel action phrases still get the
+    'companycam [noun]' tail stripped so verb lists stay tight."""
+    from backend.app.agent.tool_summary import _verb_phrase
+
+    # Known phrases from the plan.
+    assert _verb_phrase("Created CompanyCam project") == "created"
+    assert _verb_phrase("Archived CompanyCam project") == "archived"
+    assert _verb_phrase("Commented on CompanyCam project") == "commented"
+    assert _verb_phrase("Uploaded photo to CompanyCam") == "uploaded photo"
+    assert _verb_phrase("Tagged CompanyCam photo") == "tagged"
+    # Novel action phrases (not enumerated at authorship time).
+    assert _verb_phrase("Created CompanyCam tag") == "created"
+    assert _verb_phrase("Created CompanyCam label") == "created"
+    # Non-CompanyCam action passes through.
+    assert _verb_phrase("Scheduled calendar event") == "scheduled calendar event"
+
+
+def test_grouping_works_across_integrations() -> None:
+    """Same-URL grouping is integration-agnostic. QBO and Calendar get
+    the same treatment as CompanyCam for free."""
+    # QuickBooks: create invoice + email invoice to client, both share the
+    # same QBO deep link.
+    qbo_url = "https://app.qbo.intuit.com/app/invoice?txnId=4782"
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "qb_create",
+                action="Created QuickBooks invoice for",
+                target="Johnson, $2,560.00",
+                url=qbo_url,
+            ),
+            _tc_with_receipt(
+                "qb_send",
+                action="Emailed QuickBooks invoice to",
+                target="johnson@example.com",
+                url=qbo_url,
+            ),
+        ]
+    )
+    lines = block.split("\n")
+    # One grouped 3-line block.
+    assert len(lines) == 3
+    assert qbo_url in lines[2]
+    # Subject is the first informative target (the invoice with amount).
+    assert lines[0] == "- Johnson, $2,560.00"
+    # Email recipient survives as a parenthesised qualifier on the email verb.
+    assert "johnson@example.com" in lines[1]
+
+
+def test_calendar_event_delete_is_standalone() -> None:
+    """Calendar delete produces a single-line receipt (no URL) alongside
+    a grouped project block. The two must not interfere."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "calendar_delete_event",
+                action="Canceled calendar event",
+                target="Kitchen walkthrough",
+            ),
+            _tc_with_receipt(
+                "companycam_create_project",
+                action="Created CompanyCam project",
+                target="Smith Residence",
+                url="https://app.companycam.com/projects/94772883",
+            ),
+            _tc_with_receipt(
+                "companycam_archive_project",
+                action="Archived CompanyCam project",
+                target="project",
+                url="https://app.companycam.com/projects/94772883",
+            ),
+        ]
+    )
+    # Calendar line is standalone (no URL). CompanyCam pair is one grouped block.
+    assert "- Canceled calendar event Kitchen walkthrough\n" in block + "\n"
+    assert "- Smith Residence" in block
+    assert "created · archived" in block
+
+
 def test_render_receipt_line_scrubs_control_chars_directly() -> None:
     """Unit-level guarantee for render_receipt_line: newlines in any
     field are scrubbed before they hit output."""

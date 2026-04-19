@@ -62,27 +62,28 @@ def render_receipt_line(action: str, target: str, url: str | None) -> str:
     return head
 
 
-# Verb-reduction patterns used when grouping receipts that share a URL.
-# Drop the known noun suffixes so a list of actions reads as verbs:
+# Verb-reduction used when grouping receipts that share a URL. Strip
+# any "companycam [noun]" tail from the action so it reads as a verb:
 #   "Created CompanyCam project"          → "created"
 #   "Archived CompanyCam project"         → "archived"
 #   "Commented on CompanyCam project"     → "commented"
 #   "Uploaded photo to CompanyCam"        → "uploaded photo to"
-# Longest patterns first so we match the most specific form.
-_VERB_SUFFIXES: tuple[str, ...] = (
-    " on companycam project",
-    " on companycam photo",
-    " on companycam",
-    " companycam project",
-    " companycam photo",
-    " companycam checklist",
-    " companycam",
-)
+#   "Tagged CompanyCam photo"             → "tagged"
+# Case-insensitive. Also handles new CompanyCam action phrases we
+# haven't seen yet (e.g. "Created CompanyCam tag" → "created"),
+# which keeps verb lists short even if a future tool adds a novel
+# action string. A non-CompanyCam action passes through unchanged.
+_CC_TAIL_RE = re.compile(r"\s*(?:on\s+|to\s+)?companycam(?:\s+\w+)?\s*$", re.IGNORECASE)
 
-# Generic fallback words a tool may use for ``target`` when it doesn't
-# have a human name for the entity (archive_project, delete_photo, etc.).
+# Generic single-noun fallback words an integration may set as
+# ``target`` when it does not have a human name for the entity
+# (archive_project, delete_photo, delete_project, etc.). These are
+# universal English nouns, not CompanyCam-specific — any future
+# integration using the same fallback approach benefits for free.
 # When grouping, prefer any real name over these.
-_GENERIC_TARGETS: frozenset[str] = frozenset({"project", "photo", "checklist", "comment"})
+_GENERIC_TARGETS: frozenset[str] = frozenset(
+    {"project", "photo", "checklist", "comment", "event", "invoice", "customer", "estimate"}
+)
 
 
 def _pick_group_subject(entries: list[tuple[str, str]]) -> str:
@@ -106,12 +107,8 @@ def _pick_group_subject(entries: list[tuple[str, str]]) -> str:
 
 def _verb_phrase(action: str) -> str:
     """Reduce an action string to the bare verb for a grouped receipt."""
-    lower = action.lower()
-    for suffix in _VERB_SUFFIXES:
-        if lower.endswith(suffix):
-            lower = lower[: -len(suffix)]
-            break
-    return lower.strip()
+    stripped = _CC_TAIL_RE.sub("", action)
+    return stripped.strip().lower()
 
 
 def _render_group(
