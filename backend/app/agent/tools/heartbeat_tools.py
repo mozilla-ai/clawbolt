@@ -60,10 +60,12 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
             name=ToolName.UPDATE_HEARTBEAT,
             description=(
                 "Update the user's heartbeat notes with new markdown text. "
-                "IMPORTANT: This overwrites the entire file. Only include items "
-                "that currently exist in the file plus whatever the user asked to "
-                "add or change. Never re-add items that are not in the current "
-                "file, even if you remember them from conversation history."
+                "Overwrites the entire file: include the current items plus "
+                "whatever the user asked to add or change, and never re-add "
+                "items not in the current file. Write timed items as windows "
+                "('every morning', 'Mondays') rather than exact clock times; "
+                "the heartbeat system checks periodically and fires each item "
+                "once per window."
             ),
             function=update_heartbeat,
             params_model=UpdateHeartbeatParams,
