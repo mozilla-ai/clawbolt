@@ -15,6 +15,7 @@ from backend.app.agent.tools.companycam_params import (
     CompanyCamGetChecklistParams,
     CompanyCamListChecklistsParams,
 )
+from backend.app.agent.tools.companycam_receipts import _sanitize, project_url
 from backend.app.agent.tools.names import ToolName
 from backend.app.services.companycam import CompanyCamService
 
@@ -100,7 +101,8 @@ def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
             ),
             receipt=ToolReceipt(
                 action="Created CompanyCam checklist",
-                target=f"{cl.name or 'Untitled'} on project {project_id}",
+                target=_sanitize(cl.name or "", 40) or "checklist",
+                url=project_url(project_id),
             ),
         )
 

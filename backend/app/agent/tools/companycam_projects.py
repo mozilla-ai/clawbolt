@@ -20,6 +20,10 @@ from backend.app.agent.tools.companycam_params import (
     CompanyCamUpdateNotepadParams,
     CompanyCamUpdateProjectParams,
 )
+from backend.app.agent.tools.companycam_receipts import (
+    project_target,
+    project_url,
+)
 from backend.app.agent.tools.names import ToolName
 from backend.app.services.companycam import CompanyCamService
 
@@ -72,8 +76,8 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             content=(f"Created CompanyCam project: {project.name or name} (ID: {project.id})"),
             receipt=ToolReceipt(
                 action="Created CompanyCam project",
-                target=project.name or name,
-                url=project.project_url or None,
+                target=project_target(project),
+                url=project.project_url or project_url(project.id),
             ),
         )
 
@@ -107,8 +111,8 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             content=f"Updated CompanyCam project: {project.name or ''} (ID: {project_id})",
             receipt=ToolReceipt(
                 action="Updated CompanyCam project",
-                target=project.name or project_id,
-                url=project.project_url or None,
+                target=project_target(project),
+                url=project.project_url or project_url(project_id),
             ),
         )
 
@@ -161,7 +165,8 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             content=f"Project {project_id} archived successfully.",
             receipt=ToolReceipt(
                 action="Archived CompanyCam project",
-                target=project_id,
+                target=project_target(None),
+                url=project_url(project_id),
             ),
         )
 
@@ -180,7 +185,7 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             content=f"Project {project_id} permanently deleted.",
             receipt=ToolReceipt(
                 action="Deleted CompanyCam project",
-                target=project_id,
+                target=project_target(None),
             ),
         )
 
@@ -202,7 +207,8 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             content=f"Notepad updated on project {project_id}.",
             receipt=ToolReceipt(
                 action="Updated notepad on CompanyCam project",
-                target=project_id,
+                target=project_target(None),
+                url=project_url(project_id),
             ),
         )
 
