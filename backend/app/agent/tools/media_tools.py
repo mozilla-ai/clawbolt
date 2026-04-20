@@ -153,10 +153,10 @@ def create_media_tools(
             name=ToolName.DISCARD_MEDIA,
             description=(
                 "Discard a staged photo the user asked you not to save. Use this "
-                "ONLY when the user's current message explicitly asks to drop the "
-                "photo (e.g. 'don't save that one', 'skip this photo'). Quote the "
-                "user's phrase in the reason argument; the user will be asked to "
-                "confirm. Idempotent: discarding an already-discarded handle is safe."
+                "only when the user's current message explicitly asks to drop the "
+                "photo. Quote the user's phrase in the reason argument; the user "
+                "will be asked to confirm. Idempotent: discarding an already-"
+                "discarded handle is safe."
             ),
             function=discard_media,
             params_model=DiscardMediaParams,
