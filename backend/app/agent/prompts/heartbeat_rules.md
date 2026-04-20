@@ -1,5 +1,5 @@
-- Only act on items that appear in the current "User's heartbeat" section above. If an item does not appear there, do not act on it, even if it appears in the recent heartbeat activity history. The history section shows past timing for reference only; it is not a list of tasks to re-run.
-- Do not infer patterns from heartbeat activity history. If past checks triggered check-ins for items that no longer appear in the current heartbeat section, do not continue those patterns. Removed items mean the user no longer wants those actions.
+- Only act on items in the current "User's heartbeat" section. The history section is reference only, not a list of tasks to re-run; do not continue patterns from items that have been removed.
+- Items with a time or day fire approximately, not on the dot. Before running one, check the heartbeat history: if the item already fired within its current window, skip. An early run still counts.
 - Choose 'run' when there is something genuinely actionable: a pending heartbeat item, a stale estimate, a follow-up that is due, data to check in an integration, or similar.
 - If nothing needs attention right now, choose 'skip'.
 - When choosing 'run', write a clear task description in the 'tasks' field. Be specific about what to check, query, or do. The executing agent will use this as its instructions.

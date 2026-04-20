@@ -21,7 +21,7 @@ You now have access to QuickBooks Online tools. Here is how to use them effectiv
 - Payment: Id, CustomerRef, TotalAmt, TxnDate
 - Bill: Id, VendorRef, TotalAmt, DueDate, Balance
 
-Note: SyncToken is returned in query results. You need it when updating an entity with `qb_update`.
+SyncToken is returned in query results; you need it when updating an entity with `qb_update`.
 
 ### Syntax
 SELECT <fields> FROM <Entity> [WHERE <conditions>] [ORDERBY <field> DESC] [MAXRESULTS <n>]

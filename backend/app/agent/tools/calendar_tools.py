@@ -733,7 +733,7 @@ def create_calendar_tools(
             name=ToolName.CALENDAR_CREATE_EVENT,
             description=(
                 "Create a new event on Google Calendar. "
-                "IMPORTANT: Some calendars are read-only. Check calendar_list_calendars "
+                "Some calendars are read-only; check calendar_list_calendars "
                 "first to verify the target calendar allows creation. "
                 "Use 'Job: {client} - {description}' format for job events. "
                 "Include the job location. "
