@@ -184,7 +184,7 @@ class TestSectionBuilders:
         """Should contain core behavioral rules."""
         result = build_instructions_section()
         assert "concise" in result
-        assert "ONLY communicate via this chat" in result
+        assert "only communicate via this chat" in result
 
     def test_build_instructions_section_no_trade_guidance(self) -> None:
         """Instructions section should not contain trade-specific guidance (removed from model)."""
