@@ -108,8 +108,10 @@ async def test_ask_sub_tools_have_approval_policy() -> None:
         try:
             import inspect
 
+            from backend.app.agent.tools.base import Tool
+
             result = factory.create(ctx)
-            tools = await result if inspect.isawaitable(result) else result
+            tools: list[Tool] = await result if inspect.isawaitable(result) else result  # type: ignore[assignment]
         except Exception:
             continue
 
