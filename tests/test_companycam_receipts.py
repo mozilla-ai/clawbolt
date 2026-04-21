@@ -27,7 +27,7 @@ from backend.app.services.companycam_models import Photo, Project
 
 
 def test_project_url_numeric_id() -> None:
-    assert project_url("94772883") == "https://app.companycam.com/projects/94772883"
+    assert project_url("94772883") == "https://app.companycam.com/projects/94772883/photos"
 
 
 def test_project_url_empty_id_returns_none() -> None:
@@ -107,6 +107,19 @@ def test_photo_target_truncates_description() -> None:
     out = photo_target(ph)
     assert len(out) == 60
     assert out.endswith("\u2026")
+
+
+def test_photo_target_rejects_dict_like_description() -> None:
+    """Regression: LLM may pass a dict repr as the photo description.
+    The receipt target must fall back to 'photo', not surface raw braces."""
+    ph = Photo(id="x", description="{'id': '39959882', 'html_content': 'Basement staircase'}")
+    assert photo_target(ph) == "photo"
+
+
+def test_photo_target_rejects_json_array_description() -> None:
+    """JSON array descriptions also fall back to generic."""
+    ph = Photo(id="x", description='[{"key": "value"}]')
+    assert photo_target(ph) == "photo"
 
 
 def test_photo_target_strips_newlines() -> None:
@@ -205,11 +218,11 @@ def test_project_url_honors_settings_web_base(monkeypatch: Any) -> None:
     from backend.app.config import settings
 
     monkeypatch.setattr(settings, "companycam_web_base", "https://eu.app.companycam.com")
-    assert project_url("94772883") == "https://eu.app.companycam.com/projects/94772883"
+    assert project_url("94772883") == "https://eu.app.companycam.com/projects/94772883/photos"
 
 
 def test_project_url_strips_trailing_slash_on_web_base(monkeypatch: Any) -> None:
     from backend.app.config import settings
 
     monkeypatch.setattr(settings, "companycam_web_base", "https://app.companycam.com/")
-    assert project_url("94772883") == "https://app.companycam.com/projects/94772883"
+    assert project_url("94772883") == "https://app.companycam.com/projects/94772883/photos"
