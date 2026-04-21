@@ -656,3 +656,69 @@ async def test_permissions_write_normalizes_minified_json(test_user: User) -> No
     assert "\n" in result.content
     assert '  "tools"' in result.content
     assert '"qb_query": "always"' in result.content
+
+
+# ---------------------------------------------------------------------------
+# resolve_media_ref tests
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_media_ref_by_handle(test_user: User) -> None:
+    """resolve_media_ref resolves a handle to (original_url, bytes, mime)."""
+    handle = media_staging.stage(test_user.id, "bb_photo_1", b"photo", "image/jpeg")
+    assert handle is not None
+    result = media_staging.resolve_media_ref(test_user.id, handle)
+    assert result is not None
+    url, content, mime = result
+    assert url == "bb_photo_1"
+    assert content == b"photo"
+    assert mime == "image/jpeg"
+
+
+def test_resolve_media_ref_by_url(test_user: User) -> None:
+    """resolve_media_ref resolves a URL to (url, bytes, mime)."""
+    media_staging.stage(test_user.id, "bb_photo_2", b"photo2", "image/png")
+    result = media_staging.resolve_media_ref(test_user.id, "bb_photo_2")
+    assert result is not None
+    url, content, mime = result
+    assert url == "bb_photo_2"
+    assert content == b"photo2"
+    assert mime == "image/png"
+
+
+def test_resolve_media_ref_wrong_user(test_user: User) -> None:
+    """resolve_media_ref rejects handles owned by a different user."""
+    handle = media_staging.stage("other-user", "bb_foreign", b"data", "image/jpeg")
+    assert handle is not None
+    result = media_staging.resolve_media_ref(test_user.id, handle)
+    assert result is None
+    media_staging.clear_user("other-user")
+
+
+def test_resolve_media_ref_unknown_ref(test_user: User) -> None:
+    """resolve_media_ref returns None for unrecognized references."""
+    assert media_staging.resolve_media_ref(test_user.id, "media_UNKNOWN") is None
+    assert media_staging.resolve_media_ref(test_user.id, "https://no.such/url") is None
+
+
+@pytest.mark.asyncio()
+async def test_upload_to_storage_resolves_handle(test_user: User) -> None:
+    """Regression: upload_to_storage must accept media handles, not just URLs."""
+    handle = media_staging.stage(test_user.id, "bb_real_url", b"photo-bytes", "image/jpeg")
+    assert handle is not None
+
+    ctx = ToolContext(
+        user=test_user,
+        storage=MockStorageBackend(),
+        downloaded_media=[],
+    )
+    tools = _file_factory(ctx)
+    upload = tools[0].function
+
+    result = await upload(
+        file_category="job_photo",
+        original_url=handle,
+        client_name="Test Client",
+    )
+    assert result.is_error is False
+    assert "Uploaded" in result.content
