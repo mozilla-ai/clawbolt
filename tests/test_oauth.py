@@ -12,20 +12,24 @@ from fastapi.testclient import TestClient
 from pydantic import SecretStr
 
 import backend.app.database as _db_module
+import backend.app.services.oauth as _oauth_module
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
 from backend.app.main import app
 from backend.app.models import User
 from backend.app.services.oauth import (
+    _DISCOVERY_CACHE_TTL_SECONDS,
     OAuthConfig,
     OAuthService,
     OAuthTokenData,
     _generate_pkce_pair,
+    _get_intuit_endpoints,
     get_companycam_oauth_config,
     get_google_calendar_oauth_config,
     get_oauth_config,
     get_quickbooks_oauth_config,
     oauth_service,
+    warm_intuit_discovery,
 )
 
 # ---------------------------------------------------------------------------
@@ -903,3 +907,104 @@ def test_web_callback_still_redirects(
 
     assert resp.status_code == 302
     assert "/app/oauth/callback?status=success" in resp.headers["location"]
+
+
+# ---------------------------------------------------------------------------
+# Intuit discovery document tests
+# ---------------------------------------------------------------------------
+
+_FAKE_DISCOVERY = {
+    "authorization_endpoint": "https://discovered.intuit.com/oauth2/authorize",
+    "token_endpoint": "https://discovered.intuit.com/oauth2/token",
+    "userinfo_endpoint": "https://discovered.intuit.com/userinfo",
+    "issuer": "https://oauth.platform.intuit.com/op/v1",
+}
+
+
+@pytest.fixture(autouse=False)
+def _reset_discovery_cache() -> Generator[None]:
+    """Reset the module-level discovery cache before and after each test."""
+    _oauth_module._intuit_discovery_cache.clear()
+    _oauth_module._intuit_discovery_fetched_at = 0.0
+    yield
+    _oauth_module._intuit_discovery_cache.clear()
+    _oauth_module._intuit_discovery_fetched_at = 0.0
+
+
+@pytest.mark.asyncio()
+async def test_warm_intuit_discovery_success(_reset_discovery_cache: None) -> None:
+    """Successful discovery fetch should cache endpoints."""
+    mock_resp = httpx.Response(200, json=_FAKE_DISCOVERY, request=httpx.Request("GET", "https://x"))
+    with patch("backend.app.services.oauth.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.get.return_value = mock_resp
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_cls.return_value = mock_client
+
+        await warm_intuit_discovery()
+
+    assert _oauth_module._intuit_discovery_cache["authorization_endpoint"] == (
+        "https://discovered.intuit.com/oauth2/authorize"
+    )
+    assert _oauth_module._intuit_discovery_cache["token_endpoint"] == (
+        "https://discovered.intuit.com/oauth2/token"
+    )
+
+
+@pytest.mark.asyncio()
+async def test_warm_intuit_discovery_failure_swallowed(_reset_discovery_cache: None) -> None:
+    """Failed discovery fetch should not raise; cache stays empty."""
+    with patch("backend.app.services.oauth.httpx.AsyncClient") as mock_cls:
+        mock_client = AsyncMock()
+        mock_client.get.side_effect = httpx.ConnectError("network error")
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+        mock_cls.return_value = mock_client
+
+        await warm_intuit_discovery()
+
+    assert _oauth_module._intuit_discovery_cache == {}
+
+
+def test_get_intuit_endpoints_from_cache(_reset_discovery_cache: None) -> None:
+    """When the discovery cache is warm, endpoints come from it."""
+    _oauth_module._intuit_discovery_cache.update(_FAKE_DISCOVERY)
+    _oauth_module._intuit_discovery_fetched_at = time.time()
+
+    authorize, token = _get_intuit_endpoints()
+    assert authorize == "https://discovered.intuit.com/oauth2/authorize"
+    assert token == "https://discovered.intuit.com/oauth2/token"
+
+
+def test_get_intuit_endpoints_fallback_when_empty(_reset_discovery_cache: None) -> None:
+    """When the discovery cache is empty, hardcoded fallbacks are returned."""
+    authorize, token = _get_intuit_endpoints()
+    assert authorize == "https://appcenter.intuit.com/connect/oauth2"
+    assert token == "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+
+
+def test_get_intuit_endpoints_fallback_when_stale(_reset_discovery_cache: None) -> None:
+    """When the cache is older than the TTL, fallbacks are returned."""
+    _oauth_module._intuit_discovery_cache.update(_FAKE_DISCOVERY)
+    _oauth_module._intuit_discovery_fetched_at = time.time() - _DISCOVERY_CACHE_TTL_SECONDS - 1
+
+    authorize, token = _get_intuit_endpoints()
+    assert authorize == "https://appcenter.intuit.com/connect/oauth2"
+    assert token == "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+
+
+def test_quickbooks_config_uses_discovery_endpoints(_reset_discovery_cache: None) -> None:
+    """get_quickbooks_oauth_config should use discovery endpoints when cached."""
+    _oauth_module._intuit_discovery_cache.update(_FAKE_DISCOVERY)
+    _oauth_module._intuit_discovery_fetched_at = time.time()
+
+    with (
+        patch.object(settings, "quickbooks_client_id", "cid"),
+        patch.object(settings, "quickbooks_client_secret", "csec"),
+    ):
+        config = get_quickbooks_oauth_config()
+
+    assert config is not None
+    assert config.authorize_url == "https://discovered.intuit.com/oauth2/authorize"
+    assert config.token_url == "https://discovered.intuit.com/oauth2/token"
