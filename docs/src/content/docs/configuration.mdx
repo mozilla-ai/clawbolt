@@ -186,6 +186,7 @@ When `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` are set, us
 |----------|---------|-------------|
 | `COMPANYCAM_CLIENT_ID` | | CompanyCam OAuth 2.0 client ID. Register at [docs.companycam.com/docs/oauth](https://docs.companycam.com/docs/oauth) |
 | `COMPANYCAM_CLIENT_SECRET` | | CompanyCam OAuth 2.0 client secret |
+| `COMPANYCAM_WEB_BASE` | `https://app.companycam.com` | Web app base URL used to build clickable receipt deep links. Override only if CompanyCam ships a non-US host. |
 
 When both are set, users can connect CompanyCam via OAuth on the Tools page or through chat. This enables tools like `companycam_search_projects`, `companycam_upload_photo`, and `companycam_create_project`.
 

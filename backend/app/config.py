@@ -114,6 +114,9 @@ class Settings(BaseSettings):
     # CompanyCam OAuth 2.0
     companycam_client_id: str = ""
     companycam_client_secret: str = ""
+    # Web app base URL for receipt deep links. Override if CompanyCam ever
+    # ships EU / sandbox hosts (the US prod URL is stable today).
+    companycam_web_base: str = "https://app.companycam.com"
 
     # Supplier pricing (SerpApi Home Depot engine)
     serpapi_api_key: str = ""  # https://serpapi.com — free tier: 250 searches/month

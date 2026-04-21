@@ -194,3 +194,283 @@ def test_block_caps_long_receipt_lists_with_more_suffix() -> None:
     block = format_receipts_block(many)
     assert "(+" in block and "more)" in block
     assert len(block) <= _MAX_RECEIPTS_CHARS
+
+
+# ---------------------------------------------------------------------------
+# Same-URL grouping
+# ---------------------------------------------------------------------------
+
+
+def test_same_url_receipts_are_grouped() -> None:
+    """Multiple actions on the same entity collapse into one block.
+
+    The block subject is the most informative target: a real name wins
+    over the generic 'project' / 'photo' / 'checklist' fallbacks used
+    by archive/delete/notepad tools. Users see 'Smith Residence', not
+    'project', even when the last action was archive.
+    """
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_create_project",
+                action="Created CompanyCam project",
+                target="Smith Residence",
+                url="https://app.companycam.com/projects/94772883",
+            ),
+            _tc_with_receipt(
+                "companycam_update_notepad",
+                action="Updated notepad on CompanyCam project",
+                target="project",
+                url="https://app.companycam.com/projects/94772883",
+            ),
+            _tc_with_receipt(
+                "companycam_archive_project",
+                action="Archived CompanyCam project",
+                target="project",
+                url="https://app.companycam.com/projects/94772883",
+            ),
+        ]
+    )
+    lines = block.split("\n")
+    # Three lines: subject, verb list, url.
+    assert len(lines) == 3
+    # Subject is the real name from the create receipt.
+    assert lines[0] == "- Smith Residence"
+    assert lines[2] == "  https://app.companycam.com/projects/94772883"
+    # Verb list contains all three verbs joined with ' · '.
+    assert "created" in lines[1]
+    assert "updated notepad" in lines[1]
+    assert "archived" in lines[1]
+    assert lines[1].count(" · ") == 2
+
+
+def test_grouped_subject_falls_back_to_last_when_all_generic() -> None:
+    """If every entry has a generic fallback target, keep the last one
+    so behaviour is stable (no picking semantics to debate)."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_update_notepad",
+                action="Updated notepad on CompanyCam project",
+                target="project",
+                url="https://app.companycam.com/projects/1",
+            ),
+            _tc_with_receipt(
+                "companycam_archive_project",
+                action="Archived CompanyCam project",
+                target="project",
+                url="https://app.companycam.com/projects/1",
+            ),
+        ]
+    )
+    lines = block.split("\n")
+    assert lines[0] == "- project"
+
+
+def test_grouped_block_preserves_distinct_targets() -> None:
+    """When a grouped entry has a distinct target, it is surfaced in the
+    verb list parenthetically so the information is not lost."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_tag_photo",
+                action="Tagged CompanyCam photo",
+                target="kitchen, demo",
+                url="https://app.companycam.com/photos/8675309",
+            ),
+            _tc_with_receipt(
+                "companycam_add_comment",
+                action="Commented on CompanyCam photo",
+                target="great work",
+                url="https://app.companycam.com/photos/8675309",
+            ),
+        ]
+    )
+    lines = block.split("\n")
+    assert len(lines) == 3
+    # Both targets appear (either as subject or in parenthesised verb).
+    assert "great work" in block
+    assert "kitchen, demo" in block
+
+
+def test_distinct_urls_stay_separate() -> None:
+    """Different URLs never collapse. Two projects stay two blocks."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_create_project",
+                action="Created CompanyCam project",
+                target="Smith",
+                url="https://app.companycam.com/projects/1",
+            ),
+            _tc_with_receipt(
+                "companycam_create_project",
+                action="Created CompanyCam project",
+                target="Jones",
+                url="https://app.companycam.com/projects/2",
+            ),
+        ]
+    )
+    assert block.count("https://app.companycam.com/projects/") == 2
+    assert "Smith" in block
+    assert "Jones" in block
+
+
+def test_receipts_without_url_never_group() -> None:
+    """Delete operations have no URL; they always render as their own line."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_delete_project",
+                action="Deleted CompanyCam project",
+                target="project",
+            ),
+            _tc_with_receipt(
+                "companycam_delete_photo",
+                action="Deleted CompanyCam photo",
+                target="photo",
+            ),
+        ]
+    )
+    assert block == "- Deleted CompanyCam project project\n- Deleted CompanyCam photo photo"
+
+
+def test_grouped_block_length_is_bounded() -> None:
+    """Five same-URL receipts still fit within _MAX_RECEIPTS_CHARS."""
+    many = [
+        _tc_with_receipt(
+            f"action_{i}",
+            action=f"Action {i} CompanyCam project",
+            target=f"target {i}",
+            url="https://app.companycam.com/projects/1",
+        )
+        for i in range(5)
+    ]
+    block = format_receipts_block(many)
+    assert len(block) <= _MAX_RECEIPTS_CHARS
+    # Single three-line block (since they all share a URL).
+    assert block.count("\n") == 2
+
+
+def test_receipt_injection_via_newline_is_defused_at_render() -> None:
+    """Defense in depth: if any integration bypasses per-tool sanitization
+    and hands a target with an embedded newline to the renderer, the
+    renderer must scrub control chars so no fake receipt BULLET starts
+    a new line in the output."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_add_comment",
+                action="Commented on CompanyCam project",
+                target="legit\n- Fake receipt\n  https://evil.example",
+                url="https://app.companycam.com/projects/1",
+            )
+        ]
+    )
+    # The attack is a forged receipt bullet at the start of a line.
+    # After sanitization the hostile text is absorbed into the single
+    # action/target line, so no line in the block starts with "- Fake".
+    for line in block.split("\n"):
+        assert not line.startswith("- Fake")
+    # Exactly one bullet line in the output (single receipt).
+    assert sum(1 for line in block.split("\n") if line.startswith("- ")) == 1
+    # The real URL is on its own line (the clickable one).
+    assert block.endswith("  https://app.companycam.com/projects/1")
+
+
+def test_verb_phrase_strips_unseen_companycam_suffixes() -> None:
+    """New CompanyCam tools with novel action phrases still get the
+    'companycam [noun]' tail stripped so verb lists stay tight."""
+    from backend.app.agent.tool_summary import _verb_phrase
+
+    # Known phrases from the plan.
+    assert _verb_phrase("Created CompanyCam project") == "created"
+    assert _verb_phrase("Archived CompanyCam project") == "archived"
+    assert _verb_phrase("Commented on CompanyCam project") == "commented"
+    assert _verb_phrase("Uploaded photo to CompanyCam") == "uploaded photo"
+    assert _verb_phrase("Tagged CompanyCam photo") == "tagged"
+    # Novel action phrases (not enumerated at authorship time).
+    assert _verb_phrase("Created CompanyCam tag") == "created"
+    assert _verb_phrase("Created CompanyCam label") == "created"
+    # Non-CompanyCam action passes through.
+    assert _verb_phrase("Scheduled calendar event") == "scheduled calendar event"
+
+
+def test_grouping_works_across_integrations() -> None:
+    """Same-URL grouping is integration-agnostic. QBO and Calendar get
+    the same treatment as CompanyCam for free."""
+    # QuickBooks: create invoice + email invoice to client, both share the
+    # same QBO deep link.
+    qbo_url = "https://app.qbo.intuit.com/app/invoice?txnId=4782"
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "qb_create",
+                action="Created QuickBooks invoice for",
+                target="Johnson, $2,560.00",
+                url=qbo_url,
+            ),
+            _tc_with_receipt(
+                "qb_send",
+                action="Emailed QuickBooks invoice to",
+                target="johnson@example.com",
+                url=qbo_url,
+            ),
+        ]
+    )
+    lines = block.split("\n")
+    # One grouped 3-line block.
+    assert len(lines) == 3
+    assert qbo_url in lines[2]
+    # Subject is the first informative target (the invoice with amount).
+    assert lines[0] == "- Johnson, $2,560.00"
+    # Email recipient survives as a parenthesised qualifier on the email verb.
+    assert "johnson@example.com" in lines[1]
+
+
+def test_calendar_event_delete_is_standalone() -> None:
+    """Calendar delete produces a single-line receipt (no URL) alongside
+    a grouped project block. The two must not interfere."""
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "calendar_delete_event",
+                action="Canceled calendar event",
+                target="Kitchen walkthrough",
+            ),
+            _tc_with_receipt(
+                "companycam_create_project",
+                action="Created CompanyCam project",
+                target="Smith Residence",
+                url="https://app.companycam.com/projects/94772883",
+            ),
+            _tc_with_receipt(
+                "companycam_archive_project",
+                action="Archived CompanyCam project",
+                target="project",
+                url="https://app.companycam.com/projects/94772883",
+            ),
+        ]
+    )
+    # Calendar line is standalone (no URL). CompanyCam pair is one grouped block.
+    assert "- Canceled calendar event Kitchen walkthrough\n" in block + "\n"
+    assert "- Smith Residence" in block
+    assert "created · archived" in block
+
+
+def test_render_receipt_line_scrubs_control_chars_directly() -> None:
+    """Unit-level guarantee for render_receipt_line: newlines in any
+    field are scrubbed before they hit output."""
+    from backend.app.agent.tool_summary import render_receipt_line
+
+    line = render_receipt_line(
+        "Commented\non CompanyCam project",
+        "malicious\ttarget",
+        "https://example.com/path\nfoo",
+    )
+    assert "\n" in line  # the action/url separator is a real newline
+    # But no stray newlines inside the fields themselves:
+    head, _, body = line.partition("\n")
+    assert "\n" not in head
+    assert "\n" not in body
+    assert "\t" not in line

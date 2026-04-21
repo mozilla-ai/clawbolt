@@ -36,6 +36,12 @@ def _refresh_lock_key(user_id: str, integration: str) -> str:
 # Token expiry buffer: refresh 5 minutes before actual expiry.
 _EXPIRY_BUFFER_SECONDS = 300
 
+# Intuit discovery document URL (OpenID Connect configuration).
+_INTUIT_DISCOVERY_URL = "https://developer.api.intuit.com/.well-known/openid_configuration"
+
+# Cache TTL for the discovery document (24 hours).
+_DISCOVERY_CACHE_TTL_SECONDS = 86400
+
 # OAuth state entries expire after 10 minutes.
 _STATE_TTL_SECONDS = 600
 
@@ -48,6 +54,61 @@ _PERMANENT_OAUTH_ERROR_CODES = frozenset(
         "unauthorized_client",
     }
 )
+
+
+# ---------------------------------------------------------------------------
+# Intuit discovery document cache
+# ---------------------------------------------------------------------------
+
+_intuit_discovery_cache: dict[str, Any] = {}
+_intuit_discovery_fetched_at: float = 0.0
+
+
+async def warm_intuit_discovery() -> None:
+    """Fetch and cache the Intuit OpenID Connect discovery document.
+
+    Called at app startup so that ``get_quickbooks_oauth_config()`` can
+    resolve endpoints from the discovery document instead of relying on
+    hardcoded URLs. Failures are logged and swallowed; the hardcoded
+    fallback URLs will be used until the next successful fetch.
+    """
+    global _intuit_discovery_cache, _intuit_discovery_fetched_at
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.get(_INTUIT_DISCOVERY_URL)
+            resp.raise_for_status()
+            _intuit_discovery_cache = resp.json()
+            _intuit_discovery_fetched_at = time.time()
+            logger.info(
+                "Intuit discovery document cached: authorization_endpoint=%s token_endpoint=%s",
+                _intuit_discovery_cache.get("authorization_endpoint"),
+                _intuit_discovery_cache.get("token_endpoint"),
+            )
+    except Exception:
+        logger.warning(
+            "Failed to fetch Intuit discovery document from %s, "
+            "falling back to hardcoded endpoints",
+            _INTUIT_DISCOVERY_URL,
+            exc_info=True,
+        )
+
+
+def _get_intuit_endpoints() -> tuple[str, str]:
+    """Return (authorize_url, token_url) from the discovery cache or fallbacks.
+
+    If the cache is stale (older than ``_DISCOVERY_CACHE_TTL_SECONDS``) or
+    missing, falls back to the hardcoded endpoint constants.
+    """
+    if (
+        _intuit_discovery_cache
+        and (time.time() - _intuit_discovery_fetched_at) < _DISCOVERY_CACHE_TTL_SECONDS
+    ):
+        authorize = _intuit_discovery_cache.get(
+            "authorization_endpoint", _QBO_AUTHORIZE_URL_FALLBACK
+        )
+        token = _intuit_discovery_cache.get("token_endpoint", _QBO_TOKEN_URL_FALLBACK)
+        return authorize, token
+    return _QBO_AUTHORIZE_URL_FALLBACK, _QBO_TOKEN_URL_FALLBACK
 
 
 @dataclass
@@ -755,9 +816,10 @@ oauth_service = OAuthService()
 # Integration-specific config builders
 # ---------------------------------------------------------------------------
 
-# QuickBooks OAuth 2.0 endpoints
-QBO_AUTHORIZE_URL = "https://appcenter.intuit.com/connect/oauth2"
-QBO_TOKEN_URL = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
+# QuickBooks OAuth 2.0 endpoint fallbacks (used when the Intuit discovery
+# document is unavailable or stale).
+_QBO_AUTHORIZE_URL_FALLBACK = "https://appcenter.intuit.com/connect/oauth2"
+_QBO_TOKEN_URL_FALLBACK = "https://oauth.platform.intuit.com/oauth2/v1/tokens/bearer"
 QBO_SCOPES = ["com.intuit.quickbooks.accounting"]
 
 # Google Calendar OAuth 2.0 endpoints
@@ -778,13 +840,20 @@ _OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar", "companycam")
 
 
 def get_quickbooks_oauth_config() -> OAuthConfig | None:
-    """Build the QuickBooks OAuth config from settings."""
+    """Build the QuickBooks OAuth config from settings.
+
+    Endpoint URLs are resolved from the Intuit OpenID Connect discovery
+    document when available (populated by ``warm_intuit_discovery()`` at
+    startup). Falls back to hardcoded URLs if the discovery document has
+    not been fetched or is stale.
+    """
+    authorize_url, token_url = _get_intuit_endpoints()
     config = OAuthConfig(
         integration="quickbooks",
         client_id=settings.quickbooks_client_id,
         client_secret=settings.quickbooks_client_secret,
-        authorize_url=QBO_AUTHORIZE_URL,
-        token_url=QBO_TOKEN_URL,
+        authorize_url=authorize_url,
+        token_url=token_url,
         scopes=QBO_SCOPES,
     )
     return config if config.is_configured else None

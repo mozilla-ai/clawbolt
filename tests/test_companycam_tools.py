@@ -86,6 +86,29 @@ async def test_create_project() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_create_project_with_null_integration_relation_id() -> None:
+    """Regression: CompanyCam API returns integrations with relation_id=null."""
+    service = CompanyCamService(access_token="test-token")
+    created = {
+        "id": "99",
+        "name": "New Project",
+        "integrations": [{"type": "Clawbolt", "relation_id": None}],
+    }
+
+    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+        client = AsyncMock()
+        client.post = AsyncMock(return_value=_mock_response(created))
+        mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
+        mock_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+
+        result = await service.create_project("New Project", "123 Main St")
+
+    assert result.id == "99"
+    assert result.integrations is not None
+    assert result.integrations[0].relation_id is None
+
+
+@pytest.mark.asyncio()
 async def test_upload_photo() -> None:
     service = CompanyCamService(access_token="test-token")
     photo = {
@@ -153,6 +176,28 @@ def test_get_photo_url_no_uris() -> None:
     from backend.app.services.companycam_models import Photo
 
     photo = Photo(id="42", uris=[])
+    assert "42" in get_photo_url(photo)
+
+
+def test_get_photo_url_null_uri_skipped() -> None:
+    """Regression: ImageURI with null uri should be skipped."""
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    photo = Photo(
+        id="1",
+        uris=[
+            ImageURI(type="original", uri=None),
+            ImageURI(type="web", uri="https://cc.com/web.jpg"),
+        ],
+    )
+    assert get_photo_url(photo) == "https://cc.com/web.jpg"
+
+
+def test_get_photo_url_all_null_uris_fallback() -> None:
+    """Regression: if all ImageURI.uri are null, fall back to API URL."""
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    photo = Photo(id="42", uris=[ImageURI(type="original")])
     assert "42" in get_photo_url(photo)
 
 
@@ -783,3 +828,281 @@ def test_new_tool_permissions() -> None:
         ToolName.COMPANYCAM_CREATE_CHECKLIST,
     ]:
         assert perms[name] == "ask", f"{name} should be 'ask'"
+
+
+# ---------------------------------------------------------------------------
+# Receipt shape (contractor-facing iMessage footer)
+# ---------------------------------------------------------------------------
+#
+# Every write-side CompanyCam tool populates a ToolReceipt(action,
+# target, url). The footer rendered to iMessage/SMS must never surface
+# raw CompanyCam ids (8-digit numeric strings) because a contractor
+# cannot recognize or click them. These tests assert the invariant
+# per-tool: no digit-only id substring in the target, and a clickable
+# URL for every non-destructive action.
+
+import re  # noqa: E402 — placed with the receipt-shape block for locality
+from typing import Any  # noqa: E402
+
+from backend.app.agent.tools.base import ToolReceipt  # noqa: E402
+from backend.app.agent.tools.companycam_checklists import build_checklist_tools  # noqa: E402
+from backend.app.agent.tools.companycam_photos import build_photo_tools  # noqa: E402
+from backend.app.agent.tools.companycam_projects import build_project_tools  # noqa: E402
+
+# Matches any 6+ digit run with word boundaries — catches both a bare
+# id ("94772883") and an id embedded in a longer string
+# ("kitchen 94772883 done"). Using \b ensures a short numeric token
+# like "2026" inside a date does not false-flag, but 6+ digits is
+# unambiguously a CompanyCam id.
+_RAW_ID_RE = re.compile(r"\b\d{6,}\b")
+
+
+def _assert_receipt_clean(receipt: ToolReceipt | None, *, expect_url: bool) -> None:
+    assert receipt is not None, "write-side tool must populate a receipt"
+    assert receipt.action, "receipt action must be non-empty"
+    assert receipt.target, "receipt target must be non-empty"
+    # No raw CompanyCam id in the visible text.
+    assert _RAW_ID_RE.search(receipt.target) is None, (
+        f"receipt target contains raw id: {receipt.target!r}"
+    )
+    # No control chars that could forge a receipt line.
+    assert "\n" not in receipt.target, "receipt target contains newline"
+    assert "\r" not in receipt.target, "receipt target contains carriage return"
+    assert "\t" not in receipt.target, "receipt target contains tab"
+    # Non-destructive actions must have a clickable URL.
+    if expect_url:
+        assert receipt.url, "non-destructive action must supply a URL"
+        assert receipt.url.startswith("https://app.companycam.com/"), (
+            f"URL must point at CompanyCam web app: {receipt.url!r}"
+        )
+    else:
+        assert receipt.url is None, f"destructive action should not have a URL: {receipt.url!r}"
+
+
+def _get_tool(tools: list, name: str) -> Any:
+    for t in tools:
+        if t.name == name:
+            return t
+    raise AssertionError(f"tool {name} not found")
+
+
+@pytest.mark.asyncio()
+async def test_receipt_create_project_is_clean() -> None:
+    """Receipt for create_project: human name, full URL, no raw id."""
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    project_data = {
+        "id": "94772883",
+        "name": "Smith Residence",
+        "project_url": "https://app.companycam.com/projects/94772883",
+    }
+    from backend.app.services.companycam_models import Project
+
+    service.create_project = AsyncMock(return_value=Project.model_validate(project_data))
+    tool = _get_tool(build_project_tools(service), ToolName.COMPANYCAM_CREATE_PROJECT)
+    result = await tool.function(name="Smith Residence", address="")
+    _assert_receipt_clean(result.receipt, expect_url=True)
+    assert result.receipt.target == "Smith Residence"
+
+
+@pytest.mark.asyncio()
+async def test_receipt_archive_project_is_clean() -> None:
+    """Receipt for archive_project (void return) uses generic target + URL from id."""
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    service.archive_project = AsyncMock(return_value=None)
+    tool = _get_tool(build_project_tools(service), ToolName.COMPANYCAM_ARCHIVE_PROJECT)
+    result = await tool.function(project_id="94772883")
+    _assert_receipt_clean(result.receipt, expect_url=True)
+    assert result.receipt.target == "project"
+
+
+@pytest.mark.asyncio()
+async def test_receipt_delete_project_is_clean_no_url() -> None:
+    """Delete receipt: generic target, no URL (entity is gone)."""
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    service.delete_project = AsyncMock(return_value=None)
+    tool = _get_tool(build_project_tools(service), ToolName.COMPANYCAM_DELETE_PROJECT)
+    result = await tool.function(project_id="94772883")
+    _assert_receipt_clean(result.receipt, expect_url=False)
+    assert result.receipt.target == "project"
+
+
+@pytest.mark.asyncio()
+async def test_receipt_update_notepad_is_clean() -> None:
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    service.update_notepad = AsyncMock(return_value=None)
+    tool = _get_tool(build_project_tools(service), ToolName.COMPANYCAM_UPDATE_NOTEPAD)
+    result = await tool.function(project_id="94772883", notepad="On track")
+    _assert_receipt_clean(result.receipt, expect_url=True)
+
+
+@pytest.mark.asyncio()
+async def test_receipt_add_comment_uses_parent_url() -> None:
+    """Comments have no own URL. The receipt links to the parent entity."""
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    from backend.app.services.companycam_models import Comment
+
+    service.add_project_comment = AsyncMock(
+        return_value=Comment.model_validate({"id": "555", "content": "All demo done"})
+    )
+    ctx = MagicMock()
+    tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_ADD_COMMENT)
+    result = await tool.function(
+        target_type="project", target_id="388472672", content="All demo done"
+    )
+    _assert_receipt_clean(result.receipt, expect_url=True)
+    assert result.receipt.target == "All demo done"
+    assert "projects/388472672" in result.receipt.url
+
+
+@pytest.mark.asyncio()
+async def test_receipt_add_comment_truncates_long_content() -> None:
+    """A 500-char comment never reaches the iMessage footer intact."""
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    from backend.app.services.companycam_models import Comment
+
+    service.add_photo_comment = AsyncMock(
+        return_value=Comment.model_validate({"id": "555", "content": "X"})
+    )
+    ctx = MagicMock()
+    tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_ADD_COMMENT)
+    long_content = "A" * 500
+    result = await tool.function(target_type="photo", target_id="8675309", content=long_content)
+    _assert_receipt_clean(result.receipt, expect_url=True)
+    assert len(result.receipt.target) <= 40
+    assert result.receipt.target.endswith("\u2026")
+
+
+@pytest.mark.asyncio()
+async def test_receipt_tag_photo_is_clean() -> None:
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    from backend.app.services.companycam_models import Tag
+
+    service.add_photo_tags = AsyncMock(
+        return_value=[
+            Tag.model_validate({"id": "1", "display_value": "kitchen", "value": "kitchen"}),
+            Tag.model_validate({"id": "2", "display_value": "demo", "value": "demo"}),
+        ]
+    )
+    ctx = MagicMock()
+    tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_TAG_PHOTO)
+    result = await tool.function(photo_id="8675309", tags=["kitchen", "demo"])
+    _assert_receipt_clean(result.receipt, expect_url=True)
+    assert result.receipt.target == "kitchen, demo"
+
+
+@pytest.mark.asyncio()
+async def test_receipt_delete_photo_is_clean_no_url() -> None:
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    service.delete_photo = AsyncMock(return_value=None)
+    ctx = MagicMock()
+    tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_DELETE_PHOTO)
+    result = await tool.function(photo_id="8675309")
+    _assert_receipt_clean(result.receipt, expect_url=False)
+    assert result.receipt.target == "photo"
+
+
+@pytest.mark.asyncio()
+async def test_receipt_create_checklist_is_clean() -> None:
+    from backend.app.agent.tools.names import ToolName
+
+    service = MagicMock(spec=CompanyCamService)
+    from backend.app.services.companycam_models import Checklist
+
+    service.create_project_checklist = AsyncMock(
+        return_value=Checklist.model_validate(
+            {"id": "777", "name": "Rough-in inspection", "completed_at": None}
+        )
+    )
+    tool = _get_tool(build_checklist_tools(service), ToolName.COMPANYCAM_CREATE_CHECKLIST)
+    result = await tool.function(project_id="94772883", template_id="abc")
+    _assert_receipt_clean(result.receipt, expect_url=True)
+    assert result.receipt.target == "Rough-in inspection"
+
+
+@pytest.mark.asyncio()
+async def test_receipt_rendered_output_has_no_raw_ids() -> None:
+    """End-to-end: a grouped footer of five actions on one project
+    never surfaces a raw CompanyCam id in the rendered output."""
+    from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
+    from backend.app.agent.tool_summary import format_receipts_block
+
+    # Simulate the receipt fingerprints that each CompanyCam tool would
+    # leave after a successful call (matches the tool-layer rewrite).
+    fake_calls = [
+        StoredToolInteraction(
+            tool_call_id=f"cc-{i}",
+            name=name,
+            args={},
+            result="",
+            is_error=False,
+            receipt=StoredToolReceipt(action=action, target=target, url=url),
+        )
+        for i, (name, action, target, url) in enumerate(
+            [
+                (
+                    "companycam_create_project",
+                    "Created CompanyCam project",
+                    "Smith Residence",
+                    "https://app.companycam.com/projects/94772883",
+                ),
+                (
+                    "companycam_update_notepad",
+                    "Updated notepad on CompanyCam project",
+                    "project",
+                    "https://app.companycam.com/projects/94772883",
+                ),
+                (
+                    "companycam_add_comment",
+                    "Commented on CompanyCam project",
+                    "All demo done",
+                    "https://app.companycam.com/projects/94772883",
+                ),
+                (
+                    "companycam_tag_photo",
+                    "Tagged CompanyCam photo",
+                    "kitchen, demo",
+                    "https://app.companycam.com/photos/8675309",
+                ),
+                (
+                    "companycam_archive_project",
+                    "Archived CompanyCam project",
+                    "project",
+                    "https://app.companycam.com/projects/94772883",
+                ),
+            ]
+        )
+    ]
+    block = format_receipts_block(fake_calls)
+
+    # The rendered footer has two URL-keyed blocks (project + photo).
+    assert block.count("https://app.companycam.com/projects/94772883") == 1
+    assert block.count("https://app.companycam.com/photos/8675309") == 1
+
+    # Scan every visible token for a 6+ digit run: only the two URLs
+    # are allowed to contain ids. Strip URLs then assert no digit runs.
+    def _strip_urls(text: str) -> str:
+        return re.sub(r"https://\S+", "", text)
+
+    visible = _strip_urls(block)
+    assert _RAW_ID_RE.search(visible) is None, (
+        f"rendered footer leaked a raw CompanyCam id into user-visible text:\n{visible!r}"
+    )
+
+    # Block stays compact (grouping saves lines).
+    assert len(block) < 500
