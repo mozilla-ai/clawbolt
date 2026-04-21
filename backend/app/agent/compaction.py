@@ -1,9 +1,8 @@
-"""Session compaction: consolidate aging messages into MEMORY.md.
+"""Session compaction: consolidate aging messages into persistent files.
 
 When conversation history reaches the configured limit, messages about to be
-trimmed are passed through a lightweight LLM call that rewrites MEMORY.md
-with any new durable facts from the conversation.  This replaces the old
-fact-extraction approach with a full-rewrite model (like nanobot).
+trimmed are passed through a lightweight LLM call that updates MEMORY.md,
+USER.md, and SOUL.md with any new durable facts from the conversation.
 
 A timestamped summary is also appended to HISTORY.md so the conversation
 remains searchable after the raw messages are gone.
