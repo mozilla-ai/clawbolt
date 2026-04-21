@@ -96,17 +96,17 @@ def test_parse_valid_response() -> None:
             "summary": "[TIMESTAMP] Discussed pricing.",
         }
     )
-    memory_update, summary = _parse_compaction_response(raw)
-    assert "Deck: $45/sqft" in memory_update
-    assert summary == "[TIMESTAMP] Discussed pricing."
+    result = _parse_compaction_response(raw)
+    assert "Deck: $45/sqft" in result.memory_update
+    assert result.summary == "[TIMESTAMP] Discussed pricing."
 
 
 def test_parse_empty_fields() -> None:
     """Should handle empty memory_update and summary."""
     raw = json.dumps({"memory_update": "", "summary": ""})
-    memory_update, summary = _parse_compaction_response(raw)
-    assert memory_update == ""
-    assert summary == ""
+    result = _parse_compaction_response(raw)
+    assert result.memory_update == ""
+    assert result.summary == ""
 
 
 def test_parse_markdown_fenced_json() -> None:
@@ -118,9 +118,9 @@ def test_parse_markdown_fenced_json() -> None:
         }
     )
     raw = f"```json\n{inner}\n```"
-    memory_update, summary = _parse_compaction_response(raw)
-    assert "Rate: $50/hr" in memory_update
-    assert summary == "A summary."
+    result = _parse_compaction_response(raw)
+    assert "Rate: $50/hr" in result.memory_update
+    assert result.summary == "A summary."
 
 
 def test_parse_prefilled_response() -> None:
@@ -134,23 +134,66 @@ def test_parse_prefilled_response() -> None:
     )
     # Strip the leading "{" to simulate what the LLM returns after prefill
     raw_without_brace = inner.lstrip("{")
-    memory_update, summary = _parse_compaction_response(raw_without_brace)
-    assert "8am starts" in memory_update
-    assert summary == "[TIMESTAMP] Scheduling preferences."
+    result = _parse_compaction_response(raw_without_brace)
+    assert "8am starts" in result.memory_update
+    assert result.summary == "[TIMESTAMP] Scheduling preferences."
 
 
 def test_parse_invalid_json() -> None:
     """Invalid JSON should return empty strings without raising."""
-    memory_update, summary = _parse_compaction_response("not json at all")
-    assert memory_update == ""
-    assert summary == ""
+    result = _parse_compaction_response("not json at all")
+    assert result.memory_update == ""
+    assert result.summary == ""
 
 
 def test_parse_non_object_json() -> None:
     """Non-object JSON should return empty strings."""
-    memory_update, summary = _parse_compaction_response("[1, 2, 3]")
-    assert memory_update == ""
-    assert summary == ""
+    result = _parse_compaction_response("[1, 2, 3]")
+    assert result.memory_update == ""
+    assert result.summary == ""
+
+
+def test_parse_user_profile_update() -> None:
+    """Should parse user_profile_update field from compaction response."""
+    raw = json.dumps(
+        {
+            "memory_update": "",
+            "summary": "",
+            "user_profile_update": "- Name: Nathan\n- Day rate: $500",
+            "soul_update": "",
+        }
+    )
+    result = _parse_compaction_response(raw)
+    assert result.memory_update == ""
+    assert "Day rate: $500" in result.user_profile_update
+    assert result.soul_update == ""
+
+
+def test_parse_soul_update() -> None:
+    """Should parse soul_update field from compaction response."""
+    raw = json.dumps(
+        {
+            "memory_update": "",
+            "summary": "",
+            "user_profile_update": "",
+            "soul_update": "Be more concise. Skip the pleasantries.",
+        }
+    )
+    result = _parse_compaction_response(raw)
+    assert "Be more concise" in result.soul_update
+
+
+def test_parse_missing_new_fields_defaults_empty() -> None:
+    """Responses without user_profile_update/soul_update should default to empty."""
+    raw = json.dumps(
+        {
+            "memory_update": "## Facts\n- something",
+            "summary": "A summary.",
+        }
+    )
+    result = _parse_compaction_response(raw)
+    assert result.user_profile_update == ""
+    assert result.soul_update == ""
 
 
 # --- compact_session tests ---
@@ -424,6 +467,97 @@ async def test_compact_session_returns_max_message_seq(test_user: UserData) -> N
 
     assert memory_update != ""
     assert max_seq == 42
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_writes_user_profile(test_user: UserData) -> None:
+    """compact_session should write USER.md when LLM returns user_profile_update."""
+    store = get_memory_store(test_user.id)
+    store.write_user("- Name: Nathan\n- Trade: General contractor")
+
+    llm_response_content = json.dumps(
+        {
+            "memory_update": "",
+            "summary": "[TIMESTAMP] User shared their day rate.",
+            "user_profile_update": "- Name: Nathan\n- Trade: General contractor\n- Day rate: $500",
+            "soul_update": "",
+        }
+    )
+    mock_response = make_text_response(llm_response_content)
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="My day rate is $500"),
+        AssistantMessage(content="Got it, updated the estimate."),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, messages)
+
+    updated_profile = store.read_user()
+    assert "Day rate: $500" in updated_profile
+    assert "Nathan" in updated_profile
+    assert "General contractor" in updated_profile
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_writes_soul(test_user: UserData) -> None:
+    """compact_session should write SOUL.md when LLM returns soul_update."""
+    store = get_memory_store(test_user.id)
+    store.write_soul("You are a friendly assistant.")
+
+    llm_response_content = json.dumps(
+        {
+            "memory_update": "",
+            "summary": "[TIMESTAMP] User asked for more direct communication.",
+            "user_profile_update": "",
+            "soul_update": "You are a direct, no-nonsense assistant. Skip the pleasantries.",
+        }
+    )
+    mock_response = make_text_response(llm_response_content)
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="Be more blunt with me, skip the niceties"),
+        AssistantMessage(content="Done. I'll keep it direct from now on."),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, messages)
+
+    updated_soul = store.read_soul()
+    assert "direct, no-nonsense" in updated_soul
+    assert "Skip the pleasantries" in updated_soul
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_skips_empty_profile_and_soul(test_user: UserData) -> None:
+    """compact_session should not write USER.md or SOUL.md when updates are empty."""
+    store = get_memory_store(test_user.id)
+    store.write_user("- Name: Nathan")
+    store.write_soul("You are helpful.")
+
+    llm_response_content = json.dumps(
+        {
+            "memory_update": "## Clients\n- Bob: 555-0100",
+            "summary": "[TIMESTAMP] Discussed client info.",
+            "user_profile_update": "",
+            "soul_update": "",
+        }
+    )
+    mock_response = make_text_response(llm_response_content)
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="Bob's number is 555-0100"),
+        AssistantMessage(content="Saved Bob's number."),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, messages)
+
+    # Profile and soul should be unchanged
+    assert store.read_user() == "- Name: Nathan"
+    assert store.read_soul() == "You are helpful."
+    # Memory should be updated
+    assert "Bob: 555-0100" in store.read_memory()
 
 
 @pytest.mark.asyncio()
