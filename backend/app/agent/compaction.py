@@ -44,14 +44,36 @@ def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
     return "\n".join(lines)
 
 
-def _parse_compaction_response(raw: str) -> tuple[str, str]:
-    """Parse the LLM compaction response into a memory update and summary.
+class CompactionResult:
+    """Parsed result from the compaction LLM response."""
+
+    __slots__ = ("memory_update", "soul_update", "summary", "user_profile_update")
+
+    def __init__(
+        self,
+        memory_update: str = "",
+        summary: str = "",
+        user_profile_update: str = "",
+        soul_update: str = "",
+    ) -> None:
+        self.memory_update = memory_update
+        self.summary = summary
+        self.user_profile_update = user_profile_update
+        self.soul_update = soul_update
+
+
+_EMPTY_RESULT = CompactionResult()
+
+
+def _parse_compaction_response(raw: str) -> CompactionResult:
+    """Parse the LLM compaction response into structured updates.
 
     The assistant prefill starts the response with ``{``, so the raw text from
     the LLM may be missing the leading brace.  We try the text as-is first,
     then retry with a prepended ``{`` before giving up.
 
-    Returns a tuple of (memory_update, summary_string).
+    Returns a ``CompactionResult`` with memory, summary, user profile, and
+    soul updates. Empty strings indicate no change for that field.
     """
     text = raw.strip()
     # Strip markdown code fences if present
@@ -73,15 +95,18 @@ def _parse_compaction_response(raw: str) -> tuple[str, str]:
 
     if parsed is None:
         logger.warning("Failed to parse compaction response as JSON: %s", text[:200])
-        return "", ""
+        return _EMPTY_RESULT
 
     if not isinstance(parsed, dict):
         logger.warning("Compaction response is not a JSON object")
-        return "", ""
+        return _EMPTY_RESULT
 
-    memory_update = str(parsed.get("memory_update", "")).strip()
-    summary = str(parsed.get("summary", "")).strip()
-    return memory_update, summary
+    return CompactionResult(
+        memory_update=str(parsed.get("memory_update", "")).strip(),
+        summary=str(parsed.get("summary", "")).strip(),
+        user_profile_update=str(parsed.get("user_profile_update", "")).strip(),
+        soul_update=str(parsed.get("soul_update", "")).strip(),
+    )
 
 
 async def compact_session(
@@ -170,21 +195,31 @@ async def compact_session(
         return "", None
 
     raw_content = get_response_text(response)
-    memory_update, summary = _parse_compaction_response(raw_content)
+    result = _parse_compaction_response(raw_content)
 
     # Write updated MEMORY.md if the LLM produced content
-    if memory_update:
-        memory_store.write_memory(memory_update)
+    if result.memory_update:
+        memory_store.write_memory(result.memory_update)
         logger.info("Compaction rewrote MEMORY.md for user %s", user_id)
 
     # Append summary to HISTORY.md if the LLM produced one
-    if summary:
+    if result.summary:
         timestamp = datetime.datetime.now(datetime.UTC).strftime("%Y-%m-%d %H:%M")
-        entry = summary.replace("[TIMESTAMP]", f"[{timestamp}]")
+        entry = result.summary.replace("[TIMESTAMP]", f"[{timestamp}]")
         try:
             await memory_store.append_history(entry)
             logger.info("Compaction appended history entry for user %s", user_id)
         except Exception:
             logger.exception("Failed to append history for user %s", user_id)
 
-    return memory_update, max_message_seq
+    # Write updated USER.md if the LLM detected new profile info
+    if result.user_profile_update:
+        memory_store.write_user(result.user_profile_update)
+        logger.info("Compaction updated USER.md for user %s", user_id)
+
+    # Write updated SOUL.md if the LLM detected personality changes
+    if result.soul_update:
+        memory_store.write_soul(result.soul_update)
+        logger.info("Compaction updated SOUL.md for user %s", user_id)
+
+    return result.memory_update, max_message_seq
