@@ -129,9 +129,11 @@ The agent's capabilities are extended by adding tools. Tools follow a factory/re
 
 4. **Add to the registry test** at `tests/test_tool_registry.py`: add `"backend.app.agent.tools.<name>_tools"` to `EXPECTED_TOOL_MODULES`.
 
-5. **Write tests** at `tests/test_<name>_tools.py`. Call the factory function directly (e.g., `_create_calculator_tools()`) and invoke the tool function. No database needed for stateless tools.
+5. **Wire up approval policies** for any mutating tool. If a `SubToolInfo` declares `default_permission="ask"`, the corresponding `Tool` object **must** have `approval_policy=ApprovalPolicy(default_level=PermissionLevel.ASK)`. Without this, the WebUI shows "ask" but the runtime auto-executes. See `quickbooks_tools.py` for the reference pattern. The global test `test_ask_sub_tools_have_approval_policy` in `test_tool_registry.py` enforces this.
 
-6. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is injected into the conversation when the LLM activates the category via `list_capabilities`. Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose.
+6. **Write tests** at `tests/test_<name>_tools.py`. Call the factory function directly (e.g., `_create_calculator_tools()`) and invoke the tool function. No database needed for stateless tools.
+
+7. **(Specialist only) Add a SKILL.md** at `backend/app/agent/skills/<name>/SKILL.md` if the tool has complex workflows the LLM needs guidance on. This markdown is injected into the conversation when the LLM activates the category via `list_capabilities`. Core tools do not need SKILL.md; their `description` and `usage_hint` fields in the Python code serve the same purpose.
 
 ### Key files
 

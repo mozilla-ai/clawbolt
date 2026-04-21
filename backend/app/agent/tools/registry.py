@@ -320,6 +320,19 @@ class ToolRegistry:
             created: list[Tool] = await result if inspect.isawaitable(result) else result  # type: ignore[assignment]
             if excluded_tool_names:
                 created = [t for t in created if t.name not in excluded_tool_names]
+            # Warn when SubToolInfo declares "ask" but the Tool has no
+            # approval_policy. This means the UI shows "ask" but the
+            # runtime will auto-execute without prompting.
+            if factory.sub_tools:
+                ask_names = {st.name for st in factory.sub_tools if st.default_permission == "ask"}
+                for tool in created:
+                    if tool.name in ask_names and tool.approval_policy is None:
+                        logger.warning(
+                            "Tool %s has default_permission='ask' in SubToolInfo "
+                            "but no approval_policy on the Tool object. "
+                            "The runtime will auto-execute without asking the user.",
+                            tool.name,
+                        )
             tools.extend(created)
         return tools
 
