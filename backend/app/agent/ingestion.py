@@ -76,6 +76,28 @@ def _check_channel_route_enabled(user_id: str, channel: str) -> bool | None:
         db.close()
 
 
+async def _send_early_typing_indicator(channel: str, chat_id: str) -> None:
+    """Fire a typing indicator immediately on message receipt (best-effort).
+
+    Called before pipeline dispatch so the user sees instant feedback that
+    the agent received their message. Intentionally omits ``request_id``
+    so the typing indicator cannot resolve a webchat SSE response future.
+    """
+    try:
+        from backend.app.bus import OutboundMessage, message_bus
+
+        await message_bus.publish_outbound(
+            OutboundMessage(
+                channel=channel,
+                chat_id=chat_id,
+                content="",
+                is_typing_indicator=True,
+            )
+        )
+    except Exception:
+        logger.debug("Failed to send early typing indicator to %s/%s", channel, chat_id)
+
+
 async def _send_error_fallback(
     channel: str,
     user: User,
@@ -651,6 +673,9 @@ async def process_inbound_from_bus(
         media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
         channel=inbound.channel,
     )
+
+    # Immediate typing indicator so the user knows the agent saw their message.
+    await _send_early_typing_indicator(inbound.channel, inbound.sender_id)
 
     if settings.message_batch_window_ms > 0:
         await message_batcher.enqueue(

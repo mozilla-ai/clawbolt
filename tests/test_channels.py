@@ -1,10 +1,12 @@
 """Tests for channel base class, ChannelManager, and protocol conformance."""
 
 import asyncio
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from fastapi import APIRouter
 
+from backend.app.bus import message_bus
 from backend.app.channels.base import BaseChannel
 from backend.app.channels.manager import ChannelManager
 from backend.app.media.download import DownloadedMedia
@@ -141,3 +143,36 @@ async def test_manager_stop_all() -> None:
     await mgr.stop_all()
     assert ch1.stopped
     assert ch2.stopped
+
+
+@pytest.mark.asyncio
+async def test_handle_inbound_sends_error_fallback_on_crash() -> None:
+    """When process_inbound_from_bus crashes, an error reply should be sent."""
+    from backend.app.agent.ingestion import InboundMessage
+
+    mgr = ChannelManager()
+    ch = _StubChannel("bluebubbles")
+    mgr.register(ch)
+
+    inbound = InboundMessage(
+        channel="bluebubbles",
+        sender_id="+15551234567",
+        text="hello",
+    )
+
+    with patch(
+        "backend.app.agent.ingestion.process_inbound_from_bus",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("total crash"),
+    ):
+        await mgr._handle_inbound(inbound)
+
+    # An error fallback message should have been published to the bus
+    found = False
+    while not message_bus.outbound.empty():
+        outbound = message_bus.outbound.get_nowait()
+        if not outbound.is_typing_indicator and outbound.chat_id == "+15551234567":
+            assert "something went wrong" in outbound.content.lower()
+            found = True
+            break
+    assert found, "Expected an error fallback message on the outbound bus"
