@@ -1128,6 +1128,55 @@ async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_upload_photo_strips_dict_description() -> None:
+    """Regression: LLM may pass a dict repr as the photo description.
+    The tool must strip it before sending to CompanyCam so the project
+    doesn't store garbage."""
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.media.download import DownloadedMedia
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="39951388",
+        description="",
+        processing_status="processed",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/abc.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    ctx = MagicMock()
+    ctx.user.id = "test-user"
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url="https://example.com/photo.jpg",
+            filename="photo.jpg",
+        )
+    ]
+
+    dict_description = "{'id': '39959882', 'html_content': 'Basement staircase'}"
+    with (
+        patch(
+            "backend.app.services.webhook.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.routers.media_temp.create_temp_media_url",
+            return_value="https://tunnel.example.com/media/tmp/abc",
+        ),
+    ):
+        tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+        await tool.function(project_id="94772883", description=dict_description)
+
+    # The description sent to CompanyCam must be empty, not the dict repr
+    call_kwargs = service.upload_photo.call_args
+    assert call_kwargs.kwargs.get("description", "") == ""
+
+
+@pytest.mark.asyncio()
 async def test_receipt_rendered_output_has_no_raw_ids() -> None:
     """End-to-end: a grouped footer of five actions on one project
     never surfaces a raw CompanyCam id in the rendered output."""
@@ -1151,19 +1200,19 @@ async def test_receipt_rendered_output_has_no_raw_ids() -> None:
                     "companycam_create_project",
                     "Created CompanyCam project",
                     "Smith Residence",
-                    "https://app.companycam.com/projects/94772883",
+                    "https://app.companycam.com/projects/94772883/photos",
                 ),
                 (
                     "companycam_update_notepad",
                     "Updated notepad on CompanyCam project",
                     "project",
-                    "https://app.companycam.com/projects/94772883",
+                    "https://app.companycam.com/projects/94772883/photos",
                 ),
                 (
                     "companycam_add_comment",
                     "Commented on CompanyCam project",
                     "All demo done",
-                    "https://app.companycam.com/projects/94772883",
+                    "https://app.companycam.com/projects/94772883/photos",
                 ),
                 (
                     "companycam_tag_photo",
@@ -1175,7 +1224,7 @@ async def test_receipt_rendered_output_has_no_raw_ids() -> None:
                     "companycam_archive_project",
                     "Archived CompanyCam project",
                     "project",
-                    "https://app.companycam.com/projects/94772883",
+                    "https://app.companycam.com/projects/94772883/photos",
                 ),
             ]
         )
@@ -1183,7 +1232,7 @@ async def test_receipt_rendered_output_has_no_raw_ids() -> None:
     block = format_receipts_block(fake_calls)
 
     # The rendered footer has two URL-keyed blocks (project + photo).
-    assert block.count("https://app.companycam.com/projects/94772883") == 1
+    assert block.count("https://app.companycam.com/projects/94772883/photos") == 1
     assert block.count("https://app.companycam.com/photos/8675309") == 1
 
     # Scan every visible token for a 6+ digit run: only the two URLs

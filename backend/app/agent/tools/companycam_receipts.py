@@ -51,10 +51,14 @@ def _web_base() -> str:
 
 def project_url(project_id: str) -> str | None:
     """Return the web URL for a CompanyCam project, or None when the id
-    is missing or not a numeric string."""
+    is missing or not a numeric string.
+
+    Links to the ``/photos`` tab because that is the primary view
+    contractors use after tapping a project link in iMessage or SMS.
+    """
     if not project_id or not _ID_RE.match(project_id):
         return None
-    return f"{_web_base()}/projects/{project_id}"
+    return f"{_web_base()}/projects/{project_id}/photos"
 
 
 def photo_url(photo_id: str) -> str | None:
@@ -75,9 +79,18 @@ def project_target(project: Project | None) -> str:
 
 
 def photo_target(photo: Photo | None) -> str:
-    """Human-readable target for a photo receipt. Never a raw id."""
+    """Human-readable target for a photo receipt. Never a raw id.
+
+    Guards against structured data (dict repr, JSON) that the LLM may
+    have passed as the description parameter. A description that starts
+    with ``{`` or ``[`` is almost certainly not prose, so we fall back
+    to the generic word rather than surfacing raw braces in the footer.
+    """
     if photo and photo.description:
-        desc = _sanitize(photo.description, 60)
+        stripped = photo.description.strip()
+        if stripped.startswith(("{", "[")):
+            return "photo"
+        desc = _sanitize(stripped, 60)
         if desc:
             return desc
     return "photo"

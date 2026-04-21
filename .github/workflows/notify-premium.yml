@@ -1,0 +1,26 @@
+name: Notify Premium on Release
+
+# Sends a repository_dispatch event to clawbolt-premium so it can
+# redeploy or bump OSS_REF when the OSS layer ships a new version.
+#
+# Prerequisite: configure a PREMIUM_REPO_TOKEN secret in this repo's
+# GitHub Settings > Secrets. The token must be a PAT with `repo` scope
+# that can dispatch to mozilla-ai/clawbolt-premium.
+
+on:
+  release:
+    types: [created]
+  workflow_dispatch:
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Dispatch to clawbolt-premium
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.PREMIUM_REPO_TOKEN }}
+          repository: mozilla-ai/clawbolt-premium
+          event-type: oss-release
+          client-payload: >-
+            {"tag": "${{ github.event.release.tag_name || 'manual' }}", "sha": "${{ github.sha }}"}
