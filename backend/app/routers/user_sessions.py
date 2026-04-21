@@ -8,7 +8,9 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from backend.app.agent.concurrency import user_locks
+from backend.app.agent.context import StoredToolInteraction
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.tool_summary import append_receipts
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import get_db
 from backend.app.models import ChatSession, Message, User
@@ -85,11 +87,26 @@ async def get_session(
         if msg.tool_interactions_json and msg.tool_interactions_json not in ("", "[]"):
             with contextlib.suppress(json.JSONDecodeError, TypeError):
                 tool_interactions = json.loads(msg.tool_interactions_json)
+
+        # Mirror the channel-side transform: outbound replies render with the
+        # deterministic receipt block appended, matching what iMessage/Telegram
+        # users receive. Messages in the DB store the raw LLM reply so the
+        # agent's own history stays clean; the receipt block is recomputed
+        # here for the display surface.
+        body = msg.body
+        if msg.direction == "outbound" and tool_interactions:
+            stored: list[StoredToolInteraction] = []
+            for entry in tool_interactions:
+                with contextlib.suppress(Exception):
+                    stored.append(StoredToolInteraction.model_validate(entry))
+            if stored:
+                body = append_receipts(body, stored)
+
         messages.append(
             SessionMessage(
                 seq=msg.seq,
                 direction=msg.direction,
-                body=msg.body,
+                body=body,
                 timestamp=msg.timestamp,
                 tool_interactions=tool_interactions,
             )
