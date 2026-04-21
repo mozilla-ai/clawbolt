@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.companycam_params import (
     CompanyCamArchiveProjectParams,
@@ -256,6 +257,12 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
                 "Create a new project when no matching project exists. "
                 "Use the client name and address as the project name."
             ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Create CompanyCam project '{args.get('name', 'new project')}'"
+                ),
+            ),
         ),
         Tool(
             name=ToolName.COMPANYCAM_UPDATE_PROJECT,
@@ -265,6 +272,10 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             usage_hint=(
                 "Use to rename a project or update its address. "
                 "For example, adding a client name to a project."
+            ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: "Update CompanyCam project details",
             ),
         ),
         Tool(
@@ -283,6 +294,10 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             function=companycam_archive_project,
             params_model=CompanyCamArchiveProjectParams,
             usage_hint="Archive a project when a job is completed.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: "Archive a CompanyCam project",
+            ),
         ),
         Tool(
             name=ToolName.COMPANYCAM_DELETE_PROJECT,
@@ -295,6 +310,12 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             usage_hint=(
                 "Only delete a project if the user explicitly asks. Suggest archiving first."
             ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    "Permanently delete a CompanyCam project (cannot be undone)"
+                ),
+            ),
         ),
         Tool(
             name=ToolName.COMPANYCAM_UPDATE_NOTEPAD,
@@ -302,6 +323,10 @@ def build_project_tools(service: CompanyCamService) -> list[Tool]:
             function=companycam_update_notepad,
             params_model=CompanyCamUpdateNotepadParams,
             usage_hint="Add or update notes on a project.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: "Update notes on a CompanyCam project",
+            ),
         ),
         Tool(
             name=ToolName.COMPANYCAM_LIST_DOCUMENTS,

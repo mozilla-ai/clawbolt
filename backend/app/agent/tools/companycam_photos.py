@@ -14,6 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.companycam_params import (
     CompanyCamAddCommentParams,
@@ -410,6 +411,10 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 "search for the CompanyCam project, then upload the photo with "
                 "relevant tags (e.g. 'kitchen', 'demo', 'before')."
             ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: "Upload a photo to CompanyCam",
+            ),
         ),
         Tool(
             name=ToolName.COMPANYCAM_ADD_COMMENT,
@@ -419,6 +424,12 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             usage_hint=(
                 "Add a note or comment to a project (target_type='project') "
                 "or a specific photo (target_type='photo')."
+            ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    f"Add comment to CompanyCam {args.get('target_type', 'project')}"
+                ),
             ),
         ),
         Tool(
@@ -437,6 +448,10 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             function=companycam_tag_photo,
             params_model=CompanyCamTagPhotoParams,
             usage_hint="Tag photos with descriptive labels like 'before', 'kitchen', 'damage'.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: "Add tags to a CompanyCam photo",
+            ),
         ),
         Tool(
             name=ToolName.COMPANYCAM_DELETE_PHOTO,
@@ -444,6 +459,12 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             function=companycam_delete_photo,
             params_model=CompanyCamDeletePhotoParams,
             usage_hint="Only delete a photo if the user explicitly asks.",
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: (
+                    "Permanently delete a CompanyCam photo (cannot be undone)"
+                ),
+            ),
         ),
         Tool(
             name=ToolName.COMPANYCAM_SEARCH_PHOTOS,
