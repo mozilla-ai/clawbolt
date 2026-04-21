@@ -178,6 +178,16 @@ def create_file_tools(
         mime_type: str = "image/jpeg",
     ) -> ToolResult:
         """Upload a file to the user's cloud storage."""
+        # Resolve media handles: the LLM may pass a handle from
+        # analyze_photo instead of the actual URL.
+        if original_url and original_url not in media_map:
+            resolved = media_staging.resolve_media_ref(user.id, original_url)
+            if resolved is not None:
+                resolved_url, resolved_bytes, resolved_mime = resolved
+                original_url = resolved_url
+                media_map.setdefault(resolved_url, resolved_bytes)
+                mime_type = resolved_mime
+
         # Determine file content
         file_bytes = b""
         if original_url and original_url in media_map:
@@ -254,6 +264,11 @@ def create_file_tools(
         description: str = "",
     ) -> ToolResult:
         """Move an auto-saved file from Unsorted into the correct client folder."""
+        # Resolve media handles to original URLs.
+        resolved = media_staging.resolve_media_ref(user.id, original_url)
+        if resolved is not None:
+            original_url = resolved[0]
+
         # Look up the media record
         media_store = MediaStore(user.id)
         media_file = await media_store.get_by_url(original_url)

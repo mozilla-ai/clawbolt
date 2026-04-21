@@ -78,6 +78,15 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         mime_type = "image/jpeg"
         photo_uri = ""
 
+        # 0. Resolve media handles: the LLM may pass a handle
+        #    (e.g. "media_abZtYWFs") from analyze_photo instead of the
+        #    actual URL. Normalize to original_url + bytes before the
+        #    three-tier lookup below.
+        if original_url:
+            resolved = media_staging.resolve_media_ref(ctx.user.id, original_url)
+            if resolved is not None:
+                original_url, file_bytes, mime_type = resolved
+
         # 1. Try downloaded_media (current message, not yet evicted)
         for media in ctx.downloaded_media:
             if original_url and media.original_url != original_url:

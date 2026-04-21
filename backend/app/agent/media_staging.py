@@ -170,6 +170,39 @@ def touch(handle: str) -> bool:
     return True
 
 
+def resolve_media_ref(user_id: str, ref: str) -> tuple[str, bytes, str] | None:
+    """Resolve a media reference that may be a handle or an original URL.
+
+    The LLM sees media handles (``media_XXXXXX``) in the prompt and may
+    pass them to tools that expect original URLs. This function accepts
+    either form and returns ``(original_url, content, mime_type)`` when
+    the referenced media is still staged for the given user.
+
+    Returns ``None`` when the reference cannot be resolved (unknown handle,
+    wrong user, expired entry, or URL not in staging).
+    """
+    # Try handle resolution first (handles start with "media_" but so could
+    # a theoretical URL, so always check the handle index regardless).
+    entry = get_by_handle(ref)
+    if entry is not None:
+        stored_uid, original_url, content, mime = entry
+        if stored_uid == user_id:
+            return original_url, content, mime
+        return None
+
+    # Fall back to URL lookup in the user's staged entries.
+    _purge_expired()
+    now = time.monotonic()
+    user_items = _cache.get(user_id, {})
+    item = user_items.get(ref)
+    if item is not None:
+        content, mime, exp, _handle = item
+        if exp > now:
+            return ref, content, mime
+
+    return None
+
+
 def evict(user_id: str, original_url: str) -> None:
     """Remove a staged entry (call after successful upload or explicit deny)."""
     user_items = _cache.get(user_id)
