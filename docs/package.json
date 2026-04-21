@@ -3,6 +3,10 @@
   "type": "module",
   "version": "0.0.1",
   "scripts": {
+    "prepare-tokens": "node scripts/prepare-tokens.mjs",
+    "predev": "npm run prepare-tokens",
+    "prestart": "npm run prepare-tokens",
+    "prebuild": "npm run prepare-tokens",
     "dev": "astro dev",
     "start": "astro dev",
     "build": "astro build",
