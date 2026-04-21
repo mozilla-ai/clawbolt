@@ -78,6 +78,91 @@ def test_get_session_detail(client: TestClient, test_user: User) -> None:
     assert data["messages"][1]["tool_interactions"][0]["tool"] == "save_fact"
 
 
+def test_get_session_detail_appends_receipts_to_outbound(
+    client: TestClient, test_user: User
+) -> None:
+    """Outbound messages with tool receipts should include the rendered
+    receipt block in the returned body, matching what iMessage/Telegram
+    users see."""
+    tool_json = json.dumps(
+        [
+            {
+                "tool_call_id": "call_1",
+                "name": "create_companycam_project",
+                "args": {},
+                "result": "ok",
+                "is_error": False,
+                "receipt": {
+                    "action": "Created CompanyCam project",
+                    "target": "Smith Residence",
+                    "url": "https://app.companycam.com/projects/12345",
+                },
+            },
+        ]
+    )
+    _create_session(
+        test_user,
+        "1_250",
+        [
+            {
+                "direction": "inbound",
+                "body": "Create a project for Smith",
+                "timestamp": "2025-01-15T10:01:00",
+                "seq": 1,
+            },
+            {
+                "direction": "outbound",
+                "body": "Done!",
+                "timestamp": "2025-01-15T10:02:00",
+                "seq": 2,
+                "tool_interactions_json": tool_json,
+            },
+        ],
+    )
+    resp = client.get("/api/user/sessions/1_250")
+    assert resp.status_code == 200
+    body = resp.json()["messages"][1]["body"]
+    assert body.startswith("Done!")
+    assert "Created CompanyCam project Smith Residence" in body
+    assert "https://app.companycam.com/projects/12345" in body
+
+
+def test_get_session_detail_inbound_body_unchanged(client: TestClient, test_user: User) -> None:
+    """Receipt append must only apply to outbound messages, never inbound."""
+    tool_json = json.dumps(
+        [
+            {
+                "tool_call_id": "call_1",
+                "name": "create_companycam_project",
+                "args": {},
+                "result": "ok",
+                "is_error": False,
+                "receipt": {
+                    "action": "Created CompanyCam project",
+                    "target": "Smith Residence",
+                    "url": "https://app.companycam.com/projects/12345",
+                },
+            },
+        ]
+    )
+    _create_session(
+        test_user,
+        "1_260",
+        [
+            {
+                "direction": "inbound",
+                "body": "Hello",
+                "timestamp": "2025-01-15T10:01:00",
+                "seq": 1,
+                "tool_interactions_json": tool_json,
+            },
+        ],
+    )
+    resp = client.get("/api/user/sessions/1_260")
+    assert resp.status_code == 200
+    assert resp.json()["messages"][0]["body"] == "Hello"
+
+
 def test_session_direction_values(client: TestClient, test_user: User) -> None:
     """API response direction values must be 'inbound'/'outbound' (not 'incoming'/'outgoing')."""
     _create_session(

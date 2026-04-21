@@ -1,7 +1,6 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
-import Markdown from 'react-markdown';
 import Button from '@/components/ui/button';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { Checkbox } from '@heroui/checkbox';
@@ -566,13 +565,7 @@ export default function ChatPage() {
                     </div>
                   )}
                   {msg.body && (
-                    msg.role === 'assistant' ? (
-                      <div className="prose-chat">
-                        <Markdown>{msg.body}</Markdown>
-                      </div>
-                    ) : (
-                      <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
-                    )
+                    <p className="text-sm whitespace-pre-wrap">{msg.body}</p>
                   )}
 
                   {msg.toolInteractions && msg.toolInteractions.length > 0 && (
