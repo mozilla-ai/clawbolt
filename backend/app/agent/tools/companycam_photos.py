@@ -31,7 +31,7 @@ from backend.app.agent.tools.companycam_receipts import (
     tags_target,
 )
 from backend.app.agent.tools.names import ToolName
-from backend.app.services.companycam import CompanyCamService, get_photo_url
+from backend.app.services.companycam import CompanyCamService
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext
@@ -158,13 +158,13 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 except Exception:
                     break
 
-        url = get_photo_url(photo)
+        app_url = photo_url(photo.id)
         logger.info(
             "CompanyCam photo result: project=%s id=%s status=%s url=%s",
             project_id,
             photo.id,
             status,
-            url,
+            app_url,
         )
 
         if status == "processing_error":
@@ -185,7 +185,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
                 receipt=ToolReceipt(
                     action="Photo already in CompanyCam",
                     target=photo_target(photo),
-                    url=url or photo_url(photo.id),
+                    url=app_url,
                 ),
             )
 
@@ -193,11 +193,11 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         if status == "pending":
             status_note = " (still processing, may take a moment to appear)"
         return ToolResult(
-            content=f"Photo uploaded to CompanyCam project {project_id}: {url}{status_note}",
+            content=f"Photo uploaded to CompanyCam project {project_id}: {app_url}{status_note}",
             receipt=ToolReceipt(
                 action="Uploaded photo to CompanyCam",
                 target=photo_target(photo),
-                url=url or photo_url(photo.id),
+                url=app_url,
             ),
         )
 
@@ -373,9 +373,9 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             return ToolResult(content="No photos found matching the criteria.")
         lines = [f"Found {len(photos)} photo(s):"]
         for p in photos[:20]:
-            url = get_photo_url(p)
+            p_url = photo_url(p.id) or f"photo {p.id}"
             desc = f" - {p.description}" if p.description else ""
-            lines.append(f"- ID: {p.id}{desc}: {url}")
+            lines.append(f"- ID: {p.id}{desc}: {p_url}")
         if len(photos) > 20:
             lines.append(f"(Showing 20 of {len(photos)})")
         if len(photos) >= 50:

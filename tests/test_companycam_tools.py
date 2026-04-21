@@ -1036,6 +1036,98 @@ async def test_receipt_create_checklist_is_clean() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_receipt_upload_photo_uses_app_url() -> None:
+    """Regression: upload receipt must link to the app, not the CDN image."""
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.media.download import DownloadedMedia
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="39951388",
+        description="Clock repair job site",
+        processing_status="processed",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/long-cdn-hash.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    ctx = MagicMock()
+    ctx.user.id = "test-user"
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url="https://example.com/photo.jpg",
+            filename="photo.jpg",
+        )
+    ]
+
+    with (
+        patch(
+            "backend.app.services.webhook.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.routers.media_temp.create_temp_media_url",
+            return_value="https://tunnel.example.com/media/tmp/abc",
+        ),
+    ):
+        tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+        result = await tool.function(project_id="94772883")
+
+    _assert_receipt_clean(result.receipt, expect_url=True)
+    assert "photos/39951388" in result.receipt.url
+    # Content shown to the LLM should also use the app URL, not the CDN URL
+    assert "img.companycam.com" not in result.content
+
+
+@pytest.mark.asyncio()
+async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
+    """Regression: duplicate-photo receipt must link to the app, not the CDN."""
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.media.download import DownloadedMedia
+    from backend.app.services.companycam_models import ImageURI, Photo
+
+    service = MagicMock(spec=CompanyCamService)
+    photo_obj = Photo(
+        id="39951388",
+        description="Kitchen demo",
+        processing_status="duplicate",
+        uris=[ImageURI(type="original", uri="https://img.companycam.com/dup.jpg")],
+    )
+    service.upload_photo = AsyncMock(return_value=photo_obj)
+
+    ctx = MagicMock()
+    ctx.user.id = "test-user"
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url="https://example.com/photo.jpg",
+            filename="photo.jpg",
+        )
+    ]
+
+    with (
+        patch(
+            "backend.app.services.webhook.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.routers.media_temp.create_temp_media_url",
+            return_value="https://tunnel.example.com/media/tmp/abc",
+        ),
+    ):
+        tool = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+        result = await tool.function(project_id="94772883")
+
+    _assert_receipt_clean(result.receipt, expect_url=True)
+    assert "photos/39951388" in result.receipt.url
+
+
+@pytest.mark.asyncio()
 async def test_receipt_rendered_output_has_no_raw_ids() -> None:
     """End-to-end: a grouped footer of five actions on one project
     never surfaces a raw CompanyCam id in the rendered output."""
