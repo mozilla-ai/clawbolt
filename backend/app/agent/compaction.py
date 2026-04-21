@@ -61,6 +61,11 @@ class CompactionResult:
         self.user_profile_update = user_profile_update
         self.soul_update = soul_update
 
+    def __setattr__(self, name: str, value: str) -> None:
+        if hasattr(self, name):
+            raise AttributeError(f"CompactionResult is immutable: cannot reassign '{name}'")
+        object.__setattr__(self, name, value)
+
 
 _EMPTY_RESULT = CompactionResult()
 

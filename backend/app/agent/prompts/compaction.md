@@ -9,7 +9,7 @@ Each file has a distinct purpose. Route facts to the correct file:
 - Geographic area, service radius, zip code
 - Preferred tools, equipment, material brands (general preferences)
 - Working hours, availability, timezone
-- Communication preferences
+- Preferred contact method, response time expectations
 
 **memory (MEMORY.md)**: durable business facts that are not about the user themselves.
 - Client names, contact info, project history
