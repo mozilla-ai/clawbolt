@@ -64,6 +64,15 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         if tags:
             tags = [t.strip()[:50] for t in tags[:10] if t.strip()]
 
+        # Sanitize LLM-supplied description: the LLM sometimes passes
+        # the raw vision analysis output (a dict repr or JSON object)
+        # instead of a plain-text sentence. Strip it so CompanyCam
+        # doesn't store garbage as the photo description.
+        if description:
+            description = description.strip()
+            if description.startswith(("{", "[")):
+                description = ""
+
         file_bytes: bytes = b""
         mime_type = "image/jpeg"
         photo_uri = ""
@@ -82,10 +91,13 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             all_staged = media_staging.get_all_for_user(ctx.user.id)
             if original_url and original_url in all_staged:
                 file_bytes = all_staged[original_url]
-            elif all_staged:
+            elif not original_url and all_staged:
+                # Only grab an arbitrary photo when the LLM did not
+                # specify which one. When original_url is set but not
+                # found, we must NOT silently substitute another photo.
                 first_url = next(iter(all_staged))
                 file_bytes = all_staged[first_url]
-                original_url = original_url or first_url
+                original_url = first_url
 
         # 3. Fall back to MediaFile records (already saved to storage)
         if not file_bytes:
@@ -93,7 +105,9 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
             media_file = None
             if original_url:
                 media_file = await media_store.get_by_url(original_url)
-            if media_file is None:
+            if media_file is None and not original_url:
+                # Same guard as step 2: only grab the most recent media
+                # when the LLM did not specify a particular URL.
                 all_media = await media_store.list_all()
                 if all_media:
                     media_file = all_media[-1]
