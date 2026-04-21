@@ -1,6 +1,7 @@
 """Tests for the progressive approval system."""
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -469,6 +470,121 @@ class TestApprovalGate:
         with db_session() as db:
             assert db.get(PendingApprovalRow, test_user.id) is not None, (
                 "fresh rows must survive a failed publish"
+            )
+
+    @pytest.mark.asyncio()
+    async def test_resolve_deletes_row_before_waking_waiter(self, test_user: User) -> None:
+        """resolve() must delete the pending_approvals row before event.set()
+        so a crash between wake-up and the waiter's trailing cleanup can't
+        leave an already-answered row to be mis-identified as an orphan."""
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        gate = ApprovalGate()
+        mock_publish = AsyncMock()
+        woke_after_delete = asyncio.Event()
+
+        async def _resolve_and_check() -> None:
+            await asyncio.sleep(0.01)
+            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+            # Immediately after resolve returns, the DB row must already be
+            # gone, without waiting for request_approval's trailing cleanup.
+            with db_session() as db:
+                assert db.get(PendingApprovalRow, test_user.id) is None, (
+                    "resolve() must delete the row before waking the waiter"
+                )
+            woke_after_delete.set()
+
+        task = asyncio.create_task(_resolve_and_check())
+        await gate.request_approval(
+            user_id=test_user.id,
+            tool_name="write_file",
+            description="write",
+            publish_outbound=mock_publish,
+            channel="telegram",
+            chat_id="chat_1",
+            timeout=5.0,
+        )
+        await task
+        assert woke_after_delete.is_set()
+
+    @pytest.mark.asyncio()
+    async def test_persist_pending_row_upsert_is_idempotent(self, test_user: User) -> None:
+        """_persist_pending_row uses ON CONFLICT DO UPDATE so repeated calls
+        for the same user overwrite cleanly rather than racing a PK violation."""
+        from backend.app.agent.approval import _persist_pending_row
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        _persist_pending_row(test_user.id, "tool_a", "desc a", "telegram", "chat_1")
+        _persist_pending_row(test_user.id, "tool_b", "desc b", "bluebubbles", "chat_2")
+
+        with db_session() as db:
+            row = db.get(PendingApprovalRow, test_user.id)
+            assert row is not None
+            assert row.tool_name == "tool_b"
+            assert row.channel == "bluebubbles"
+            assert row.chat_id == "chat_2"
+
+    @pytest.mark.asyncio()
+    async def test_cleanup_skips_when_another_worker_holds_lock(
+        self, test_user: User, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """When a peer worker holds the cleanup advisory lock, this worker
+        must return 0 and publish nothing so users don't receive duplicate
+        'previous request was interrupted' messages during a rolling restart."""
+        from backend.app.agent import approval as approval_module
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="would-be orphan",
+                    channel="telegram",
+                    chat_id="chat_lock",
+                )
+            )
+            db.commit()
+
+        class _LockedSession:
+            """SessionLocal stand-in where pg_try_advisory_lock returns False."""
+
+            def __init__(self) -> None:
+                self._closed = False
+
+            def execute(self, *_args: object, **_kwargs: object) -> Any:
+                class _Result:
+                    def scalar(self) -> bool:
+                        return False
+
+                return _Result()
+
+            def commit(self) -> None:
+                pass
+
+            def close(self) -> None:
+                self._closed = True
+
+        monkeypatch.setattr(approval_module, "SessionLocal", _LockedSession)
+
+        published: list[OutboundMessage] = []
+
+        async def _publish(msg: OutboundMessage) -> None:
+            published.append(msg)
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+
+        assert recovered == 0
+        assert published == [], (
+            "no message should be sent when another worker owns the cleanup lock"
+        )
+        with db_session() as db:
+            assert db.get(PendingApprovalRow, test_user.id) is not None, (
+                "the peer worker that owns the lock must remain responsible for the row"
             )
 
     @pytest.mark.asyncio()

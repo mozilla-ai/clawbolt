@@ -23,19 +23,18 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from enum import StrEnum
 from fnmatch import fnmatch
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import Any, Literal, cast
 
 from any_llm import acompletion
 from any_llm.types.completion import ChatCompletion
 from pydantic import BaseModel, Field
 from sqlalchemy import text
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
+from backend.app.bus import OutboundMessage
 from backend.app.config import settings
-from backend.app.database import db_session
+from backend.app.database import SessionLocal, db_session
 from backend.app.models import PendingApprovalRow, UserPermissionSet
-
-if TYPE_CHECKING:
-    from backend.app.bus import OutboundMessage
 
 logger = logging.getLogger(__name__)
 
@@ -413,9 +412,9 @@ class ApprovalGate:
         if prompt is None:
             prompt = format_approval_message(tool_name, description)
         try:
-            from backend.app.bus import OutboundMessage as OMsg
-
-            await publish_outbound(OMsg(channel=channel, chat_id=chat_id, content=prompt))
+            await publish_outbound(
+                OutboundMessage(channel=channel, chat_id=chat_id, content=prompt)
+            )
         except Exception:
             logger.exception("Failed to send approval prompt to user %s", user_id)
             self._pending.pop(user_id, None)
@@ -456,11 +455,17 @@ class ApprovalGate:
         """Resolve a pending approval with the user's decision.
 
         Returns True if there was a pending approval to resolve.
+
+        The persisted row is deleted before ``event.set()`` fires so that if
+        this worker crashes between resolving and the waiting coroutine's
+        trailing cleanup, a fresh worker won't mistake the already-answered
+        row for an orphan and re-send the recovery message.
         """
         pending = self._pending.get(user_id)
         if pending is None:
             return False
         pending.decision = decision
+        _delete_pending_row(user_id)
         pending.event.set()
         return True
 
@@ -479,29 +484,39 @@ def _persist_pending_row(
 ) -> None:
     """Upsert a pending_approvals row before the prompt is sent.
 
+    Uses a single-statement ON CONFLICT DO UPDATE so two concurrent
+    request_approval calls for the same user can't both see "no row"
+    and race an INSERT into a PK violation.
+
     Failures are logged but never raised: persistence is a recovery aid,
     not a correctness prerequisite. The in-memory gate still drives
     the live wake-up flow.
     """
     try:
+        now = datetime.now(UTC)
+        stmt = (
+            pg_insert(PendingApprovalRow)
+            .values(
+                user_id=user_id,
+                tool_name=tool_name,
+                description=description,
+                channel=channel,
+                chat_id=chat_id,
+                created_at=now,
+            )
+            .on_conflict_do_update(
+                index_elements=["user_id"],
+                set_={
+                    "tool_name": tool_name,
+                    "description": description,
+                    "channel": channel,
+                    "chat_id": chat_id,
+                    "created_at": now,
+                },
+            )
+        )
         with db_session() as db:
-            existing = db.get(PendingApprovalRow, user_id)
-            if existing is None:
-                db.add(
-                    PendingApprovalRow(
-                        user_id=user_id,
-                        tool_name=tool_name,
-                        description=description,
-                        channel=channel,
-                        chat_id=chat_id,
-                    )
-                )
-            else:
-                existing.tool_name = tool_name
-                existing.description = description
-                existing.channel = channel
-                existing.chat_id = chat_id
-                existing.created_at = datetime.now(UTC)
+            db.execute(stmt)
             db.commit()
     except Exception:
         logger.exception(
@@ -525,6 +540,9 @@ def _delete_pending_row(user_id: str) -> None:
 
 _ORPHAN_MAX_AGE = timedelta(hours=1)
 
+# Advisory-lock key used to serialize orphan cleanup across workers at boot.
+_CLEANUP_LOCK_KEY = "pending_approvals:cleanup"
+
 
 async def cleanup_orphaned_approvals(
     publish_outbound: Callable[[OutboundMessage], Awaitable[None]],
@@ -538,6 +556,11 @@ async def cleanup_orphaned_approvals(
     the number of orphans for which a recovery message was successfully
     delivered.
 
+    When several workers boot at once (rolling restart, blue/green, etc.),
+    ``pg_try_advisory_lock`` ensures exactly one worker owns the cleanup
+    pass. The rest return immediately with zero work done so users don't
+    receive duplicate "previous request was interrupted" messages.
+
     Rows are always deleted by the end of this call:
       * Malformed rows (missing channel or chat_id) are deleted with a
         warning; no message is sent because we have nowhere to send it.
@@ -547,68 +570,94 @@ async def cleanup_orphaned_approvals(
       * Fresh rows whose publish fails stay in the table for a later
         restart to retry. The age gate caps how long that can loop.
     """
-    from backend.app.bus import OutboundMessage as OMsg
-
+    db = SessionLocal()
+    lock_acquired = False
     try:
-        with db_session() as db:
-            rows = db.query(PendingApprovalRow).all()
-            snapshot = [(r.user_id, r.tool_name, r.channel, r.chat_id, r.created_at) for r in rows]
-    except Exception:
-        logger.exception("Failed to load orphaned approvals on startup")
-        return 0
-
-    now = datetime.now(UTC)
-    recovered = 0
-    for user_id, tool_name, channel, chat_id, created_at in snapshot:
-        if not channel or not chat_id:
-            logger.warning(
-                "Dropping malformed pending_approvals row for user %s tool %s: "
-                "channel=%r chat_id=%r",
-                user_id,
-                tool_name,
-                channel,
-                chat_id,
-            )
-            _delete_pending_row(user_id)
-            continue
-
-        expired = created_at is not None and (now - created_at) > _ORPHAN_MAX_AGE
+        try:
+            got_lock = db.execute(
+                text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                {"k": _CLEANUP_LOCK_KEY},
+            ).scalar()
+            db.commit()
+        except Exception:
+            logger.exception("Failed to acquire orphan-cleanup advisory lock")
+            return 0
+        if not got_lock:
+            logger.info("Another worker is running orphan cleanup; skipping on this boot")
+            return 0
+        lock_acquired = True
 
         try:
-            await publish_outbound(
-                OMsg(
-                    channel=channel,
-                    chat_id=chat_id,
-                    content=(
-                        "My previous approval request was interrupted and I didn't "
-                        "get your reply. Please resend your last message if you still "
-                        "want me to act on it."
-                    ),
-                )
-            )
-            _delete_pending_row(user_id)
-            recovered += 1
-            logger.info(
-                "Recovered orphaned approval for user %s (tool=%s)",
-                user_id,
-                tool_name,
-            )
+            rows = db.query(PendingApprovalRow).all()
+            snapshot = [(r.user_id, r.tool_name, r.channel, r.chat_id, r.created_at) for r in rows]
+            db.commit()
         except Exception:
-            logger.exception(
-                "Failed to recover orphaned approval for user %s tool %s",
-                user_id,
-                tool_name,
-            )
-            if expired:
+            logger.exception("Failed to load orphaned approvals on startup")
+            return 0
+
+        now = datetime.now(UTC)
+        recovered = 0
+        for user_id, tool_name, channel, chat_id, created_at in snapshot:
+            if not channel or not chat_id:
                 logger.warning(
-                    "Dropping expired pending_approvals row for user %s tool %s "
-                    "(age > %s); publish kept failing",
+                    "Dropping malformed pending_approvals row for user %s tool %s: "
+                    "channel=%r chat_id=%r",
                     user_id,
                     tool_name,
-                    _ORPHAN_MAX_AGE,
+                    channel,
+                    chat_id,
                 )
                 _delete_pending_row(user_id)
-    return recovered
+                continue
+
+            expired = created_at is not None and (now - created_at) > _ORPHAN_MAX_AGE
+
+            try:
+                await publish_outbound(
+                    OutboundMessage(
+                        channel=channel,
+                        chat_id=chat_id,
+                        content=(
+                            "My previous approval request was interrupted and I didn't "
+                            "get your reply. Please resend your last message if you still "
+                            "want me to act on it."
+                        ),
+                    )
+                )
+                _delete_pending_row(user_id)
+                recovered += 1
+                logger.info(
+                    "Recovered orphaned approval for user %s (tool=%s)",
+                    user_id,
+                    tool_name,
+                )
+            except Exception:
+                logger.exception(
+                    "Failed to recover orphaned approval for user %s tool %s",
+                    user_id,
+                    tool_name,
+                )
+                if expired:
+                    logger.warning(
+                        "Dropping expired pending_approvals row for user %s tool %s "
+                        "(age > %s); publish kept failing",
+                        user_id,
+                        tool_name,
+                        _ORPHAN_MAX_AGE,
+                    )
+                    _delete_pending_row(user_id)
+        return recovered
+    finally:
+        if lock_acquired:
+            try:
+                db.execute(
+                    text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                    {"k": _CLEANUP_LOCK_KEY},
+                )
+                db.commit()
+            except Exception:
+                logger.exception("Failed to release orphan-cleanup advisory lock")
+        db.close()
 
 
 # ---------------------------------------------------------------------------

@@ -19,13 +19,19 @@ from typing import Any
 
 import httpx
 import sqlalchemy as sa
-from sqlalchemy import select
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.config import settings
-from backend.app.database import db_session
+from backend.app.database import SessionLocal, db_session
 
 logger = logging.getLogger(__name__)
+
+
+def _refresh_lock_key(user_id: str, integration: str) -> str:
+    """Advisory-lock key for serializing OAuth token refresh per (user, integration)."""
+    return f"oauth_refresh:{user_id}:{integration}"
+
 
 # Token expiry buffer: refresh 5 minutes before actual expiry.
 _EXPIRY_BUFFER_SECONDS = 300
@@ -390,27 +396,57 @@ class OAuthService:
 
         The callback preserves fields the service does not know about
         (realm_id, scopes, extra) by loading the current row before saving.
+
+        The load + save runs under a session-scoped advisory lock keyed on
+        ``(user_id, integration)`` so two concurrent service refreshes can't
+        both read the old row and overwrite each other (losing the rotated
+        refresh_token from whichever callback runs second).
         """
 
         def _persist(access_token: str, refresh_token: str, expires_at: float) -> None:
-            current = self.load_token(user_id, integration)
-            if current is None:
-                logger.warning(
-                    "on_refresh callback fired for missing token: user=%s integration=%s",
-                    user_id,
-                    integration,
+            db = SessionLocal()
+            lock_key = _refresh_lock_key(user_id, integration)
+            try:
+                db.execute(
+                    text("SELECT pg_advisory_lock(hashtext(:k))"),
+                    {"k": lock_key},
                 )
-                return
-            current.access_token = access_token
-            if refresh_token:
-                current.refresh_token = refresh_token
-            current.expires_at = expires_at
-            self.save_token(user_id, integration, current)
-            logger.info(
-                "Persisted mid-call token refresh: user=%s integration=%s",
-                user_id,
-                integration,
-            )
+                db.commit()
+                try:
+                    current = self.load_token(user_id, integration)
+                    if current is None:
+                        logger.warning(
+                            "on_refresh callback fired for missing token: user=%s integration=%s",
+                            user_id,
+                            integration,
+                        )
+                        return
+                    current.access_token = access_token
+                    if refresh_token:
+                        current.refresh_token = refresh_token
+                    current.expires_at = expires_at
+                    self.save_token(user_id, integration, current)
+                    logger.info(
+                        "Persisted mid-call token refresh: user=%s integration=%s",
+                        user_id,
+                        integration,
+                    )
+                finally:
+                    try:
+                        db.execute(
+                            text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                            {"k": lock_key},
+                        )
+                        db.commit()
+                    except Exception:
+                        logger.exception(
+                            "Failed to release OAuth refresh lock in callback: "
+                            "user=%s integration=%s",
+                            user_id,
+                            integration,
+                        )
+            finally:
+                db.close()
 
         return _persist
 
@@ -456,68 +492,116 @@ class OAuthService:
         Returns the updated token data on success, or None if no token or
         refresh token exists. Raises on HTTP errors so the caller can
         classify them via ``_is_permanent_refresh_failure``.
+
+        A session-scoped Postgres advisory lock serializes concurrent
+        refreshes for the same (user, integration). Without it, two workers
+        racing a 401 both POST ``refresh_token`` to the provider. Providers
+        that rotate the refresh token (Google, QuickBooks) may invalidate
+        the other worker's newly-issued token, or the losing worker may
+        overwrite the winner's rotated refresh_token in the DB. After
+        acquiring the lock we re-load the token and skip the HTTP call
+        entirely if another worker already refreshed it.
         """
-        token = self.load_token(user_id, integration)
-        if not token or not token.refresh_token:
-            logger.debug(
-                "Cannot refresh token (missing): user=%s integration=%s has_token=%s has_refresh=%s",
-                user_id,
-                integration,
-                token is not None,
-                bool(token and token.refresh_token),
+        db = SessionLocal()
+        lock_key = _refresh_lock_key(user_id, integration)
+        try:
+            db.execute(
+                text("SELECT pg_advisory_lock(hashtext(:k))"),
+                {"k": lock_key},
             )
-            return None
+            db.commit()
+            try:
+                token = self.load_token(user_id, integration)
+                if not token or not token.refresh_token:
+                    logger.debug(
+                        "Cannot refresh token (missing): user=%s integration=%s "
+                        "has_token=%s has_refresh=%s",
+                        user_id,
+                        integration,
+                        token is not None,
+                        bool(token and token.refresh_token),
+                    )
+                    return None
 
-        config = get_oauth_config(integration)
-        if config is None:
-            logger.debug(
-                "Cannot refresh token (no config): user=%s integration=%s",
-                user_id,
-                integration,
-            )
-            return None
+                # If a peer worker already refreshed under the lock, the
+                # reloaded token will carry a future expires_at. Skip the
+                # redundant HTTP call. ``expires_at > 0`` guards against
+                # providers that don't return an expiry (expires_at == 0,
+                # treated as non-expiring), where an explicit
+                # ``refresh_token`` call still needs to hit the provider.
+                if token.expires_at > 0 and not token.is_expired():
+                    logger.info(
+                        "Token already refreshed by another worker: user=%s integration=%s",
+                        user_id,
+                        integration,
+                    )
+                    return token
 
-        logger.debug(
-            "Attempting token refresh: user=%s integration=%s token_url=%s",
-            user_id,
-            integration,
-            config.token_url,
-        )
-        http = self._get_http()
-        resp = await http.post(
-            config.token_url,
-            data={
-                "grant_type": "refresh_token",
-                "refresh_token": token.refresh_token,
-            },
-            auth=(config.client_id, config.client_secret),
-        )
-        resp.raise_for_status()
-        data = resp.json()
+                config = get_oauth_config(integration)
+                if config is None:
+                    logger.debug(
+                        "Cannot refresh token (no config): user=%s integration=%s",
+                        user_id,
+                        integration,
+                    )
+                    return None
 
-        token.access_token = data["access_token"]
-        if "refresh_token" in data:
-            token.refresh_token = data["refresh_token"]
+                logger.debug(
+                    "Attempting token refresh: user=%s integration=%s token_url=%s",
+                    user_id,
+                    integration,
+                    config.token_url,
+                )
+                http = self._get_http()
+                resp = await http.post(
+                    config.token_url,
+                    data={
+                        "grant_type": "refresh_token",
+                        "refresh_token": token.refresh_token,
+                    },
+                    auth=(config.client_id, config.client_secret),
+                )
+                resp.raise_for_status()
+                data = resp.json()
 
-        # Compute absolute expiry from the provider's response.
-        # RFC 6749 Section 5.1: expires_in is RECOMMENDED, not REQUIRED.
-        # Some providers return an absolute expires_at timestamp instead.
-        # When neither is present the token is treated as non-expiring
-        # (expires_at stays 0, and is_expired() returns False).
-        if data.get("expires_in"):
-            token.expires_at = time.time() + int(data["expires_in"])
-        elif data.get("expires_at"):
-            token.expires_at = float(data["expires_at"])
-        else:
-            token.expires_at = 0.0
+                token.access_token = data["access_token"]
+                if "refresh_token" in data:
+                    token.refresh_token = data["refresh_token"]
 
-        self.save_token(user_id, integration, token)
-        logger.info(
-            "Refreshed OAuth token: user=%s integration=%s",
-            user_id,
-            integration,
-        )
-        return token
+                # Compute absolute expiry from the provider's response.
+                # RFC 6749 Section 5.1: expires_in is RECOMMENDED, not REQUIRED.
+                # Some providers return an absolute expires_at timestamp instead.
+                # When neither is present the token is treated as non-expiring
+                # (expires_at stays 0, and is_expired() returns False).
+                if data.get("expires_in"):
+                    token.expires_at = time.time() + int(data["expires_in"])
+                elif data.get("expires_at"):
+                    token.expires_at = float(data["expires_at"])
+                else:
+                    token.expires_at = 0.0
+
+                self.save_token(user_id, integration, token)
+                logger.info(
+                    "Refreshed OAuth token: user=%s integration=%s",
+                    user_id,
+                    integration,
+                )
+                return token
+            finally:
+                try:
+                    db.execute(
+                        text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                        {"k": lock_key},
+                    )
+                    db.commit()
+                except Exception:
+                    logger.exception(
+                        "Failed to release OAuth refresh lock: user=%s integration=%s",
+                        user_id,
+                        integration,
+                    )
+        finally:
+            db.close()
 
     async def get_valid_token(
         self,

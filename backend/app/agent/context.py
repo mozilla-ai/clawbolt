@@ -6,6 +6,7 @@ import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import text
 
 from backend.app.agent.compaction import compact_session
 from backend.app.agent.dto import SessionState
@@ -18,6 +19,7 @@ from backend.app.agent.messages import (
 )
 from backend.app.agent.session_db import SessionStore, get_session_store
 from backend.app.config import settings
+from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
@@ -54,6 +56,11 @@ class StoredToolInteraction(BaseModel):
     receipt: StoredToolReceipt | None = None
 
 
+def _compaction_lock_key(session_id: str) -> str:
+    """Advisory-lock key serializing compaction for a single session."""
+    return f"compact:{session_id}"
+
+
 async def _run_compaction_in_background(
     session_store: SessionStore,
     session: SessionState,
@@ -66,12 +73,35 @@ async def _run_compaction_in_background(
     This is designed to be fired as a background task via asyncio.create_task
     so it does not block message processing.
 
-    Re-reads ``last_compacted_seq`` from the database before running so that
-    if another worker (or a previous crashed run) already compacted through
-    ``max_message_seq``, we skip the LLM call. This prevents duplicate
-    HISTORY.md append entries and wasted LLM spend when compaction raced.
+    Wrapped in a session-scoped Postgres advisory lock keyed on
+    ``session_id``. If another worker is already compacting this session,
+    ``pg_try_advisory_lock`` returns false and we skip the LLM call without
+    waiting. This closes the read-then-write race where two workers would
+    both load the stale ``last_compacted_seq``, both call the LLM, and both
+    append to HISTORY.md. After acquiring the lock we re-check the
+    watermark so a completed compaction from another worker is respected.
     """
+    db = SessionLocal()
+    lock_acquired = False
+    lock_key = _compaction_lock_key(session.session_id)
     try:
+        try:
+            got_lock = db.execute(
+                text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                {"k": lock_key},
+            ).scalar()
+            db.commit()
+        except Exception:
+            logger.exception("Failed to acquire compaction lock for session %s", session.session_id)
+            return
+        if not got_lock:
+            logger.info(
+                "Skipping compaction for session %s: another worker holds the compaction lock",
+                session.session_id,
+            )
+            return
+        lock_acquired = True
+
         fresh = session_store.load_session(session.session_id)
         current_watermark = fresh.last_compacted_seq if fresh is not None else 0
         if max_message_seq <= current_watermark:
@@ -101,6 +131,19 @@ async def _run_compaction_in_background(
             session.session_id,
             user_id,
         )
+    finally:
+        if lock_acquired:
+            try:
+                db.execute(
+                    text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                    {"k": lock_key},
+                )
+                db.commit()
+            except Exception:
+                logger.exception(
+                    "Failed to release compaction lock for session %s", session.session_id
+                )
+        db.close()
 
 
 def trigger_compaction_for_dropped(
