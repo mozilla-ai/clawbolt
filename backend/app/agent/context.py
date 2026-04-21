@@ -90,6 +90,9 @@ async def _run_compaction_in_background(
                 text("SELECT pg_try_advisory_lock(hashtext(:k))"),
                 {"k": lock_key},
             ).scalar()
+            # Close the implicit read transaction; the advisory lock is
+            # session-scoped and survives the commit. Keeps the connection
+            # out of idle-in-transaction state across the LLM call below.
             db.commit()
         except Exception:
             logger.exception("Failed to acquire compaction lock for session %s", session.session_id)

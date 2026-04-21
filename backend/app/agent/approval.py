@@ -578,6 +578,9 @@ async def cleanup_orphaned_approvals(
                 text("SELECT pg_try_advisory_lock(hashtext(:k))"),
                 {"k": _CLEANUP_LOCK_KEY},
             ).scalar()
+            # Close the implicit read transaction so we aren't idle-in-
+            # transaction through publish_outbound below. The advisory
+            # lock is session-scoped and survives the commit.
             db.commit()
         except Exception:
             logger.exception("Failed to acquire orphan-cleanup advisory lock")

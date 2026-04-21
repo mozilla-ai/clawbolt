@@ -472,6 +472,8 @@ class OAuthService:
                     text("SELECT pg_advisory_lock(hashtext(:k))"),
                     {"k": lock_key},
                 )
+                # Close the implicit read transaction; the advisory lock is
+                # session-scoped and survives the commit.
                 db.commit()
                 try:
                     current = self.load_token(user_id, integration)
@@ -570,6 +572,9 @@ class OAuthService:
                 text("SELECT pg_advisory_lock(hashtext(:k))"),
                 {"k": lock_key},
             )
+            # Close the implicit read transaction so we aren't idle-in-
+            # transaction across the httpx POST. The advisory lock is
+            # session-scoped and survives the commit.
             db.commit()
             try:
                 token = self.load_token(user_id, integration)
