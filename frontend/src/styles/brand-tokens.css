@@ -1,0 +1,258 @@
+/*
+ * Clawbolt brand tokens. Single source of truth for design tokens across the
+ * frontend React app (consumed via Tailwind v4's @theme indirection in
+ * frontend/src/index.css), the OSS docs Starlight site, and the premium docs
+ * user guide in clawbolt-premium.
+ *
+ * Token names are prefixed --brand-* so there is exactly one source of truth
+ * per token. frontend/src/index.css's @theme block maps Tailwind utility
+ * names to these tokens via CSS var indirection, e.g.:
+ *
+ *   @theme { --color-primary: var(--brand-color-primary); }
+ *
+ * That generates the .bg-primary / .text-primary utilities while letting the
+ * value cascade from :root. A Tailwind palette change lives in one place.
+ *
+ * Source: DESIGN.md (canonical spec).
+ *
+ * Convention inversion -- read this before editing the Starlight alias
+ * block at the bottom of the file:
+ *
+ *   The frontend React app defaults to LIGHT mode and toggles TO dark via
+ *   an html.dark class. Starlight docs default to DARK mode and toggle TO
+ *   light via a [data-theme="light"] attribute. The two systems have
+ *   opposite defaults. This file therefore:
+ *
+ *     - Declares --brand-color-* tokens with LIGHT values at :root, and
+ *       DARK values under html:where(.dark, .dark *). Matches the frontend
+ *       convention.
+ *     - Declares --sl-color-* Starlight aliases with DARK values at :root,
+ *       and LIGHT values under :root[data-theme="light"]. Matches the
+ *       Starlight convention.
+ *
+ *   Both conventions coexist in :root. It looks inconsistent at a glance;
+ *   it is deliberate.
+ */
+
+/* ---------- Brand palette (light-mode default) ---------- */
+
+:root {
+  /* Core semantic tokens -- light mode */
+  --brand-color-background: #F6F5F3;
+  --brand-color-card: #FEFEFE;
+  --brand-color-panel: #F0EEEB;
+  --brand-color-foreground: #2D2A26;
+  --brand-color-muted-foreground: #7A746C;
+  --brand-color-primary: #B8720E;
+  --brand-color-primary-hover: #9A5F0B;
+  --brand-color-primary-light: #FDF3E3;
+  --brand-color-border: #E3DFD9;
+  --brand-color-danger: #C93B37;
+  --brand-color-danger-light: #FCE8E8;
+  --brand-color-danger-hover: #f5d0d0;
+  --brand-color-warning-bg: #fdf4d6;
+  --brand-color-warning-border: #e8c438;
+  --brand-color-warning-text: #7a5a09;
+  --brand-color-error-bg: #FCE8E8;
+  --brand-color-error-border: #eba8a8;
+  --brand-color-error-text: #872020;
+  --brand-color-success: #1b8f46;
+  --brand-color-success-bg: #E5F5EC;
+  --brand-color-success-text: #0d5a33;
+  --brand-color-info-bg: #E3EDF7;
+  --brand-color-info-border: #88b6dc;
+  --brand-color-info-text: #1f4a7e;
+  --brand-color-header-bg-from: #FEFEFE;
+  --brand-color-header-bg-to: #F6F5F3;
+  --brand-color-header-text: #2D2A26;
+  --brand-color-header-border: #E3DFD9;
+  --brand-color-secondary-hover: #EDEAE6;
+  --brand-color-selected-bg: #FDF3E3;
+  --brand-color-focus-bg: #F6F5F3;
+
+  /* Extended primary scale */
+  --brand-color-primary-50: #FDF8F0;
+  --brand-color-primary-100: #FDF3E3;
+  --brand-color-primary-200: #F5DDB4;
+  --brand-color-primary-300: #E8C07A;
+  --brand-color-primary-400: #D4A030;
+  --brand-color-primary-500: #C4860E;
+  --brand-color-primary-600: #B8720E;
+  --brand-color-primary-700: #9A5F0B;
+  --brand-color-primary-800: #7D4D09;
+  --brand-color-primary-900: #613C07;
+
+  /* Extended neutral scale */
+  --brand-color-neutral-50: #FAF9F7;
+  --brand-color-neutral-100: #F6F5F3;
+  --brand-color-neutral-200: #EDEAE6;
+  --brand-color-neutral-300: #E3DFD9;
+  --brand-color-neutral-400: #C4BEB5;
+  --brand-color-neutral-500: #94908A;
+  --brand-color-neutral-600: #7A746C;
+  --brand-color-neutral-700: #5A544D;
+  --brand-color-neutral-800: #3E3A35;
+  --brand-color-neutral-900: #2D2A26;
+
+  /* Extended danger scale */
+  --brand-color-danger-50: #fdf0f0;
+  --brand-color-danger-100: #fce8e8;
+  --brand-color-danger-200: #f5d0d0;
+  --brand-color-danger-300: #eba8a8;
+  --brand-color-danger-400: #e06464;
+  --brand-color-danger-500: #C93B37;
+  --brand-color-danger-600: #b82724;
+  --brand-color-danger-700: #961f1d;
+  --brand-color-danger-800: #7a1918;
+  --brand-color-danger-900: #5e1413;
+
+  /* Extended success scale */
+  --brand-color-success-50: #edf8f1;
+  --brand-color-success-100: #E5F5EC;
+  --brand-color-success-200: #a8e4c0;
+  --brand-color-success-300: #6bcf94;
+  --brand-color-success-400: #36b468;
+  --brand-color-success-500: #1b8f46;
+  --brand-color-success-600: #17793c;
+  --brand-color-success-700: #136332;
+  --brand-color-success-800: #104d28;
+  --brand-color-success-900: #0d3a1e;
+
+  /* Extended warning scale */
+  --brand-color-warning-50: #fefaf0;
+  --brand-color-warning-100: #fdf4d6;
+  --brand-color-warning-200: #fae6a2;
+  --brand-color-warning-300: #f2d264;
+  --brand-color-warning-400: #e8c438;
+  --brand-color-warning-500: #d4a510;
+  --brand-color-warning-600: #b08508;
+  --brand-color-warning-700: #8c6a06;
+  --brand-color-warning-800: #7a5a09;
+  --brand-color-warning-900: #5c420a;
+
+  /* Typography */
+  --brand-font-display: 'Outfit', system-ui, -apple-system, sans-serif;
+  --brand-font-ui: 'DM Sans', system-ui, -apple-system, sans-serif;
+  --brand-font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+
+  /* Border radius */
+  --brand-radius-sm: 8px;
+  --brand-radius-md: 10px;
+  --brand-radius-lg: 14px;
+  --brand-radius-xl: 18px;
+  --brand-radius-full: 9999px;
+
+  /* Shadows -- warm tint on light surfaces */
+  --brand-shadow-xs: 0 1px 2px rgba(45, 42, 38, 0.04);
+  --brand-shadow-sm: 0 1px 3px rgba(45, 42, 38, 0.06), 0 1px 2px rgba(45, 42, 38, 0.04);
+  --brand-shadow-md: 0 4px 6px -1px rgba(45, 42, 38, 0.07), 0 2px 4px -2px rgba(45, 42, 38, 0.05);
+  --brand-shadow-lg: 0 10px 15px -3px rgba(45, 42, 38, 0.08), 0 4px 6px -4px rgba(45, 42, 38, 0.04);
+  --brand-shadow-xl: 0 20px 25px -5px rgba(45, 42, 38, 0.08), 0 8px 10px -6px rgba(45, 42, 38, 0.04);
+  --brand-shadow-inner: inset 0 2px 4px rgba(45, 42, 38, 0.04);
+}
+
+/* Dark mode -- scoped to html.dark to match OSS frontend convention.
+ * Tokens not overridden here intentionally inherit their light-mode value. */
+html:where(.dark, .dark *) {
+  --brand-color-background: #1A1816;
+  --brand-color-card: #262320;
+  --brand-color-panel: #1E1C19;
+  --brand-color-foreground: #E8E4DE;
+  --brand-color-muted-foreground: #9A948C;
+  --brand-color-primary: #D4940F;
+  --brand-color-primary-hover: #E5A82A;
+  --brand-color-primary-light: #332810;
+  --brand-color-border: #3A3630;
+  --brand-color-danger: #e85450;
+  --brand-color-danger-light: #351a1a;
+  --brand-color-danger-hover: #422020;
+  --brand-color-warning-bg: #362008;
+  --brand-color-warning-border: #a67e14;
+  --brand-color-warning-text: #f0d456;
+  --brand-color-error-bg: #351a1a;
+  --brand-color-error-border: #702020;
+  --brand-color-error-text: #eba8a8;
+  --brand-color-success: #3cc978;
+  --brand-color-success-bg: #0c3626;
+  --brand-color-success-text: #6ae0a0;
+  --brand-color-info-bg: #1a2e48;
+  --brand-color-info-border: #2e6bb5;
+  --brand-color-info-text: #88b6dc;
+  --brand-color-header-bg-from: #1A1816;
+  --brand-color-header-bg-to: #262320;
+  --brand-color-header-text: #E8E4DE;
+  --brand-color-header-border: #3A3630;
+  --brand-color-secondary-hover: #322F2B;
+  --brand-color-selected-bg: #332810;
+  --brand-color-focus-bg: #1E1C19;
+
+  --brand-color-primary-50: #1E1A10;
+  --brand-color-primary-100: #332810;
+  --brand-color-primary-200: #4A3A18;
+  --brand-color-primary-300: #7D4D09;
+  --brand-color-primary-400: #B8720E;
+  --brand-color-primary-500: #D4940F;
+  --brand-color-primary-600: #E5A82A;
+  --brand-color-neutral-50: #1A1816;
+  --brand-color-neutral-100: #262320;
+  --brand-color-neutral-200: #3A3630;
+  --brand-color-neutral-300: #524D46;
+  --brand-color-neutral-400: #6E6860;
+  --brand-color-neutral-500: #9A948C;
+  --brand-color-neutral-600: #C4BEB5;
+  --brand-color-danger-50: #351a1a;
+  --brand-color-danger-100: #422020;
+  --brand-color-success-50: #0c3626;
+  --brand-color-success-100: #0d4630;
+  --brand-color-warning-50: #362008;
+  --brand-color-warning-100: #3e2406;
+
+  --brand-shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
+  --brand-shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.2);
+  --brand-shadow-md: 0 4px 8px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2);
+  --brand-shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.35), 0 4px 8px rgba(0, 0, 0, 0.25);
+  --brand-shadow-xl: 0 20px 30px rgba(0, 0, 0, 0.4), 0 8px 12px rgba(0, 0, 0, 0.25);
+  --brand-shadow-inner: inset 0 2px 4px rgba(0, 0, 0, 0.15);
+}
+
+/* ---------- Starlight alias layer (dark-mode default) ---------- */
+
+/*
+ * Astro Starlight reads --sl-color-* and --sl-font. Its default convention
+ * is dark-at-root + [data-theme="light"] override. We mirror that convention
+ * here so a Starlight site can @import this file and inherit the Clawbolt
+ * palette without redeclaring values.
+ *
+ * See the "convention inversion" note at the top of this file.
+ */
+
+:root {
+  --sl-font: var(--brand-font-ui);
+  --sl-font-mono: var(--brand-font-mono);
+
+  --sl-color-accent-low: #332810;
+  --sl-color-accent: #D4940F;
+  --sl-color-accent-high: #FDF3E3;
+  --sl-color-white: #E8E4DE;
+  --sl-color-gray-1: #C4BEB5;
+  --sl-color-gray-2: #9A948C;
+  --sl-color-gray-3: #6E6860;
+  --sl-color-gray-4: #524D46;
+  --sl-color-gray-5: #3A3630;
+  --sl-color-gray-6: #262320;
+  --sl-color-black: #1A1816;
+}
+
+:root[data-theme="light"] {
+  --sl-color-accent-low: #FDF3E3;
+  --sl-color-accent: #B8720E;
+  --sl-color-accent-high: #613C07;
+  --sl-color-white: #2D2A26;
+  --sl-color-gray-1: #3E3A35;
+  --sl-color-gray-2: #5A544D;
+  --sl-color-gray-3: #7A746C;
+  --sl-color-gray-4: #94908A;
+  --sl-color-gray-5: #C4BEB5;
+  --sl-color-gray-6: #EDEAE6;
+  --sl-color-black: #F6F5F3;
+}

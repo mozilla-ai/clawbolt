@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "./styles/brand-tokens.css";
 
 @plugin "./hero.ts";
 @source "../node_modules/@heroui/theme/dist/**/*.{js,ts}";
@@ -6,125 +7,138 @@
 @custom-variant dark (&:where(.dark, .dark *));
 @custom-variant can-hover (@media (hover: hover));
 
+/*
+ * @theme declares Tailwind utility names and maps them to the --brand-*
+ * tokens in ./styles/brand-tokens.css via CSS var indirection. Tailwind
+ * generates utilities (.bg-primary, .text-foreground, etc.) while the
+ * actual values live exclusively in brand-tokens.css, so a palette change
+ * has one edit site. Dark-mode values cascade through automatically --
+ * brand-tokens.css's html:where(.dark, .dark *) block updates --brand-*,
+ * and every var() consumer below picks that up at runtime.
+ *
+ * text-* and animate-* tokens below are intentionally Tailwind-only
+ * (Starlight and other non-Tailwind consumers do not need them).
+ */
 @theme {
-  /* Amber Workshop palette - light mode */
-  --color-background: #F6F5F3;
-  --color-card: #FEFEFE;
-  --color-panel: #F0EEEB;
-  --color-foreground: #2D2A26;
-  --color-muted-foreground: #7A746C;
-  --color-primary: #B8720E;
-  --color-primary-hover: #9A5F0B;
-  --color-primary-light: #FDF3E3;
-  --color-border: #E3DFD9;
-  --color-danger: #C93B37;
-  --color-danger-light: #FCE8E8;
-  --color-danger-hover: #f5d0d0;
-  --color-warning-bg: #fdf4d6;
-  --color-warning-border: #e8c438;
-  --color-warning-text: #7a5a09;
-  --color-error-bg: #FCE8E8;
-  --color-error-border: #eba8a8;
-  --color-error-text: #872020;
-  --color-success: #1b8f46;
-  --color-success-bg: #E5F5EC;
-  --color-success-text: #0d5a33;
-  --color-info-bg: #E3EDF7;
-  --color-info-border: #88b6dc;
-  --color-info-text: #1f4a7e;
-  --color-header-bg-from: #FEFEFE;
-  --color-header-bg-to: #F6F5F3;
-  --color-header-text: #2D2A26;
-  --color-header-border: #E3DFD9;
-  --color-secondary-hover: #EDEAE6;
-  --color-selected-bg: #FDF3E3;
-  --color-focus-bg: #F6F5F3;
+  /* Colors -- light-mode values come from --brand-color-* at :root in
+   * brand-tokens.css; dark-mode values come from the dark block there. */
+  --color-background: var(--brand-color-background);
+  --color-card: var(--brand-color-card);
+  --color-panel: var(--brand-color-panel);
+  --color-foreground: var(--brand-color-foreground);
+  --color-muted-foreground: var(--brand-color-muted-foreground);
+  --color-primary: var(--brand-color-primary);
+  --color-primary-hover: var(--brand-color-primary-hover);
+  --color-primary-light: var(--brand-color-primary-light);
+  --color-border: var(--brand-color-border);
+  --color-danger: var(--brand-color-danger);
+  --color-danger-light: var(--brand-color-danger-light);
+  --color-danger-hover: var(--brand-color-danger-hover);
+  --color-warning-bg: var(--brand-color-warning-bg);
+  --color-warning-border: var(--brand-color-warning-border);
+  --color-warning-text: var(--brand-color-warning-text);
+  --color-error-bg: var(--brand-color-error-bg);
+  --color-error-border: var(--brand-color-error-border);
+  --color-error-text: var(--brand-color-error-text);
+  --color-success: var(--brand-color-success);
+  --color-success-bg: var(--brand-color-success-bg);
+  --color-success-text: var(--brand-color-success-text);
+  --color-info-bg: var(--brand-color-info-bg);
+  --color-info-border: var(--brand-color-info-border);
+  --color-info-text: var(--brand-color-info-text);
+  --color-header-bg-from: var(--brand-color-header-bg-from);
+  --color-header-bg-to: var(--brand-color-header-bg-to);
+  --color-header-text: var(--brand-color-header-text);
+  --color-header-border: var(--brand-color-header-border);
+  --color-secondary-hover: var(--brand-color-secondary-hover);
+  --color-selected-bg: var(--brand-color-selected-bg);
+  --color-focus-bg: var(--brand-color-focus-bg);
 
-  /* Extended primary scale (amber) */
-  --color-primary-50: #FDF8F0;
-  --color-primary-100: #FDF3E3;
-  --color-primary-200: #F5DDB4;
-  --color-primary-300: #E8C07A;
-  --color-primary-400: #D4A030;
-  --color-primary-500: #C4860E;
-  --color-primary-600: #B8720E;
-  --color-primary-700: #9A5F0B;
-  --color-primary-800: #7D4D09;
-  --color-primary-900: #613C07;
+  /* Extended primary scale */
+  --color-primary-50: var(--brand-color-primary-50);
+  --color-primary-100: var(--brand-color-primary-100);
+  --color-primary-200: var(--brand-color-primary-200);
+  --color-primary-300: var(--brand-color-primary-300);
+  --color-primary-400: var(--brand-color-primary-400);
+  --color-primary-500: var(--brand-color-primary-500);
+  --color-primary-600: var(--brand-color-primary-600);
+  --color-primary-700: var(--brand-color-primary-700);
+  --color-primary-800: var(--brand-color-primary-800);
+  --color-primary-900: var(--brand-color-primary-900);
 
-  /* Extended neutral scale (warm gray) */
-  --color-neutral-50: #FAF9F7;
-  --color-neutral-100: #F6F5F3;
-  --color-neutral-200: #EDEAE6;
-  --color-neutral-300: #E3DFD9;
-  --color-neutral-400: #C4BEB5;
-  --color-neutral-500: #94908A;
-  --color-neutral-600: #7A746C;
-  --color-neutral-700: #5A544D;
-  --color-neutral-800: #3E3A35;
-  --color-neutral-900: #2D2A26;
+  /* Extended neutral scale */
+  --color-neutral-50: var(--brand-color-neutral-50);
+  --color-neutral-100: var(--brand-color-neutral-100);
+  --color-neutral-200: var(--brand-color-neutral-200);
+  --color-neutral-300: var(--brand-color-neutral-300);
+  --color-neutral-400: var(--brand-color-neutral-400);
+  --color-neutral-500: var(--brand-color-neutral-500);
+  --color-neutral-600: var(--brand-color-neutral-600);
+  --color-neutral-700: var(--brand-color-neutral-700);
+  --color-neutral-800: var(--brand-color-neutral-800);
+  --color-neutral-900: var(--brand-color-neutral-900);
 
   /* Extended danger scale */
-  --color-danger-50: #fdf0f0;
-  --color-danger-100: #fce8e8;
-  --color-danger-200: #f5d0d0;
-  --color-danger-300: #eba8a8;
-  --color-danger-400: #e06464;
-  --color-danger-500: #C93B37;
-  --color-danger-600: #b82724;
-  --color-danger-700: #961f1d;
-  --color-danger-800: #7a1918;
-  --color-danger-900: #5e1413;
+  --color-danger-50: var(--brand-color-danger-50);
+  --color-danger-100: var(--brand-color-danger-100);
+  --color-danger-200: var(--brand-color-danger-200);
+  --color-danger-300: var(--brand-color-danger-300);
+  --color-danger-400: var(--brand-color-danger-400);
+  --color-danger-500: var(--brand-color-danger-500);
+  --color-danger-600: var(--brand-color-danger-600);
+  --color-danger-700: var(--brand-color-danger-700);
+  --color-danger-800: var(--brand-color-danger-800);
+  --color-danger-900: var(--brand-color-danger-900);
 
   /* Extended success scale */
-  --color-success-50: #edf8f1;
-  --color-success-100: #E5F5EC;
-  --color-success-200: #a8e4c0;
-  --color-success-300: #6bcf94;
-  --color-success-400: #36b468;
-  --color-success-500: #1b8f46;
-  --color-success-600: #17793c;
-  --color-success-700: #136332;
-  --color-success-800: #104d28;
-  --color-success-900: #0d3a1e;
+  --color-success-50: var(--brand-color-success-50);
+  --color-success-100: var(--brand-color-success-100);
+  --color-success-200: var(--brand-color-success-200);
+  --color-success-300: var(--brand-color-success-300);
+  --color-success-400: var(--brand-color-success-400);
+  --color-success-500: var(--brand-color-success-500);
+  --color-success-600: var(--brand-color-success-600);
+  --color-success-700: var(--brand-color-success-700);
+  --color-success-800: var(--brand-color-success-800);
+  --color-success-900: var(--brand-color-success-900);
 
   /* Extended warning scale */
-  --color-warning-50: #fefaf0;
-  --color-warning-100: #fdf4d6;
-  --color-warning-200: #fae6a2;
-  --color-warning-300: #f2d264;
-  --color-warning-400: #e8c438;
-  --color-warning-500: #d4a510;
-  --color-warning-600: #b08508;
-  --color-warning-700: #8c6a06;
-  --color-warning-800: #7a5a09;
-  --color-warning-900: #5c420a;
+  --color-warning-50: var(--brand-color-warning-50);
+  --color-warning-100: var(--brand-color-warning-100);
+  --color-warning-200: var(--brand-color-warning-200);
+  --color-warning-300: var(--brand-color-warning-300);
+  --color-warning-400: var(--brand-color-warning-400);
+  --color-warning-500: var(--brand-color-warning-500);
+  --color-warning-600: var(--brand-color-warning-600);
+  --color-warning-700: var(--brand-color-warning-700);
+  --color-warning-800: var(--brand-color-warning-800);
+  --color-warning-900: var(--brand-color-warning-900);
 
   /* Typography */
-  --font-display: 'Outfit', system-ui, -apple-system, sans-serif;
-  --font-ui: 'DM Sans', system-ui, -apple-system, sans-serif;
-  --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  --font-display: var(--brand-font-display);
+  --font-ui: var(--brand-font-ui);
+  --font-mono: var(--brand-font-mono);
 
-  /* Override Tailwind text sizes: bump for field use */
+  /* Override Tailwind text sizes: bump for field use (Tailwind-only) */
   --text-sm: 0.9375rem; /* 15px (was 14px) */
   --text-xs: 0.8125rem; /* 13px (was 12px) */
 
-  /* Border radius - shape hierarchy */
-  --radius-sm: 8px;  /* buttons */
-  --radius-md: 10px; /* inputs */
-  --radius-lg: 14px; /* cards */
-  --radius-xl: 18px; /* containers/modals */
-  --radius-full: 9999px;
+  /* Border radius */
+  --radius-sm: var(--brand-radius-sm);
+  --radius-md: var(--brand-radius-md);
+  --radius-lg: var(--brand-radius-lg);
+  --radius-xl: var(--brand-radius-xl);
+  --radius-full: var(--brand-radius-full);
 
-  /* Shadows - warm tint */
-  --shadow-xs: 0 1px 2px rgba(45, 42, 38, 0.04);
-  --shadow-sm: 0 1px 3px rgba(45, 42, 38, 0.06), 0 1px 2px rgba(45, 42, 38, 0.04);
-  --shadow-md: 0 4px 6px -1px rgba(45, 42, 38, 0.07), 0 2px 4px -2px rgba(45, 42, 38, 0.05);
-  --shadow-lg: 0 10px 15px -3px rgba(45, 42, 38, 0.08), 0 4px 6px -4px rgba(45, 42, 38, 0.04);
-  --shadow-xl: 0 20px 25px -5px rgba(45, 42, 38, 0.08), 0 8px 10px -6px rgba(45, 42, 38, 0.04);
-  --shadow-inner: inset 0 2px 4px rgba(45, 42, 38, 0.04);
+  /* Shadows */
+  --shadow-xs: var(--brand-shadow-xs);
+  --shadow-sm: var(--brand-shadow-sm);
+  --shadow-md: var(--brand-shadow-md);
+  --shadow-lg: var(--brand-shadow-lg);
+  --shadow-xl: var(--brand-shadow-xl);
+  --shadow-inner: var(--brand-shadow-inner);
 
-  /* Animations (unchanged) */
+  /* Animations (Tailwind-only -- keyframes defined below) */
   --animate-spin: spin 0.8s linear infinite;
   --animate-overlay-in: overlay-in 150ms ease-out;
   --animate-dialog-in: dialog-in 150ms ease-out;
@@ -168,69 +182,9 @@
     overflow-x: hidden;
   }
 
-  html:where(.dark, .dark *) {
-    /* Dark mode: warm charcoal */
-    --color-background: #1A1816;
-    --color-card: #262320;
-    --color-panel: #1E1C19;
-    --color-foreground: #E8E4DE;
-    --color-muted-foreground: #9A948C;
-    --color-primary: #D4940F;
-    --color-primary-hover: #E5A82A;
-    --color-primary-light: #332810;
-    --color-border: #3A3630;
-    --color-danger: #e85450;
-    --color-danger-light: #351a1a;
-    --color-danger-hover: #422020;
-    --color-warning-bg: #362008;
-    --color-warning-border: #a67e14;
-    --color-warning-text: #f0d456;
-    --color-error-bg: #351a1a;
-    --color-error-border: #702020;
-    --color-error-text: #eba8a8;
-    --color-success: #3cc978;
-    --color-success-bg: #0c3626;
-    --color-success-text: #6ae0a0;
-    --color-info-bg: #1a2e48;
-    --color-info-border: #2e6bb5;
-    --color-info-text: #88b6dc;
-    --color-header-bg-from: #1A1816;
-    --color-header-bg-to: #262320;
-    --color-header-text: #E8E4DE;
-    --color-header-border: #3A3630;
-    --color-secondary-hover: #322F2B;
-    --color-selected-bg: #332810;
-    --color-focus-bg: #1E1C19;
-
-    /* Dark mode extended scales */
-    --color-primary-50: #1E1A10;
-    --color-primary-100: #332810;
-    --color-primary-200: #4A3A18;
-    --color-primary-300: #7D4D09;
-    --color-primary-400: #B8720E;
-    --color-primary-500: #D4940F;
-    --color-primary-600: #E5A82A;
-    --color-neutral-50: #1A1816;
-    --color-neutral-100: #262320;
-    --color-neutral-200: #3A3630;
-    --color-neutral-300: #524D46;
-    --color-neutral-400: #6E6860;
-    --color-neutral-500: #9A948C;
-    --color-neutral-600: #C4BEB5;
-    --color-danger-50: #351a1a;
-    --color-danger-100: #422020;
-    --color-success-50: #0c3626;
-    --color-success-100: #0d4630;
-    --color-warning-50: #362008;
-    --color-warning-100: #3e2406;
-
-    --shadow-xs: 0 1px 2px rgba(0, 0, 0, 0.2);
-    --shadow-sm: 0 2px 4px rgba(0, 0, 0, 0.25), 0 1px 2px rgba(0, 0, 0, 0.2);
-    --shadow-md: 0 4px 8px rgba(0, 0, 0, 0.3), 0 2px 4px rgba(0, 0, 0, 0.2);
-    --shadow-lg: 0 10px 20px rgba(0, 0, 0, 0.35), 0 4px 8px rgba(0, 0, 0, 0.25);
-    --shadow-xl: 0 20px 30px rgba(0, 0, 0, 0.4), 0 8px 12px rgba(0, 0, 0, 0.25);
-    --shadow-inner: inset 0 2px 4px rgba(0, 0, 0, 0.15);
-  }
+  /* Dark-mode color + shadow tokens are declared in brand-tokens.css; the
+   * @theme indirection above makes --color-* and --shadow-* cascade through
+   * automatically, so no dark overrides needed here. */
 
   body {
     font-family: var(--font-ui);
