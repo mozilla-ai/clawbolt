@@ -925,6 +925,67 @@ async def test_run_compaction_skips_when_watermark_already_advanced() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_run_compaction_skips_when_peer_worker_holds_lock() -> None:
+    """When another worker already holds the per-session compaction advisory
+    lock, this worker must return without running compact_session so both
+    workers can't race and append duplicate HISTORY.md entries.
+
+    The watermark re-check alone doesn't prevent the race: two workers can
+    both read the old watermark, both call the LLM, and both append before
+    either one writes the new seq. The advisory lock closes that window.
+    """
+    import backend.app.agent.context as context_module
+    from backend.app.agent.context import _run_compaction_in_background
+
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            user_id="compaction-lock-race",
+            phone="+15550009999",
+            channel_identifier="999",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
+
+    session_store = get_session_store(user.id)
+    session, _ = await session_store.get_or_create_session()
+
+    messages: list[AgentMessage] = [UserMessage(content="a"), AssistantMessage(content="b")]
+
+    class _LockedSession:
+        """SessionLocal stand-in where pg_try_advisory_lock returns False."""
+
+        def execute(self, *_args: object, **_kwargs: object) -> object:
+            class _Result:
+                def scalar(self) -> bool:
+                    return False
+
+            return _Result()
+
+        def commit(self) -> None:
+            pass
+
+        def close(self) -> None:
+            pass
+
+    with (
+        patch.object(context_module, "SessionLocal", _LockedSession),
+        patch("backend.app.agent.context.compact_session", new_callable=AsyncMock) as mock_compact,
+    ):
+        await _run_compaction_in_background(
+            session_store, session, user.id, messages, max_message_seq=10
+        )
+
+    mock_compact.assert_not_called()
+
+
+@pytest.mark.asyncio()
 async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
     """Two concurrent get_or_create_session calls for the same user must not
     create two active sessions.

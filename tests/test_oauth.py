@@ -204,6 +204,32 @@ def test_build_on_refresh_callback_persists_rotated_refresh_token(
     assert abs(reloaded.expires_at - new_expires) < 1
 
 
+async def test_refresh_token_returns_early_when_peer_worker_already_refreshed(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """When another worker has already refreshed the token while this one
+    was waiting for the per-(user, integration) advisory lock, we must
+    observe the fresh token under the lock and skip the HTTP refresh call
+    entirely. Otherwise both workers POST ``refresh_token`` and the second
+    one can either get rejected or overwrite the winner's rotated RT."""
+    # Pre-populate with an unexpired token, simulating "peer already refreshed".
+    fresh = OAuthTokenData(
+        access_token="at-fresh",
+        refresh_token="rt-fresh",
+        expires_at=time.time() + 7200,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", fresh)
+
+    with patch.object(oauth_svc, "_get_http") as mock_http_fn:
+        mock_client = AsyncMock()
+        mock_http_fn.return_value = mock_client
+        result = await oauth_svc.refresh_token(test_user.id, "quickbooks")
+
+    assert result is not None
+    assert result.access_token == "at-fresh"
+    mock_client.post.assert_not_called()
+
+
 def test_build_on_refresh_callback_preserves_refresh_token_when_empty(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
