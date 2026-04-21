@@ -728,6 +728,58 @@ async def test_list_project_photos_pagination() -> None:
 
 
 # ---------------------------------------------------------------------------
+# Regression: approval policies must match SubToolInfo defaults
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_companycam_ask_tools_have_approval_policy() -> None:
+    """Regression: every CompanyCam tool with default_permission='ask' must have
+    an ApprovalPolicy on the Tool object so the runtime actually enforces it.
+
+    Without this, the WebUI shows 'ask' but the execution pipeline treats the
+    tool as 'always' (auto-execute without prompting the user).
+    """
+    from backend.app.agent.tools.companycam_checklists import build_checklist_tools
+    from backend.app.agent.tools.companycam_photos import build_photo_tools
+    from backend.app.agent.tools.companycam_projects import build_project_tools
+    from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
+
+    ensure_tool_modules_imported()
+
+    # Get the SubToolInfo entries that declare default_permission="ask"
+    factory_entry = default_registry._factories["companycam"]
+    ask_tool_names = {st.name for st in factory_entry.sub_tools if st.default_permission == "ask"}
+    assert ask_tool_names, "Expected at least one CompanyCam tool with default_permission='ask'"
+
+    # Build the actual Tool objects (with a mock service + context)
+    service = CompanyCamService(access_token="test-token")
+    ctx = MagicMock()
+    ctx.user = MagicMock()
+    ctx.user.id = "test-user"
+
+    all_tools = [
+        *build_project_tools(service),
+        *build_photo_tools(service, ctx),
+        *build_checklist_tools(service),
+    ]
+    tool_map = {t.name: t for t in all_tools}
+
+    missing = []
+    for name in sorted(ask_tool_names):
+        tool = tool_map.get(name)
+        if tool is None:
+            missing.append(f"{name}: not found in built tools")
+        elif tool.approval_policy is None:
+            missing.append(f"{name}: has default_permission='ask' but no approval_policy")
+
+    assert not missing, (
+        "CompanyCam tools with default_permission='ask' must have an ApprovalPolicy "
+        "on the Tool object so the runtime enforces permissions:\n" + "\n".join(missing)
+    )
+
+
+# ---------------------------------------------------------------------------
 # New service method tests: error handling
 # ---------------------------------------------------------------------------
 

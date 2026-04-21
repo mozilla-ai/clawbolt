@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.companycam_params import (
     CompanyCamCreateChecklistParams,
@@ -129,6 +130,10 @@ def build_checklist_tools(service: CompanyCamService) -> list[Tool]:
             usage_hint=(
                 "Create a new checklist from a template. "
                 "Use list_checklists or ask the user which template to use."
+            ),
+            approval_policy=ApprovalPolicy(
+                default_level=PermissionLevel.ASK,
+                description_builder=lambda args: "Create a checklist on a CompanyCam project",
             ),
         ),
     ]

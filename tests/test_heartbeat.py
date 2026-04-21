@@ -1193,7 +1193,7 @@ class TestExecuteHeartbeatTasks:
             # Should use create_core_tools without messaging excluded (#921)
             mock_registry.create_core_tools.assert_called_once()
             call_kwargs = mock_registry.create_core_tools.call_args
-            excluded: set[str] = call_kwargs.kwargs.get("excluded_factories") or set()  # type: ignore[assignment]
+            excluded: set[str] = call_kwargs.kwargs.get("excluded_factories") or set()
             assert "messaging" not in excluded
 
             # Should create list_capabilities since specialists are available
