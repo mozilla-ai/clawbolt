@@ -30,12 +30,15 @@ def spa_client(spa_dist: Path) -> TestClient:
     ``if _FRONTEND_DIST.is_dir()`` block registers the catch-all route
     against our temporary directory.
     """
-    from fastapi import FastAPI, Request
+    from fastapi import FastAPI, HTTPException, Request
     from fastapi.responses import FileResponse
     from fastapi.staticfiles import StaticFiles
 
     app = FastAPI()
     _dist = spa_dist
+
+    _BLOCKED_SUFFIXES = (".env", ".pem", ".key", ".pgpass", ".netrc")
+    _BLOCKED_SEGMENTS = {"credentials", "secrets"}
 
     if _dist.is_dir():
         app.mount("/assets", StaticFiles(directory=_dist / "assets"), name="assets")
@@ -43,6 +46,14 @@ def spa_client(spa_dist: Path) -> TestClient:
         @app.get("/{full_path:path}")
         async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
             """Serve the SPA index.html for all non-API routes."""
+            lower = full_path.lower()
+            segments = lower.split("/")
+            basename = segments[-1] if segments else ""
+            if basename.endswith(_BLOCKED_SUFFIXES) or basename.startswith(".env"):
+                raise HTTPException(status_code=404)
+            if _BLOCKED_SEGMENTS.intersection(segments):
+                raise HTTPException(status_code=404)
+
             file_path = _dist / full_path
             resolved = file_path.resolve()
             if resolved.is_file() and resolved.is_relative_to(_dist.resolve()):
@@ -112,3 +123,61 @@ class TestSpaFallbackSecurity:
         assert resp.status_code == 200
         assert "TOP SECRET" not in resp.text
         assert "SPA" in resp.text
+
+
+class TestSpaBlockedPaths:
+    """Sensitive file patterns return 404 instead of the SPA index.html."""
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/.env",
+            "/secrets/.env",
+            "/.env.production",
+            "/docker/.env",
+            "/kubernetes/secrets.env",
+            "/.github/workflows/secrets.env",
+            "/config/.env.production",
+            "/production/.env",
+        ],
+    )
+    def test_env_files_return_404(self, spa_client: TestClient, path: str) -> None:
+        """Paths ending with .env or starting with .env must return 404."""
+        resp = spa_client.get(path)
+        assert resp.status_code == 404
+
+    @pytest.mark.parametrize(
+        "path",
+        [
+            "/server.pem",
+            "/tls/cert.key",
+            "/db/.pgpass",
+            "/home/.netrc",
+        ],
+    )
+    def test_key_and_credential_files_return_404(self, spa_client: TestClient, path: str) -> None:
+        """Paths with sensitive file extensions must return 404."""
+        resp = spa_client.get(path)
+        assert resp.status_code == 404
+
+    def test_credentials_segment_returns_404(self, spa_client: TestClient) -> None:
+        """Paths containing a 'credentials' segment must return 404."""
+        resp = spa_client.get("/config/credentials/db.json")
+        assert resp.status_code == 404
+
+    def test_secrets_segment_returns_404(self, spa_client: TestClient) -> None:
+        """Paths containing a 'secrets' segment must return 404."""
+        resp = spa_client.get("/k8s/secrets/app.yaml")
+        assert resp.status_code == 404
+
+    def test_normal_paths_still_serve_spa(self, spa_client: TestClient) -> None:
+        """Non-sensitive unknown paths still get the SPA index.html."""
+        resp = spa_client.get("/app/dashboard")
+        assert resp.status_code == 200
+        assert "SPA" in resp.text
+
+    def test_legitimate_files_still_served(self, spa_client: TestClient, spa_dist: Path) -> None:
+        """Real files in dist are still served normally."""
+        resp = spa_client.get("/favicon.ico")
+        assert resp.status_code == 200
+        assert resp.text == "icon"
