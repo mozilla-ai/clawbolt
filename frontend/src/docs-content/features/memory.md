@@ -1,7 +1,4 @@
----
-title: Memory
-description: Clawbolt remembers your rates, clients, and preferences.
----
+# Memory
 
 Clawbolt has a persistent memory system that stores facts about your business across conversations. It remembers your rates, client details, job preferences, and anything else you tell it.
 

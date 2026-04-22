@@ -1,7 +1,4 @@
----
-title: Tips & Tricks
-description: Get the most out of your Clawbolt assistant.
----
+# Tips & Tricks
 
 ## Use voice dictation
 

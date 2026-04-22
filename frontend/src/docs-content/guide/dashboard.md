@@ -1,7 +1,4 @@
----
-title: Dashboard
-description: Using the Clawbolt web dashboard to manage your assistant.
----
+# Dashboard
 
 Everything in Clawbolt is designed to be managed through chat. Your assistant automatically updates your memory, heartbeat, personality, and profile as you talk to it. You never need to log into the dashboard.
 
@@ -12,7 +9,7 @@ That said, the dashboard is there if you want a visual overview or prefer to mak
 The main dashboard shows a card for each area: **Channels**, **Tools**, **Memory**, **Heartbeat**, **Soul**, **User**, and **Settings**. Click any card to view or edit.
 
 - **Channels** -- messaging platforms your assistant listens on and their status
-- **Tools** -- integrations like Google Calendar and QuickBooks (also manageable [over chat](/guide/integrations/))
+- **Tools** -- integrations like Google Calendar and QuickBooks (also manageable [over chat](/docs/guide/integrations))
 - **Memory** -- what your assistant knows about your business (also managed automatically through chat)
 - **Heartbeat** -- proactive check-in priorities (also managed through chat)
 - **Soul** -- your assistant's personality and communication style (also managed through chat)

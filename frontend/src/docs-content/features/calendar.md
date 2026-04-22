@@ -1,11 +1,8 @@
----
-title: Google Calendar
-description: Manage your schedule from chat with Google Calendar integration.
----
+# Google Calendar
 
-:::caution[Experimental]
-The Google Calendar integration is experimental. Use with caution while this feature is being developed. Double-check events created or modified by the assistant before relying on them.
-:::
+> **Experimental**
+>
+> The Google Calendar integration is experimental. Use with caution while this feature is being developed. Double-check events created or modified by the assistant before relying on them.
 
 Clawbolt can connect to your Google Calendar so you can manage your schedule from the chat. Ask questions like "am I free Thursday afternoon?" or "schedule a site visit at the Johnson place for 9am tomorrow" and Clawbolt handles it.
 

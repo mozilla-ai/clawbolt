@@ -170,8 +170,8 @@ cd frontend && npm run generate:api                # regenerate src/generated/ap
 Commit both `frontend/openapi.json` and `frontend/src/generated/api.d.ts`.
 
 - Bug fixes include regression tests
-- New features evaluate whether the docs site (`docs/`) needs updates
-- Features that change how users interact with the assistant must update the user guide (`docs/src/content/docs/guide/`)
+- New features evaluate whether the user docs (`frontend/src/docs-content/`) need updates
+- Features that change how users interact with the assistant must update the user guide (`frontend/src/docs-content/guide/`)
 - When you manage a pull request, you must always adhere to the pull request template at .github/pull_request_template.md
 - CI green
 

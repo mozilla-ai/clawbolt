@@ -1,7 +1,4 @@
----
-title: Integrations
-description: Connect Google Calendar, QuickBooks, and other services through chat.
----
+# Integrations
 
 Your assistant can connect to external services like Google Calendar and QuickBooks. The easiest way to set them up is to just ask:
 
@@ -46,8 +43,8 @@ Clawbolt: Google Calendar has been disconnected.
 
 ## Available integrations
 
-- **Google Calendar** -- check your schedule, book jobs, manage events. [Learn more](/guide/calendar/)
-- **QuickBooks Online** -- create estimates, look up invoices, manage customers. [Learn more](/guide/estimates/)
+- **Google Calendar** -- check your schedule, book jobs, manage events. [Learn more](/docs/guide/calendar)
+- **QuickBooks Online** -- create estimates, look up invoices, manage customers. [Learn more](/docs/guide/estimates)
 
 ## Dashboard alternative
 

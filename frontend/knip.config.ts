@@ -10,7 +10,11 @@ const config: KnipConfig = {
     'src/sw.ts', // Service worker entry point (referenced by VitePWA injectManifest config)
   ],
   project: ['src/**/*.{ts,tsx}'],
-ignoreDependencies: ['tailwind-merge'], // Peer dep of tailwind-variants (HeroUI)
+  ignoreDependencies: [
+    'tailwind-merge', // Peer dep of tailwind-variants (HeroUI)
+    'remark-gfm', // Imported by premium's DocsPage overlay, not OSS
+    'rehype-highlight', // Imported by premium's DocsPage overlay, not OSS
+  ],
   vite: { config: ['vite.config.ts'] },
 };
 

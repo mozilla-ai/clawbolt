@@ -1,7 +1,4 @@
----
-title: What is Clawbolt?
-description: Your AI assistant for running a trades business, all through text messaging.
----
+# What is Clawbolt?
 
 Clawbolt is an AI assistant for contractors, handymen, and tradespeople. You text it like you'd text a friend, and it helps you run your business: remembering client details, organizing job photos, creating estimates, managing your calendar, and following up on tasks.
 
@@ -19,15 +16,15 @@ Clawbolt: 42 Oak Street, Austin, TX 78701.
 
 ## What it can do
 
-- **[Memory](/guide/memory/)** -- remembers your rates, clients, and preferences
-- **[Photos](/guide/photos/)** -- analyzes and organizes job site photos
-- **[Estimates](/guide/estimates/)** -- dictate a job description, get a QuickBooks estimate
-- **[Calendar](/guide/calendar/)** -- check availability, schedule jobs, get reminders
-- **[Heartbeat](/guide/heartbeat/)** -- proactive check-ins and follow-ups
-- **[Integrations](/guide/integrations/)** -- connect Google Calendar, QuickBooks, and more over chat
+- **[Memory](/docs/guide/memory)** -- remembers your rates, clients, and preferences
+- **[Photos](/docs/guide/photos)** -- analyzes and organizes job site photos
+- **[Estimates](/docs/guide/estimates)** -- dictate a job description, get a QuickBooks estimate
+- **[Calendar](/docs/guide/calendar)** -- check availability, schedule jobs, get reminders
+- **[Heartbeat](/docs/guide/heartbeat)** -- proactive check-ins and follow-ups
+- **[Integrations](/docs/guide/integrations)** -- connect Google Calendar, QuickBooks, and more over chat
 
 ## Getting started
 
-If someone already set up Clawbolt for you, head to [First Steps](/guide/getting-started/).
+If someone already set up Clawbolt for you, head to [First Steps](/docs/guide/getting-started).
 
 Setting it up yourself? Start with the [self-hosting guide](https://github.com/mozilla-ai/clawbolt/tree/main/docs/self-host) and come back here once it's running.

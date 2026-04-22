@@ -1,7 +1,4 @@
----
-title: Estimates & Invoicing
-description: Create estimates and invoices by talking to your assistant, powered by QuickBooks Online.
----
+# Estimates & Invoicing
 
 With QuickBooks connected, you can create estimates, look up invoices, and manage customers all through text.
 
@@ -51,4 +48,4 @@ Clawbolt: Here's a link to connect your QuickBooks account:
           Tap it, sign in, and you're all set.
 ```
 
-You can also connect from the Tools page in the web dashboard. See [QuickBooks](/features/quickbooks/) for technical setup details.
+You can also connect from the Tools page in the web dashboard. See [QuickBooks](/docs/features/quickbooks) for technical setup details.

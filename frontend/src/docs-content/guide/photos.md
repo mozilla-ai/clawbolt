@@ -1,7 +1,4 @@
----
-title: Photos & Files
-description: Send job site photos for AI analysis and automatic organization.
----
+# Photos & Files
 
 Send a photo to your assistant and it will describe what it sees, store it, and organize it in your cloud storage.
 
