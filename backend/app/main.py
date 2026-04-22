@@ -5,7 +5,7 @@ from pathlib import Path
 
 from any_llm import amessages
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -298,9 +298,22 @@ if _FRONTEND_DIST.is_dir():
     # Serve static assets (JS, CSS, images)
     app.mount("/assets", StaticFiles(directory=_FRONTEND_DIST / "assets"), name="assets")
 
+    # Paths that automated scanners probe for secrets. Return 404 instead of
+    # the SPA index.html so the server doesn't look like it hosts these files.
+    _BLOCKED_SUFFIXES = (".env", ".pem", ".key", ".pgpass", ".netrc")
+    _BLOCKED_SEGMENTS = {"credentials", "secrets"}
+
     @app.get("/{full_path:path}", include_in_schema=False)
     async def _spa_fallback(request: Request, full_path: str) -> FileResponse:
         """Serve the SPA index.html for all non-API routes."""
+        lower = full_path.lower()
+        segments = lower.split("/")
+        basename = segments[-1] if segments else ""
+        if basename.endswith(_BLOCKED_SUFFIXES) or basename.startswith(".env"):
+            raise HTTPException(status_code=404)
+        if _BLOCKED_SEGMENTS.intersection(segments):
+            raise HTTPException(status_code=404)
+
         file_path = _FRONTEND_DIST / full_path
         resolved = file_path.resolve()
         if resolved.is_file() and resolved.is_relative_to(_FRONTEND_DIST.resolve()):
