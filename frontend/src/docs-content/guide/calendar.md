@@ -1,7 +1,4 @@
----
-title: Calendar
-description: Manage your schedule through chat with Google Calendar integration.
----
+# Calendar
 
 With Google Calendar connected, you can check your schedule, book jobs, and manage appointments through text.
 
@@ -48,4 +45,4 @@ Clawbolt: Here's a link to connect your Google account:
           Tap it, sign in, and grant calendar access.
 ```
 
-You can also connect from the Tools page in the web dashboard. You can control which calendar actions are enabled (list, create, update, delete) from there. See [Google Calendar](/features/calendar/) for technical setup details.
+You can also connect from the Tools page in the web dashboard. You can control which calendar actions are enabled (list, create, update, delete) from there. See [Google Calendar](/docs/features/calendar) for technical setup details.

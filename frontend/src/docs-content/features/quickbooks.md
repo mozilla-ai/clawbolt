@@ -1,11 +1,8 @@
----
-title: QuickBooks Online
-description: Connect Clawbolt to QuickBooks Online to manage invoices, estimates, customers, and more from chat.
----
+# QuickBooks Online
 
-:::caution[Experimental]
-The QuickBooks integration is experimental. Do not connect it to a production QuickBooks account. Use a sandbox company only while this feature is being developed.
-:::
+> **Experimental**
+>
+> The QuickBooks integration is experimental. Do not connect it to a production QuickBooks account. Use a sandbox company only while this feature is being developed.
 
 Clawbolt can connect to QuickBooks Online so you can manage invoices, estimates, and customers directly from the chat. Ask a question like "what invoices do I have for Amy?" or dictate a job description and Clawbolt will create a draft estimate in QuickBooks.
 

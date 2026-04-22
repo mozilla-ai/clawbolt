@@ -1,7 +1,4 @@
----
-title: Memory
-description: Your assistant remembers your rates, clients, and preferences.
----
+# Memory
 
 Your assistant has long-term memory. Tell it something about your business and it saves it for future conversations. You only need to say things once.
 
