@@ -473,12 +473,19 @@ class BlueBubblesChannel(BaseChannel):
             return
         chat_guid = self._get_chat_guid(to)
         try:
-            await self._http.post(
+            resp = await self._http.post(
                 f"/api/v1/chat/{chat_guid}/typing",
                 params={"password": settings.bluebubbles_password},
             )
+            if resp.status_code >= 400:
+                logger.warning(
+                    "BlueBubbles typing indicator non-200: status=%s chatGuid=%s body=%s",
+                    resp.status_code,
+                    chat_guid,
+                    resp.text[:500],
+                )
         except Exception:
-            logger.debug("Failed to send BlueBubbles typing indicator to %s", to)
+            logger.exception("Failed to send BlueBubbles typing indicator to %s", to)
 
     async def download_media(self, file_id: str) -> DownloadedMedia:
         """Download media by BlueBubbles attachment GUID."""
