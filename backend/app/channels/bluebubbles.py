@@ -482,7 +482,7 @@ class BlueBubblesChannel(BaseChannel):
                     "BlueBubbles typing indicator non-200: status=%s chatGuid=%s body=%s",
                     resp.status_code,
                     chat_guid,
-                    resp.text,
+                    resp.text[:500],
                 )
         except Exception:
             logger.exception("Failed to send BlueBubbles typing indicator to %s", to)
