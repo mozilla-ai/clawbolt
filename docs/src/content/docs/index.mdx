@@ -6,8 +6,8 @@ hero:
   image:
     file: ../../assets/clawbolt_text.png
   actions:
-    - text: Get Started
-      link: ./getting-started/
+    - text: Read the Guide
+      link: ./guide/
       icon: right-arrow
       variant: primary
     - text: View on GitHub
@@ -16,20 +16,21 @@ hero:
       variant: minimal
 ---
 
-## See it in action
-
-<iframe
-  width="100%"
-  style="aspect-ratio:16/9;border-radius:8px"
-  src="https://www.youtube.com/embed/YJcnij0SYiY?si=aefpF9w84H_spWnh"
-  title="Clawbolt Demo"
-  frameborder="0"
-  allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
-  allowfullscreen
-></iframe>
-
 ## What is Clawbolt?
 
 Clawbolt is a messaging-first AI assistant that helps solo tradespeople manage their business. Text your assistant from iMessage, RCS, SMS, or Telegram. No app to install, no dashboard to learn. Just text.
 
 Built by [Mozilla.ai](https://mozilla.ai) using the open-core model.
+
+## User docs
+
+- **[User Guide](./guide/)** -- how to use Clawbolt as an end user
+- **[Features](./features/memory/)** -- feature reference for memory, photos, calendar, and more
+
+## Self-hosting and development
+
+User docs above are shipped to [clawbolt.ai/docs](https://clawbolt.ai/docs) via the premium build. Self-hosting and contributor documentation lives in plain markdown in this repository:
+
+- **[Self-hosting guide](https://github.com/mozilla-ai/clawbolt/tree/main/docs/self-host)** -- Docker, channels, storage, environment variables
+- **[Architecture](https://github.com/mozilla-ai/clawbolt/blob/main/ARCHITECTURE.md)** -- system design
+- **[Contributing](https://github.com/mozilla-ai/clawbolt/blob/main/CONTRIBUTING.md)** -- local dev, tests, PR guidelines

@@ -18,7 +18,7 @@
 
 Clawbolt is a messaging-first AI assistant that helps users manage their business: estimates, client records, job photos, and more. Text your assistant from iMessage, RCS, SMS, or Telegram. No app to install, no dashboard to learn. Just text.
 
-**[Read the full documentation](https://mozilla-ai.github.io/clawbolt)**
+**[User guide: clawbolt.ai/docs](https://clawbolt.ai/docs)**
 
 ## Demo
 
@@ -53,8 +53,27 @@ curl http://localhost:8000/api/health
 
 Webhooks are registered automatically via a Cloudflare Tunnel. Text the Linq phone number or message your Telegram bot and Clawbolt will respond.
 
-See the docs for [full configuration options](https://mozilla-ai.github.io/clawbolt/configuration/), [Linq setup](https://mozilla-ai.github.io/clawbolt/deployment/linq-setup/), and [Telegram setup](https://mozilla-ai.github.io/clawbolt/deployment/telegram-setup/).
+## Documentation
+
+| Audience | Where |
+|---|---|
+| **End users** (people using Clawbolt to run their business) | [clawbolt.ai/docs](https://clawbolt.ai/docs) |
+| **Self-hosters** (running your own instance) | [docs/self-host/](./docs/self-host/) |
+| **Contributors** (hacking on Clawbolt itself) | [CONTRIBUTING.md](./CONTRIBUTING.md) |
+
+### Self-hosting
+
+- [Self-hosting overview](./docs/self-host/README.md) -- quickstart and index
+- [Configuration](./docs/self-host/configuration.md) -- full environment variable reference
+- [Docker](./docs/self-host/docker.md) -- Docker Compose setup and troubleshooting
+- [Storage Providers](./docs/self-host/storage.md) -- local, Dropbox, or Google Drive
+- Messaging channels: [Linq](./docs/self-host/linq-setup.md), [BlueBubbles](./docs/self-host/bluebubbles-setup.md), [Telegram](./docs/self-host/telegram-setup.md)
+
+### Architecture and development
+
+- [ARCHITECTURE.md](./ARCHITECTURE.md) -- system design, request flow, tech stack
+- [CONTRIBUTING.md](./CONTRIBUTING.md) -- local dev setup, tests, code standards, PR guidelines
 
 ## Contributing
 
-See the [local setup guide](https://mozilla-ai.github.io/clawbolt/development/local-setup/) for development, or read the [full contributing guide](https://mozilla-ai.github.io/clawbolt/development/contributing/).
+See [CONTRIBUTING.md](./CONTRIBUTING.md) for local development setup, tests, and PR guidelines.
