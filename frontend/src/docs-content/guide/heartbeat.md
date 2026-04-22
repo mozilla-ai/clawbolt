@@ -1,7 +1,4 @@
----
-title: Heartbeat
-description: Your assistant proactively checks in with reminders and follow-ups.
----
+# Heartbeat
 
 Heartbeat lets your assistant reach out proactively. Instead of waiting for you to message first, it periodically reviews your tasks and priorities and sends you a reminder when there's something useful to say.
 

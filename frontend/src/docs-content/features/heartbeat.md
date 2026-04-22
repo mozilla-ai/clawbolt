@@ -1,7 +1,4 @@
----
-title: Heartbeat
-description: Proactive check-ins and reminders.
----
+# Heartbeat
 
 The heartbeat system lets Clawbolt proactively reach out with reminders and follow-ups. Instead of waiting for you to message first, Clawbolt checks in periodically when there is something useful to say.
 

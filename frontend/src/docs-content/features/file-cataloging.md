@@ -1,7 +1,4 @@
----
-title: File Cataloging
-description: Automatically organize photos and documents in cloud storage.
----
+# File Cataloging
 
 Clawbolt can automatically catalog job photos and documents to a cloud storage backend. Files are organized by client and type.
 

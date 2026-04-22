@@ -1,7 +1,4 @@
----
-title: Photos
-description: Send job site photos for AI analysis and documentation.
----
+# Photos
 
 Send a photo to Clawbolt and it will analyze it using vision AI, providing a description suitable for job documentation. Photos work over iMessage, RCS, SMS, and Telegram.
 
@@ -21,7 +18,7 @@ Send a photo to Clawbolt and it will analyze it using vision AI, providing a des
 
 ## Storage organization
 
-When [file cataloging](../file-cataloging/) is configured, photos are automatically organized:
+When [file cataloging](/docs/features/file-cataloging) is configured, photos are automatically organized:
 
 ```
 Job Photos/
