@@ -1,7 +1,4 @@
----
-title: Architecture
-description: How Clawbolt is built, from webhook to reply.
----
+# Architecture
 
 Clawbolt is a FastAPI backend with a multi-channel messaging interface and a custom tool-calling agent loop built on [any-llm](https://github.com/mozilla-ai/any-llm).
 
@@ -103,7 +100,7 @@ Every data class and endpoint uses `user_id` scoping from day one, so multi-tena
 
 ### Deterministic heartbeat
 
-The [heartbeat system](../features/heartbeat/) separates cheap deterministic checks (file-based lookups) from expensive LLM calls. LLM is only invoked when actionable flags are found, keeping costs low.
+The heartbeat system separates cheap deterministic checks (file-based lookups) from expensive LLM calls. LLM is only invoked when actionable flags are found, keeping costs low. See the [Heartbeat feature page](https://clawbolt.ai/docs/features/heartbeat/) for user-facing details.
 
 ## Data classes
 

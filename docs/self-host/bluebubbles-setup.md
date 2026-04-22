@@ -1,7 +1,4 @@
----
-title: BlueBubbles Setup (iMessage)
-description: Set up a free, self-hosted iMessage bridge using BlueBubbles and a Mac.
----
+# BlueBubbles Setup (iMessage)
 
 [BlueBubbles](https://github.com/BlueBubblesApp/bluebubbles-server) is a free, open-source iMessage bridge that runs on any Mac with iMessage signed in. Users message your assistant's iCloud email address from the Messages app on any Apple device.
 
@@ -133,4 +130,4 @@ Tell users to open **Messages** on their iPhone, iPad, or Mac and start a new co
 
 ## Reference
 
-See the [Configuration](/configuration/#bluebubbles-settings-self-hosted-imessage-bridge) page for the full list of BlueBubbles environment variables.
+See [Configuration](./configuration.md#bluebubbles-self-hosted-imessage-bridge) for the full list of BlueBubbles environment variables.

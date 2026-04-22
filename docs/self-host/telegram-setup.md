@@ -1,9 +1,6 @@
----
-title: Telegram Setup
-description: Create a Telegram bot and configure the webhook.
----
+# Telegram Setup
 
-Telegram is one of Clawbolt's messaging channels. If you prefer texting from your phone's native messaging app, configure an iMessage backend via [Linq Setup](../linq-setup/) (hosted iMessage/RCS/SMS) or [BlueBubbles Setup](../bluebubbles-setup/) (self-hosted iMessage) instead. Telegram can run alongside an iMessage backend.
+Telegram is one of Clawbolt's messaging channels. If you prefer texting from your phone's native messaging app, configure an iMessage backend via [Linq Setup](./linq-setup.md) (hosted iMessage/RCS/SMS) or [BlueBubbles Setup](./bluebubbles-setup.md) (self-hosted iMessage) instead. Telegram can run alongside an iMessage backend.
 
 This guide walks you through creating a Telegram bot, connecting it to Clawbolt, and configuring who can use it.
 
@@ -24,9 +21,7 @@ Add the token to your `.env` file:
 TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
 ```
 
-:::tip
-You can customize your bot later with BotFather commands: `/setdescription` (bio shown before users start chatting), `/setabouttext` (profile description), and `/setuserpic` (profile photo).
-:::
+> **Tip:** You can customize your bot later with BotFather commands: `/setdescription` (bio shown before users start chatting), `/setabouttext` (profile description), and `/setuserpic` (profile photo).
 
 ## 2. Configure access control
 

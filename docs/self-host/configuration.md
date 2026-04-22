@@ -1,7 +1,4 @@
----
-title: Configuration
-description: Environment variables and settings for Clawbolt.
----
+# Configuration
 
 Clawbolt is configured via environment variables. Copy `.env.example` to `.env` and fill in the values.
 
@@ -54,9 +51,7 @@ Set the API key env var for your chosen provider, or set `ANY_LLM_KEY` to use th
 
 ## iMessage backends
 
-Clawbolt's user-facing "iMessage" channel is powered by one of two interchangeable
-backends. Choose one: configuring both at once will cause the app to refuse to start.
-End users see a single "iMessage" option regardless of which backend you pick.
+Clawbolt's user-facing "iMessage" channel is powered by one of two interchangeable backends. Choose one: configuring both at once will cause the app to refuse to start. End users see a single "iMessage" option regardless of which backend you pick.
 
 ### Linq (hosted iMessage/RCS/SMS)
 
@@ -92,7 +87,7 @@ When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage c
 | `CLAWBOLT_DATA_DIR` | `./data` | Host path bind-mounted to `/app/data` (Docker Compose only) |
 | `FILE_STORAGE_BASE_DIR` | `data/storage` | Base directory for local file storage |
 
-See [Storage Providers](../deployment/storage/) for setup instructions.
+See [Storage Providers](./storage.md) for setup instructions.
 
 ## LLM token limits
 

@@ -1,7 +1,4 @@
----
-title: Docker
-description: Run Clawbolt with Docker Compose.
----
+# Docker
 
 Docker Compose is the recommended way to run Clawbolt. It handles the app and tunnel setup.
 

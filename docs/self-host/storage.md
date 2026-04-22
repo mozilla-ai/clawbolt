@@ -1,7 +1,4 @@
----
-title: Storage Providers
-description: Configure Dropbox, Google Drive, or local file storage.
----
+# Storage Providers
 
 Clawbolt can catalog job photos and documents to a storage backend. Three providers are supported.
 
@@ -51,6 +48,4 @@ STORAGE_PROVIDER=google_drive
 GOOGLE_DRIVE_CREDENTIALS_JSON='{"token": "...", "refresh_token": "...", ...}'
 ```
 
-:::note
-Storage is currently global: one storage account per deployment. Future versions will support per-user storage credentials so each user's files go to their own cloud account.
-:::
+> **Note:** Storage is currently global: one storage account per deployment. Future versions will support per-user storage credentials so each user's files go to their own cloud account.

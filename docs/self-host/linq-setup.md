@@ -1,7 +1,4 @@
----
-title: Linq Setup (Texting)
-description: Set up iMessage, RCS, and SMS messaging via Linq.
----
+# Linq Setup (Texting)
 
 Linq is the recommended messaging channel for Clawbolt. It lets users text their assistant from their phone's native messaging app using iMessage, RCS, or SMS. No extra app required.
 
@@ -97,4 +94,4 @@ Text the Linq phone number from your phone. Clawbolt will respond via your prefe
 
 ## Reference
 
-See the [Configuration](../../configuration/#linq-settings-imessagercessms) page for the full list of Linq environment variables.
+See [Configuration](./configuration.md#linq-hosted-imessagercsms) for the full list of Linq environment variables.
