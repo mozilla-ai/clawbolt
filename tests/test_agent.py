@@ -429,7 +429,9 @@ async def test_agent_echoes_rendered_receipt_into_tool_result(
     # as something already sent to the user, so it does not restate.
     assert "appended to the reply the user sees" in content
     assert "Created QuickBooks estimate for Jane Smith, $0.00" in content
-    assert "https://app.sandbox.qbo.intuit.com/app/estimate?txnId=161" in content
+    # Compact URL rendering (issue #976): the rendered receipt strips https://
+    # before echoing back to the LLM.
+    assert "app.sandbox.qbo.intuit.com/app/estimate?txnId=161" in content
     # The original tool content is preserved so the LLM can reason about
     # the machine-readable result.
     assert "Id: 161" in content
