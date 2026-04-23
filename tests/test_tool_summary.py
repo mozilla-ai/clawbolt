@@ -67,9 +67,7 @@ def test_single_receipt_renders_action_target_url() -> None:
             )
         ]
     )
-    assert block == (
-        "- Uploaded photo to CompanyCam project Davis\n  https://companycam.com/p/abc123"
-    )
+    assert block == ("- Uploaded photo to CompanyCam project Davis\n  companycam.com/p/abc123")
 
 
 def test_receipt_without_url_omits_link_line() -> None:
@@ -104,8 +102,9 @@ def test_multiple_receipts_one_per_line() -> None:
     )
     assert "Uploaded photo to CompanyCam project Davis" in block
     assert "Created QuickBooks invoice for Johnson, $2,560.00" in block
-    assert "https://companycam.com/p/1" in block
-    assert "https://app.qbo.intuit.com/app/invoice?txnId=4782" in block
+    assert "companycam.com/p/1" in block
+    assert "app.qbo.intuit.com/app/invoice?txnId=4782" in block
+    assert "https://" not in block
 
 
 def test_failed_tool_receipt_is_suppressed() -> None:
@@ -152,7 +151,8 @@ def test_append_preserves_reply_and_separates_block() -> None:
     )
     assert body.startswith("Kitchen demo looks good.")
     assert "- Uploaded photo to CompanyCam project Davis" in body
-    assert "https://companycam.com/p/1" in body
+    assert "companycam.com/p/1" in body
+    assert "https://" not in body
 
 
 def test_append_returns_reply_unchanged_when_no_receipts() -> None:
@@ -174,9 +174,7 @@ def test_append_handles_empty_reply_text() -> None:
             )
         ],
     )
-    assert body == (
-        "- Created CompanyCam project Davis bathroom remodel\n  https://companycam.com/p/new"
-    )
+    assert body == ("- Created CompanyCam project Davis bathroom remodel\n  companycam.com/p/new")
 
 
 def test_block_caps_long_receipt_lists_with_more_suffix() -> None:
@@ -236,7 +234,7 @@ def test_same_url_receipts_are_grouped() -> None:
     assert len(lines) == 3
     # Subject is the real name from the create receipt.
     assert lines[0] == "- Smith Residence"
-    assert lines[2] == "  https://app.companycam.com/projects/94772883"
+    assert lines[2] == "  app.companycam.com/projects/94772883"
     # Verb list contains all three verbs joined with ' · '.
     assert "created" in lines[1]
     assert "updated notepad" in lines[1]
@@ -311,7 +309,8 @@ def test_distinct_urls_stay_separate() -> None:
             ),
         ]
     )
-    assert block.count("https://app.companycam.com/projects/") == 2
+    assert block.count("app.companycam.com/projects/") == 2
+    assert "https://" not in block
     assert "Smith" in block
     assert "Jones" in block
 
@@ -375,7 +374,7 @@ def test_receipt_injection_via_newline_is_defused_at_render() -> None:
     # Exactly one bullet line in the output (single receipt).
     assert sum(1 for line in block.split("\n") if line.startswith("- ")) == 1
     # The real URL is on its own line (the clickable one).
-    assert block.endswith("  https://app.companycam.com/projects/1")
+    assert block.endswith("  app.companycam.com/projects/1")
 
 
 def test_verb_phrase_strips_unseen_companycam_suffixes() -> None:
@@ -421,7 +420,8 @@ def test_grouping_works_across_integrations() -> None:
     lines = block.split("\n")
     # One grouped 3-line block.
     assert len(lines) == 3
-    assert qbo_url in lines[2]
+    assert "app.qbo.intuit.com/app/invoice?txnId=4782" in lines[2]
+    assert "https://" not in block
     # Subject is the first informative target (the invoice with amount).
     assert lines[0] == "- Johnson, $2,560.00"
     # Email recipient survives as a parenthesised qualifier on the email verb.
@@ -474,3 +474,78 @@ def test_render_receipt_line_scrubs_control_chars_directly() -> None:
     assert "\n" not in head
     assert "\n" not in body
     assert "\t" not in line
+
+
+# ---------------------------------------------------------------------------
+# Compact URL rendering (issue #976) -- strip https:// prefix
+# ---------------------------------------------------------------------------
+
+
+def test_display_url_strips_https_prefix() -> None:
+    """The helper is the one place that decides the compact form."""
+    from backend.app.agent.tool_summary import _display_url
+
+    assert (
+        _display_url("https://app.companycam.com/projects/42/photos")
+        == "app.companycam.com/projects/42/photos"
+    )
+
+
+def test_display_url_passes_through_bare_url() -> None:
+    """A URL without a scheme is left alone so auto-linking channels
+    still see a bare domain (already compact)."""
+    from backend.app.agent.tool_summary import _display_url
+
+    assert _display_url("app.companycam.com/projects/42") == "app.companycam.com/projects/42"
+
+
+def test_display_url_preserves_http_prefix() -> None:
+    """A plain http:// URL is visually suspicious; keeping it visible
+    lets the user notice that the link is not over TLS."""
+    from backend.app.agent.tool_summary import _display_url
+
+    assert _display_url("http://example.com/x") == "http://example.com/x"
+
+
+def test_display_url_is_case_sensitive() -> None:
+    """removeprefix is case-sensitive by design. No production integration
+    emits an uppercase scheme today, so we document rather than mitigate."""
+    from backend.app.agent.tool_summary import _display_url
+
+    assert _display_url("HTTPS://app.companycam.com/x") == "HTTPS://app.companycam.com/x"
+
+
+def test_render_receipt_strips_https_prefix() -> None:
+    """End-to-end: a single receipt renders the URL in compact form."""
+    from backend.app.agent.tool_summary import render_receipt_line
+
+    rendered = render_receipt_line(
+        "Created CompanyCam project",
+        "Astro Home Management",
+        "https://app.companycam.com/projects/103320586/photos",
+    )
+    assert "\n  app.companycam.com/projects/103320586/photos" in rendered
+    assert "https://" not in rendered
+
+
+def test_grouped_receipt_strips_https_prefix() -> None:
+    """Grouped-receipt path (shared URL) also runs through _display_url."""
+    shared = "https://app.companycam.com/projects/42/photos"
+    block = format_receipts_block(
+        [
+            _tc_with_receipt(
+                "companycam_create_project",
+                action="Created CompanyCam project",
+                target="Demo",
+                url=shared,
+            ),
+            _tc_with_receipt(
+                "companycam_upload_photo",
+                action="Uploaded photo to CompanyCam",
+                target="photo",
+                url=shared,
+            ),
+        ]
+    )
+    assert "app.companycam.com/projects/42/photos" in block
+    assert "https://" not in block
