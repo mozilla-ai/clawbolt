@@ -550,7 +550,7 @@
     "/api/user/channels/routes/{channel}": {
       "patch": {
         "summary": "Update Channel Route",
-        "description": "Toggle enabled status for a channel route.\n\nSingle-channel enforcement: when enabling a channel, all other\nnon-webchat routes for this user are automatically disabled so\nexactly one messaging channel is active at a time.\n\nIf the user has no route for this channel yet (e.g. they configured\ncredentials but haven't messaged through the channel), a placeholder\nroute is created so the enabled flag can be persisted.",
+        "description": "Toggle enabled status for a channel route.\n\nSingle-channel enforcement: when enabling a channel, all other\nnon-webchat routes for this user are automatically disabled so\nexactly one messaging channel is active at a time.\n\nIf the user has no route and no known identifier for this channel yet\n(fresh onboarding), the selection is persisted via ``preferred_channel``\nonly. The route row is created later when the identifier arrives,\neither via an inbound message (OSS) or via an explicit link call\n(premium). This keeps placeholder rows out of the database and avoids\nleaking the user's internal UUID into identifier-shaped UI fields.",
         "operationId": "update_channel_route_api_user_channels_routes__channel__patch",
         "parameters": [
           {

@@ -190,9 +190,12 @@ async def update_channel_route(
     non-webchat routes for this user are automatically disabled so
     exactly one messaging channel is active at a time.
 
-    If the user has no route for this channel yet (e.g. they configured
-    credentials but haven't messaged through the channel), a placeholder
-    route is created so the enabled flag can be persisted.
+    If the user has no route and no known identifier for this channel yet
+    (fresh onboarding), the selection is persisted via ``preferred_channel``
+    only. The route row is created later when the identifier arrives,
+    either via an inbound message (OSS) or via an explicit link call
+    (premium). This keeps placeholder rows out of the database and avoids
+    leaking the user's internal UUID into identifier-shaped UI fields.
     """
     from backend.app.channels import get_channel
 
@@ -215,28 +218,36 @@ async def update_channel_route(
         ).update({"enabled": False})
 
     route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel).first()
-    if route is None:
+    if route is None and user.channel_identifier:
         route = ChannelRoute(
             user_id=user.id,
             channel=channel,
-            channel_identifier=user.channel_identifier or user.id,
+            channel_identifier=user.channel_identifier,
             enabled=body.enabled,
         )
         db.add(route)
-    else:
+    elif route is not None:
         route.enabled = body.enabled
 
     if body.enabled:
         user.preferred_channel = channel
 
     db.commit()
-    db.refresh(route)
+    if route is not None:
+        db.refresh(route)
+        return ChannelRouteResponse(
+            channel=route.channel,
+            channel_identifier=route.channel_identifier,
+            enabled=route.enabled,
+            created_at=route.created_at.isoformat() if route.created_at else "",
+            last_inbound_at=route.last_inbound_at.isoformat() if route.last_inbound_at else None,
+        )
     return ChannelRouteResponse(
-        channel=route.channel,
-        channel_identifier=route.channel_identifier,
-        enabled=route.enabled,
-        created_at=route.created_at.isoformat() if route.created_at else "",
-        last_inbound_at=route.last_inbound_at.isoformat() if route.last_inbound_at else None,
+        channel=channel,
+        channel_identifier="",
+        enabled=body.enabled,
+        created_at="",
+        last_inbound_at=None,
     )
 
 
