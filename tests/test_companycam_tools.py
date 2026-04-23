@@ -1284,13 +1284,15 @@ async def test_receipt_rendered_output_has_no_raw_ids() -> None:
     block = format_receipts_block(fake_calls)
 
     # The rendered footer has two URL-keyed blocks (project + photo).
-    assert block.count("https://app.companycam.com/projects/94772883/photos") == 1
-    assert block.count("https://app.companycam.com/photos/8675309") == 1
+    # URLs are rendered in compact form (https:// stripped) per issue #976.
+    assert block.count("app.companycam.com/projects/94772883/photos") == 1
+    assert block.count("app.companycam.com/photos/8675309") == 1
+    assert "https://" not in block
 
     # Scan every visible token for a 6+ digit run: only the two URLs
     # are allowed to contain ids. Strip URLs then assert no digit runs.
     def _strip_urls(text: str) -> str:
-        return re.sub(r"https://\S+", "", text)
+        return re.sub(r"app\.companycam\.com/\S+", "", text)
 
     visible = _strip_urls(block)
     assert _RAW_ID_RE.search(visible) is None, (

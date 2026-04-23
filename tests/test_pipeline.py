@@ -357,7 +357,9 @@ async def test_dispatch_reply_appends_receipt_for_imessage_write_tool() -> None:
     outbound = mock_publish.await_args.args[0]
     assert "Kitchen demo looks good." in outbound.content
     assert "- Uploaded photo to CompanyCam project Davis" in outbound.content
-    assert "https://companycam.com/p/abc123" in outbound.content
+    # Issue #976: URLs render in compact form (https:// stripped).
+    assert "companycam.com/p/abc123" in outbound.content
+    assert "https://" not in outbound.content
 
 
 @pytest.mark.asyncio
@@ -388,7 +390,9 @@ async def test_dispatch_reply_also_appends_receipt_for_webchat() -> None:
     outbound = mock_publish.await_args.args[0]
     assert outbound.content.startswith("Done.")
     assert "- Uploaded photo to CompanyCam project Davis" in outbound.content
-    assert "https://companycam.com/p/abc123" in outbound.content
+    # Issue #976: URLs render in compact form (https:// stripped).
+    assert "companycam.com/p/abc123" in outbound.content
+    assert "https://" not in outbound.content
 
 
 @pytest.mark.asyncio
