@@ -87,6 +87,9 @@ class Settings(BaseSettings):
 
     # Media
     max_media_size_bytes: int = Field(default=20_971_520, ge=1)  # 20 MB
+    # Hard wall-time ceiling for any single media download. Guards against
+    # slow-drip carriers that keep the connection alive but never finish.
+    media_download_max_seconds: float = Field(default=60.0, gt=0)
 
     # QuickBooks Online
     quickbooks_client_id: str = ""
