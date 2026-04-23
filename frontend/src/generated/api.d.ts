@@ -366,9 +366,12 @@ export interface paths {
          *     non-webchat routes for this user are automatically disabled so
          *     exactly one messaging channel is active at a time.
          *
-         *     If the user has no route for this channel yet (e.g. they configured
-         *     credentials but haven't messaged through the channel), a placeholder
-         *     route is created so the enabled flag can be persisted.
+         *     If the user has no route and no known identifier for this channel yet
+         *     (fresh onboarding), the selection is persisted via ``preferred_channel``
+         *     only. The route row is created later when the identifier arrives,
+         *     either via an inbound message (OSS) or via an explicit link call
+         *     (premium). This keeps placeholder rows out of the database and avoids
+         *     leaking the user's internal UUID into identifier-shaped UI fields.
          */
         patch: operations["update_channel_route_api_user_channels_routes__channel__patch"];
         trace?: never;
