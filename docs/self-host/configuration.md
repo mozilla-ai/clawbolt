@@ -206,3 +206,4 @@ When `SERPAPI_API_KEY` is set, the agent gains a `supplier_search_products` spec
 | Variable | Default | Description |
 |----------|---------|-------------|
 | `MAX_MEDIA_SIZE_BYTES` | `20971520` | Max upload size (20 MB default) |
+| `MEDIA_DOWNLOAD_MAX_SECONDS` | `60.0` | Hard wall-time ceiling per media download (slow-drip guard) |

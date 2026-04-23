@@ -15,7 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
-from backend.app.media.download import DownloadedMedia, check_media_size, generate_filename
+from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 
@@ -488,20 +488,21 @@ class BlueBubblesChannel(BaseChannel):
             logger.exception("Failed to send BlueBubbles typing indicator to %s", to)
 
     async def download_media(self, file_id: str) -> DownloadedMedia:
-        """Download media by BlueBubbles attachment GUID."""
-        resp = await self._http.get(
+        """Download media by BlueBubbles attachment GUID.
+
+        Streams with a hard size cap and wall-time deadline so a slow or
+        oversized attachment can't OOM or stall the worker.
+        """
+        content, headers = await download_bounded(
+            self._http,
             f"/api/v1/attachment/{file_id}/download",
             params={"password": settings.bluebubbles_password},
-            timeout=settings.http_timeout_seconds,
         )
-        resp.raise_for_status()
-
-        content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-        check_media_size(resp.content)
+        content_type = headers.get("content-type", "application/octet-stream").split(";")[0]
 
         filename = generate_filename(content_type)
         return DownloadedMedia(
-            content=resp.content,
+            content=content,
             mime_type=content_type,
             original_url=file_id,
             filename=filename,
