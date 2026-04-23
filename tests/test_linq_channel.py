@@ -384,16 +384,15 @@ async def test_send_typing_indicator_without_cached_chat() -> None:
 
 
 async def test_download_media_from_cdn() -> None:
-    """download_media should fetch content from the CDN URL."""
+    """download_media should fetch content from the CDN URL via the streaming helper."""
     channel = LinqChannel()
 
-    mock_http = AsyncMock()
-    mock_resp = AsyncMock()
-    mock_resp.content = b"fake-image-data"
-    mock_resp.headers = {"content-type": "image/jpeg"}
-    mock_resp.raise_for_status = lambda: None
-    mock_http.get.return_value = mock_resp
-    channel._client = mock_http
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200, content=b"fake-image-data", headers={"content-type": "image/jpeg"}
+        )
+
+    channel._client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
 
     result = await channel.download_media("https://cdn.linqapp.com/media/photo.jpg")
 

@@ -498,13 +498,12 @@ async def test_download_media_size_limit_exceeded() -> None:
     """download_media should raise ValueError when file exceeds size limit."""
     channel = BlueBubblesChannel()
 
-    mock_http = AsyncMock()
-    mock_resp = AsyncMock()
-    mock_resp.content = b"x" * 100
-    mock_resp.headers = {"content-type": "image/jpeg"}
-    mock_resp.raise_for_status = lambda: None
-    mock_http.get.return_value = mock_resp
-    channel._client = mock_http
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=b"x" * 100, headers={"content-type": "image/jpeg"})
+
+    channel._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://bluebubbles.example"
+    )
 
     with (
         patch("backend.app.media.download.settings.max_media_size_bytes", 50),
@@ -517,22 +516,24 @@ async def test_download_media() -> None:
     """download_media should fetch content from the BlueBubbles API."""
     channel = BlueBubblesChannel()
 
-    mock_http = AsyncMock()
-    mock_resp = AsyncMock()
-    mock_resp.content = b"fake-image-data"
-    mock_resp.headers = {"content-type": "image/jpeg"}
-    mock_resp.raise_for_status = lambda: None
-    mock_http.get.return_value = mock_resp
-    channel._client = mock_http
+    captured: dict[str, str] = {}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured["path"] = request.url.path
+        return httpx.Response(
+            200, content=b"fake-image-data", headers={"content-type": "image/jpeg"}
+        )
+
+    channel._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://bluebubbles.example"
+    )
 
     result = await channel.download_media("att-guid-001")
 
     assert result.content == b"fake-image-data"
     assert result.mime_type == "image/jpeg"
     assert result.original_url == "att-guid-001"
-    mock_http.get.assert_called_once()
-    call_args = mock_http.get.call_args
-    assert call_args[0][0] == "/api/v1/attachment/att-guid-001/download"
+    assert captured["path"] == "/api/v1/attachment/att-guid-001/download"
 
 
 # ---------------------------------------------------------------------------

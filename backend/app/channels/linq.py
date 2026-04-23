@@ -14,7 +14,7 @@ from pydantic import BaseModel, ConfigDict
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
-from backend.app.media.download import DownloadedMedia, check_media_size, generate_filename
+from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 
@@ -452,16 +452,15 @@ class LinqChannel(BaseChannel):
         """Download media from a Linq CDN URL.
 
         For Linq, ``file_id`` is the full CDN URL from the webhook payload.
+        Streams with a hard size cap and wall-time deadline so a slow or
+        oversized carrier can't OOM or stall the worker.
         """
-        resp = await self._http.get(file_id, timeout=settings.http_timeout_seconds)
-        resp.raise_for_status()
-
-        content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-        check_media_size(resp.content)
+        content, headers = await download_bounded(self._http, file_id)
+        content_type = headers.get("content-type", "application/octet-stream").split(";")[0]
 
         filename = generate_filename(content_type)
         return DownloadedMedia(
-            content=resp.content,
+            content=content,
             mime_type=content_type,
             original_url=file_id,
             filename=filename,
