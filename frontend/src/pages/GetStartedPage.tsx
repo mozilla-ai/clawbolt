@@ -122,7 +122,9 @@ export default function GetStartedPage() {
 
   const handleDismiss = () => {
     try { sessionStorage.setItem('getStartedDismissed', '1'); } catch { /* ignore */ }
-    navigate('/app/chat', { replace: true });
+    navigate(selectedChannel && selectedChannel !== 'none' ? '/app/dashboard' : '/app/chat', {
+      replace: true,
+    });
   };
 
   // Determine Step 2 heading based on selection
@@ -302,10 +304,19 @@ export default function GetStartedPage() {
                 <span className="text-xs font-medium text-muted-foreground">Step 4</span>
               </div>
               <h3 className="text-sm font-semibold font-display">You're off to the races</h3>
-              <p className="text-sm text-muted-foreground mt-1">
-                That's it. Clawbolt learns about you and your business as you chat.
-                You can always fine-tune settings later from the sidebar.
-              </p>
+              {selectedChannel && selectedChannel !== 'none' ? (
+                <p className="text-sm text-muted-foreground mt-1">
+                  That's it. From here, just text your assistant directly.
+                  Clawbolt learns about you and your business as you chat,
+                  and you can set up integrations, approve tool access, and
+                  adjust settings all from the conversation.
+                </p>
+              ) : (
+                <p className="text-sm text-muted-foreground mt-1">
+                  That's it. Clawbolt learns about you and your business as you chat.
+                  You can always fine-tune settings later from the sidebar.
+                </p>
+              )}
             </div>
           </div>
         </Card>
@@ -316,7 +327,9 @@ export default function GetStartedPage() {
           variant="primary"
           onClick={handleDismiss}
         >
-          Got it, take me to chat
+          {selectedChannel && selectedChannel !== 'none'
+            ? 'Got it, take me to the dashboard'
+            : 'Got it, take me to chat'}
         </Button>
       </div>
     </div>

@@ -105,9 +105,21 @@ describe('GetStartedPage', () => {
     expect(screen.getByText('None')).toBeInTheDocument();
   });
 
-  it('renders the dismiss button', () => {
+  it('renders the dismiss button defaulting to chat when no channel selected', () => {
     renderWithRouter(<GetStartedPage />);
     expect(screen.getByText('Got it, take me to chat')).toBeInTheDocument();
+  });
+
+  it('shows dashboard dismiss button when a messaging channel is selected', async () => {
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+
+    const linqRadio = await screen.findByDisplayValue('linq');
+    await user.click(linqRadio);
+
+    await waitFor(() => {
+      expect(screen.getByText('Got it, take me to the dashboard')).toBeInTheDocument();
+    });
   });
 
   it('shows "Configure your channel" placeholder when no channel is selected', () => {
@@ -255,6 +267,8 @@ describe('GetStartedPage', () => {
       expect(screen.getByText('No setup needed')).toBeInTheDocument();
     });
     expect(screen.getByText('Use the chat in the sidebar to talk to your assistant.')).toBeInTheDocument();
+    // "None" keeps the chat-oriented dismiss button
+    expect(screen.getByText('Got it, take me to chat')).toBeInTheDocument();
   });
 
   it('pre-populates selection from active channel route', async () => {
