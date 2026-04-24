@@ -1,7 +1,7 @@
 import re
 from typing import Any
 
-from backend.app.services.quickbooks_service import QuickBooksService
+from backend.app.integrations.quickbooks.service import QuickBooksService
 
 # Sample data for the mock QBO sandbox.
 _CUSTOMERS: list[dict[str, Any]] = [

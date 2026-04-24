@@ -7,12 +7,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.app.agent.tools.base import Tool
-from backend.app.agent.tools.quickbooks_tools import (
+from backend.app.agent.tools.registry import ToolContext
+from backend.app.integrations.quickbooks.factory import (
     _describe_qb_query,
     _quickbooks_factory,
     create_quickbooks_tools,
 )
-from backend.app.agent.tools.registry import ToolContext
 from backend.app.models import User
 from tests.mocks.quickbooks import MockQuickBooksService
 
@@ -175,7 +175,7 @@ async def test_quickbooks_factory_returns_empty_when_not_configured() -> None:
     ctx.user = user
 
     with (
-        patch("backend.app.agent.tools.quickbooks_tools.settings") as mock_settings,
+        patch("backend.app.integrations.quickbooks.factory.settings") as mock_settings,
     ):
         mock_settings.quickbooks_client_id = ""
         mock_settings.quickbooks_client_secret = ""
@@ -191,8 +191,8 @@ async def test_quickbooks_factory_returns_empty_when_not_connected() -> None:
     ctx.user = user
 
     with (
-        patch("backend.app.agent.tools.quickbooks_tools.settings") as mock_settings,
-        patch("backend.app.agent.tools.quickbooks_tools.oauth_service") as mock_oauth,
+        patch("backend.app.integrations.quickbooks.factory.settings") as mock_settings,
+        patch("backend.app.integrations.quickbooks.factory.oauth_service") as mock_oauth,
     ):
         mock_settings.quickbooks_client_id = "test-id"
         mock_settings.quickbooks_client_secret = "test-secret"

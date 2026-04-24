@@ -21,7 +21,7 @@ def _reset_import_guard() -> None:
     _reg._tool_modules_imported = False
 
 
-EXPECTED_TOOL_MODULES: set[str] = {
+EXPECTED_CORE_TOOL_MODULES: set[str] = {
     "backend.app.agent.tools.calculator_tools",
     "backend.app.agent.tools.memory_tools",
     "backend.app.agent.tools.messaging_tools",
@@ -29,16 +29,19 @@ EXPECTED_TOOL_MODULES: set[str] = {
     "backend.app.agent.tools.file_tools",
     "backend.app.agent.tools.integration_tools",
     "backend.app.agent.tools.media_tools",
-    "backend.app.agent.tools.pricing_tools",
-    "backend.app.agent.tools.quickbooks_tools",
-    "backend.app.agent.tools.calendar_tools",
-    "backend.app.agent.tools.companycam_tools",
     "backend.app.agent.tools.workspace_tools",
+}
+
+EXPECTED_INTEGRATION_MODULES: set[str] = {
+    "backend.app.integrations.calendar.factory",
+    "backend.app.integrations.companycam.factory",
+    "backend.app.integrations.quickbooks.factory",
+    "backend.app.integrations.supplier_pricing.factory",
 }
 
 
 def test_auto_discovery_finds_all_tool_modules() -> None:
-    """ensure_tool_modules_imported discovers every *_tools module."""
+    """ensure_tool_modules_imported discovers every *_tools and integration factory module."""
     imported: list[str] = []
     original_import = importlib.import_module
 
@@ -49,8 +52,11 @@ def test_auto_discovery_finds_all_tool_modules() -> None:
     with patch.object(importlib, "import_module", side_effect=tracking_import):
         ensure_tool_modules_imported()
 
-    discovered = {m for m in imported if m.endswith("_tools")}
-    assert discovered == EXPECTED_TOOL_MODULES
+    core = {m for m in imported if m.endswith("_tools")}
+    assert core == EXPECTED_CORE_TOOL_MODULES
+
+    integrations = {m for m in imported if m.endswith(".factory") and ".integrations." in m}
+    assert integrations == EXPECTED_INTEGRATION_MODULES
 
 
 def test_auto_discovery_ignores_non_tool_modules() -> None:

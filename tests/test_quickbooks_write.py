@@ -7,8 +7,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from backend.app.agent.tools.quickbooks_tools import create_quickbooks_tools
-from backend.app.services.quickbooks_service import QuickBooksService
+from backend.app.integrations.quickbooks.factory import create_quickbooks_tools
+from backend.app.integrations.quickbooks.service import QuickBooksService
 
 
 class FakeQBService(QuickBooksService):

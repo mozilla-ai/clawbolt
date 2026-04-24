@@ -12,8 +12,8 @@ import sys
 from pathlib import Path
 
 SPEC_URL = "https://raw.githubusercontent.com/CompanyCam/openapi-spec/main/openapi.yaml"
-SPEC_PATH = Path("backend/app/services/companycam_openapi.yaml")
-MODELS_PATH = Path("backend/app/services/companycam_models.py")
+SPEC_PATH = Path("backend/app/integrations/companycam/companycam_openapi.yaml")
+MODELS_PATH = Path("backend/app/integrations/companycam/models.py")
 
 
 def main() -> None:
@@ -59,7 +59,7 @@ def main() -> None:
     MODELS_PATH.write_text(content, encoding="utf-8")
 
     print(f"Generated {MODELS_PATH}")
-    print("Run `ruff format backend/app/services/companycam_models.py` to finalize.")
+    print(f"Run `ruff format {MODELS_PATH}` to finalize.")
 
 
 if __name__ == "__main__":

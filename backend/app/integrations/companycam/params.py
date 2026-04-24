@@ -1,8 +1,8 @@
 """Pydantic parameter models for CompanyCam tools.
 
-Extracted from ``companycam_tools.py`` to keep that entrypoint module
+Extracted from ``factory.py`` to keep that entrypoint module
 focused on registration and factory wiring. Imported by
-``companycam_projects``, ``companycam_photos``, and ``companycam_checklists``.
+``projects``, ``photos``, and ``checklists``.
 """
 
 from __future__ import annotations

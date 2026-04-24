@@ -35,11 +35,27 @@ def load_skill_instructions(skill_dir: str) -> str:
 def load_all_skills() -> None:
     """Discover all skill packages and load their SKILL.md content.
 
-    Each sub-package under ``backend.app.agent.skills`` that contains a
-    SKILL.md file is loaded. The package name (e.g. ``quickbooks``) is
-    used as the key, matching the tool factory registration name.
+    Scans two locations:
+
+    1. ``backend.app.agent.skills.*`` -- skill-only packages
+    2. ``backend.app.integrations.*`` -- self-contained integration packages
+
+    Each sub-package that contains a SKILL.md file is loaded. The package
+    name (e.g. ``quickbooks``) is used as the key, matching the tool
+    factory registration name.
     """
-    package = importlib.import_module("backend.app.agent.skills")
+    _scan_package("backend.app.agent.skills")
+    _scan_package("backend.app.integrations")
+
+
+def _scan_package(package_path: str) -> None:
+    """Scan a top-level package for sub-packages containing SKILL.md."""
+    try:
+        package = importlib.import_module(package_path)
+    except ModuleNotFoundError:
+        logger.debug("Package %s not found, skipping skill scan", package_path)
+        return
+
     for _, name, is_pkg in pkgutil.iter_modules(package.__path__, package.__name__ + "."):
         if not is_pkg:
             continue
