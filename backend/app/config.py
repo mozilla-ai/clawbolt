@@ -114,6 +114,11 @@ class Settings(BaseSettings):
     google_calendar_client_id: str = ""
     google_calendar_client_secret: str = ""
 
+    # ServiceNow FSM
+    servicenow_client_id: str = ""
+    servicenow_client_secret: str = ""
+    servicenow_instance_url: str = ""  # e.g. "https://mycompany.service-now.com"
+
     # CompanyCam OAuth 2.0
     companycam_client_id: str = ""
     companycam_client_secret: str = ""

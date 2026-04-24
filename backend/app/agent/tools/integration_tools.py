@@ -33,6 +33,7 @@ _DISPLAY_NAMES: dict[str, str] = {
     "quickbooks": "QuickBooks Online",
     "calendar": "Google Calendar",
     "companycam": "CompanyCam",
+    "servicenow": "ServiceNow FSM",
     "supplier_pricing": "Home Depot pricing",
 }
 
@@ -41,6 +42,7 @@ _TOOL_OAUTH_MAP: dict[str, str] = {
     "calendar": "google_calendar",
     "quickbooks": "quickbooks",
     "companycam": "companycam",
+    "servicenow": "servicenow",
 }
 
 

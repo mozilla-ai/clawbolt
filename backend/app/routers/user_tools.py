@@ -78,6 +78,11 @@ _FACTORY_META: dict[str, _FactoryMeta] = {
         domain_group="Integrations",
         domain_group_order=2,
     ),
+    "servicenow": _FactoryMeta(
+        "Manage work orders, tasks, and time in ServiceNow FSM",
+        domain_group="Integrations",
+        domain_group_order=2,
+    ),
     "supplier_pricing": _FactoryMeta(
         "Search product prices at Home Depot",
         domain_group="Integrations",

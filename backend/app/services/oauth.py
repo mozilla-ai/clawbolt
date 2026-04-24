@@ -840,8 +840,11 @@ COMPANYCAM_AUTHORIZE_URL = "https://app.companycam.com/oauth/authorize"
 COMPANYCAM_TOKEN_URL = "https://app.companycam.com/oauth/token"
 COMPANYCAM_SCOPES = ["read", "write", "destroy"]
 
+# ServiceNow OAuth 2.0 (instance-specific URLs built at runtime)
+SERVICENOW_SCOPES: list[str] = []  # SN uses no explicit scopes by default
+
 # Registry of all supported OAuth integrations.
-_OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar", "companycam")
+_OAUTH_INTEGRATIONS = ("quickbooks", "google_calendar", "companycam", "servicenow")
 
 
 def get_quickbooks_oauth_config() -> OAuthConfig | None:
@@ -893,6 +896,27 @@ def get_companycam_oauth_config() -> OAuthConfig | None:
     return config if config.is_configured else None
 
 
+def get_servicenow_oauth_config() -> OAuthConfig | None:
+    """Build the ServiceNow OAuth config from settings.
+
+    ServiceNow OAuth URLs are instance-specific, built from the
+    configured ``servicenow_instance_url``.
+    """
+    instance_url = settings.servicenow_instance_url.rstrip("/")
+    if not instance_url:
+        return None
+    config = OAuthConfig(
+        integration="servicenow",
+        client_id=settings.servicenow_client_id,
+        client_secret=settings.servicenow_client_secret,
+        authorize_url=f"{instance_url}/oauth_auth.do",
+        token_url=f"{instance_url}/oauth_token.do",
+        scopes=SERVICENOW_SCOPES,
+        use_pkce=True,
+    )
+    return config if config.is_configured else None
+
+
 def get_oauth_config(integration: str) -> OAuthConfig | None:
     """Return the OAuth config for the named integration, or None."""
     if integration == "quickbooks":
@@ -901,6 +925,8 @@ def get_oauth_config(integration: str) -> OAuthConfig | None:
         return get_google_calendar_oauth_config()
     if integration == "companycam":
         return get_companycam_oauth_config()
+    if integration == "servicenow":
+        return get_servicenow_oauth_config()
     return None
 
 

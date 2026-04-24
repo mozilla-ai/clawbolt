@@ -185,6 +185,16 @@ When `GOOGLE_CALENDAR_CLIENT_ID` and `GOOGLE_CALENDAR_CLIENT_SECRET` are set, us
 
 When both are set, users can connect CompanyCam via OAuth on the Tools page or through chat. This enables tools like `companycam_search_projects`, `companycam_upload_photo`, and `companycam_create_project`.
 
+## ServiceNow FSM
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SERVICENOW_CLIENT_ID` | | ServiceNow OAuth 2.0 client ID |
+| `SERVICENOW_CLIENT_SECRET` | | ServiceNow OAuth 2.0 client secret |
+| `SERVICENOW_INSTANCE_URL` | | ServiceNow instance URL, e.g. `https://mycompany.service-now.com` |
+
+When all three are set, users can connect ServiceNow FSM via OAuth on the Tools page or through chat. This enables specialist tools for managing work orders, tasks, work notes, and time tracking (`servicenow_list_work_orders`, `servicenow_update_task`, `servicenow_log_time`, etc.).
+
 ## Supplier pricing
 
 | Variable | Default | Description |

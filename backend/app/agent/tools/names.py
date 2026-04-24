@@ -61,6 +61,16 @@ class ToolName:
     COMPANYCAM_GET_CHECKLIST = "companycam_get_checklist"
     COMPANYCAM_CREATE_CHECKLIST = "companycam_create_checklist"
 
+    # ServiceNow FSM
+    SERVICENOW_LIST_WORK_ORDERS = "servicenow_list_work_orders"
+    SERVICENOW_GET_WORK_ORDER = "servicenow_get_work_order"
+    SERVICENOW_LIST_TASKS = "servicenow_list_tasks"
+    SERVICENOW_UPDATE_TASK = "servicenow_update_task"
+    SERVICENOW_ADD_WORK_ORDER_NOTE = "servicenow_add_work_order_note"
+    SERVICENOW_ADD_TASK_NOTE = "servicenow_add_task_note"
+    SERVICENOW_LOG_TIME = "servicenow_log_time"
+    SERVICENOW_SEARCH = "servicenow_search"
+
     # Supplier pricing
     SUPPLIER_SEARCH_PRODUCTS = "supplier_search_products"
 
