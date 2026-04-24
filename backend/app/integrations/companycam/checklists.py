@@ -1,8 +1,7 @@
 """CompanyCam checklist tools.
 
 Implements list/get/create for CompanyCam project checklists. Built by
-the factory in ``companycam_tools`` which passes the authenticated
-service.
+the factory in ``factory`` which passes the authenticated service.
 """
 
 from __future__ import annotations

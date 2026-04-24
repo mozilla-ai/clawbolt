@@ -4,7 +4,7 @@ Provides methods for interacting with the CompanyCam REST API v2:
 searching/creating projects, uploading photos, and listing project photos.
 
 All return types use Pydantic models generated from CompanyCam's OpenAPI spec
-(see companycam_models.py).
+(see models.py).
 """
 
 from __future__ import annotations

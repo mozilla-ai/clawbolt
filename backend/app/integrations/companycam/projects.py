@@ -2,7 +2,7 @@
 
 Implements the project lifecycle (search, create, update, get, archive,
 delete), the notepad, and document listing. Built by the factory in
-``companycam_tools`` which passes the authenticated service and context.
+``factory`` which passes the authenticated service and context.
 """
 
 from __future__ import annotations

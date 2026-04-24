@@ -1,7 +1,7 @@
 """CompanyCam photo and comment tools.
 
 Implements upload/tag/delete/search for photos and add/list for comments
-on either projects or photos. Built by the factory in ``companycam_tools``
+on either projects or photos. Built by the factory in ``factory``
 which passes the authenticated service and context.
 """
 
