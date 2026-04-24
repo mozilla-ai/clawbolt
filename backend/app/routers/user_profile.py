@@ -7,6 +7,7 @@ from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
 from backend.app.auth.dependencies import get_current_user
+from backend.app.channel_state import realign_preferred_channel
 from backend.app.channels import is_bluebubbles_configured, reset_channel_clients
 from backend.app.config import (
     resolve_imessage_backend,
@@ -231,6 +232,8 @@ async def update_channel_route(
 
     if body.enabled:
         user.preferred_channel = channel
+    else:
+        realign_preferred_channel(db, user)
 
     db.commit()
     if route is not None:
