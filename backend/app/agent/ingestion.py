@@ -34,6 +34,7 @@ from backend.app.agent.user_db import provision_user
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
+from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia
 from backend.app.models import ChannelRoute, User
 
@@ -95,7 +96,7 @@ async def _send_early_typing_indicator(channel: str, chat_id: str) -> None:
             )
         )
     except Exception:
-        logger.debug("Failed to send early typing indicator to %s/%s", channel, chat_id)
+        logger.debug("Failed to send early typing indicator to %s/%s", channel, mask_pii(chat_id))
 
 
 async def _send_error_fallback(
@@ -172,7 +173,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
     """
     from sqlalchemy.exc import IntegrityError
 
-    logger.debug("_get_or_create_user: channel=%s sender_id=%s", channel, sender_id)
+    logger.debug("_get_or_create_user: channel=%s sender_id=%s", channel, mask_pii(sender_id))
     db = SessionLocal()
     try:
         # Look up by channel route
@@ -565,7 +566,7 @@ async def process_inbound_from_bus(
         "process_inbound_from_bus: resolved user %s for channel=%s sender_id=%s",
         user.id,
         inbound.channel,
-        inbound.sender_id,
+        mask_pii(inbound.sender_id),
     )
 
     # -- Check if channel is disabled for this user --
