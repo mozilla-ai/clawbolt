@@ -6,6 +6,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import backend.app.database as _db_module
+from backend.app.agent.heartbeat import resolve_heartbeat_route
 from backend.app.agent.ingestion import InboundMessage, process_inbound_from_bus
 from backend.app.bus import message_bus
 from backend.app.models import ChannelRoute, User
@@ -223,8 +224,6 @@ async def test_inbound_disabled_does_not_update_preferred(test_user: User) -> No
 
 def test_heartbeat_resolve_skips_disabled(test_user: User) -> None:
     """When preferred channel is disabled, fall back to next enabled."""
-    from backend.app.agent.heartbeat import resolve_heartbeat_route
-
     _create_route(test_user.id, "telegram", "111", enabled=False)
     _create_route(test_user.id, "linq", "222", enabled=True)
 
@@ -250,10 +249,49 @@ def test_heartbeat_resolve_skips_disabled(test_user: User) -> None:
     assert result[0] == "linq"
 
 
+def test_heartbeat_resolve_persists_drift_sync(test_user: User) -> None:
+    """Drift-sync must persist even when the User passed in is detached.
+
+    Regression for #1013: the heartbeat scheduler loads users, expunges them,
+    then processes each in a fresh session. ``resolve_heartbeat_route`` mutated
+    the detached ``User`` and called ``db.commit()``, but SQLAlchemy did not
+    track the change so the update never hit the database.
+    """
+    _create_route(test_user.id, "telegram", "111", enabled=False)
+    _create_route(test_user.id, "linq", "222", enabled=True)
+
+    db = _db_module.SessionLocal()
+    try:
+        user = db.query(User).filter_by(id=test_user.id).first()
+        assert user is not None
+        user.preferred_channel = "telegram"
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
+
+    with patch("backend.app.agent.heartbeat.get_channel"):
+        db = _db_module.SessionLocal()
+        try:
+            result = resolve_heartbeat_route(user, db)
+        finally:
+            db.close()
+
+    assert result is not None
+    assert result[0] == "linq"
+
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=test_user.id).first()
+        assert refreshed is not None
+        assert refreshed.preferred_channel == "linq"
+    finally:
+        db.close()
+
+
 def test_heartbeat_resolve_none_when_all_disabled(test_user: User) -> None:
     """When all channels are disabled, return None."""
-    from backend.app.agent.heartbeat import resolve_heartbeat_route
-
     _create_route(test_user.id, "telegram", "111", enabled=False)
     _create_route(test_user.id, "linq", "222", enabled=False)
 
