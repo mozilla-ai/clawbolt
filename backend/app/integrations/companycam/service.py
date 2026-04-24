@@ -15,7 +15,7 @@ from typing import Any
 
 import httpx
 
-from backend.app.services.companycam_models import (
+from backend.app.integrations.companycam.models import (
     Checklist,
     ChecklistTemplate,
     Comment,

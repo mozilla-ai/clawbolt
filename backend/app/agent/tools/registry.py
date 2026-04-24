@@ -481,7 +481,12 @@ _tool_modules_imported = False
 
 
 def ensure_tool_modules_imported() -> None:
-    """Auto-discover and import all tool modules that end with ``_tools``.
+    """Auto-discover and import all tool modules.
+
+    Scans two locations:
+
+    1. ``backend.app.agent.tools.*_tools`` -- core tool modules
+    2. ``backend.app.integrations.*.factory`` -- integration packages
 
     Guarded so the discovery loop and its log messages only run once,
     even when called from multiple import sites.
@@ -491,6 +496,7 @@ def ensure_tool_modules_imported() -> None:
         return
     _tool_modules_imported = True
 
+    # 1. Core tools: modules ending with _tools in backend/app/agent/tools/
     package = importlib.import_module("backend.app.agent.tools")
     for _, name, _ in pkgutil.iter_modules(package.__path__, package.__name__ + "."):
         if name.endswith("_tools"):
@@ -499,6 +505,26 @@ def ensure_tool_modules_imported() -> None:
                 logger.debug("Imported tool module: %s", name)
             except Exception:
                 logger.exception("Failed to import tool module: %s", name)
+
+    # 2. Integration packages: factory module in each backend/app/integrations/*/
+    try:
+        integrations_pkg = importlib.import_module("backend.app.integrations")
+        for _, pkg_name, is_pkg in pkgutil.iter_modules(
+            integrations_pkg.__path__, integrations_pkg.__name__ + "."
+        ):
+            if not is_pkg:
+                continue
+            factory_module = f"{pkg_name}.factory"
+            try:
+                importlib.import_module(factory_module)
+                logger.debug("Imported integration module: %s", factory_module)
+            except ModuleNotFoundError:
+                logger.debug("No factory module in %s, skipping", pkg_name)
+            except Exception:
+                logger.exception("Failed to import integration module: %s", factory_module)
+    except ModuleNotFoundError:
+        logger.debug("No integrations package found, skipping integration discovery")
+
     logger.info(
         "Tool registry: %d factories registered: %s",
         len(default_registry.factory_names),

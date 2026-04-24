@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from backend.app.services.companycam import CompanyCamService, get_photo_url
+from backend.app.integrations.companycam.service import CompanyCamService, get_photo_url
 
 # ---------------------------------------------------------------------------
 # CompanyCamService tests
@@ -41,7 +41,7 @@ async def test_validate_token() -> None:
     service = CompanyCamService(access_token="test-token")
     user_data = {"id": "1", "first_name": "John", "email_address": "john@example.com"}
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(user_data))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -57,7 +57,7 @@ async def test_search_projects() -> None:
     service = CompanyCamService(access_token="test-token")
     projects = [{"id": "42", "name": "Smith Residence"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(projects))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -74,7 +74,7 @@ async def test_create_project() -> None:
     service = CompanyCamService(access_token="test-token")
     created = {"id": "99", "name": "New Project"}
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.post = AsyncMock(return_value=_mock_response(created))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -95,7 +95,7 @@ async def test_create_project_with_null_integration_relation_id() -> None:
         "integrations": [{"type": "Clawbolt", "relation_id": None}],
     }
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.post = AsyncMock(return_value=_mock_response(created))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -116,7 +116,7 @@ async def test_upload_photo() -> None:
         "uris": [{"type": "original", "uri": "https://photos.cc.com/abc.jpg"}],
     }
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.post = AsyncMock(return_value=_mock_response(photo))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -142,7 +142,7 @@ async def test_list_project_photos() -> None:
     service = CompanyCamService(access_token="test-token")
     photos = [{"id": "10", "uris": []}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(photos))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -159,21 +159,21 @@ async def test_list_project_photos() -> None:
 
 
 def test_get_photo_url_original() -> None:
-    from backend.app.services.companycam_models import ImageURI, Photo
+    from backend.app.integrations.companycam.models import ImageURI, Photo
 
     photo = Photo(id="1", uris=[ImageURI(type="original", uri="https://cc.com/a.jpg")])
     assert get_photo_url(photo) == "https://cc.com/a.jpg"
 
 
 def test_get_photo_url_fallback() -> None:
-    from backend.app.services.companycam_models import ImageURI, Photo
+    from backend.app.integrations.companycam.models import ImageURI, Photo
 
     photo = Photo(id="1", uris=[ImageURI(type="thumb", uri="https://cc.com/thumb.jpg")])
     assert get_photo_url(photo) == "https://cc.com/thumb.jpg"
 
 
 def test_get_photo_url_no_uris() -> None:
-    from backend.app.services.companycam_models import Photo
+    from backend.app.integrations.companycam.models import Photo
 
     photo = Photo(id="42", uris=[])
     assert "42" in get_photo_url(photo)
@@ -181,7 +181,7 @@ def test_get_photo_url_no_uris() -> None:
 
 def test_get_photo_url_null_uri_skipped() -> None:
     """Regression: ImageURI with null uri should be skipped."""
-    from backend.app.services.companycam_models import ImageURI, Photo
+    from backend.app.integrations.companycam.models import ImageURI, Photo
 
     photo = Photo(
         id="1",
@@ -195,7 +195,7 @@ def test_get_photo_url_null_uri_skipped() -> None:
 
 def test_get_photo_url_all_null_uris_fallback() -> None:
     """Regression: if all ImageURI.uri are null, fall back to API URL."""
-    from backend.app.services.companycam_models import ImageURI, Photo
+    from backend.app.integrations.companycam.models import ImageURI, Photo
 
     photo = Photo(id="42", uris=[ImageURI(type="original")])
     assert "42" in get_photo_url(photo)
@@ -216,8 +216,8 @@ def test_companycam_tools_registered() -> None:
 
 def test_companycam_auth_check_not_connected() -> None:
     """Auth check should return a reason when OAuth is not connected."""
-    from backend.app.agent.tools.companycam_tools import _companycam_auth_check
     from backend.app.config import settings
+    from backend.app.integrations.companycam.factory import _companycam_auth_check
 
     user = MagicMock()
     user.id = "test-user-no-token"
@@ -227,7 +227,7 @@ def test_companycam_auth_check_not_connected() -> None:
     with (
         patch.object(settings, "companycam_client_id", "cid"),
         patch.object(settings, "companycam_client_secret", "csec"),
-        patch("backend.app.agent.tools.companycam_tools.oauth_service") as mock_oauth,
+        patch("backend.app.integrations.companycam.factory.oauth_service") as mock_oauth,
     ):
         mock_oauth.is_connected.return_value = False
         result = _companycam_auth_check(ctx)
@@ -239,8 +239,8 @@ def test_companycam_auth_check_not_connected() -> None:
 
 def test_companycam_auth_check_connected() -> None:
     """Auth check should return None when OAuth is connected."""
-    from backend.app.agent.tools.companycam_tools import _companycam_auth_check
     from backend.app.config import settings
+    from backend.app.integrations.companycam.factory import _companycam_auth_check
 
     user = MagicMock()
     user.id = "test-user-connected"
@@ -250,7 +250,7 @@ def test_companycam_auth_check_connected() -> None:
     with (
         patch.object(settings, "companycam_client_id", "cid"),
         patch.object(settings, "companycam_client_secret", "csec"),
-        patch("backend.app.agent.tools.companycam_tools.oauth_service") as mock_oauth,
+        patch("backend.app.integrations.companycam.factory.oauth_service") as mock_oauth,
     ):
         mock_oauth.is_connected.return_value = True
         result = _companycam_auth_check(ctx)
@@ -260,8 +260,8 @@ def test_companycam_auth_check_connected() -> None:
 
 def test_companycam_auth_check_not_configured() -> None:
     """Auth check should return None (hide tools) when OAuth creds are not configured."""
-    from backend.app.agent.tools.companycam_tools import _companycam_auth_check
     from backend.app.config import settings
+    from backend.app.integrations.companycam.factory import _companycam_auth_check
 
     user = MagicMock()
     user.id = "test-user"
@@ -287,7 +287,7 @@ async def test_get_project() -> None:
     service = CompanyCamService(access_token="test-token")
     project = {"id": "42", "name": "Smith Residence", "status": "active"}
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(project))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -303,7 +303,7 @@ async def test_get_project() -> None:
 async def test_delete_project() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.delete = AsyncMock(return_value=_mock_response(None))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -318,7 +318,7 @@ async def test_delete_project() -> None:
 async def test_archive_project() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.patch = AsyncMock(return_value=_mock_response(None))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -333,7 +333,7 @@ async def test_archive_project() -> None:
 async def test_restore_project() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.put = AsyncMock(return_value=_mock_response(None))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -348,7 +348,7 @@ async def test_restore_project() -> None:
 async def test_update_notepad() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.put = AsyncMock(return_value=_mock_response(None))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -370,7 +370,7 @@ async def test_list_project_documents() -> None:
     service = CompanyCamService(access_token="test-token")
     docs = [{"id": "1", "name": "contract.pdf", "url": "https://example.com/c.pdf"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(docs))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -386,7 +386,7 @@ async def test_list_project_documents() -> None:
 async def test_list_project_documents_pagination() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response([]))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -405,7 +405,7 @@ async def test_list_project_comments() -> None:
     service = CompanyCamService(access_token="test-token")
     comments = [{"id": "1", "content": "Looking good", "creator_name": "John"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(comments))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -422,7 +422,7 @@ async def test_add_project_comment() -> None:
     service = CompanyCamService(access_token="test-token")
     comment = {"id": "5", "content": "Done!", "creator_name": "Bot"}
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.post = AsyncMock(return_value=_mock_response(comment))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -440,7 +440,7 @@ async def test_list_project_labels() -> None:
     service = CompanyCamService(access_token="test-token")
     labels = [{"id": "1", "display_value": "Roofing", "value": "roofing"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(labels))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -457,7 +457,7 @@ async def test_add_project_labels() -> None:
     service = CompanyCamService(access_token="test-token")
     labels = [{"id": "2", "display_value": "Priority", "value": "priority"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.post = AsyncMock(return_value=_mock_response(labels))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -481,7 +481,7 @@ async def test_search_photos() -> None:
     service = CompanyCamService(access_token="test-token")
     photos = [{"id": "10", "uris": []}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(photos))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -499,7 +499,7 @@ async def test_search_photos_normalize() -> None:
     service = CompanyCamService(access_token="test-token")
     photos = [{"id": "10", "uris": [], "coordinates": {"lat": 1.0, "lon": 2.0}}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(photos))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -515,7 +515,7 @@ async def test_search_photos_normalize() -> None:
 async def test_delete_photo() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.delete = AsyncMock(return_value=_mock_response(None))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -531,7 +531,7 @@ async def test_list_photo_tags() -> None:
     service = CompanyCamService(access_token="test-token")
     tags = [{"id": "1", "display_value": "Kitchen", "value": "kitchen"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(tags))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -551,7 +551,7 @@ async def test_add_photo_tags() -> None:
         {"id": "2", "display_value": "Kitchen", "value": "kitchen"},
     ]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.post = AsyncMock(return_value=_mock_response(tags))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -569,7 +569,7 @@ async def test_list_photo_comments() -> None:
     service = CompanyCamService(access_token="test-token")
     comments = [{"id": "1", "content": "Nice shot"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(comments))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -585,7 +585,7 @@ async def test_add_photo_comment() -> None:
     service = CompanyCamService(access_token="test-token")
     comment = {"id": "3", "content": "Check this", "creator_name": "Bot"}
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.post = AsyncMock(return_value=_mock_response(comment))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -608,7 +608,7 @@ async def test_list_checklist_templates() -> None:
     service = CompanyCamService(access_token="test-token")
     templates = [{"id": "1", "name": "Roof Inspection"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(templates))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -625,7 +625,7 @@ async def test_list_project_checklists() -> None:
     service = CompanyCamService(access_token="test-token")
     checklists = [{"id": "10", "name": "Inspection", "project_id": "42"}]
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(checklists))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -642,7 +642,7 @@ async def test_create_project_checklist() -> None:
     service = CompanyCamService(access_token="test-token")
     checklist = {"id": "20", "name": "Roof Survey", "project_id": "42"}
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.post = AsyncMock(return_value=_mock_response(checklist))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -674,7 +674,7 @@ async def test_get_checklist() -> None:
         "sectionless_tasks": [],
     }
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(checklist))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -697,7 +697,7 @@ async def test_get_checklist() -> None:
 async def test_search_projects_pagination() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response([]))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -714,7 +714,7 @@ async def test_search_projects_pagination() -> None:
 async def test_list_project_photos_pagination() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response([]))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -740,10 +740,10 @@ async def test_companycam_ask_tools_have_approval_policy() -> None:
     Without this, the WebUI shows 'ask' but the execution pipeline treats the
     tool as 'always' (auto-execute without prompting the user).
     """
-    from backend.app.agent.tools.companycam_checklists import build_checklist_tools
-    from backend.app.agent.tools.companycam_photos import build_photo_tools
-    from backend.app.agent.tools.companycam_projects import build_project_tools
     from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
+    from backend.app.integrations.companycam.checklists import build_checklist_tools
+    from backend.app.integrations.companycam.photos import build_photo_tools
+    from backend.app.integrations.companycam.projects import build_project_tools
 
     ensure_tool_modules_imported()
 
@@ -788,7 +788,7 @@ async def test_companycam_ask_tools_have_approval_policy() -> None:
 async def test_get_project_404() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.get = AsyncMock(return_value=_mock_response(None, status_code=404))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -802,7 +802,7 @@ async def test_get_project_404() -> None:
 async def test_delete_photo_404() -> None:
     service = CompanyCamService(access_token="test-token")
 
-    with patch("backend.app.services.companycam.httpx.AsyncClient") as mock_cls:
+    with patch("backend.app.integrations.companycam.service.httpx.AsyncClient") as mock_cls:
         client = AsyncMock()
         client.delete = AsyncMock(return_value=_mock_response(None, status_code=404))
         mock_cls.return_value.__aenter__ = AsyncMock(return_value=client)
@@ -897,9 +897,9 @@ import re  # noqa: E402 — placed with the receipt-shape block for locality
 from typing import Any  # noqa: E402
 
 from backend.app.agent.tools.base import ToolReceipt  # noqa: E402
-from backend.app.agent.tools.companycam_checklists import build_checklist_tools  # noqa: E402
-from backend.app.agent.tools.companycam_photos import build_photo_tools  # noqa: E402
-from backend.app.agent.tools.companycam_projects import build_project_tools  # noqa: E402
+from backend.app.integrations.companycam.checklists import build_checklist_tools  # noqa: E402
+from backend.app.integrations.companycam.photos import build_photo_tools  # noqa: E402
+from backend.app.integrations.companycam.projects import build_project_tools  # noqa: E402
 
 # Matches any 6+ digit run with word boundaries — catches both a bare
 # id ("94772883") and an id embedded in a longer string
@@ -949,7 +949,7 @@ async def test_receipt_create_project_is_clean() -> None:
         "name": "Smith Residence",
         "project_url": "https://app.companycam.com/projects/94772883",
     }
-    from backend.app.services.companycam_models import Project
+    from backend.app.integrations.companycam.models import Project
 
     service.create_project = AsyncMock(return_value=Project.model_validate(project_data))
     tool = _get_tool(build_project_tools(service), ToolName.COMPANYCAM_CREATE_PROJECT)
@@ -1001,7 +1001,7 @@ async def test_receipt_add_comment_uses_parent_url() -> None:
     from backend.app.agent.tools.names import ToolName
 
     service = MagicMock(spec=CompanyCamService)
-    from backend.app.services.companycam_models import Comment
+    from backend.app.integrations.companycam.models import Comment
 
     service.add_project_comment = AsyncMock(
         return_value=Comment.model_validate({"id": "555", "content": "All demo done"})
@@ -1022,7 +1022,7 @@ async def test_receipt_add_comment_truncates_long_content() -> None:
     from backend.app.agent.tools.names import ToolName
 
     service = MagicMock(spec=CompanyCamService)
-    from backend.app.services.companycam_models import Comment
+    from backend.app.integrations.companycam.models import Comment
 
     service.add_photo_comment = AsyncMock(
         return_value=Comment.model_validate({"id": "555", "content": "X"})
@@ -1041,7 +1041,7 @@ async def test_receipt_tag_photo_is_clean() -> None:
     from backend.app.agent.tools.names import ToolName
 
     service = MagicMock(spec=CompanyCamService)
-    from backend.app.services.companycam_models import Tag
+    from backend.app.integrations.companycam.models import Tag
 
     service.add_photo_tags = AsyncMock(
         return_value=[
@@ -1074,7 +1074,7 @@ async def test_receipt_create_checklist_is_clean() -> None:
     from backend.app.agent.tools.names import ToolName
 
     service = MagicMock(spec=CompanyCamService)
-    from backend.app.services.companycam_models import Checklist
+    from backend.app.integrations.companycam.models import Checklist
 
     service.create_project_checklist = AsyncMock(
         return_value=Checklist.model_validate(
@@ -1091,8 +1091,8 @@ async def test_receipt_create_checklist_is_clean() -> None:
 async def test_receipt_upload_photo_uses_app_url() -> None:
     """Regression: upload receipt must link to the app, not the CDN image."""
     from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
     from backend.app.media.download import DownloadedMedia
-    from backend.app.services.companycam_models import ImageURI, Photo
 
     service = MagicMock(spec=CompanyCamService)
     photo_obj = Photo(
@@ -1138,8 +1138,8 @@ async def test_receipt_upload_photo_uses_app_url() -> None:
 async def test_receipt_upload_duplicate_photo_uses_app_url() -> None:
     """Regression: duplicate-photo receipt must link to the app, not the CDN."""
     from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
     from backend.app.media.download import DownloadedMedia
-    from backend.app.services.companycam_models import ImageURI, Photo
 
     service = MagicMock(spec=CompanyCamService)
     photo_obj = Photo(
@@ -1185,8 +1185,8 @@ async def test_upload_photo_strips_dict_description() -> None:
     The tool must strip it before sending to CompanyCam so the project
     doesn't store garbage."""
     from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
     from backend.app.media.download import DownloadedMedia
-    from backend.app.services.companycam_models import ImageURI, Photo
 
     service = MagicMock(spec=CompanyCamService)
     photo_obj = Photo(

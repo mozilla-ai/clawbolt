@@ -11,7 +11,8 @@ import logging
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
-from backend.app.agent.tools.companycam_params import (
+from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.companycam.params import (
     CompanyCamArchiveProjectParams,
     CompanyCamCreateProjectParams,
     CompanyCamDeleteProjectParams,
@@ -21,12 +22,11 @@ from backend.app.agent.tools.companycam_params import (
     CompanyCamUpdateNotepadParams,
     CompanyCamUpdateProjectParams,
 )
-from backend.app.agent.tools.companycam_receipts import (
+from backend.app.integrations.companycam.receipts import (
     project_target,
     project_url,
 )
-from backend.app.agent.tools.names import ToolName
-from backend.app.services.companycam import CompanyCamService
+from backend.app.integrations.companycam.service import CompanyCamService
 
 logger = logging.getLogger(__name__)
 

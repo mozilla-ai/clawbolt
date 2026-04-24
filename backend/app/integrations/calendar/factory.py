@@ -17,12 +17,12 @@ from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolR
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
 from backend.app.database import SessionLocal
-from backend.app.models import CalendarConfig
-from backend.app.services.calendar_provider import (
+from backend.app.integrations.calendar.provider import (
     CalendarEventCreate,
     CalendarEventUpdate,
 )
-from backend.app.services.google_calendar import GoogleCalendarService
+from backend.app.integrations.calendar.service import GoogleCalendarService
+from backend.app.models import CalendarConfig
 from backend.app.services.oauth import (
     oauth_service,
 )
