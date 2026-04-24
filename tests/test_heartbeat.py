@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from any_llm.types.messages import MessageResponse, MessageUsage, ToolUseBlock
 from pydantic import BaseModel
+from sqlalchemy import event
 
 import backend.app.database as _db_module
 from backend.app.agent.dto import HeartbeatLogEntry
@@ -1265,6 +1266,89 @@ class TestHeartbeatScheduler:
         await scheduler.tick()
 
         mock_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_filters_users_in_sql(
+        self,
+        mock_settings: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """Tick should filter inactive/non-onboarded users at the SQL level (#1014).
+
+        Captures the SQL issued during tick() and asserts the users query
+        includes WHERE conditions on onboarding_complete and is_active, so
+        dormant rows are never loaded into Python memory.
+        """
+        mock_settings.heartbeat_concurrency = 2
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        db = _db_module.SessionLocal()
+        try:
+            for i, (onboarded, active) in enumerate(
+                [(True, True), (True, False), (False, True), (False, False)]
+            ):
+                user = User(
+                    user_id=f"hb-sql-filter-{i}",
+                    phone="+15550002222",
+                    onboarding_complete=onboarded,
+                    is_active=active,
+                    preferred_channel="telegram",
+                    channel_identifier="",
+                )
+                db.add(user)
+                db.flush()
+                db.add(
+                    ChannelRoute(
+                        user_id=user.id,
+                        channel="telegram",
+                        channel_identifier=f"sql-filter-{i}",
+                    )
+                )
+            db.commit()
+        finally:
+            db.close()
+
+        mock_run.return_value = None
+
+        captured_sql: list[str] = []
+
+        def _capture(
+            conn: object,
+            cursor: object,
+            statement: str,
+            parameters: object,
+            context: object,
+            executemany: bool,
+        ) -> None:
+            captured_sql.append(statement)
+
+        engine = _db_module.get_engine()
+        event.listen(engine, "before_cursor_execute", _capture)
+        try:
+            scheduler = HeartbeatScheduler()
+            await scheduler.tick()
+        finally:
+            event.remove(engine, "before_cursor_execute", _capture)
+
+        user_selects = [
+            s for s in captured_sql if "FROM users" in s and s.lstrip().upper().startswith("SELECT")
+        ]
+        assert user_selects, "expected a SELECT FROM users during tick()"
+
+        def _where_clause(sql: str) -> str:
+            upper = sql.upper()
+            idx = upper.find("WHERE ")
+            return sql[idx:] if idx != -1 else ""
+
+        assert any(
+            "users.onboarding_complete" in _where_clause(s)
+            and "users.is_active" in _where_clause(s)
+            for s in user_selects
+        ), f"users query missing WHERE filter on onboarding_complete/is_active; saw: {user_selects}"
+
+        assert mock_run.await_count == 1
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")

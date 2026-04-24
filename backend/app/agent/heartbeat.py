@@ -957,12 +957,15 @@ class HeartbeatScheduler:
         logger.debug("Heartbeat tick starting")
         db = SessionLocal()
         try:
-            all_users = db.query(User).all()
-            for u in all_users:
+            users = (
+                db.query(User)
+                .filter(User.onboarding_complete.is_(True), User.is_active.is_(True))
+                .all()
+            )
+            for u in users:
                 db.expunge(u)
         finally:
             db.close()
-        users = [c for c in all_users if c.onboarding_complete and c.is_active]
 
         if not users:
             logger.debug("Heartbeat tick: no onboarded users found")
