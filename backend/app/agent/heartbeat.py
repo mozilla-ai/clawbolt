@@ -854,13 +854,13 @@ def resolve_heartbeat_route(
         )
         return None
 
-    # Keep preferred_channel in sync if it drifted.
+    # Keep preferred_channel in sync if it drifted. ``user`` may be detached
+    # (the heartbeat scheduler expunges users from the loading session before
+    # handing them to a fresh one), so a column-scoped UPDATE is used instead
+    # of attribute mutation. This also avoids ``merge`` copying other columns
+    # from a possibly-stale detached instance back onto the persistent row.
     if user.preferred_channel != route.channel:
-        # ``user`` may be detached (e.g. the heartbeat scheduler expunges users
-        # from the loading session before handing them to a fresh session). Attach
-        # via ``merge`` so the mutation is tracked and persisted by ``commit``.
-        attached = db.merge(user)
-        attached.preferred_channel = route.channel
+        db.query(User).filter(User.id == user.id).update({User.preferred_channel: route.channel})
         db.commit()
 
     return route.channel, route
