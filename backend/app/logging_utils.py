@@ -31,13 +31,6 @@ def mask_pii(value: str) -> str:
 
     Handles bare phone numbers, emails, and compound identifiers that
     embed a phone number (e.g. iMessage chat GUIDs).
-
-    Examples::
-
-        mask_pii("+14025551234")              -> "+***1234"
-        mask_pii("luke@acme.com")             -> "l***@acme.com"
-        mask_pii("iMessage;-;+14025551234")   -> "iMessage;-;+***1234"
-        mask_pii("some-opaque-id")            -> "some-opaque-id"
     """
     if not value:
         return value
