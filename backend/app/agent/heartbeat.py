@@ -856,7 +856,11 @@ def resolve_heartbeat_route(
 
     # Keep preferred_channel in sync if it drifted.
     if user.preferred_channel != route.channel:
-        user.preferred_channel = route.channel
+        # ``user`` may be detached (e.g. the heartbeat scheduler expunges users
+        # from the loading session before handing them to a fresh session). Attach
+        # via ``merge`` so the mutation is tracked and persisted by ``commit``.
+        attached = db.merge(user)
+        attached.preferred_channel = route.channel
         db.commit()
 
     return route.channel, route
