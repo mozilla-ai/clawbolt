@@ -65,6 +65,11 @@ def _enforce_single_channel() -> None:
     After the single-channel refactor, each user should have at most one
     enabled messaging channel.  This cleans up users who had multiple
     channels enabled before the refactor.
+
+    Also realigns ``preferred_channel`` if it points to a channel with no
+    enabled route while another enabled route exists. This keeps downstream
+    consumers (heartbeat, reauth notifications) consistent without needing
+    read-time drift-sync.
     """
     db = SessionLocal()
     try:
@@ -74,9 +79,20 @@ def _enforce_single_channel() -> None:
             routes = db.query(ChannelRoute).filter_by(user_id=user.id).all()
             enabled_messaging = [r for r in routes if r.enabled and r.channel != "webchat"]
             if len(enabled_messaging) > 1:
+                preferred_match = next(
+                    (r for r in enabled_messaging if r.channel == user.preferred_channel),
+                    None,
+                )
+                # If preferred_channel does not match any enabled route, pick
+                # the first enabled messaging route and make it preferred so
+                # we never end up with a user whose preferred points to a
+                # disabled channel while another is active.
+                keeper = preferred_match or enabled_messaging[0]
                 for r in enabled_messaging:
-                    if r.channel != user.preferred_channel:
+                    if r is not keeper:
                         r.enabled = False
+                if preferred_match is None:
+                    user.preferred_channel = keeper.channel
                 fixed += 1
         if fixed:
             db.commit()

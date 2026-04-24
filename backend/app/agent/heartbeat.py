@@ -877,9 +877,10 @@ def resolve_heartbeat_route(
     Returns ``(channel_name, route)`` on success, or ``None`` when no
     pushable route can be found.
 
-    Under single-channel enforcement each user has at most one enabled
-    non-webchat route. We query for it directly rather than guessing
-    from the preferred_channel field.
+    Pure lookup: never mutates the database. Under single-channel enforcement
+    each user has at most one enabled non-webchat route, and the write paths
+    that flip ``enabled`` are responsible for keeping ``User.preferred_channel``
+    in sync.
     """
     route = (
         db.query(ChannelRoute)
@@ -908,15 +909,6 @@ def resolve_heartbeat_route(
             route.channel,
         )
         return None
-
-    # Keep preferred_channel in sync if it drifted. ``user`` may be detached
-    # (the heartbeat scheduler expunges users from the loading session before
-    # handing them to a fresh one), so a column-scoped UPDATE is used instead
-    # of attribute mutation. This also avoids ``merge`` copying other columns
-    # from a possibly-stale detached instance back onto the persistent row.
-    if user.preferred_channel != route.channel:
-        db.query(User).filter(User.id == user.id).update({User.preferred_channel: route.channel})
-        db.commit()
 
     return route.channel, route
 

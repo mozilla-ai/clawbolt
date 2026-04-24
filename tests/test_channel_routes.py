@@ -249,13 +249,13 @@ def test_heartbeat_resolve_skips_disabled(test_user: User) -> None:
     assert result[0] == "linq"
 
 
-def test_heartbeat_resolve_persists_drift_sync(test_user: User) -> None:
-    """Drift-sync must persist even when the User passed in is detached.
+def test_heartbeat_resolve_is_pure_lookup(test_user: User) -> None:
+    """resolve_heartbeat_route must never mutate persisted state.
 
-    Regression for #1013: the heartbeat scheduler loads users, expunges them,
-    then processes each in a fresh session. ``resolve_heartbeat_route`` mutated
-    the detached ``User`` and called ``db.commit()``, but SQLAlchemy did not
-    track the change so the update never hit the database.
+    The write paths (PATCH, ingestion, startup migration, premium linking)
+    own ``preferred_channel``. The heartbeat scheduler runs in a hot path on
+    a detached User and should only read. If it drifts from an enabled route,
+    that is a bug at the write path, not something to paper over here.
     """
     _create_route(test_user.id, "telegram", "111", enabled=False)
     _create_route(test_user.id, "linq", "222", enabled=True)
@@ -281,11 +281,12 @@ def test_heartbeat_resolve_persists_drift_sync(test_user: User) -> None:
     assert result is not None
     assert result[0] == "linq"
 
+    # preferred_channel must be untouched by the lookup.
     db = _db_module.SessionLocal()
     try:
         refreshed = db.query(User).filter_by(id=test_user.id).first()
         assert refreshed is not None
-        assert refreshed.preferred_channel == "linq"
+        assert refreshed.preferred_channel == "telegram"
     finally:
         db.close()
 

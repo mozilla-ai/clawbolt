@@ -366,6 +366,11 @@ class TestHeartbeatRouting:
             db.close()
 
     def test_fallback_when_preferred_disabled(self) -> None:
+        """Resolve returns an enabled route even if preferred_channel drifted.
+
+        The lookup is pure: it does not rewrite preferred_channel. Write
+        paths are responsible for keeping preferred_channel aligned.
+        """
         uid = _create_user_with_routes(
             [
                 ("telegram", "hb-222", False),
@@ -384,7 +389,7 @@ class TestHeartbeatRouting:
             assert channel_name == "linq"
 
             db.refresh(user)
-            assert user.preferred_channel == "linq"
+            assert user.preferred_channel == "telegram"
         finally:
             db.close()
 
@@ -485,5 +490,132 @@ class TestStartupMigration:
             route = db.query(ChannelRoute).filter_by(user_id=uid, channel="telegram").first()
             assert route is not None
             assert route.enabled is True
+        finally:
+            db.close()
+
+    def test_realigns_preferred_when_stale(self) -> None:
+        """preferred_channel is repointed to an enabled route when stale.
+
+        Multi-channel users whose ``preferred_channel`` points at a channel
+        that is not in the enabled set would otherwise be left with every
+        messaging route disabled and a dangling preferred_channel.
+        """
+        from backend.app.main import _enforce_single_channel
+
+        uid = _create_user_with_routes(
+            [
+                ("linq", "+15551111111", True),
+                ("bluebubbles", "+15552222222", True),
+            ],
+            preferred_channel="telegram",
+        )
+
+        _enforce_single_channel()
+
+        db = _db_module.SessionLocal()
+        try:
+            user = db.query(User).filter_by(id=uid).first()
+            assert user is not None
+            assert user.preferred_channel in {"linq", "bluebubbles"}
+            enabled = (
+                db.query(ChannelRoute)
+                .filter(
+                    ChannelRoute.user_id == uid,
+                    ChannelRoute.enabled.is_(True),
+                    ChannelRoute.channel != "webchat",
+                )
+                .all()
+            )
+            assert len(enabled) == 1
+            assert enabled[0].channel == user.preferred_channel
+        finally:
+            db.close()
+
+
+class TestPatchDisableSyncsPreferred:
+    """Disabling the currently-preferred channel via PATCH updates preferred_channel."""
+
+    def test_disable_preferred_no_other(self, client) -> None:  # noqa: ANN001
+        """Disabling the only messaging channel is a no-op for preferred_channel.
+
+        There is no other enabled route to repoint to, and resolve now
+        returns None instead of relying on drift-sync.
+        """
+        db = _db_module.SessionLocal()
+        try:
+            user = db.query(User).first()
+            assert user is not None
+            user_id = user.id
+            user.preferred_channel = "telegram"
+            db.add(
+                ChannelRoute(
+                    user_id=user_id,
+                    channel="telegram",
+                    channel_identifier="111",
+                    enabled=True,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.patch(
+            "/api/user/channels/routes/telegram",
+            json={"enabled": False},
+        )
+        assert resp.status_code == 200
+
+        db = _db_module.SessionLocal()
+        try:
+            user = db.query(User).filter_by(id=user_id).first()
+            assert user is not None
+            assert user.preferred_channel == "telegram"
+        finally:
+            db.close()
+
+    def test_disable_preferred_repoints_to_other_enabled(self, client) -> None:  # noqa: ANN001
+        """If another enabled route exists, disabling preferred repoints to it.
+
+        This state is unusual under single-channel enforcement, but it can
+        arise from legacy data. Fix at the write path so the heartbeat lookup
+        never needs to paper over drift.
+        """
+        db = _db_module.SessionLocal()
+        try:
+            user = db.query(User).first()
+            assert user is not None
+            user_id = user.id
+            user.preferred_channel = "telegram"
+            db.add(
+                ChannelRoute(
+                    user_id=user_id,
+                    channel="telegram",
+                    channel_identifier="111",
+                    enabled=True,
+                )
+            )
+            db.add(
+                ChannelRoute(
+                    user_id=user_id,
+                    channel="linq",
+                    channel_identifier="+15551234567",
+                    enabled=True,
+                )
+            )
+            db.commit()
+        finally:
+            db.close()
+
+        resp = client.patch(
+            "/api/user/channels/routes/telegram",
+            json={"enabled": False},
+        )
+        assert resp.status_code == 200
+
+        db = _db_module.SessionLocal()
+        try:
+            user = db.query(User).filter_by(id=user_id).first()
+            assert user is not None
+            assert user.preferred_channel == "linq"
         finally:
             db.close()
