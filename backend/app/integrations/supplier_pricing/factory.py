@@ -15,9 +15,9 @@ from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
-from backend.app.services.suppliers.cache import SupplierCache
-from backend.app.services.suppliers.homedepot import HomeDepotSupplier
-from backend.app.services.suppliers.protocol import Location, ProductResult
+from backend.app.integrations.supplier_pricing.cache import SupplierCache
+from backend.app.integrations.supplier_pricing.homedepot import HomeDepotSupplier
+from backend.app.integrations.supplier_pricing.protocol import Location, ProductResult
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext

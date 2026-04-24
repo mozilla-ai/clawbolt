@@ -11,10 +11,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.agent.tools.calendar_tools import parse_disabled_tools
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
 from backend.app.database import SessionLocal
+from backend.app.integrations.calendar.factory import parse_disabled_tools
+from backend.app.integrations.calendar.service import GoogleCalendarService
 from backend.app.models import CalendarConfig, User
 from backend.app.schemas import (
     CalendarConfigEntry,
@@ -23,7 +24,6 @@ from backend.app.schemas import (
     CalendarListEntry,
     CalendarListResponse,
 )
-from backend.app.services.google_calendar import GoogleCalendarService
 from backend.app.services.oauth import oauth_service
 
 logger = logging.getLogger(__name__)

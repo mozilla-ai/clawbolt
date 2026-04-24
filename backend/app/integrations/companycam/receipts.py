@@ -14,7 +14,7 @@ from __future__ import annotations
 import re
 
 from backend.app.config import settings
-from backend.app.services.companycam_models import Photo, Project
+from backend.app.integrations.companycam.models import Photo, Project
 
 # CompanyCam entity ids are numeric strings. Gate URL construction on this
 # so a garbled id from the API or a confused LLM cannot poison the URL

@@ -196,9 +196,9 @@ class TestQuickBooksAuthCheck:
     def test_returns_none_when_not_configured(self) -> None:
         from unittest.mock import patch
 
-        from backend.app.agent.tools.quickbooks_tools import _quickbooks_auth_check
+        from backend.app.integrations.quickbooks.factory import _quickbooks_auth_check
 
-        with patch("backend.app.agent.tools.quickbooks_tools.settings") as mock_settings:
+        with patch("backend.app.integrations.quickbooks.factory.settings") as mock_settings:
             mock_settings.quickbooks_client_id = ""
             mock_settings.quickbooks_client_secret = ""
             ctx = ToolContext(user=User(id="test-user"))
@@ -207,14 +207,14 @@ class TestQuickBooksAuthCheck:
     def test_returns_none_when_authenticated(self) -> None:
         from unittest.mock import patch
 
-        from backend.app.agent.tools.quickbooks_tools import _quickbooks_auth_check
+        from backend.app.integrations.quickbooks.factory import _quickbooks_auth_check
 
         mock_token = MagicMock()
         mock_token.access_token = "valid-token"
         mock_token.realm_id = "realm-123"
         with (
-            patch("backend.app.agent.tools.quickbooks_tools.settings") as mock_settings,
-            patch("backend.app.agent.tools.quickbooks_tools.oauth_service") as mock_oauth,
+            patch("backend.app.integrations.quickbooks.factory.settings") as mock_settings,
+            patch("backend.app.integrations.quickbooks.factory.oauth_service") as mock_oauth,
         ):
             mock_settings.quickbooks_client_id = "client-id"
             mock_settings.quickbooks_client_secret = "client-secret"
@@ -225,11 +225,11 @@ class TestQuickBooksAuthCheck:
     def test_returns_reason_when_no_token(self) -> None:
         from unittest.mock import patch
 
-        from backend.app.agent.tools.quickbooks_tools import _quickbooks_auth_check
+        from backend.app.integrations.quickbooks.factory import _quickbooks_auth_check
 
         with (
-            patch("backend.app.agent.tools.quickbooks_tools.settings") as mock_settings,
-            patch("backend.app.agent.tools.quickbooks_tools.oauth_service") as mock_oauth,
+            patch("backend.app.integrations.quickbooks.factory.settings") as mock_settings,
+            patch("backend.app.integrations.quickbooks.factory.oauth_service") as mock_oauth,
         ):
             mock_settings.quickbooks_client_id = "client-id"
             mock_settings.quickbooks_client_secret = "client-secret"
@@ -246,9 +246,9 @@ class TestCalendarAuthCheck:
     def test_returns_none_when_not_configured(self) -> None:
         from unittest.mock import patch
 
-        from backend.app.agent.tools.calendar_tools import _calendar_auth_check
+        from backend.app.integrations.calendar.factory import _calendar_auth_check
 
-        with patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings:
+        with patch("backend.app.integrations.calendar.factory.settings") as mock_settings:
             mock_settings.google_calendar_client_id = ""
             mock_settings.google_calendar_client_secret = ""
             ctx = ToolContext(user=User(id="test-user"))
@@ -257,13 +257,13 @@ class TestCalendarAuthCheck:
     def test_returns_none_when_authenticated(self) -> None:
         from unittest.mock import patch
 
-        from backend.app.agent.tools.calendar_tools import _calendar_auth_check
+        from backend.app.integrations.calendar.factory import _calendar_auth_check
 
         mock_token = MagicMock()
         mock_token.access_token = "valid-token"
         with (
-            patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings,
-            patch("backend.app.agent.tools.calendar_tools.oauth_service") as mock_oauth,
+            patch("backend.app.integrations.calendar.factory.settings") as mock_settings,
+            patch("backend.app.integrations.calendar.factory.oauth_service") as mock_oauth,
         ):
             mock_settings.google_calendar_client_id = "client-id"
             mock_settings.google_calendar_client_secret = "client-secret"
@@ -274,11 +274,11 @@ class TestCalendarAuthCheck:
     def test_returns_reason_when_no_token(self) -> None:
         from unittest.mock import patch
 
-        from backend.app.agent.tools.calendar_tools import _calendar_auth_check
+        from backend.app.integrations.calendar.factory import _calendar_auth_check
 
         with (
-            patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings,
-            patch("backend.app.agent.tools.calendar_tools.oauth_service") as mock_oauth,
+            patch("backend.app.integrations.calendar.factory.settings") as mock_settings,
+            patch("backend.app.integrations.calendar.factory.oauth_service") as mock_oauth,
         ):
             mock_settings.google_calendar_client_id = "client-id"
             mock_settings.google_calendar_client_secret = "client-secret"

@@ -8,14 +8,14 @@ import pytest
 
 from backend.app.agent.approval import PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind
-from backend.app.agent.tools.calendar_tools import (
+from backend.app.agent.tools.names import ToolName
+from backend.app.agent.tools.registry import ToolContext
+from backend.app.integrations.calendar.factory import (
     _calendar_factory,
     _parse_dt,
     _resolve_tz,
     create_calendar_tools,
 )
-from backend.app.agent.tools.names import ToolName
-from backend.app.agent.tools.registry import ToolContext
 from backend.app.models import User
 from tests.mocks.google_calendar import MockGoogleCalendarService
 
@@ -64,7 +64,7 @@ async def test_factory_returns_empty_when_not_configured() -> None:
     user.id = "1"
     ctx.user = user
 
-    with patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings:
+    with patch("backend.app.integrations.calendar.factory.settings") as mock_settings:
         mock_settings.google_calendar_client_id = ""
         mock_settings.google_calendar_client_secret = ""
         assert await _calendar_factory(ctx) == []
@@ -79,8 +79,8 @@ async def test_factory_returns_empty_when_not_connected() -> None:
     ctx.user = user
 
     with (
-        patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings,
-        patch("backend.app.agent.tools.calendar_tools.oauth_service") as mock_oauth,
+        patch("backend.app.integrations.calendar.factory.settings") as mock_settings,
+        patch("backend.app.integrations.calendar.factory.oauth_service") as mock_oauth,
     ):
         mock_settings.google_calendar_client_id = "test-id"
         mock_settings.google_calendar_client_secret = "test-secret"
@@ -105,10 +105,10 @@ async def test_factory_returns_6_tools_when_configured() -> None:
     mock_token.expires_at = 9999999999.0
 
     with (
-        patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings,
-        patch("backend.app.agent.tools.calendar_tools.oauth_service") as mock_oauth,
+        patch("backend.app.integrations.calendar.factory.settings") as mock_settings,
+        patch("backend.app.integrations.calendar.factory.oauth_service") as mock_oauth,
         patch(
-            "backend.app.agent.tools.calendar_tools._get_enabled_calendars",
+            "backend.app.integrations.calendar.factory._get_enabled_calendars",
             return_value=[("primary", "Primary", [], "owner")],
         ),
     ):
@@ -773,14 +773,14 @@ async def test_factory_passes_enabled_calendars() -> None:
     mock_token.expires_at = 9999999999.0
 
     with (
-        patch("backend.app.agent.tools.calendar_tools.settings") as mock_settings,
-        patch("backend.app.agent.tools.calendar_tools.oauth_service") as mock_oauth,
+        patch("backend.app.integrations.calendar.factory.settings") as mock_settings,
+        patch("backend.app.integrations.calendar.factory.oauth_service") as mock_oauth,
         patch(
-            "backend.app.agent.tools.calendar_tools.create_calendar_tools",
+            "backend.app.integrations.calendar.factory.create_calendar_tools",
             wraps=create_calendar_tools,
         ) as mock_create,
         patch(
-            "backend.app.agent.tools.calendar_tools._get_enabled_calendars",
+            "backend.app.integrations.calendar.factory._get_enabled_calendars",
             return_value=[
                 ("primary", "Personal", [], "owner"),
                 ("jobs@example.com", "Jobs", [ToolName.CALENDAR_CREATE_EVENT], "writer"),
@@ -1089,7 +1089,7 @@ async def test_403_error_mentions_permissions() -> None:
     """A 403 from Google should tell the agent it's a permissions issue."""
     import httpx
 
-    from backend.app.agent.tools.calendar_tools import _handle_http_error
+    from backend.app.integrations.calendar.factory import _handle_http_error
 
     request = httpx.Request("POST", "https://example.com/calendars/test/events")
     response = httpx.Response(403, request=request, text="Forbidden")

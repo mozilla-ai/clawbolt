@@ -116,21 +116,21 @@ class TestWorkspaceResourceExtractors:
 
 class TestQuickBooksResourceExtractors:
     def test_qb_query_extracts_entity_from_query(self) -> None:
-        from backend.app.agent.tools.quickbooks_tools import _extract_query_entity
+        from backend.app.integrations.quickbooks.factory import _extract_query_entity
 
         assert _extract_query_entity({"query": "SELECT * FROM Invoice"}) == "Invoice"
         assert _extract_query_entity({"query": "select Id from Customer"}) == "Customer"
         assert _extract_query_entity({"query": "bad query"}) is None
 
     def test_qb_create_extracts_entity_type(self) -> None:
-        from backend.app.agent.tools.quickbooks_tools import _extract_entity_type
+        from backend.app.integrations.quickbooks.factory import _extract_entity_type
 
         assert _extract_entity_type({"entity_type": "Invoice", "data": {}}) == "Invoice"
         assert _extract_entity_type({"entity_type": "Customer", "data": {}}) == "Customer"
         assert _extract_entity_type({}) is None
 
     def test_qb_send_extracts_email(self) -> None:
-        from backend.app.agent.tools.quickbooks_tools import _extract_send_email
+        from backend.app.integrations.quickbooks.factory import _extract_send_email
 
         assert _extract_send_email({"email": "bob@example.com"}) == "bob@example.com"
         assert _extract_send_email({}) is None

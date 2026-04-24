@@ -13,9 +13,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from backend.app.services.suppliers.cache import SupplierCache
-from backend.app.services.suppliers.homedepot import HomeDepotSupplier
-from backend.app.services.suppliers.protocol import Location, ProductResult
+from backend.app.integrations.supplier_pricing.cache import SupplierCache
+from backend.app.integrations.supplier_pricing.homedepot import HomeDepotSupplier
+from backend.app.integrations.supplier_pricing.protocol import Location, ProductResult
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -74,7 +74,7 @@ class TestHomeDepotSupplier:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
             return_value=mock_client,
         ):
             results = await supplier.search_products("plywood", Location(zip_code="15213"))
@@ -103,10 +103,13 @@ class TestHomeDepotSupplier:
 
         with (
             patch(
-                "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+                "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
                 return_value=mock_client,
             ),
-            patch("backend.app.services.suppliers.homedepot.asyncio.sleep", new_callable=AsyncMock),
+            patch(
+                "backend.app.integrations.supplier_pricing.homedepot.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
         ):
             results = await supplier.search_products("plywood", Location(zip_code="15213"))
 
@@ -124,10 +127,13 @@ class TestHomeDepotSupplier:
 
         with (
             patch(
-                "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+                "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
                 return_value=mock_client,
             ),
-            patch("backend.app.services.suppliers.homedepot.asyncio.sleep", new_callable=AsyncMock),
+            patch(
+                "backend.app.integrations.supplier_pricing.homedepot.asyncio.sleep",
+                new_callable=AsyncMock,
+            ),
             pytest.raises(httpx.HTTPStatusError),
         ):
             await supplier.search_products("plywood", Location(zip_code="15213"))
@@ -143,7 +149,7 @@ class TestHomeDepotSupplier:
 
         with (
             patch(
-                "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+                "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
                 return_value=mock_client,
             ),
             pytest.raises(httpx.TimeoutException),
@@ -161,7 +167,7 @@ class TestHomeDepotSupplier:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
             return_value=mock_client,
         ):
             results = await supplier.search_products("nonexistent", Location(zip_code="15213"))
@@ -180,7 +186,7 @@ class TestHomeDepotSupplier:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
             return_value=mock_client,
         ):
             results = await supplier.search_products("plywood", Location(zip_code="15213"))
@@ -200,7 +206,7 @@ class TestHomeDepotSupplier:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
             return_value=mock_client,
         ):
             results = await supplier.search_products("item", Location(zip_code="15213"))
@@ -220,7 +226,7 @@ class TestHomeDepotSupplier:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
             return_value=mock_client,
         ):
             results = await supplier.search_products("item", Location(zip_code="15213"))
@@ -242,7 +248,7 @@ class TestHomeDepotSupplier:
         mock_client.__aexit__ = AsyncMock(return_value=False)
 
         with patch(
-            "backend.app.services.suppliers.homedepot.httpx.AsyncClient",
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
             return_value=mock_client,
         ):
             results = await supplier.search_products(
@@ -319,7 +325,7 @@ class TestSupplierSearchTool:
 
         cache = SupplierCache()
 
-        from backend.app.agent.tools.pricing_tools import _create_pricing_tools
+        from backend.app.integrations.supplier_pricing.factory import _create_pricing_tools
 
         tools = _create_pricing_tools(mock_supplier, cache)
         tool_fn = tools[0].function
@@ -422,20 +428,20 @@ class TestSupplierSearchTool:
 
 class TestPricingFactory:
     def test_factory_returns_empty_when_no_serpapi_key(self) -> None:
-        from backend.app.agent.tools.pricing_tools import _pricing_factory
+        from backend.app.integrations.supplier_pricing.factory import _pricing_factory
 
         ctx = MagicMock()
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
+        with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = ""
             result = _pricing_factory(ctx)
 
         assert len(result) == 0
 
     def test_factory_returns_hd_when_key_set(self) -> None:
-        from backend.app.agent.tools.pricing_tools import _pricing_factory
+        from backend.app.integrations.supplier_pricing.factory import _pricing_factory
 
         ctx = MagicMock()
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
+        with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = "test-key"
             result = _pricing_factory(ctx)
 
@@ -443,19 +449,19 @@ class TestPricingFactory:
         assert result[0].name == "supplier_search_products"
 
     def test_auth_check_always_passes(self) -> None:
-        from backend.app.agent.tools.pricing_tools import _pricing_auth_check
+        from backend.app.integrations.supplier_pricing.factory import _pricing_auth_check
 
         ctx = MagicMock()
         assert _pricing_auth_check(ctx) is None
 
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
+        with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = ""
             assert _pricing_auth_check(ctx) is None
 
     def test_auth_check_returns_none_when_key_set(self) -> None:
-        from backend.app.agent.tools.pricing_tools import _pricing_auth_check
+        from backend.app.integrations.supplier_pricing.factory import _pricing_auth_check
 
         ctx = MagicMock()
-        with patch("backend.app.agent.tools.pricing_tools.settings") as mock_settings:
+        with patch("backend.app.integrations.supplier_pricing.factory.settings") as mock_settings:
             mock_settings.serpapi_api_key = "key"
             assert _pricing_auth_check(ctx) is None

@@ -15,7 +15,7 @@ from urllib.parse import quote
 
 import httpx
 
-from backend.app.services.calendar_provider import (
+from backend.app.integrations.calendar.provider import (
     BusySlot,
     CalendarEventCreate,
     CalendarEventData,

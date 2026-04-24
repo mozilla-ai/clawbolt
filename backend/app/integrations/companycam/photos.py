@@ -1,7 +1,7 @@
 """CompanyCam photo and comment tools.
 
 Implements upload/tag/delete/search for photos and add/list for comments
-on either projects or photos. Built by the factory in ``companycam_tools``
+on either projects or photos. Built by the factory in ``factory``
 which passes the authenticated service and context.
 """
 
@@ -16,7 +16,8 @@ from typing import TYPE_CHECKING
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
-from backend.app.agent.tools.companycam_params import (
+from backend.app.agent.tools.names import ToolName
+from backend.app.integrations.companycam.params import (
     CompanyCamAddCommentParams,
     CompanyCamDeletePhotoParams,
     CompanyCamListCommentsParams,
@@ -24,15 +25,14 @@ from backend.app.agent.tools.companycam_params import (
     CompanyCamTagPhotoParams,
     CompanyCamUploadPhotoParams,
 )
-from backend.app.agent.tools.companycam_receipts import (
+from backend.app.integrations.companycam.receipts import (
     comment_target,
     photo_target,
     photo_url,
     project_url,
     tags_target,
 )
-from backend.app.agent.tools.names import ToolName
-from backend.app.services.companycam import CompanyCamService
+from backend.app.integrations.companycam.service import CompanyCamService
 
 if TYPE_CHECKING:
     from backend.app.agent.tools.registry import ToolContext

@@ -24,7 +24,7 @@ from backend.app.agent.context import StoredToolInteraction
 # Last line of defence: any integration that builds a ToolReceipt must
 # not let newlines, tabs, or control chars reach the rendered output.
 # Integrations should sanitize earlier (see
-# ``backend/app/agent/tools/companycam_receipts._sanitize``), but the
+# ``backend/app/integrations/companycam/receipts._sanitize``), but the
 # renderer strips again so a new integration that forgets still ships
 # safe output.
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")

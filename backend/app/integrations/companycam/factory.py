@@ -1,13 +1,13 @@
 """CompanyCam tool registration and factory.
 
-This module is the entrypoint for tool auto-discovery (the ``_tools``
-suffix is picked up by ``ensure_tool_modules_imported``). It wires
+This module is the entrypoint for tool auto-discovery (the ``factory``
+module is picked up by ``ensure_tool_modules_imported``). It wires
 together the grouped implementation modules:
 
-* ``companycam_params``      -- Pydantic parameter models
-* ``companycam_projects``    -- project lifecycle + notepad + documents
-* ``companycam_photos``      -- photo upload/tag/delete/search + comments
-* ``companycam_checklists``  -- checklist management
+* ``params``      -- Pydantic parameter models
+* ``projects``    -- project lifecycle + notepad + documents
+* ``photos``      -- photo upload/tag/delete/search + comments
+* ``checklists``  -- checklist management
 
 Authentication uses the standard OAuth 2.0 authorization code flow
 (same as Google Calendar and QuickBooks).
@@ -19,12 +19,12 @@ import logging
 from typing import TYPE_CHECKING
 
 from backend.app.agent.tools.base import Tool
-from backend.app.agent.tools.companycam_checklists import build_checklist_tools
-from backend.app.agent.tools.companycam_photos import build_photo_tools
-from backend.app.agent.tools.companycam_projects import build_project_tools
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
-from backend.app.services.companycam import CompanyCamService
+from backend.app.integrations.companycam.checklists import build_checklist_tools
+from backend.app.integrations.companycam.photos import build_photo_tools
+from backend.app.integrations.companycam.projects import build_project_tools
+from backend.app.integrations.companycam.service import CompanyCamService
 from backend.app.services.oauth import oauth_service
 
 if TYPE_CHECKING:

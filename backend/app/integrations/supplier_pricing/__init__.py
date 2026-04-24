@@ -1,8 +1,8 @@
 """Pluggable supplier pricing integrations."""
 
-from backend.app.services.suppliers.cache import SupplierCache
-from backend.app.services.suppliers.homedepot import HomeDepotSupplier
-from backend.app.services.suppliers.protocol import (
+from backend.app.integrations.supplier_pricing.cache import SupplierCache
+from backend.app.integrations.supplier_pricing.homedepot import HomeDepotSupplier
+from backend.app.integrations.supplier_pricing.protocol import (
     Location,
     ProductDetails,
     ProductResult,

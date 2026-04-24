@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import Any
 
-from backend.app.services.calendar_provider import (
+from backend.app.integrations.calendar.provider import (
     BusySlot,
     CalendarEventCreate,
     CalendarEventData,

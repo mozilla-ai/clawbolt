@@ -10,7 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from backend.app.agent.tools.companycam_receipts import (
+from backend.app.integrations.companycam.models import Photo, Project
+from backend.app.integrations.companycam.receipts import (
     _sanitize,
     comment_target,
     photo_target,
@@ -19,7 +20,6 @@ from backend.app.agent.tools.companycam_receipts import (
     project_url,
     tags_target,
 )
-from backend.app.services.companycam_models import Photo, Project
 
 # ---------------------------------------------------------------------------
 # URL builders

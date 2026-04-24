@@ -6,7 +6,7 @@ import logging
 
 import httpx
 
-from backend.app.services.suppliers.protocol import Location, ProductResult
+from backend.app.integrations.supplier_pricing.protocol import Location, ProductResult
 
 logger = logging.getLogger(__name__)
 

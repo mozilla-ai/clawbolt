@@ -10,11 +10,11 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from backend.app.services.calendar_provider import (
+from backend.app.integrations.calendar.provider import (
     CalendarEventCreate,
     CalendarEventUpdate,
 )
-from backend.app.services.google_calendar import GoogleCalendarService
+from backend.app.integrations.calendar.service import GoogleCalendarService
 
 
 def _mock_response(

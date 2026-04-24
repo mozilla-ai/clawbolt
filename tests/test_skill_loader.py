@@ -27,8 +27,7 @@ def test_load_skill_instructions_reads_skill_md() -> None:
         "..",
         "backend",
         "app",
-        "agent",
-        "skills",
+        "integrations",
         "quickbooks",
     )
     content = load_skill_instructions(os.path.normpath(skill_dir))

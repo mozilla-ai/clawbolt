@@ -13,13 +13,13 @@ from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
+from backend.app.integrations.quickbooks.service import (
+    QuickBooksOnlineService,
+    QuickBooksService,
+)
 from backend.app.services.oauth import (
     _get_intuit_endpoints,
     oauth_service,
-)
-from backend.app.services.quickbooks_service import (
-    QuickBooksOnlineService,
-    QuickBooksService,
 )
 
 if TYPE_CHECKING:
