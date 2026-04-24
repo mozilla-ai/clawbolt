@@ -63,6 +63,7 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
+from backend.app.logging_utils import mask_pii
 from backend.app.models import User
 from backend.app.services.llm_service import (
     apply_tool_caching,
@@ -201,7 +202,7 @@ class ClawboltAgent:
                     )
                 )
             except Exception:
-                logger.debug("Failed to send typing indicator to %s", self._chat_id)
+                logger.debug("Failed to send typing indicator to %s", mask_pii(self._chat_id))
 
     async def _persist_approval_prompt(self, prompt: str) -> None:
         """Store the approval prompt as an outbound message in the session.
