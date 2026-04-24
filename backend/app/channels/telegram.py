@@ -17,6 +17,7 @@ from telegram.constants import ChatAction
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import Settings, get_effective_webhook_secret, settings
+from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia, download_telegram_media
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import (
@@ -475,7 +476,7 @@ class TelegramChannel(BaseChannel):
                 chat_id=self._parse_chat_id(to), action=ChatAction.TYPING
             )
         except Exception:
-            logger.debug("Failed to send typing indicator to %s", to)
+            logger.debug("Failed to send typing indicator to %s", mask_pii(to))
 
     async def download_media(self, file_id: str) -> DownloadedMedia:
         """Download media from Telegram via the Bot API."""

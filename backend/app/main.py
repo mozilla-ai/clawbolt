@@ -26,6 +26,7 @@ from backend.app.config import (
     validate_personal_storage_backend,
 )
 from backend.app.database import SessionLocal, get_engine
+from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
 from backend.app.routers import (
     auth,
@@ -216,7 +217,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
         )
 
     if settings.linq_api_token:
-        logger.info("Linq channel enabled (from: %s)", settings.linq_from_number)
+        logger.info("Linq channel enabled (from: %s)", mask_pii(settings.linq_from_number))
         if not settings.linq_allowed_numbers:
             logger.warning(
                 "No Linq allowed numbers configured (LINQ_ALLOWED_NUMBERS). "

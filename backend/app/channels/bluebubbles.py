@@ -15,6 +15,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
+from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
@@ -359,7 +360,7 @@ class BlueBubblesChannel(BaseChannel):
                 logger.warning("BlueBubbles webhook received invalid JSON")
                 return JSONResponse(content={"ok": True})
 
-            logger.debug("BlueBubbles webhook raw payload: %s", raw)
+            logger.debug("BlueBubbles webhook received: type=%s", raw.get("type", "?"))
 
             try:
                 payload = BBWebhookPayload.model_validate(raw)
@@ -372,7 +373,7 @@ class BlueBubblesChannel(BaseChannel):
                 "BlueBubbles webhook parsed: type=%s isFromMe=%s handle=%s attachments=%d",
                 payload.type,
                 data.is_from_me if data else "",
-                data.handle.address if data and data.handle else "",
+                mask_pii(data.handle.address) if data and data.handle else "",
                 len(data.attachments) if data else 0,
             )
 
@@ -410,8 +411,8 @@ class BlueBubblesChannel(BaseChannel):
         }
         logger.info(
             "BlueBubbles send_text: to=%s chatGuid=%s method=%s bodyLen=%d",
-            to,
-            chat_guid,
+            mask_pii(to),
+            mask_pii(chat_guid),
             settings.bluebubbles_send_method,
             len(body),
         )
@@ -481,11 +482,11 @@ class BlueBubblesChannel(BaseChannel):
                 logger.warning(
                     "BlueBubbles typing indicator non-200: status=%s chatGuid=%s body=%s",
                     resp.status_code,
-                    chat_guid,
+                    mask_pii(chat_guid),
                     resp.text[:500],
                 )
         except Exception:
-            logger.exception("Failed to send BlueBubbles typing indicator to %s", to)
+            logger.exception("Failed to send BlueBubbles typing indicator to %s", mask_pii(to))
 
     async def download_media(self, file_id: str) -> DownloadedMedia:
         """Download media by BlueBubbles attachment GUID.
