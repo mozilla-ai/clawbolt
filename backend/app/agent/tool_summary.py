@@ -24,7 +24,7 @@ from backend.app.agent.context import StoredToolInteraction
 # Last line of defence: any integration that builds a ToolReceipt must
 # not let newlines, tabs, or control chars reach the rendered output.
 # Integrations should sanitize earlier (see
-# ``backend/app/agent/tools/companycam_receipts._sanitize``), but the
+# ``backend/app/integrations/companycam/receipts._sanitize``), but the
 # renderer strips again so a new integration that forgets still ships
 # safe output.
 _CTRL_RE = re.compile(r"[\x00-\x1f\x7f]")
@@ -35,6 +35,17 @@ def _scrub(text: str) -> str:
     if not text:
         return text
     return re.sub(r"\s+", " ", _CTRL_RE.sub(" ", text)).strip()
+
+
+def _display_url(url: str) -> str:
+    """Render a deep link in compact form for plain-text channels.
+
+    Strips the ``https://`` scheme so auto-linking channels (iMessage,
+    Telegram, webchat) still render a tappable link while the visible text
+    is eight characters shorter. Bare or non-https URLs pass through so
+    an unusual scheme stays visible as a signal.
+    """
+    return url.removeprefix("https://")
 
 
 _SUMMARY_SEPARATOR = "\n\n"
@@ -58,7 +69,7 @@ def render_receipt_line(action: str, target: str, url: str | None) -> str:
     """
     head = f"- {_scrub(action)} {_scrub(target)}".rstrip()
     if url:
-        return f"{head}\n  {_scrub(url)}"
+        return f"{head}\n  {_scrub(_display_url(url))}"
     return head
 
 
@@ -139,7 +150,7 @@ def _render_group(
             verbs.append(verb)
 
     head = f"- {_scrub(target)}".rstrip()
-    clean_url = _scrub(url)
+    clean_url = _scrub(_display_url(url))
     if not verbs:
         return f"{head}\n  {clean_url}"
     return f"{head}\n  {' · '.join(verbs)}\n  {clean_url}"

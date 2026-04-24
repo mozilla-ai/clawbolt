@@ -1,3 +1,0 @@
-# Staged from frontend/ at build time by scripts/prepare-tokens.mjs.
-# frontend/src/styles/brand-tokens.css is the single source of truth.
-src/styles/brand-tokens.css

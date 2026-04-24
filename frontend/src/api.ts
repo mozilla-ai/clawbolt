@@ -340,11 +340,22 @@ const api = {
   // Activity stream: real-time agent status from any channel.
   // Auto-reconnects on disconnect so transient drops (proxy timeout,
   // network glitch) don't permanently kill the spinner updates.
+  // Stops retrying on auth errors (401/403) since reconnecting won't help.
+  // Uses exponential backoff for transient errors to avoid server spam.
   subscribeToActivity: (
     onEvent: (event: { type: string; tool_name?: string; channel?: string }) => void,
   ): AbortController => {
     const controller = new AbortController();
-    const RECONNECT_MS = 2_000;
+    const BASE_MS = 2_000;
+    const MAX_MS = 30_000;
+    let failures = 0;
+
+    const backoff = (): number => Math.min(BASE_MS * 2 ** failures, MAX_MS);
+
+    const reconnect = (): void => {
+      failures++;
+      if (!controller.signal.aborted) setTimeout(connect, backoff());
+    };
 
     const connect = (): void => {
       if (controller.signal.aborted) return;
@@ -356,10 +367,15 @@ const api = {
       })
         .then((res) => {
           if (!res.ok || !res.body) {
-            // Non-OK response (e.g. 401): retry after delay
-            if (!controller.signal.aborted) setTimeout(connect, RECONNECT_MS);
+            if (res.status === 401 || res.status === 403) {
+              // Auth error: stop retrying, reconnecting won't fix this
+              return;
+            }
+            reconnect();
             return;
           }
+          // Connected successfully, reset backoff
+          failures = 0;
           const reader = res.body.getReader();
           const decoder = new TextDecoder();
           let buffer = '';
@@ -370,7 +386,7 @@ const api = {
               .then(({ done, value }) => {
                 if (done) {
                   // Server closed the stream: reconnect
-                  if (!controller.signal.aborted) setTimeout(connect, RECONNECT_MS);
+                  reconnect();
                   return;
                 }
                 buffer += decoder.decode(value, { stream: true });
@@ -394,14 +410,14 @@ const api = {
               })
               .catch(() => {
                 // Stream error: reconnect unless intentionally aborted
-                if (!controller.signal.aborted) setTimeout(connect, RECONNECT_MS);
+                reconnect();
               });
           };
           read();
         })
         .catch(() => {
           // Connection failed: reconnect unless intentionally aborted
-          if (!controller.signal.aborted) setTimeout(connect, RECONNECT_MS);
+          reconnect();
         });
     };
 

@@ -1,0 +1,132 @@
+# Telegram Setup
+
+Telegram is one of Clawbolt's messaging channels. If you prefer texting from your phone's native messaging app, configure an iMessage backend via [Linq Setup](./linq-setup.md) (hosted iMessage/RCS/SMS) or [BlueBubbles Setup](./bluebubbles-setup.md) (self-hosted iMessage) instead. Telegram can run alongside an iMessage backend.
+
+This guide walks you through creating a Telegram bot, connecting it to Clawbolt, and configuring who can use it.
+
+## 1. Create a bot with BotFather
+
+[BotFather](https://core.telegram.org/bots/tutorial#obtain-your-bot-token) is Telegram's built-in tool for creating and managing bots.
+
+1. Open Telegram on your phone or desktop
+2. Search for **@BotFather** or open [t.me/BotFather](https://t.me/BotFather)
+3. Send `/newbot`
+4. BotFather asks for a **display name** (e.g. "My Clawbolt"). This is what users see in chat.
+5. BotFather asks for a **username** (e.g. `my_clawbolt_bot`). Must end in `bot` and be unique across Telegram.
+6. BotFather replies with your **bot token**. It looks like `123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11`. Keep this secret.
+
+Add the token to your `.env` file:
+
+```bash
+TELEGRAM_BOT_TOKEN=123456:ABC-DEF1234ghIkl-zyx57W2v1u123ew11
+```
+
+> **Tip:** You can customize your bot later with BotFather commands: `/setdescription` (bio shown before users start chatting), `/setabouttext` (profile description), and `/setuserpic` (profile photo).
+
+## 2. Configure access control
+
+Clawbolt rejects all incoming messages by default. Before starting the server, configure your Telegram user ID.
+
+### Set your chat ID
+
+Chat IDs are numeric and never change. Each user can only set a single Telegram user ID. Add yours to your `.env`:
+
+```bash
+TELEGRAM_ALLOWED_CHAT_ID=123456789
+```
+
+### Allow everyone
+
+To allow any Telegram user to message the bot (useful for development):
+
+```bash
+TELEGRAM_ALLOWED_CHAT_ID=*
+```
+
+### Finding your chat ID
+
+To find your own chat ID:
+
+1. Search for **@userinfobot** on Telegram and start a chat
+2. It replies with your user ID, which is your chat ID for private messages
+
+Alternatively, send a message to your bot and check the server logs. Clawbolt logs the chat ID of blocked messages:
+
+```
+INFO: Chat 123456789 / @yourname not in allowlist, ignoring
+```
+
+## 3. Connect the webhook
+
+Telegram delivers messages to Clawbolt via a [webhook](https://core.telegram.org/bots/webhooks): Telegram sends an HTTPS request to your server for every new message.
+
+### Docker Compose (automatic)
+
+When using Docker Compose, the webhook is registered automatically on startup:
+
+1. Docker Compose starts a [Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/) alongside the app
+2. The tunnel creates a public HTTPS URL (a random `*.trycloudflare.com` domain)
+3. The app discovers the tunnel URL and calls Telegram's `setWebhook` API
+
+No Cloudflare account or auth token is required. Check the tunnel URL with:
+
+```bash
+docker compose logs tunnel
+```
+
+### Local development (manual)
+
+If you are running without Docker, you need a tunnel to give Telegram a public URL:
+
+```bash
+# Install cloudflared: https://developers.cloudflare.com/cloudflare-one/connections/connect-networks/downloads/
+cloudflared tunnel --url http://localhost:8000
+```
+
+Copy the `https://*.trycloudflare.com` URL from the output, then register the webhook:
+
+```bash
+curl -X POST "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/setWebhook" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://<your-tunnel-url>/api/webhooks/telegram"}'
+```
+
+## 4. Verify everything works
+
+Check that Telegram sees your webhook:
+
+```bash
+curl -s "https://api.telegram.org/bot<YOUR_BOT_TOKEN>/getWebhookInfo" | python3 -m json.tool
+```
+
+You should see your tunnel URL in the `url` field and no errors in `last_error_message`.
+
+Then send a message to your bot on Telegram. If Clawbolt is running and configured correctly, it will respond.
+
+## Troubleshooting
+
+**Bot does not respond to messages**
+
+- Check the server logs for allowlist rejections. If you see "not in allowlist, ignoring", update `TELEGRAM_ALLOWED_CHAT_ID` in your `.env`.
+- Verify the webhook is registered: run the `getWebhookInfo` curl command above.
+- Make sure the server is running and reachable at the tunnel URL.
+
+**"Webhook was not set" or empty URL in getWebhookInfo**
+
+- If using Docker Compose, check that the tunnel container is healthy: `docker compose ps`.
+- If running locally, make sure `cloudflared` is still running and re-register the webhook.
+
+**getWebhookInfo shows `last_error_message`**
+
+- `SSL error` or `Connection refused`: the tunnel may have restarted with a new URL. Re-register the webhook with the new URL.
+- `Wrong response from the webhook: 500`: check the server logs for application errors.
+
+**BotFather says the username is taken**
+
+- Bot usernames must be globally unique and end in `bot`. Try a more specific name like `yourcompany_clawbolt_bot`.
+
+## Further reading
+
+- [Telegram Bot Tutorial](https://core.telegram.org/bots/tutorial): Telegram's official getting-started guide
+- [BotFather commands](https://core.telegram.org/bots/features#botfather): full list of bot configuration options
+- [Webhooks guide](https://core.telegram.org/bots/webhooks): Telegram's deep-dive on webhook setup

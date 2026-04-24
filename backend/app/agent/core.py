@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import random
+import re
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -62,6 +63,7 @@ from backend.app.agent.tools.names import ToolName
 from backend.app.agent.tools.registry import ToolContext, ToolRegistry
 from backend.app.agent.trimming import trim_messages
 from backend.app.config import settings
+from backend.app.logging_utils import mask_pii
 from backend.app.models import User
 from backend.app.services.llm_service import (
     apply_tool_caching,
@@ -85,6 +87,25 @@ MAX_INPUT_TOKENS = settings.max_input_tokens
 _VALID_STOP_REASONS: set[str | None] = {"end_turn", "max_tokens", "tool_use", "stop_sequence", None}
 
 _LLM_ERROR_FALLBACK = "I'm having trouble thinking right now. Can you try again in a moment?"
+
+# Patterns that commonly appear in tool exception messages and would leak
+# secrets into the LLM context (and thence into provider logs and the
+# `messages` table) if echoed verbatim. Add new vendors here as they show up.
+_SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"Bearer\s+[A-Za-z0-9._\-]+", re.IGNORECASE), "Bearer ***"),
+    (re.compile(r"sk-[A-Za-z0-9_\-]{8,}"), "sk-***"),
+    (re.compile(r"ghp_[A-Za-z0-9]{20,}"), "ghp_***"),
+    (re.compile(r"AIza[0-9A-Za-z_\-]{20,}"), "AIza***"),
+    (re.compile(r"xox[baprs]-[A-Za-z0-9-]{8,}"), "xox-***"),
+    (re.compile(r"(?i)\b(api[_\-]?key|password|token|secret)\s*[:=]\s*\S+"), r"\1=***"),
+)
+
+
+def _scrub_secrets(text: str) -> str:
+    """Strip well-known secret formats so we can safely echo errors to the LLM."""
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
+    return text
 
 
 @dataclass
@@ -181,7 +202,7 @@ class ClawboltAgent:
                     )
                 )
             except Exception:
-                logger.debug("Failed to send typing indicator to %s", self._chat_id)
+                logger.debug("Failed to send typing indicator to %s", mask_pii(self._chat_id))
 
     async def _persist_approval_prompt(self, prompt: str) -> None:
         """Store the approval prompt as an outbound message in the session.
@@ -807,12 +828,33 @@ class ClawboltAgent:
                         receipt=stored_receipt,
                     )
                 )
-            except Exception:
+            except Exception as exc:
                 logger.exception("Tool call failed: %s", tool_name)
                 hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
-                result_str = f"Error: tool {tool_name} failed\n\n{hint}"
+                # Surface the real exception so the LLM can decide whether to
+                # retry, adjust its args, or report the issue back to the user.
+                # Scrub well-known secret formats first so a tool that wraps an
+                # API key or OAuth token in its exception does not leak it into
+                # the LLM context (and thus into provider logs and the messages
+                # table). Cap the rendered string so a long traceback can not
+                # blow the context budget.
+                err_text = _scrub_secrets(f"{type(exc).__name__}: {exc}")
+                result_str = f"Error: tool {tool_name} raised {err_text}\n\n{hint}"[:1500]
                 is_error = True
                 actions_taken.append(f"Failed: {tool_name}")
+                # Persist the failure as a tool interaction so the admin
+                # inspection view can see what blew up.
+                tool_call_records.append(
+                    StoredToolInteraction(
+                        tool_call_id=tc_req.id,
+                        name=tool_name,
+                        args=validated_args,
+                        result=result_str,
+                        is_error=True,
+                        tags=set(tool_tags),
+                        receipt=None,
+                    )
+                )
             tool_duration = (time.monotonic() - tool_start) * 1000
             logger.debug(
                 "Tool %s completed in %.1fms, is_error=%s, result_length=%d",

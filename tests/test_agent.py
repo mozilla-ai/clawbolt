@@ -429,7 +429,9 @@ async def test_agent_echoes_rendered_receipt_into_tool_result(
     # as something already sent to the user, so it does not restate.
     assert "appended to the reply the user sees" in content
     assert "Created QuickBooks estimate for Jane Smith, $0.00" in content
-    assert "https://app.sandbox.qbo.intuit.com/app/estimate?txnId=161" in content
+    # Compact URL rendering (issue #976): the rendered receipt strips https://
+    # before echoing back to the LLM.
+    assert "app.sandbox.qbo.intuit.com/app/estimate?txnId=161" in content
     # The original tool content is preserved so the LLM can reason about
     # the machine-readable result.
     assert "Id: 161" in content
@@ -1308,6 +1310,87 @@ async def test_tool_exception_appends_hint(
     response = await agent.process_message("test", system_prompt_override="system")
 
     assert any("Failed: bad_tool" in a for a in response.actions_taken)
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_tool_exception_message_surfaced_to_llm(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """When a tool raises, the exception type and message must be fed back
+    to the LLM so it can decide whether to retry, adjust args, or report
+    the issue to the user. Generic 'tool failed' is not enough.
+    """
+
+    async def crashing_tool(**kwargs: object) -> ToolResult:
+        raise PermissionError("Calendar API key has insufficient scope")
+
+    tool = Tool(
+        name="cal_event",
+        description="test",
+        function=crashing_tool,
+        params_model=_EmptyParams,
+    )
+
+    mock_amessages.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "cal_event", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Sorry, I hit a permissions issue."),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    await agent.process_message("test", system_prompt_override="system")
+
+    # Round 2 messages must contain the exception text in the tool result.
+    second_call_messages = mock_amessages.call_args_list[1][1]["messages"]
+    tool_result_blob = json.dumps(second_call_messages, default=str)
+    assert "PermissionError" in tool_result_blob
+    assert "insufficient scope" in tool_result_blob
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_tool_exception_scrubs_secrets_before_surfacing(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """A tool exception that includes a Bearer token / API key must not leak it.
+
+    Tool wrappers around third-party APIs routinely raise exceptions whose
+    str() includes the request URL or auth header. Echoing those verbatim
+    would push secrets into the LLM context and provider logs.
+    """
+
+    async def leaky_tool(**kwargs: object) -> ToolResult:
+        raise RuntimeError(
+            "401 from upstream: Authorization=Bearer abc123XYZ_secret_token "
+            "(api_key=sk-mySecretKey9876543210)"
+        )
+
+    tool = Tool(name="leaky", description="t", function=leaky_tool, params_model=_EmptyParams)
+
+    mock_amessages.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "call_1", "name": "leaky", "arguments": json.dumps({})}]
+        ),
+        make_text_response("Got it."),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    await agent.process_message("test", system_prompt_override="system")
+
+    second_call_messages = mock_amessages.call_args_list[1][1]["messages"]
+    tool_result_blob = json.dumps(second_call_messages, default=str)
+    # Status code and exception type still surface so the LLM can react.
+    assert "RuntimeError" in tool_result_blob
+    assert "401" in tool_result_blob
+    # Concrete secrets must be redacted.
+    assert "abc123XYZ_secret_token" not in tool_result_blob
+    assert "sk-mySecretKey9876543210" not in tool_result_blob
 
 
 # ---------------------------------------------------------------------------

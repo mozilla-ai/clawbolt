@@ -18,6 +18,7 @@ import datetime
 import logging
 import random
 import re
+from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -132,6 +133,8 @@ class HeartbeatDecision:
     action: str  # "skip" or "run"
     tasks: str
     reasoning: str
+    input_tokens: int = 0
+    output_tokens: int = 0
 
 
 # Legacy data structure kept for backwards compatibility with existing code
@@ -483,7 +486,11 @@ async def evaluate_heartbeat_need(
         getattr(response, "stop_reason", "unknown"),
         len(response.content),
     )
-    return _parse_decision_response(response)
+    decision = _parse_decision_response(response)
+    if response.usage:
+        decision.input_tokens = response.usage.input_tokens or 0
+        decision.output_tokens = response.usage.output_tokens or 0
+    return decision
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +657,39 @@ async def get_daily_heartbeat_count(user_id: str) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Post-heartbeat usage hooks
+# ---------------------------------------------------------------------------
+
+HeartbeatUsageHook = Callable[[str, int, int, bool], None]
+
+_heartbeat_usage_hooks: list[HeartbeatUsageHook] = []
+
+
+def register_heartbeat_usage_hook(hook: HeartbeatUsageHook) -> None:
+    """Register a callback invoked after each heartbeat LLM run.
+
+    Called with ``(user_id, input_tokens, output_tokens, sent_reply)`` once
+    Phase 1 (plus any Phase 2) has completed. Premium layers subscribe to
+    this hook to reflect heartbeat LLM spend in per-tenant usage counters.
+    """
+    _heartbeat_usage_hooks.append(hook)
+
+
+def _dispatch_heartbeat_usage(
+    user_id: str,
+    input_tokens: int,
+    output_tokens: int,
+    sent_reply: bool,
+) -> None:
+    """Fire all registered usage hooks, isolating failures per hook."""
+    for hook in _heartbeat_usage_hooks:
+        try:
+            hook(user_id, input_tokens, output_tokens, sent_reply)
+        except Exception:
+            logger.exception("heartbeat usage hook failed for user %s", user_id)
+
+
+# ---------------------------------------------------------------------------
 # Per-user runner (orchestrates Phase 1 + Phase 2)
 # ---------------------------------------------------------------------------
 
@@ -700,108 +740,123 @@ async def run_heartbeat_for_user(
 
     logger.debug("Heartbeat evaluating user %s via LLM (channel=%s)", user.id, channel)
 
-    # -- Phase 1: decide whether tasks need attention --
-    decision = await evaluate_heartbeat_need(user, channel=channel, chat_id=chat_id)
+    total_input_tokens = 0
+    total_output_tokens = 0
+    sent_reply = False
+    try:
+        # -- Phase 1: decide whether tasks need attention --
+        decision = await evaluate_heartbeat_need(user, channel=channel, chat_id=chat_id)
+        total_input_tokens += decision.input_tokens
+        total_output_tokens += decision.output_tokens
 
-    logger.debug(
-        "Heartbeat Phase 1 decision for user %s: action=%s, reasoning=%s",
-        user.id,
-        decision.action,
-        decision.reasoning,
-    )
-
-    if decision.action != "run" or not decision.tasks:
         logger.debug(
-            "Heartbeat skip Phase 2 for user %s: action=%s, tasks_empty=%s",
+            "Heartbeat Phase 1 decision for user %s: action=%s, reasoning=%s",
             user.id,
             decision.action,
-            not decision.tasks,
+            decision.reasoning,
         )
-        # Log the skip so the admin page shows decision history
+
+        if decision.action != "run" or not decision.tasks:
+            logger.debug(
+                "Heartbeat skip Phase 2 for user %s: action=%s, tasks_empty=%s",
+                user.id,
+                decision.action,
+                not decision.tasks,
+            )
+            # Log the skip so the admin page shows decision history
+            heartbeat_store = HeartbeatStore(user.id)
+            await heartbeat_store.log_heartbeat(
+                action_type="skip",
+                channel=channel,
+                reasoning=decision.reasoning,
+            )
+            return HeartbeatAction(
+                action_type="no_action",
+                message="",
+                reasoning=decision.reasoning,
+                priority=0,
+            )
+
+        # -- Phase 2: execute tasks via full agent loop --
+        response = await execute_heartbeat_tasks(
+            user, decision.tasks, channel=channel, chat_id=chat_id
+        )
+        if response is not None:
+            total_input_tokens += response.total_input_tokens
+            total_output_tokens += response.total_output_tokens
+
+        # Check whether a SENDS_REPLY-tagged tool (currently send_media_reply)
+        # already delivered the message before relying on reply_text. Tool-based
+        # sends are logged even when the LLM produces no trailing text.
+        sent_reply = response is not None and any(
+            ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in response.tool_calls
+        )
+
+        if not response or (not response.reply_text and not sent_reply):
+            logger.debug("Heartbeat Phase 2 produced no output for user %s", user.id)
+            return HeartbeatAction(
+                action_type="no_action",
+                message="",
+                reasoning="Phase 2 agent produced no output",
+                priority=0,
+            )
+
+        reply_text = response.reply_text
+
+        if not sent_reply:
+            logger.info(
+                "Heartbeat sending message to user %s: %.100s",
+                user.id,
+                reply_text,
+            )
+            try:
+                from backend.app.bus import OutboundMessage, message_bus
+
+                await message_bus.publish_outbound(
+                    OutboundMessage(
+                        channel=channel,
+                        chat_id=chat_id,
+                        content=reply_text,
+                    )
+                )
+                sent_reply = True
+            except Exception:
+                logger.exception("Heartbeat message failed for user %s", user.id)
+                return HeartbeatAction(
+                    action_type="send_message",
+                    message=reply_text,
+                    reasoning=decision.reasoning,
+                    priority=3,
+                )
+
+        # Record outbound message in session history
+        session, _ = await get_or_create_conversation(user.id)
+        session_store = get_session_store(user.id)
+        await session_store.add_message(
+            session=session,
+            direction=MessageDirection.OUTBOUND,
+            body=reply_text,
+        )
+
+        # Record heartbeat log for persistent rate limiting
         heartbeat_store = HeartbeatStore(user.id)
         await heartbeat_store.log_heartbeat(
-            action_type="skip",
+            action_type="send",
+            message_text=reply_text,
             channel=channel,
             reasoning=decision.reasoning,
+            tasks=decision.tasks,
         )
+
         return HeartbeatAction(
-            action_type="no_action",
-            message="",
+            action_type="send_message",
+            message=reply_text,
             reasoning=decision.reasoning,
-            priority=0,
+            priority=3,
         )
-
-    # -- Phase 2: execute tasks via full agent loop --
-    response = await execute_heartbeat_tasks(user, decision.tasks, channel=channel, chat_id=chat_id)
-
-    # Check whether a SENDS_REPLY-tagged tool (currently send_media_reply)
-    # already delivered the message before relying on reply_text. Tool-based
-    # sends are logged even when the LLM produces no trailing text.
-    sent_reply = response is not None and any(
-        ToolTags.SENDS_REPLY in tc.tags and not tc.is_error for tc in response.tool_calls
-    )
-
-    if not response or (not response.reply_text and not sent_reply):
-        logger.debug("Heartbeat Phase 2 produced no output for user %s", user.id)
-        return HeartbeatAction(
-            action_type="no_action",
-            message="",
-            reasoning="Phase 2 agent produced no output",
-            priority=0,
-        )
-
-    reply_text = response.reply_text
-
-    if not sent_reply:
-        logger.info(
-            "Heartbeat sending message to user %s: %.100s",
-            user.id,
-            reply_text,
-        )
-        try:
-            from backend.app.bus import OutboundMessage, message_bus
-
-            await message_bus.publish_outbound(
-                OutboundMessage(
-                    channel=channel,
-                    chat_id=chat_id,
-                    content=reply_text,
-                )
-            )
-        except Exception:
-            logger.exception("Heartbeat message failed for user %s", user.id)
-            return HeartbeatAction(
-                action_type="send_message",
-                message=reply_text,
-                reasoning=decision.reasoning,
-                priority=3,
-            )
-
-    # Record outbound message in session history
-    session, _ = await get_or_create_conversation(user.id)
-    session_store = get_session_store(user.id)
-    await session_store.add_message(
-        session=session,
-        direction=MessageDirection.OUTBOUND,
-        body=reply_text,
-    )
-
-    # Record heartbeat log for persistent rate limiting
-    heartbeat_store = HeartbeatStore(user.id)
-    await heartbeat_store.log_heartbeat(
-        action_type="send",
-        message_text=reply_text,
-        channel=channel,
-        reasoning=decision.reasoning,
-        tasks=decision.tasks,
-    )
-
-    return HeartbeatAction(
-        action_type="send_message",
-        message=reply_text,
-        reasoning=decision.reasoning,
-        priority=3,
-    )
+    finally:
+        if total_input_tokens or total_output_tokens:
+            _dispatch_heartbeat_usage(user.id, total_input_tokens, total_output_tokens, sent_reply)
 
 
 # ---------------------------------------------------------------------------
@@ -854,9 +909,13 @@ def resolve_heartbeat_route(
         )
         return None
 
-    # Keep preferred_channel in sync if it drifted.
+    # Keep preferred_channel in sync if it drifted. ``user`` may be detached
+    # (the heartbeat scheduler expunges users from the loading session before
+    # handing them to a fresh one), so a column-scoped UPDATE is used instead
+    # of attribute mutation. This also avoids ``merge`` copying other columns
+    # from a possibly-stale detached instance back onto the persistent row.
     if user.preferred_channel != route.channel:
-        user.preferred_channel = route.channel
+        db.query(User).filter(User.id == user.id).update({User.preferred_channel: route.channel})
         db.commit()
 
     return route.channel, route
@@ -957,12 +1016,15 @@ class HeartbeatScheduler:
         logger.debug("Heartbeat tick starting")
         db = SessionLocal()
         try:
-            all_users = db.query(User).all()
-            for u in all_users:
+            users = (
+                db.query(User)
+                .filter(User.onboarding_complete.is_(True), User.is_active.is_(True))
+                .all()
+            )
+            for u in users:
                 db.expunge(u)
         finally:
             db.close()
-        users = [c for c in all_users if c.onboarding_complete and c.is_active]
 
         if not users:
             logger.debug("Heartbeat tick: no onboarded users found")

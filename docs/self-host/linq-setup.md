@@ -1,0 +1,97 @@
+# Linq Setup (Texting)
+
+Linq is the recommended messaging channel for Clawbolt. It lets users text their assistant from their phone's native messaging app using iMessage, RCS, or SMS. No extra app required.
+
+[Linq](https://linqapp.com) provides a Partner API that gives Clawbolt a phone number users can text directly.
+
+## 1. Get a Linq account
+
+Sign up for a Linq Partner account at [linqapp.com](https://linqapp.com) and get:
+
+- A **Partner API V3 bearer token**
+- A **provisioned phone number** in E.164 format (e.g. `+15551234567`)
+
+## 2. Configure environment
+
+Add these to your `.env` file:
+
+```bash
+LINQ_API_TOKEN=your_bearer_token
+LINQ_FROM_NUMBER=+15551234567
+```
+
+### Access control
+
+Like Telegram, Linq rejects all inbound messages by default. Configure which phone numbers are allowed:
+
+```bash
+# Allow a specific phone number (E.164 format)
+LINQ_ALLOWED_NUMBERS=+15559876543
+
+# Allow everyone (useful for development)
+LINQ_ALLOWED_NUMBERS=*
+```
+
+### Preferred messaging service
+
+Linq supports iMessage, RCS, and SMS. Set your preferred service:
+
+```bash
+# Default is iMessage
+LINQ_PREFERRED_SERVICE=iMessage
+
+# Other options: SMS, RCS
+```
+
+## 3. Start the server
+
+```bash
+docker compose up --build
+```
+
+On startup, Clawbolt automatically:
+1. Discovers the Cloudflare Tunnel URL
+2. Creates a webhook subscription with Linq's API
+3. Stores the signing secret for message verification
+
+No manual webhook registration is needed.
+
+## 4. Start texting
+
+Text the Linq phone number from your phone. Clawbolt will respond via your preferred messaging service (iMessage, RCS, or SMS).
+
+## How it works
+
+- **Inbound messages** arrive via webhook at `/api/webhooks/linq` with HMAC-SHA256 signature verification
+- **Outbound messages** are sent via the Linq Partner API V3
+- **Media** (photos, documents) is supported in both directions
+- **Typing indicators** are sent while the agent is processing
+
+## Security
+
+- All inbound webhooks are verified with HMAC-SHA256 signatures
+- Replay protection with a 5-minute window prevents reuse of old webhook payloads
+- Phone number allowlist prevents unauthorized access
+- Idempotency tracking prevents duplicate message processing
+
+## Troubleshooting
+
+**Bot does not respond to texts**
+
+- Check server logs for allowlist rejections
+- Verify `LINQ_API_TOKEN` and `LINQ_FROM_NUMBER` are set correctly
+- Ensure the Cloudflare Tunnel is running: `docker compose logs tunnel`
+
+**Webhook not registering on startup**
+
+- The tunnel URL must be resolvable before webhook registration can succeed
+- Check `docker compose logs app` for Linq-related errors
+
+**Media not coming through**
+
+- Verify the phone number is allowed in `LINQ_ALLOWED_NUMBERS`
+- Check that the media file size is within the `MAX_MEDIA_SIZE_BYTES` limit (default 20 MB)
+
+## Reference
+
+See [Configuration](./configuration.md#linq-hosted-imessagercsms) for the full list of Linq environment variables.

@@ -78,7 +78,7 @@ class Settings(BaseSettings):
     compaction_enabled: bool = True
     compaction_model: str = ""  # empty = fall back to llm_model
     compaction_provider: str = ""  # empty = fall back to llm_provider
-    compaction_max_tokens: int = Field(default=1500, ge=1)
+    compaction_max_tokens: int = Field(default=16_000, ge=1)
 
     # Rate limiting
     webhook_rate_limit_max_requests: int = Field(default=30, ge=1)
@@ -87,6 +87,9 @@ class Settings(BaseSettings):
 
     # Media
     max_media_size_bytes: int = Field(default=20_971_520, ge=1)  # 20 MB
+    # Hard wall-time ceiling for any single media download. Guards against
+    # slow-drip carriers that keep the connection alive but never finish.
+    media_download_max_seconds: float = Field(default=60.0, gt=0)
 
     # QuickBooks Online
     quickbooks_client_id: str = ""

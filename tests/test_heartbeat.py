@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from any_llm.types.messages import MessageResponse, MessageUsage, ToolUseBlock
 from pydantic import BaseModel
+from sqlalchemy import event
 
 import backend.app.database as _db_module
 from backend.app.agent.dto import HeartbeatLogEntry
@@ -22,6 +23,7 @@ from backend.app.agent.heartbeat import (
     HeartbeatDecisionParams,
     HeartbeatScheduler,
     _format_heartbeat_history,
+    _heartbeat_usage_hooks,
     _parse_decision_response,
     _parse_tool_call_response,
     evaluate_heartbeat_need,
@@ -29,6 +31,7 @@ from backend.app.agent.heartbeat import (
     get_daily_heartbeat_count,
     is_within_business_hours,
     parse_frequency_to_minutes,
+    register_heartbeat_usage_hook,
     run_heartbeat_for_user,
 )
 from backend.app.agent.system_prompt import to_local_time
@@ -584,6 +587,40 @@ class TestEvaluateHeartbeatNeed:
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.settings")
     @patch("backend.app.agent.heartbeat.amessages")
+    async def test_populates_tokens_from_response(
+        self,
+        mock_llm: AsyncMock,
+        mock_settings: MagicMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        mock_build_prompt: AsyncMock,
+        mock_log_usage: MagicMock,
+        user: User,
+    ) -> None:
+        """Phase 1 decision carries back the LLM's token usage."""
+        self._setup_mocks(
+            mock_llm,
+            mock_settings,
+            mock_get_session_store,
+            mock_heartbeat_store_cls,
+            mock_build_prompt,
+        )
+        response = _make_decision_tool_call(action="skip", tasks="", reasoning="nope")
+        response.usage.input_tokens = 42
+        response.usage.output_tokens = 7
+        mock_llm.return_value = response
+
+        decision = await evaluate_heartbeat_need(user)
+        assert decision.input_tokens == 42
+        assert decision.output_tokens == 7
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.log_llm_usage")
+    @patch("backend.app.agent.heartbeat.build_heartbeat_system_prompt", new_callable=AsyncMock)
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.settings")
+    @patch("backend.app.agent.heartbeat.amessages")
     async def test_llm_says_run(
         self,
         mock_llm: AsyncMock,
@@ -971,6 +1008,160 @@ class TestRunHeartbeatForUser:
 
 
 # ---------------------------------------------------------------------------
+# Heartbeat usage hooks
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture()
+def clear_heartbeat_hooks() -> object:
+    """Snapshot and restore the module-level usage-hook list around a test."""
+    snapshot = list(_heartbeat_usage_hooks)
+    _heartbeat_usage_hooks.clear()
+    yield
+    _heartbeat_usage_hooks.clear()
+    _heartbeat_usage_hooks.extend(snapshot)
+
+
+class TestHeartbeatUsageHooks:
+    """Tests for register_heartbeat_usage_hook and post-run dispatch."""
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_hook_fires_with_phase1_tokens_on_skip(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+        clear_heartbeat_hooks: object,
+    ) -> None:
+        """Phase 1 skip still reports Phase 1 tokens via the hook."""
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="skip",
+            tasks="",
+            reasoning="nothing to do",
+            input_tokens=120,
+            output_tokens=30,
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        calls: list[tuple[str, int, int, bool]] = []
+
+        def _hook(user_id: str, in_tok: int, out_tok: int, sent: bool) -> None:
+            calls.append((user_id, in_tok, out_tok, sent))
+
+        register_heartbeat_usage_hook(_hook)
+
+        await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+
+        assert calls == [(user.id, 120, 30, False)]
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.get_or_create_conversation")
+    @patch("backend.app.bus.OutboundMessage")
+    @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_hook_sums_phase1_and_phase2_tokens(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_bus: MagicMock,
+        mock_outbound_msg: MagicMock,
+        mock_get_conv: AsyncMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+        clear_heartbeat_hooks: object,
+    ) -> None:
+        """When Phase 2 runs and delivers, hook sees Phase 1+2 tokens and sent_reply=True."""
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run",
+            tasks="Check inbox",
+            reasoning="due",
+            input_tokens=100,
+            output_tokens=50,
+        )
+        from backend.app.agent.core import AgentResponse
+
+        mock_execute.return_value = AgentResponse(
+            reply_text="All clear.",
+            total_input_tokens=800,
+            total_output_tokens=200,
+        )
+        mock_bus.publish_outbound = AsyncMock()
+        mock_get_conv.return_value = (MagicMock(), True)
+        mock_session_store = MagicMock()
+        mock_session_store.add_message = AsyncMock()
+        mock_get_session_store.return_value = mock_session_store
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        calls: list[tuple[str, int, int, bool]] = []
+        register_heartbeat_usage_hook(lambda uid, i, o, s: calls.append((uid, i, o, s)))
+
+        await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+
+        assert calls == [(user.id, 900, 250, True)]
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_hook_failure_does_not_break_heartbeat(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+        clear_heartbeat_hooks: object,
+    ) -> None:
+        """A raising hook must not bubble up and break the heartbeat run."""
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="skip",
+            tasks="",
+            reasoning="nothing",
+            input_tokens=10,
+            output_tokens=5,
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        def _boom(*_args: object) -> None:
+            raise RuntimeError("hook exploded")
+
+        register_heartbeat_usage_hook(_boom)
+
+        # Should not raise
+        result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        assert result is not None
+
+    @pytest.mark.asyncio
+    async def test_hook_not_called_when_no_llm_ran(self, clear_heartbeat_hooks: object) -> None:
+        """Early-return paths (not onboarded, rate-limited, etc.) skip the hook."""
+        calls: list[tuple[str, int, int, bool]] = []
+        register_heartbeat_usage_hook(lambda uid, i, o, s: calls.append((uid, i, o, s)))
+
+        u = User(id="99", user_id="hb-early", phone="+15550000099", onboarding_complete=False)
+        await run_heartbeat_for_user(u, "telegram", u.phone, 5)
+
+        assert calls == []
+
+
+# ---------------------------------------------------------------------------
 # get_daily_heartbeat_count (persistent rate limiting)
 # ---------------------------------------------------------------------------
 
@@ -1265,6 +1456,89 @@ class TestHeartbeatScheduler:
         await scheduler.tick()
 
         mock_run.assert_not_called()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_tick_filters_users_in_sql(
+        self,
+        mock_settings: MagicMock,
+        mock_run: AsyncMock,
+    ) -> None:
+        """Tick should filter inactive/non-onboarded users at the SQL level (#1014).
+
+        Captures the SQL issued during tick() and asserts the users query
+        includes WHERE conditions on onboarding_complete and is_active, so
+        dormant rows are never loaded into Python memory.
+        """
+        mock_settings.heartbeat_concurrency = 2
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        db = _db_module.SessionLocal()
+        try:
+            for i, (onboarded, active) in enumerate(
+                [(True, True), (True, False), (False, True), (False, False)]
+            ):
+                user = User(
+                    user_id=f"hb-sql-filter-{i}",
+                    phone="+15550002222",
+                    onboarding_complete=onboarded,
+                    is_active=active,
+                    preferred_channel="telegram",
+                    channel_identifier="",
+                )
+                db.add(user)
+                db.flush()
+                db.add(
+                    ChannelRoute(
+                        user_id=user.id,
+                        channel="telegram",
+                        channel_identifier=f"sql-filter-{i}",
+                    )
+                )
+            db.commit()
+        finally:
+            db.close()
+
+        mock_run.return_value = None
+
+        captured_sql: list[str] = []
+
+        def _capture(
+            conn: object,
+            cursor: object,
+            statement: str,
+            parameters: object,
+            context: object,
+            executemany: bool,
+        ) -> None:
+            captured_sql.append(statement)
+
+        engine = _db_module.get_engine()
+        event.listen(engine, "before_cursor_execute", _capture)
+        try:
+            scheduler = HeartbeatScheduler()
+            await scheduler.tick()
+        finally:
+            event.remove(engine, "before_cursor_execute", _capture)
+
+        user_selects = [
+            s for s in captured_sql if "FROM users" in s and s.lstrip().upper().startswith("SELECT")
+        ]
+        assert user_selects, "expected a SELECT FROM users during tick()"
+
+        def _where_clause(sql: str) -> str:
+            upper = sql.upper()
+            idx = upper.find("WHERE ")
+            return sql[idx:] if idx != -1 else ""
+
+        assert any(
+            "users.onboarding_complete" in _where_clause(s)
+            and "users.is_active" in _where_clause(s)
+            for s in user_selects
+        ), f"users query missing WHERE filter on onboarding_complete/is_active; saw: {user_selects}"
+
+        assert mock_run.await_count == 1
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.run_heartbeat_for_user")

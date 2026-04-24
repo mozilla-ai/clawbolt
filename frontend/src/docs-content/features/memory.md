@@ -1,0 +1,38 @@
+# Memory
+
+Clawbolt has a persistent memory system that stores facts about your business across conversations. It remembers your rates, client details, job preferences, and anything else you tell it.
+
+## How it works
+
+Memory is stored as freeform text in a per-user `MEMORY.md` file managed by the agent. The agent reads and writes this file using workspace tools (`read_file`, `write_file`, `edit_file`). When conversations get long, automatic compaction summarizes key facts back into `MEMORY.md` and appends a timestamped summary to `HISTORY.md`.
+
+## Saving facts
+
+Clawbolt automatically picks up on facts from your messages. You can also be explicit:
+
+```
+You: Remember that my hourly rate for electrical work is $95
+
+Clawbolt: Got it! I've saved that your hourly rate for electrical
+          work is $95.
+```
+
+## Recalling facts
+
+Clawbolt's memory is always available in context. You can ask directly:
+
+```
+You: What's Mrs. Johnson's address?
+
+Clawbolt: Mrs. Johnson's address is 42 Oak Street, Austin, TX 78701.
+```
+
+## Forgetting facts
+
+You can ask Clawbolt to forget outdated information:
+
+```
+You: Forget my old rate for plumbing, it's $90 now
+
+Clawbolt: Done! I've updated your plumbing rate to $90/hour.
+```

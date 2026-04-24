@@ -15,7 +15,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
-from backend.app.media.download import DownloadedMedia, check_media_size, generate_filename
+from backend.app.logging_utils import mask_pii
+from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 
@@ -359,7 +360,7 @@ class BlueBubblesChannel(BaseChannel):
                 logger.warning("BlueBubbles webhook received invalid JSON")
                 return JSONResponse(content={"ok": True})
 
-            logger.debug("BlueBubbles webhook raw payload: %s", raw)
+            logger.debug("BlueBubbles webhook received: type=%s", raw.get("type", "?"))
 
             try:
                 payload = BBWebhookPayload.model_validate(raw)
@@ -372,7 +373,7 @@ class BlueBubblesChannel(BaseChannel):
                 "BlueBubbles webhook parsed: type=%s isFromMe=%s handle=%s attachments=%d",
                 payload.type,
                 data.is_from_me if data else "",
-                data.handle.address if data and data.handle else "",
+                mask_pii(data.handle.address) if data and data.handle else "",
                 len(data.attachments) if data else 0,
             )
 
@@ -410,8 +411,8 @@ class BlueBubblesChannel(BaseChannel):
         }
         logger.info(
             "BlueBubbles send_text: to=%s chatGuid=%s method=%s bodyLen=%d",
-            to,
-            chat_guid,
+            mask_pii(to),
+            mask_pii(chat_guid),
             settings.bluebubbles_send_method,
             len(body),
         )
@@ -473,28 +474,36 @@ class BlueBubblesChannel(BaseChannel):
             return
         chat_guid = self._get_chat_guid(to)
         try:
-            await self._http.post(
+            resp = await self._http.post(
                 f"/api/v1/chat/{chat_guid}/typing",
                 params={"password": settings.bluebubbles_password},
             )
+            if resp.status_code >= 400:
+                logger.warning(
+                    "BlueBubbles typing indicator non-200: status=%s chatGuid=%s body=%s",
+                    resp.status_code,
+                    mask_pii(chat_guid),
+                    resp.text[:500],
+                )
         except Exception:
-            logger.debug("Failed to send BlueBubbles typing indicator to %s", to)
+            logger.exception("Failed to send BlueBubbles typing indicator to %s", mask_pii(to))
 
     async def download_media(self, file_id: str) -> DownloadedMedia:
-        """Download media by BlueBubbles attachment GUID."""
-        resp = await self._http.get(
+        """Download media by BlueBubbles attachment GUID.
+
+        Streams with a hard size cap and wall-time deadline so a slow or
+        oversized attachment can't OOM or stall the worker.
+        """
+        content, headers = await download_bounded(
+            self._http,
             f"/api/v1/attachment/{file_id}/download",
             params={"password": settings.bluebubbles_password},
-            timeout=settings.http_timeout_seconds,
         )
-        resp.raise_for_status()
-
-        content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-        check_media_size(resp.content)
+        content_type = headers.get("content-type", "application/octet-stream").split(";")[0]
 
         filename = generate_filename(content_type)
         return DownloadedMedia(
-            content=resp.content,
+            content=content,
             mime_type=content_type,
             original_url=file_id,
             filename=filename,

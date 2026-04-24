@@ -1,0 +1,35 @@
+# First Steps
+
+When you message your assistant for the first time, it starts a short conversation to get to know you and your business. Takes about 5 minutes.
+
+## The onboarding conversation
+
+Your assistant will ask for:
+
+1. **Your name and timezone**
+2. **Your trade** -- electrician, plumber, painter, general contractor, etc.
+3. **Your business** -- crew size, job types, service area, rates
+4. **Communication style** -- formal or casual, detailed or brief
+
+You don't have to answer everything at once. Your assistant picks up on details naturally as you chat.
+
+## Your first real conversation
+
+After the intro, start using it right away:
+
+```
+You: Remember that my hourly rate for electrical work is $95
+
+Clawbolt: Got it! I've saved your electrical rate at $95/hour.
+```
+
+## Everything happens through chat
+
+Your assistant manages everything for you as you talk. Your memory, personality, profile, heartbeat priorities, and integrations are all updated automatically through conversation. There's a [web dashboard](/docs/guide/dashboard) if you're curious, but you never need to open it.
+
+## Tips for getting started
+
+- **Talk naturally.** No special commands needed.
+- **Use voice dictation.** Tap the microphone on your keyboard and talk instead of typing.
+- **Teach it as you go.** Every time you mention a client, rate, or preference, it remembers.
+- **Connect integrations over chat.** Ask "connect my Google Calendar" and your assistant sends you a link. [Learn more](/docs/guide/integrations)

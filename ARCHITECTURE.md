@@ -1,0 +1,113 @@
+# Architecture
+
+Clawbolt is a FastAPI backend with a multi-channel messaging interface and a custom tool-calling agent loop built on [any-llm](https://github.com/mozilla-ai/any-llm).
+
+## Request flow
+
+```
+User sends a message (iMessage/RCS/SMS or Telegram)
+        |
+        v
+  Channel webhook  -->  Media pipeline (photos, docs)
+        |                        |
+        v                        v
+  Agent loop (any-llm)  <--  Processed context
+        |
+        v
+  Tool execution (memory, file upload, heartbeat, calendar)
+        |
+        v
+  Reply sent via originating channel
+```
+
+1. **Webhook**: A channel delivers an inbound message (Linq sends to `/api/webhooks/linq`, Telegram to `/api/webhooks/telegram`)
+2. **Media pipeline**: Photos and documents are downloaded and processed (image analysis)
+3. **Agent loop**: The LLM receives the message plus conversation history and available tools, then decides what to do
+4. **Tool execution**: The agent calls tools (edit memory, upload a file, query QuickBooks, check calendar, etc.)
+5. **Reply**: The agent's response is sent back via the originating channel
+
+## Tech stack
+
+- **Python 3.11+** with FastAPI and async throughout
+- **PostgreSQL** for all structured data via SQLAlchemy 2.0 ORM
+- **Pydantic v2** for data classes and request/response schemas
+- **any-llm** for LLM provider abstraction (swap between OpenAI, Anthropic, etc.)
+- **python-telegram-bot** for the Telegram Bot API
+- **httpx** for the Linq Partner API (iMessage/RCS/SMS)
+- **httpx** for the BlueBubbles API (self-hosted iMessage bridge)
+
+## Storage
+
+All structured data is stored in PostgreSQL via SQLAlchemy 2.0 ORM. The database has 11 tables:
+
+| Table | Purpose |
+|---|---|
+| `users` | User profiles, personality text, preferences |
+| `channel_routes` | Channel -> user routing (Telegram, Linq, webchat, etc.) |
+| `sessions` | Chat session metadata |
+| `messages` | Chat messages (FK to sessions) |
+| `media_files` | Media file manifest |
+| `memory_documents` | Structured memory and compaction history |
+| `heartbeat_logs` | Heartbeat send log |
+| `idempotency_keys` | Webhook deduplication |
+| `llm_usage_logs` | Token usage tracking |
+| `tool_configs` | Per-user tool configuration |
+| `calendar_configs` | Per-user calendar integration settings |
+
+Key store modules:
+- `UserStore` (singleton via `get_user_store()`)
+- `SessionStore` (per-user via `get_session_store(id)`)
+- `MemoryStore` (per-user via `get_memory_store(id)`)
+- `MediaStore`, `HeartbeatStore`, `IdempotencyStore`, `LLMUsageStore`, `ToolConfigStore`
+
+File storage for uploads uses the local filesystem under `data/` (configurable via `DATA_DIR`).
+
+## Agent tools
+
+The agent has access to these tool groups:
+
+| Tool group | Tools | Purpose |
+|------------|-------|---------|
+| Messaging | `send_media_reply` | Attach a file or image to the reply. Plain text replies flow through the LLM's response text automatically. |
+| Workspace | `read_file`, `write_file`, `edit_file`, `delete_file` | Read/write markdown files (MEMORY.md, USER.md, SOUL.md, etc.) |
+| Heartbeat | `get_heartbeat`, `update_heartbeat` | Read and update heartbeat notes |
+| Files | `upload_to_storage`, `organize_file` | Store and organize files in cloud storage |
+| Media | `analyze_photo`, `discard_media` | Agent-native photo handling (describe or discard staged photos) |
+| QuickBooks | `qb_query`, `qb_create`, `qb_update`, `qb_send` | Query, create, update, and send QuickBooks entities (specialist) |
+| Calendar | `calendar_list_events`, `calendar_create_event`, `calendar_update_event`, `calendar_delete_event`, `calendar_check_availability` | Read and manage Google Calendar events (specialist) |
+
+Tool selection is context-aware: the registry picks relevant tools based on message keywords and context, with a fallback to all tools for ambiguous messages.
+
+## Key design patterns
+
+### Channel abstraction
+
+The async message bus (`bus.py`) decouples the agent from delivery mechanics. Channels publish inbound messages to the bus and the `ChannelManager` dispatches outbound replies to the correct channel. The agent only interacts with the bus, never with channel implementations directly. Current channels are Telegram and two interchangeable iMessage backends: Linq (hosted iMessage/RCS/SMS) and BlueBubbles (self-hosted iMessage bridge). Users see whichever iMessage backend the operator configures as a single unified "iMessage" option in the UI. New channels can be added without modifying the agent.
+
+### Agent-native media handling
+
+The media pipeline stages photo bytes in memory and classifies them, but does not run vision or auto-save. The agent receives a short handle (`media_XXXXXX`) for each staged photo in its combined context and decides per-photo which tools to call (`analyze_photo`, `upload_to_storage`, `push_to_companycam_project`, `discard_media`). Staging bytes have a 24h TTL and a 50-entry per-user cap; oldest-expiring entries are evicted first when the cap is hit.
+
+### Storage abstraction
+
+The `StorageBackend` ABC allows swapping between local filesystem, Dropbox, and Google Drive. Each user's files are organized in per-client folders.
+
+### Auth plugin infrastructure
+
+Authentication uses a plugin system with an ABC base, dynamic import loader, and dependency injection. The open-source version is single-tenant. Premium adds multi-tenant auth via plugin.
+
+Every data class and endpoint uses `user_id` scoping from day one, so multi-tenancy is a configuration change rather than an architectural one.
+
+### Deterministic heartbeat
+
+The heartbeat system separates cheap deterministic checks (file-based lookups) from expensive LLM calls. LLM is only invoked when actionable flags are found, keeping costs low. See the [Heartbeat feature page](https://clawbolt.ai/docs/features/heartbeat/) for user-facing details.
+
+## Data classes
+
+| Data class | Purpose |
+|------------|---------|
+| `UserData` | User profile, heartbeat settings |
+| `SessionState` | Conversation session with messages |
+| `StoredMessage` | Inbound/outbound text, media URLs, tool interactions |
+| `MediaData` | Processed media with storage URLs |
+| `ToolConfigEntry` | Per-user tool group configuration |

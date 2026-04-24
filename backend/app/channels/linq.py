@@ -14,7 +14,8 @@ from pydantic import BaseModel, ConfigDict
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
-from backend.app.media.download import DownloadedMedia, check_media_size, generate_filename
+from backend.app.logging_utils import mask_pii
+from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 
@@ -334,7 +335,7 @@ class LinqChannel(BaseChannel):
                 logger.warning("Linq webhook received invalid JSON")
                 return JSONResponse(content={"ok": True})
 
-            logger.debug("Linq webhook raw payload: %s", raw)
+            logger.debug("Linq webhook received: event_type=%s", raw.get("event_type", "?"))
 
             try:
                 payload = LinqWebhookPayload.model_validate(raw)
@@ -347,7 +348,7 @@ class LinqChannel(BaseChannel):
                 "Linq webhook parsed: event_type=%s direction=%s sender=%s parts=%d",
                 payload.event_type,
                 data.direction if data else "",
-                data.sender_handle.handle if data and data.sender_handle else "",
+                mask_pii(data.sender_handle.handle) if data and data.sender_handle else "",
                 len(data.parts) if data else 0,
             )
 
@@ -446,22 +447,21 @@ class LinqChannel(BaseChannel):
         try:
             await self._http.post(f"/chats/{cached_chat_id}/typing")
         except Exception:
-            logger.debug("Failed to send Linq typing indicator to %s", to)
+            logger.debug("Failed to send Linq typing indicator to %s", mask_pii(to))
 
     async def download_media(self, file_id: str) -> DownloadedMedia:
         """Download media from a Linq CDN URL.
 
         For Linq, ``file_id`` is the full CDN URL from the webhook payload.
+        Streams with a hard size cap and wall-time deadline so a slow or
+        oversized carrier can't OOM or stall the worker.
         """
-        resp = await self._http.get(file_id, timeout=settings.http_timeout_seconds)
-        resp.raise_for_status()
-
-        content_type = resp.headers.get("content-type", "application/octet-stream").split(";")[0]
-        check_media_size(resp.content)
+        content, headers = await download_bounded(self._http, file_id)
+        content_type = headers.get("content-type", "application/octet-stream").split(";")[0]
 
         filename = generate_filename(content_type)
         return DownloadedMedia(
-            content=resp.content,
+            content=content,
             mime_type=content_type,
             original_url=file_id,
             filename=filename,

@@ -124,7 +124,9 @@ def test_get_session_detail_appends_receipts_to_outbound(
     body = resp.json()["messages"][1]["body"]
     assert body.startswith("Done!")
     assert "Created CompanyCam project Smith Residence" in body
-    assert "https://app.companycam.com/projects/12345" in body
+    # Compact URL rendering (issue #976) strips the https:// prefix.
+    assert "app.companycam.com/projects/12345" in body
+    assert "https://" not in body
 
 
 def test_get_session_detail_inbound_body_unchanged(client: TestClient, test_user: User) -> None:
