@@ -50,15 +50,19 @@ const mockProfile = {
   updated_at: '2024-01-01T00:00:00Z',
 };
 
-vi.mock('@/contexts/AuthContext', () => ({
-  useAuth: () => ({
+const authMock = vi.hoisted(() => ({
+  state: {
     authState: 'ready',
-    currentAuthUser: { id: 1, name: 'Test User' },
+    currentAuthUser: { id: 1, name: 'Test User', role: undefined as string | undefined },
     authConfig: { required: true, method: 'oidc' },
     isPremium: false,
     handleLogin: vi.fn(),
     handleLogout: vi.fn(),
-  }),
+  },
+}));
+
+vi.mock('@/contexts/AuthContext', () => ({
+  useAuth: () => authMock.state,
 }));
 
 vi.mock('react-router-dom', async () => {
@@ -151,6 +155,10 @@ beforeEach(() => {
   mockProfile.soul_text = 'You are a helpful contractor assistant.';
   mockProfile.user_text = 'John is a plumber in Portland.';
   mockProfile.timezone = 'America/Los_Angeles';
+  // Reset auth state to OSS defaults; tests that need premium/admin override
+  // mutate authMock.state directly.
+  authMock.state.isPremium = false;
+  authMock.state.currentAuthUser = { id: 1, name: 'Test User', role: undefined };
 });
 
 describe('DashboardPage', () => {
@@ -539,5 +547,34 @@ describe('DashboardPage', () => {
     });
     // Other cards still render
     expect(screen.getByText('some memory content here')).toBeInTheDocument();
+  });
+
+  it('hides the Settings card for non-admin users in premium', async () => {
+    authMock.state.isPremium = true;
+    authMock.state.currentAuthUser = { id: 1, name: 'Tenant', role: 'user' };
+    setupMocks();
+    renderWithRouter(<DashboardPage />);
+
+    // Wait for dashboard to settle (some other card has loaded)
+    await waitFor(() => {
+      expect(screen.getByText('Channels')).toBeInTheDocument();
+    });
+    // Settings card and its content must not render for non-admin tenants
+    expect(screen.queryByText('Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('AI model and provider configuration.')).not.toBeInTheDocument();
+    // The model config endpoint must not be called either
+    expect(mockGetModelConfig).not.toHaveBeenCalled();
+  });
+
+  it('shows the Settings card for admin users in premium', async () => {
+    authMock.state.isPremium = true;
+    authMock.state.currentAuthUser = { id: 1, name: 'Admin', role: 'admin' };
+    setupMocks();
+    renderWithRouter(<DashboardPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Settings')).toBeInTheDocument();
+    });
+    expect(mockGetModelConfig).toHaveBeenCalled();
   });
 });
