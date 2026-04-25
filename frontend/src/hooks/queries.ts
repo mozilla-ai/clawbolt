@@ -186,10 +186,11 @@ export function useUpdateStorageConfig() {
 
 // --- Model config ---
 
-export function useModelConfig() {
+export function useModelConfig(opts: { enabled?: boolean } = {}) {
   return useQuery({
     queryKey: queryKeys.modelConfig,
     queryFn: () => api.getModelConfig(),
+    enabled: opts.enabled ?? true,
   });
 }
 
