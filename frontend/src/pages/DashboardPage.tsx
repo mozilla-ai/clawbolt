@@ -7,6 +7,7 @@ import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
 import { useToolConfig, useUpdateToolConfig, useOAuthStatus, useCalendarConfig, useMemory, useModelConfig, useUpdateProfile } from '@/hooks/queries';
 import { useChannelStates } from '@/hooks/useChannelStates';
+import { useAuth } from '@/contexts/AuthContext';
 import { getVisibleChannels, getChannelStatusDisplay } from '@/lib/channel-utils';
 import { displayName as toolDisplayName, getToolOAuthStatus } from '@/lib/tool-utils';
 import type { AppShellContext } from '@/layouts/AppShell';
@@ -101,7 +102,11 @@ export default function DashboardPage() {
   const oauth = useOAuthStatus();
   const calendarConfig = useCalendarConfig();
   const memory = useMemory();
-  const modelConfig = useModelConfig();
+  const { currentAuthUser, isPremium } = useAuth();
+  // In premium, the LLM model/provider is an admin-only operational detail.
+  // OSS single-tenant deployments have no role concept, so the card always shows.
+  const canSeeModelConfig = !isPremium || currentAuthUser?.role === 'admin';
+  const modelConfig = useModelConfig({ enabled: canSeeModelConfig });
   const updateProfile = useUpdateProfile();
 
   // --- Channels ---
@@ -292,37 +297,39 @@ export default function DashboardPage() {
           )}
         </DashboardCard>
 
-        {/* Settings */}
-        <DashboardCard
-          title="Settings"
-          description="AI model and provider configuration."
-          configured={settingsConfigured}
-          icon={<SettingsIcon />}
-          onClick={() => navigate('/app/settings')}
-          isLoading={modelConfig.isPending && !modelConfig.data}
-          isError={modelConfig.isError && !modelConfig.data}
-        >
-          {settingsConfigured ? (
-            <div className="space-y-1">
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground">Model</span>
-                <span className="text-foreground font-medium">{model}</span>
-              </div>
-              <div className="flex items-center gap-2 text-xs">
-                <span className="text-muted-foreground">Provider</span>
-                <span className="text-foreground font-medium">{provider}</span>
-              </div>
-              {visionModel && visionModel !== model && (
+        {/* Settings (admin-only in premium; LLM provider/model is platform config) */}
+        {canSeeModelConfig && (
+          <DashboardCard
+            title="Settings"
+            description="AI model and provider configuration."
+            configured={settingsConfigured}
+            icon={<SettingsIcon />}
+            onClick={() => navigate('/app/settings')}
+            isLoading={modelConfig.isPending && !modelConfig.data}
+            isError={modelConfig.isError && !modelConfig.data}
+          >
+            {settingsConfigured ? (
+              <div className="space-y-1">
                 <div className="flex items-center gap-2 text-xs">
-                  <span className="text-muted-foreground">Vision</span>
-                  <span className="text-foreground font-medium">{visionModel}</span>
+                  <span className="text-muted-foreground">Model</span>
+                  <span className="text-foreground font-medium">{model}</span>
                 </div>
-              )}
-            </div>
-          ) : (
-            <p className="text-xs text-muted-foreground">Configure which AI model and provider your assistant uses.</p>
-          )}
-        </DashboardCard>
+                <div className="flex items-center gap-2 text-xs">
+                  <span className="text-muted-foreground">Provider</span>
+                  <span className="text-foreground font-medium">{provider}</span>
+                </div>
+                {visionModel && visionModel !== model && (
+                  <div className="flex items-center gap-2 text-xs">
+                    <span className="text-muted-foreground">Vision</span>
+                    <span className="text-foreground font-medium">{visionModel}</span>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <p className="text-xs text-muted-foreground">Configure which AI model and provider your assistant uses.</p>
+            )}
+          </DashboardCard>
+        )}
 
       </div>
 
