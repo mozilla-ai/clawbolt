@@ -237,6 +237,40 @@ class TestHomeDepotSupplier:
         assert results[0].in_stock is None
 
     @pytest.mark.asyncio
+    async def test_search_strips_apionline_subdomain(self) -> None:
+        """SerpApi returns links on apionline.homedepot.com which 404 in browsers."""
+        supplier = HomeDepotSupplier(api_key="test-key")
+        products = [
+            {
+                "product_id": "312528815",
+                "title": "2 in. x 4 in. x 12 ft. SPF Lumber",
+                "link": (
+                    "https://apionline.homedepot.com/p/"
+                    "2-in-x-4-in-x-12-ft-2-Premium-Grade-SPF-Dimensional-Lumber-058440/312528815"
+                ),
+            }
+        ]
+        mock_resp = _make_httpx_response(200, {"products": products})
+
+        mock_client = AsyncMock()
+        mock_client.get = AsyncMock(return_value=mock_resp)
+        mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = AsyncMock(return_value=False)
+
+        with patch(
+            "backend.app.integrations.supplier_pricing.homedepot.httpx.AsyncClient",
+            return_value=mock_client,
+        ):
+            results = await supplier.search_products("lumber", Location(zip_code="15213"))
+
+        assert len(results) == 1
+        assert "apionline" not in results[0].product_url
+        assert results[0].product_url == (
+            "https://www.homedepot.com/p/"
+            "2-in-x-4-in-x-12-ft-2-Premium-Grade-SPF-Dimensional-Lumber-058440/312528815"
+        )
+
+    @pytest.mark.asyncio
     async def test_search_max_results_truncation(self) -> None:
         supplier = HomeDepotSupplier(api_key="test-key")
         products = [{"product_id": str(i), "title": f"Item {i}"} for i in range(10)]

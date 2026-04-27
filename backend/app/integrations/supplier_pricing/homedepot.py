@@ -13,6 +13,17 @@ logger = logging.getLogger(__name__)
 _SERPAPI_BASE = "https://serpapi.com/search"
 
 
+def _normalize_product_url(url: str) -> str:
+    """Strip SerpApi's apionline. subdomain from Home Depot product URLs.
+
+    SerpApi returns links like https://apionline.homedepot.com/p/... which 404
+    in a browser. The path resolves correctly on www.homedepot.com.
+    """
+    if not url:
+        return url
+    return url.replace("//apionline.homedepot.com", "//www.homedepot.com", 1)
+
+
 class HomeDepotSupplier:
     """Home Depot product search via SerpApi's dedicated HD engine.
 
@@ -96,7 +107,7 @@ class HomeDepotSupplier:
                     was_price_dollars=was_dollars,
                     in_stock=in_stock,
                     aisle="",
-                    product_url=product.get("link", ""),
+                    product_url=_normalize_product_url(product.get("link", "")),
                     image_url=product.get("thumbnail", ""),
                     rating=product.get("rating"),
                 )
