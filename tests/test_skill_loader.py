@@ -66,6 +66,21 @@ def test_get_skill_instructions_returns_none_for_unknown() -> None:
     assert get_skill_instructions("nonexistent_skill") is None
 
 
+def test_companycam_skill_mentions_camera_roll_tradeoff() -> None:
+    """CompanyCam SKILL.md must brief the agent on the camera roll trade-off.
+
+    Photos sent via messaging channels (iMessage, SMS, Telegram) end up in
+    the user's camera roll. Photos taken directly in the CompanyCam app
+    do not. The agent needs to know this so it can mention the trade-off
+    when relevant. Regression test for issue #1023.
+    """
+    load_all_skills()
+    content = get_skill_instructions("companycam")
+    assert content is not None
+    lowered = content.lower()
+    assert "camera roll" in lowered
+
+
 # ---------------------------------------------------------------------------
 # list_capabilities integration
 # ---------------------------------------------------------------------------

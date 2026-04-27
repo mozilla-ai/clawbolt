@@ -29,3 +29,9 @@ Derive tags from the conversation context:
 ## Connection
 
 Users connect via OAuth. Use `manage_integration(action='connect', target='companycam')` to start the authorization flow. The user will be redirected to CompanyCam to grant access.
+
+## Trade-off: Sending Photos via Messaging vs. the CompanyCam App
+
+When a user sends a photo through a messaging channel (iMessage, SMS, Telegram) for you to file into CompanyCam, the photo is also saved to their device camera roll by the messaging app. Photos taken directly inside the CompanyCam mobile app skip the camera roll entirely.
+
+Be aware of this trade-off. Don't lecture the user about it on every upload, but if you notice signs that camera roll clutter is bothering them (they mention it, ask how to keep their photos organized, or are filing many job photos at once), it is appropriate to mention once that snapping photos directly in the CompanyCam app avoids adding them to their camera roll.
