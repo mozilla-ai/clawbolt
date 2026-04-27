@@ -135,6 +135,16 @@ class BaseChannel(ABC):
     async def send_typing_indicator(self, to: str) -> None:
         """Send a typing indicator to show the bot is processing."""
 
+    async def stop_typing_indicator(self, to: str) -> None:
+        """Clear an active typing indicator.
+
+        Default implementation is a no-op. Channels whose typing indicators
+        do not auto-expire promptly (e.g. BlueBubbles iMessage) should
+        override this to actively cancel the indicator when the agent stops
+        without sending a reply.
+        """
+        return None
+
     @abstractmethod
     async def download_media(self, file_id: str) -> DownloadedMedia:
         """Download media by channel-specific file identifier."""

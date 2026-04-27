@@ -356,7 +356,7 @@ async def test_activity_forwarder_agent_end() -> None:
 @patch("backend.app.agent.heartbeat.get_session_store")
 @patch("backend.app.agent.heartbeat.settings")
 @patch("backend.app.agent.heartbeat.amessages")
-@patch("backend.app.bus.message_bus")
+@patch("backend.app.agent.heartbeat.message_bus")
 async def test_heartbeat_sends_typing_indicator_before_llm_call(
     mock_bus: MagicMock,
     mock_llm: AsyncMock,

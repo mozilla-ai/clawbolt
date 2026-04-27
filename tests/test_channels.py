@@ -1,6 +1,7 @@
 """Tests for channel base class, ChannelManager, and protocol conformance."""
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -21,6 +22,7 @@ class _StubChannel(BaseChannel):
         self._name = channel_name
         self.started = False
         self.stopped = False
+        self.stopped_typing_for: list[str] = []
 
     @property
     def name(self) -> str:
@@ -49,6 +51,9 @@ class _StubChannel(BaseChannel):
 
     async def send_typing_indicator(self, to: str) -> None:
         pass
+
+    async def stop_typing_indicator(self, to: str) -> None:
+        self.stopped_typing_for.append(to)
 
     async def download_media(self, file_id: str) -> DownloadedMedia:
         return DownloadedMedia(
@@ -176,3 +181,50 @@ async def test_handle_inbound_sends_error_fallback_on_crash() -> None:
             found = True
             break
     assert found, "Expected an error fallback message on the outbound bus"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_routes_typing_stop_to_channel() -> None:
+    """An outbound with is_typing_stop=True must call channel.stop_typing_indicator,
+    not send_text or send_typing_indicator."""
+    from backend.app.bus import OutboundMessage
+
+    mgr = ChannelManager()
+    ch = _StubChannel("bluebubbles")
+    mgr.register(ch)
+
+    # Resolve a future on first stop_typing_indicator call so the test can
+    # await dispatcher work directly instead of polling.
+    called = asyncio.get_running_loop().create_future()
+    original_stop = ch.stop_typing_indicator
+
+    async def signaling_stop(to: str) -> None:
+        await original_stop(to)
+        if not called.done():
+            called.set_result(to)
+
+    ch.stop_typing_indicator = signaling_stop  # type: ignore[method-assign]
+
+    # Drain anything already queued.
+    while not message_bus.outbound.empty():
+        message_bus.outbound.get_nowait()
+
+    await message_bus.publish_outbound(
+        OutboundMessage(
+            channel="bluebubbles",
+            chat_id="+15551234567",
+            content="",
+            is_typing_stop=True,
+        )
+    )
+
+    task = asyncio.create_task(mgr._run_outbound_dispatcher())
+    try:
+        recipient = await asyncio.wait_for(called, timeout=1.0)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert recipient == "+15551234567"
+    assert ch.stopped_typing_for == ["+15551234567"]

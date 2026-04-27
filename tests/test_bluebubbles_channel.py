@@ -440,6 +440,52 @@ async def test_send_typing_indicator_no_error_on_failure() -> None:
         await channel.send_typing_indicator("+15551234567")
 
 
+async def test_stop_typing_indicator_private_api_issues_delete() -> None:
+    """stop_typing_indicator should DELETE the typing endpoint when in private-api mode.
+
+    iMessage typing indicators don't expire promptly on their own, so when
+    the agent decides not to reply we explicitly cancel the indicator.
+    """
+    channel = BlueBubblesChannel()
+    channel._chat_cache["+15551234567"] = "iMessage;-;+15551234567"
+
+    mock_http = _make_mock_http({})
+    channel._client = mock_http
+
+    with patch("backend.app.channels.bluebubbles.settings.bluebubbles_send_method", "private-api"):
+        await channel.stop_typing_indicator("+15551234567")
+
+    mock_http.delete.assert_called_once()
+    call_args = mock_http.delete.call_args
+    assert call_args[0][0] == "/api/v1/chat/iMessage;-;+15551234567/typing"
+
+
+async def test_stop_typing_indicator_skipped_for_apple_script() -> None:
+    """stop_typing_indicator should be a no-op for apple-script (no typing was ever sent)."""
+    channel = BlueBubblesChannel()
+
+    mock_http = _make_mock_http({})
+    channel._client = mock_http
+
+    with patch("backend.app.channels.bluebubbles.settings.bluebubbles_send_method", "apple-script"):
+        await channel.stop_typing_indicator("+15551234567")
+
+    mock_http.delete.assert_not_called()
+
+
+async def test_stop_typing_indicator_no_error_on_failure() -> None:
+    """stop_typing_indicator should not raise if the BB server is unreachable."""
+    channel = BlueBubblesChannel()
+
+    mock_http = AsyncMock()
+    mock_http.delete.side_effect = Exception("Connection refused")
+    channel._client = mock_http
+
+    with patch("backend.app.channels.bluebubbles.settings.bluebubbles_send_method", "private-api"):
+        # Should not raise
+        await channel.stop_typing_indicator("+15551234567")
+
+
 async def test_send_media_multipart_upload() -> None:
     """send_media should download media then upload as multipart form data."""
     channel = BlueBubblesChannel()

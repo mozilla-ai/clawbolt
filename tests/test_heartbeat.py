@@ -36,7 +36,11 @@ from backend.app.agent.heartbeat import (
 )
 from backend.app.agent.system_prompt import to_local_time
 from backend.app.models import ChannelRoute, User
-from tests.mocks.llm import make_text_response, make_tool_call_response
+from tests.mocks.llm import (
+    make_text_response,
+    make_tool_call_response,
+    make_truncated_tool_call_response,
+)
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -513,6 +517,29 @@ class TestParseDecisionResponse:
         assert decision.action == "skip"
         assert "Malformed" in decision.reasoning
 
+    def test_max_tokens_truncation_forces_skip(self) -> None:
+        """A truncated tool call (stop_reason=max_tokens) must not be parsed as run.
+
+        Without this guard, a partial JSON that happened to include a valid
+        action+reasoning but a truncated tasks list would surface as
+        action=run, tasks="" and skip Phase 2 while leaving a typing
+        indicator orphaned in iMessage.
+        """
+        resp = make_truncated_tool_call_response(
+            [
+                {
+                    "name": "heartbeat_decision",
+                    "arguments": json.dumps(
+                        {"action": "run", "tasks": "do stuff", "reasoning": "valid"}
+                    ),
+                    "id": "call_trunc",
+                }
+            ]
+        )
+        decision = _parse_decision_response(resp)
+        assert decision.action == "skip"
+        assert "max_tokens" in decision.reasoning
+
 
 # ---------------------------------------------------------------------------
 # evaluate_heartbeat_need
@@ -877,8 +904,8 @@ class TestRunHeartbeatForUser:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
-    @patch("backend.app.bus.OutboundMessage")
-    @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.OutboundMessage")
+    @patch("backend.app.agent.heartbeat.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -975,8 +1002,8 @@ class TestRunHeartbeatForUser:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
-    @patch("backend.app.bus.OutboundMessage")
-    @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.OutboundMessage")
+    @patch("backend.app.agent.heartbeat.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1005,6 +1032,159 @@ class TestRunHeartbeatForUser:
         # Should still return the action, just not record a message
         assert result is not None
         assert result.action_type == "send_message"
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase1_skip_emits_typing_stop(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """Phase 1 skip must emit a typing-stop so iMessage doesn't show
+        a phantom 'typing...' that never resolves into a reply."""
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="skip", tasks="", reasoning="nothing to do"
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        from backend.app.bus import message_bus
+
+        message_bus.reset()
+        await run_heartbeat_for_user(user, "bluebubbles", "+15559990000", 5)
+
+        # Drain the outbound queue and find the typing-stop message
+        published: list = []
+        while message_bus.outbound_size > 0:
+            published.append(await message_bus.consume_outbound())
+        stops = [m for m in published if m.is_typing_stop]
+        assert len(stops) == 1
+        assert stops[0].channel == "bluebubbles"
+        assert stops[0].chat_id == "+15559990000"
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase1_run_with_empty_tasks_emits_typing_stop(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """Phase 1 run-with-empty-tasks (e.g., partial parse) must emit typing-stop."""
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run", tasks="", reasoning="empty tasks for some reason"
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        from backend.app.bus import message_bus
+
+        message_bus.reset()
+        await run_heartbeat_for_user(user, "bluebubbles", "+15559990000", 5)
+
+        published: list = []
+        while message_bus.outbound_size > 0:
+            published.append(await message_bus.consume_outbound())
+        stops = [m for m in published if m.is_typing_stop]
+        assert len(stops) == 1
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_no_output_emits_typing_stop(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """Phase 2 returning None must still cancel the typing indicator."""
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(action="run", tasks="something", reasoning="run")
+        mock_execute.return_value = None
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- something"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        from backend.app.bus import message_bus
+
+        message_bus.reset()
+        await run_heartbeat_for_user(user, "bluebubbles", "+15559990000", 5)
+
+        published: list = []
+        while message_bus.outbound_size > 0:
+            published.append(await message_bus.consume_outbound())
+        stops = [m for m in published if m.is_typing_stop]
+        assert len(stops) == 1
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.get_or_create_conversation")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_successful_reply_does_not_emit_typing_stop(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_get_conv: MagicMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """When a reply was actually sent, no redundant typing-stop should be emitted.
+
+        The reply itself implicitly clears the typing indicator on iMessage,
+        so emitting an additional stop would be wasted work.
+        """
+        from backend.app.agent.core import AgentResponse
+
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run", tasks="check stuff", reasoning="run"
+        )
+        mock_execute.return_value = AgentResponse(reply_text="Here is the answer.")
+        mock_session = MagicMock()
+        mock_get_conv.return_value = (mock_session, True)
+        mock_session_store = MagicMock()
+        mock_session_store.add_message = AsyncMock()
+        mock_get_session_store.return_value = mock_session_store
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- check stuff"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        from backend.app.bus import message_bus
+
+        message_bus.reset()
+        await run_heartbeat_for_user(user, "bluebubbles", "+15559990000", 5)
+
+        published: list = []
+        while message_bus.outbound_size > 0:
+            published.append(await message_bus.consume_outbound())
+        stops = [m for m in published if m.is_typing_stop]
+        assert stops == []
+        # The reply itself was published.
+        replies = [m for m in published if not m.is_typing_indicator and not m.is_typing_stop]
+        assert len(replies) == 1
+        assert replies[0].content == "Here is the answer."
 
 
 # ---------------------------------------------------------------------------
@@ -1065,8 +1245,8 @@ class TestHeartbeatUsageHooks:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
-    @patch("backend.app.bus.OutboundMessage")
-    @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.OutboundMessage")
+    @patch("backend.app.agent.heartbeat.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1258,7 +1438,7 @@ class TestExecuteHeartbeatTasks:
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
             patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
-            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
@@ -1289,7 +1469,7 @@ class TestExecuteHeartbeatTasks:
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
             patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
-            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
@@ -1322,7 +1502,7 @@ class TestExecuteHeartbeatTasks:
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
             patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
-            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
@@ -1355,7 +1535,7 @@ class TestExecuteHeartbeatTasks:
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
             patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
-            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
@@ -2854,7 +3034,7 @@ async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: Use
             return_value=MagicMock(name="list_capabilities"),
         ) as mock_list_cap,
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
-        patch("backend.app.bus.message_bus"),
+        patch("backend.app.agent.heartbeat.message_bus"),
     ):
         from backend.app.agent.heartbeat import execute_heartbeat_tasks
 
@@ -2905,7 +3085,7 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
         ),
         patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
-        patch("backend.app.bus.message_bus"),
+        patch("backend.app.agent.heartbeat.message_bus"),
     ):
         from backend.app.agent.heartbeat import execute_heartbeat_tasks
 
@@ -2957,7 +3137,7 @@ async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User)
         patch("backend.app.agent.heartbeat.HeartbeatStore") as mock_hb_cls,
         patch("backend.app.agent.heartbeat.get_or_create_conversation") as mock_get_conv,
         patch("backend.app.agent.heartbeat.get_session_store") as mock_get_ss,
-        patch("backend.app.bus.message_bus") as mock_bus,
+        patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
     ):
         mock_count.return_value = 0
         mock_eval.return_value = HeartbeatDecision(
@@ -3017,7 +3197,7 @@ async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -
         patch("backend.app.agent.heartbeat.HeartbeatStore") as mock_hb_cls,
         patch("backend.app.agent.heartbeat.get_or_create_conversation") as mock_get_conv,
         patch("backend.app.agent.heartbeat.get_session_store") as mock_get_ss,
-        patch("backend.app.bus.message_bus") as mock_bus,
+        patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
     ):
         mock_count.return_value = 0
         mock_eval.return_value = HeartbeatDecision(
@@ -3105,7 +3285,7 @@ async def test_heartbeat_auto_approves_send_media_reply(user: User) -> None:
         patch("backend.app.agent.stores.ToolConfigStore", return_value=mock_tool_config),
         patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
-        patch("backend.app.bus.message_bus"),
+        patch("backend.app.agent.heartbeat.message_bus"),
     ):
         from backend.app.agent.heartbeat import execute_heartbeat_tasks
 

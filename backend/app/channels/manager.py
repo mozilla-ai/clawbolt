@@ -157,7 +157,9 @@ class ChannelManager:
                 continue
 
             try:
-                if outbound.is_typing_indicator:
+                if outbound.is_typing_stop:
+                    await channel.stop_typing_indicator(to=outbound.chat_id)
+                elif outbound.is_typing_indicator:
                     await channel.send_typing_indicator(to=outbound.chat_id)
                 elif outbound.media:
                     await channel.send_message(
