@@ -904,8 +904,8 @@ class TestRunHeartbeatForUser:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
-    @patch("backend.app.bus.OutboundMessage")
-    @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.OutboundMessage")
+    @patch("backend.app.agent.heartbeat.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1002,8 +1002,8 @@ class TestRunHeartbeatForUser:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
-    @patch("backend.app.bus.OutboundMessage")
-    @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.OutboundMessage")
+    @patch("backend.app.agent.heartbeat.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1245,8 +1245,8 @@ class TestHeartbeatUsageHooks:
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.get_session_store")
     @patch("backend.app.agent.heartbeat.get_or_create_conversation")
-    @patch("backend.app.bus.OutboundMessage")
-    @patch("backend.app.bus.message_bus")
+    @patch("backend.app.agent.heartbeat.OutboundMessage")
+    @patch("backend.app.agent.heartbeat.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1438,7 +1438,7 @@ class TestExecuteHeartbeatTasks:
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
             patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
-            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
@@ -1469,7 +1469,7 @@ class TestExecuteHeartbeatTasks:
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
             patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
-            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
@@ -1502,7 +1502,7 @@ class TestExecuteHeartbeatTasks:
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
             patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
-            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
@@ -1535,7 +1535,7 @@ class TestExecuteHeartbeatTasks:
         with (
             patch("backend.app.agent.core.ClawboltAgent") as MockAgent,
             patch("backend.app.agent.tools.registry.default_registry") as mock_registry,
-            patch("backend.app.bus.message_bus") as mock_bus,
+            patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
             patch("backend.app.agent.router.init_storage", return_value=None),
             patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
             patch("backend.app.agent.stores.ToolConfigStore") as MockToolConfig,
@@ -3034,7 +3034,7 @@ async def test_execute_heartbeat_uses_core_tools_and_list_capabilities(user: Use
             return_value=MagicMock(name="list_capabilities"),
         ) as mock_list_cap,
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
-        patch("backend.app.bus.message_bus"),
+        patch("backend.app.agent.heartbeat.message_bus"),
     ):
         from backend.app.agent.heartbeat import execute_heartbeat_tasks
 
@@ -3085,7 +3085,7 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
         ),
         patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
-        patch("backend.app.bus.message_bus"),
+        patch("backend.app.agent.heartbeat.message_bus"),
     ):
         from backend.app.agent.heartbeat import execute_heartbeat_tasks
 
@@ -3137,7 +3137,7 @@ async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User)
         patch("backend.app.agent.heartbeat.HeartbeatStore") as mock_hb_cls,
         patch("backend.app.agent.heartbeat.get_or_create_conversation") as mock_get_conv,
         patch("backend.app.agent.heartbeat.get_session_store") as mock_get_ss,
-        patch("backend.app.bus.message_bus") as mock_bus,
+        patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
     ):
         mock_count.return_value = 0
         mock_eval.return_value = HeartbeatDecision(
@@ -3197,7 +3197,7 @@ async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -
         patch("backend.app.agent.heartbeat.HeartbeatStore") as mock_hb_cls,
         patch("backend.app.agent.heartbeat.get_or_create_conversation") as mock_get_conv,
         patch("backend.app.agent.heartbeat.get_session_store") as mock_get_ss,
-        patch("backend.app.bus.message_bus") as mock_bus,
+        patch("backend.app.agent.heartbeat.message_bus") as mock_bus,
     ):
         mock_count.return_value = 0
         mock_eval.return_value = HeartbeatDecision(
@@ -3285,7 +3285,7 @@ async def test_heartbeat_auto_approves_send_media_reply(user: User) -> None:
         patch("backend.app.agent.stores.ToolConfigStore", return_value=mock_tool_config),
         patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
         patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
-        patch("backend.app.bus.message_bus"),
+        patch("backend.app.agent.heartbeat.message_bus"),
     ):
         from backend.app.agent.heartbeat import execute_heartbeat_tasks
 

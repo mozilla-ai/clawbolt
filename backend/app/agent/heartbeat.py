@@ -39,10 +39,12 @@ from backend.app.agent.system_prompt import (
 )
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.names import ToolName
+from backend.app.bus import OutboundMessage, message_bus
 from backend.app.channels import get_channel
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
+from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
 from backend.app.services.llm_service import (
     prepare_system_with_caching,
@@ -201,23 +203,19 @@ async def _publish_heartbeat_typing(channel: str, chat_id: str, *, stop: bool) -
     """
     if not channel or not chat_id:
         return
-    try:
-        from backend.app.bus import OutboundMessage, message_bus
-
-        await message_bus.publish_outbound(
-            OutboundMessage(
-                channel=channel,
-                chat_id=chat_id,
-                content="",
-                is_typing_indicator=not stop,
-                is_typing_stop=stop,
-            )
+    if stop:
+        msg = OutboundMessage(channel=channel, chat_id=chat_id, content="", is_typing_stop=True)
+    else:
+        msg = OutboundMessage(
+            channel=channel, chat_id=chat_id, content="", is_typing_indicator=True
         )
+    try:
+        await message_bus.publish_outbound(msg)
     except Exception:
         logger.debug(
             "Failed to publish heartbeat typing %s for chat %s",
             "stop" if stop else "start",
-            chat_id,
+            mask_pii(chat_id),
         )
 
 
@@ -547,7 +545,6 @@ async def execute_heartbeat_tasks(
         default_registry,
         ensure_tool_modules_imported,
     )
-    from backend.app.bus import message_bus
 
     ensure_tool_modules_imported()
 
@@ -839,8 +836,6 @@ async def run_heartbeat_for_user(
                 reply_text,
             )
             try:
-                from backend.app.bus import OutboundMessage, message_bus
-
                 await message_bus.publish_outbound(
                     OutboundMessage(
                         channel=channel,
