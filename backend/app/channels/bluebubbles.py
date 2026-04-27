@@ -488,6 +488,32 @@ class BlueBubblesChannel(BaseChannel):
         except Exception:
             logger.exception("Failed to send BlueBubbles typing indicator to %s", mask_pii(to))
 
+    async def stop_typing_indicator(self, to: str) -> None:
+        """Clear an active typing indicator via BlueBubbles API (best-effort).
+
+        iMessage typing indicators do not expire promptly on their own, so
+        when the agent decides not to reply we explicitly cancel the
+        indicator to avoid a phantom "typing..." with no follow-up message.
+        Skipped in apple-script mode where typing indicators are never sent.
+        """
+        if settings.bluebubbles_send_method != "private-api":
+            return
+        chat_guid = self._get_chat_guid(to)
+        try:
+            resp = await self._http.delete(
+                f"/api/v1/chat/{chat_guid}/typing",
+                params={"password": settings.bluebubbles_password},
+            )
+            if resp.status_code >= 400:
+                logger.warning(
+                    "BlueBubbles stop typing non-200: status=%s chatGuid=%s body=%s",
+                    resp.status_code,
+                    mask_pii(chat_guid),
+                    resp.text[:500],
+                )
+        except Exception:
+            logger.exception("Failed to stop BlueBubbles typing indicator for %s", mask_pii(to))
+
     async def download_media(self, file_id: str) -> DownloadedMedia:
         """Download media by BlueBubbles attachment GUID.
 

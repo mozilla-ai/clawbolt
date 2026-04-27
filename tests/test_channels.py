@@ -1,6 +1,7 @@
 """Tests for channel base class, ChannelManager, and protocol conformance."""
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -49,6 +50,10 @@ class _StubChannel(BaseChannel):
 
     async def send_typing_indicator(self, to: str) -> None:
         pass
+
+    async def stop_typing_indicator(self, to: str) -> None:
+        self.stopped_typing_for: list[str] = getattr(self, "stopped_typing_for", [])
+        self.stopped_typing_for.append(to)
 
     async def download_media(self, file_id: str) -> DownloadedMedia:
         return DownloadedMedia(
@@ -176,3 +181,42 @@ async def test_handle_inbound_sends_error_fallback_on_crash() -> None:
             found = True
             break
     assert found, "Expected an error fallback message on the outbound bus"
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_routes_typing_stop_to_channel() -> None:
+    """An outbound with is_typing_stop=True must call channel.stop_typing_indicator,
+    not send_text or send_typing_indicator."""
+    from backend.app.bus import OutboundMessage
+
+    mgr = ChannelManager()
+    ch = _StubChannel("bluebubbles")
+    mgr.register(ch)
+
+    # Drain anything already queued.
+    while not message_bus.outbound.empty():
+        message_bus.outbound.get_nowait()
+
+    await message_bus.publish_outbound(
+        OutboundMessage(
+            channel="bluebubbles",
+            chat_id="+15551234567",
+            content="",
+            is_typing_stop=True,
+        )
+    )
+
+    # Run one iteration of the dispatcher loop manually.
+    task = asyncio.create_task(mgr._run_outbound_dispatcher())
+    try:
+        # Wait for the dispatcher to consume our message.
+        for _ in range(50):
+            if getattr(ch, "stopped_typing_for", None):
+                break
+            await asyncio.sleep(0.01)
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    assert ch.stopped_typing_for == ["+15551234567"]
