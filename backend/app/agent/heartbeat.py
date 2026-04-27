@@ -39,10 +39,12 @@ from backend.app.agent.system_prompt import (
 )
 from backend.app.agent.tools.base import ToolTags
 from backend.app.agent.tools.names import ToolName
+from backend.app.bus import OutboundMessage, message_bus
 from backend.app.channels import get_channel
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
+from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
 from backend.app.services.llm_service import (
     prepare_system_with_caching,
@@ -191,6 +193,32 @@ def is_within_business_hours(
     return not in_quiet
 
 
+async def _publish_heartbeat_typing(channel: str, chat_id: str, *, stop: bool) -> None:
+    """Publish a typing indicator (or stop) via the bus, swallowing errors.
+
+    The heartbeat fires a typing indicator early (before Phase 1) so the user
+    sees instant feedback. If the heartbeat then exits without sending a reply,
+    we must explicitly cancel the indicator so the user does not see a phantom
+    "typing..." that never resolves into a message.
+    """
+    if not channel or not chat_id:
+        return
+    if stop:
+        msg = OutboundMessage(channel=channel, chat_id=chat_id, content="", is_typing_stop=True)
+    else:
+        msg = OutboundMessage(
+            channel=channel, chat_id=chat_id, content="", is_typing_indicator=True
+        )
+    try:
+        await message_bus.publish_outbound(msg)
+    except Exception:
+        logger.debug(
+            "Failed to publish heartbeat typing %s for chat %s",
+            "stop" if stop else "start",
+            mask_pii(chat_id),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Phase 1: Decision LLM call
 # ---------------------------------------------------------------------------
@@ -198,6 +226,18 @@ def is_within_business_hours(
 
 def _parse_decision_response(response: MessageResponse) -> HeartbeatDecision:
     """Extract a HeartbeatDecision from the Phase 1 LLM response."""
+    stop_reason = getattr(response, "stop_reason", None)
+    if stop_reason == "max_tokens":
+        logger.warning(
+            "Heartbeat decision truncated by max_tokens; treating as skip. "
+            "Increase llm_max_tokens_heartbeat if this recurs."
+        )
+        return HeartbeatDecision(
+            action="skip",
+            tasks="",
+            reasoning="Decision truncated by max_tokens",
+        )
+
     parsed = parse_tool_calls(response)
 
     if not parsed:
@@ -420,20 +460,7 @@ async def evaluate_heartbeat_need(
     )
 
     # Send typing indicator before LLM call via the bus
-    if channel and chat_id:
-        try:
-            from backend.app.bus import OutboundMessage, message_bus
-
-            await message_bus.publish_outbound(
-                OutboundMessage(
-                    channel=channel,
-                    chat_id=chat_id,
-                    content="",
-                    is_typing_indicator=True,
-                )
-            )
-        except Exception:
-            logger.debug("Failed to send heartbeat typing indicator to %s", chat_id)
+    await _publish_heartbeat_typing(channel, chat_id, stop=False)
 
     model = settings.heartbeat_model or settings.llm_model
     provider = settings.heartbeat_provider or settings.llm_provider
@@ -518,7 +545,6 @@ async def execute_heartbeat_tasks(
         default_registry,
         ensure_tool_modules_imported,
     )
-    from backend.app.bus import message_bus
 
     ensure_tool_modules_imported()
 
@@ -810,8 +836,6 @@ async def run_heartbeat_for_user(
                 reply_text,
             )
             try:
-                from backend.app.bus import OutboundMessage, message_bus
-
                 await message_bus.publish_outbound(
                     OutboundMessage(
                         channel=channel,
@@ -857,6 +881,12 @@ async def run_heartbeat_for_user(
     finally:
         if total_input_tokens or total_output_tokens:
             _dispatch_heartbeat_usage(user.id, total_input_tokens, total_output_tokens, sent_reply)
+        # The heartbeat fires a typing indicator before Phase 1. If we exit
+        # without delivering a reply (skip, empty tasks, no Phase 2 output,
+        # or exception), the indicator is orphaned. Cancel it explicitly so
+        # the user does not see a phantom "typing..." with no follow-up.
+        if not sent_reply:
+            await _publish_heartbeat_typing(channel, chat_id, stop=True)
 
 
 # ---------------------------------------------------------------------------
