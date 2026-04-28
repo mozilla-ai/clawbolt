@@ -127,6 +127,8 @@ See [Storage Providers](./storage.md) for setup instructions.
 | `WEBHOOK_RATE_LIMIT_MAX_REQUESTS` | `30` | Max webhook requests per window |
 | `WEBHOOK_RATE_LIMIT_WINDOW_SECONDS` | `60` | Rate limit window in seconds |
 | `RATE_LIMIT_TRUST_PROXY` | `false` | Trust `X-Forwarded-For` for client IP (set `true` behind a reverse proxy) |
+| `UNKNOWN_SENDER_SIGNUP_URL` | (empty) | Sign-up link included in the reply we send to numbers not in the allowlist. Empty = generic copy pointing at clawbolt.ai |
+| `UNKNOWN_SENDER_REPLY_COOLDOWN_SECONDS` | `86400` | Minimum seconds between unknown-sender replies to the same `(channel, sender)`. Prevents the bot from being used as a spam relay |
 
 ## Heartbeat (proactive check-ins)
 
