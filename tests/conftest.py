@@ -15,6 +15,7 @@ from backend.app.agent.memory_db import reset_memory_stores
 from backend.app.agent.session_db import reset_session_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
+from backend.app.channels import unknown_sender as unknown_sender_module
 from backend.app.config import settings
 from backend.app.database import Base
 from backend.app.main import app
@@ -193,14 +194,12 @@ def _stub_unknown_sender_reply() -> Generator[AsyncMock]:
     timeout. Tests that exercise the unknown-sender behavior import
     ``reply_to_unknown_sender`` directly from its module, bypassing this patch.
     """
-    from backend.app.channels import unknown_sender as _unknown_sender_module
-
-    _unknown_sender_module.reset_unknown_sender_cache()
+    unknown_sender_module.reset_unknown_sender_cache()
     with patch(
         "backend.app.channels.base.reply_to_unknown_sender", new_callable=AsyncMock
     ) as mock_reply:
         yield mock_reply
-    _unknown_sender_module.reset_unknown_sender_cache()
+    unknown_sender_module.reset_unknown_sender_cache()
 
 
 @pytest.fixture()

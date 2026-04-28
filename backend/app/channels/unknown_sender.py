@@ -13,6 +13,7 @@ import time
 from typing import TYPE_CHECKING
 
 from backend.app.config import settings
+from backend.app.logging_utils import mask_pii
 
 if TYPE_CHECKING:
     from backend.app.channels.base import BaseChannel
@@ -68,7 +69,7 @@ async def reply_to_unknown_sender(channel: BaseChannel, sender_id: str) -> bool:
         logger.debug(
             "%s: unknown sender %s already notified within cooldown, skipping",
             channel.name,
-            sender_id,
+            mask_pii(sender_id),
         )
         return False
 
@@ -79,13 +80,13 @@ async def reply_to_unknown_sender(channel: BaseChannel, sender_id: str) -> bool:
         logger.exception(
             "%s: failed to send unknown-sender reply to %s",
             channel.name,
-            sender_id,
+            mask_pii(sender_id),
         )
         return True
 
     logger.info(
         "%s: sent unknown-sender reply to %s",
         channel.name,
-        sender_id,
+        mask_pii(sender_id),
     )
     return True

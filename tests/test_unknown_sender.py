@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 from fastapi import APIRouter
 
+from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.channels.unknown_sender import (
     _build_reply_body,
@@ -168,11 +169,11 @@ def test_claim_reply_slot_is_monotonic_per_now() -> None:
 
 
 @pytest.mark.asyncio
-async def test_handle_webhook_inbound_replies_when_allowlist_rejects() -> None:
+async def test_handle_webhook_inbound_replies_when_allowlist_rejects(
+    _stub_unknown_sender_reply: AsyncMock,
+) -> None:
     """When ``is_allowed`` returns False, ``handle_webhook_inbound`` must still
     return 200 and trigger a reply attempt to the unknown sender."""
-    from backend.app.agent.ingestion import InboundMessage
-
     channel = _RecordingChannel("sms")
     inbound = InboundMessage(
         channel="sms",
@@ -183,10 +184,7 @@ async def test_handle_webhook_inbound_replies_when_allowlist_rejects() -> None:
         external_message_id="ext-1",
     )
 
-    with patch(
-        "backend.app.channels.base.reply_to_unknown_sender", new_callable=AsyncMock
-    ) as mock_reply:
-        resp = await handle_webhook_inbound(channel, inbound)
+    resp = await handle_webhook_inbound(channel, inbound)
 
     assert resp.status_code == 200
-    mock_reply.assert_awaited_once_with(channel, "+15551234567")
+    _stub_unknown_sender_reply.assert_awaited_once_with(channel, "+15551234567")
