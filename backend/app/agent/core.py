@@ -208,26 +208,6 @@ class ClawboltAgent:
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", mask_pii(self._chat_id))
 
-    async def _persist_approval_prompt(self, prompt: str) -> None:
-        """Store the approval prompt as an outbound message in the session.
-
-        This ensures the prompt is visible in the web UI when viewing
-        session history, even if the conversation originated on a
-        different channel (e.g. iMessage or Telegram).
-        """
-        try:
-            from backend.app.agent.session_db import get_session_store
-            from backend.app.enums import MessageDirection
-
-            session_store = get_session_store(self.user.id)
-            await session_store.add_message_by_session_id(
-                session_id=self._session_id,
-                direction=MessageDirection.OUTBOUND,
-                body=prompt,
-            )
-        except Exception:
-            logger.warning("Failed to persist approval prompt for user %s", self.user.id)
-
     def _get_tool_permission(
         self,
         tool_obj: Tool,
@@ -682,8 +662,14 @@ class ClawboltAgent:
                 elif self._publish_outbound is not None and self._chat_id is not None:
                     prompt = format_approval_message(tool_obj.name, description)
 
-                    if self._session_id:
-                        await self._persist_approval_prompt(prompt)
+                    # We deliberately do not persist the approval prompt to the
+                    # session here. Past attempts persisted it as an OUTBOUND
+                    # message which then loaded back as an ``AssistantMessage``
+                    # in the next turn's history. The LLM mimicked the format
+                    # in subsequent prose replies, generating fake permission
+                    # prompts without calling the actual tool. The user sees
+                    # the prompt via the channel; the agent does not need it
+                    # in conversation history.
 
                     if self._request_id:
                         from backend.app.bus import message_bus

@@ -670,14 +670,16 @@ class TestBatchApproval:
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
-    async def test_approval_prompt_persisted_to_session(
+    async def test_approval_prompt_not_persisted_to_session(
         self, mock_amessages: object, test_user: User
     ) -> None:
-        """Approval prompt is stored in session history so it appears in the web UI.
+        """Approval prompt must NOT be stored in session history.
 
-        Regression test for #840: tool approval sent to iMessage channel
-        did not show up in the web UI because the prompt was never
-        persisted to the session message history.
+        Reverses the original behavior from #840. Persisting the prompt
+        gave the LLM a template that subsequent turns mimicked as plain
+        prose, generating fake permission prompts and breaking the
+        approval flow (issue #1049). The user still sees the prompt
+        through their channel; the agent does not need it in history.
         """
         mock_publish = AsyncMock()
         session_id = "test-approval-persist"
@@ -713,11 +715,12 @@ class TestBatchApproval:
         await agent.process_message("read then write")
         await task
 
-        # The approval prompt should be stored in session history
+        # The approval prompt must NOT appear in session history.
         store = get_session_store(test_user.id)
         session = store.load_session(session_id)
         assert session is not None
         outbound_msgs = [m for m in session.messages if m.direction == "outbound"]
-        assert any("reply yes or no" in m.body.lower() for m in outbound_msgs), (
-            "Approval prompt not found in session history"
+        assert not any("reply yes or no" in m.body.lower() for m in outbound_msgs), (
+            "Approval prompt was persisted to session history; this trains the "
+            "LLM to mimic the format. See issue #1049."
         )

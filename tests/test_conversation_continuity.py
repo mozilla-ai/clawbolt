@@ -365,3 +365,139 @@ async def test_load_history_malformed_tool_json_falls_back_to_flat(
     assert isinstance(history[1], AssistantMessage)
     assert history[1].content == "Reply text"
     assert history[1].tool_calls == []
+
+
+# ---------------------------------------------------------------------------
+# Regression tests for issue #1049: poisoned approval prompts in history
+# trained the LLM to mimic the format and produce fake permission asks.
+# ---------------------------------------------------------------------------
+
+
+_APPROVAL_PROMPT = (
+    "I'd like to: Create Estimate in QuickBooks\n\n"
+    "Reply yes or no (always/never to remember your choice)"
+)
+
+
+@pytest.mark.asyncio()
+async def test_load_history_filters_persisted_approval_prompts(
+    conversation: SessionState,
+) -> None:
+    """Outbound messages that are clearly approval prompts (canonical
+    trailer, no tool_interactions) must not appear in the LLM-side
+    history. Persisted prompts in past turns trained the LLM to mimic
+    the format as plain prose, breaking the approval gate."""
+    conversation.messages.append(
+        StoredMessage(direction="inbound", body="Create that estimate", seq=1)
+    )
+    conversation.messages.append(StoredMessage(direction="outbound", body=_APPROVAL_PROMPT, seq=2))
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 1
+    assert isinstance(history[0], UserMessage)
+    assert history[0].content == "Create that estimate"
+    assert all(
+        "Reply yes or no" not in (m.content or "")
+        for m in history
+        if isinstance(m, AssistantMessage)
+    )
+
+
+@pytest.mark.asyncio()
+async def test_load_history_filters_orphan_approval_reply_following_prompt(
+    conversation: SessionState,
+) -> None:
+    """An inbound that parses as a fast-path approval response and
+    immediately follows a (just-filtered) approval prompt is also
+    dropped. Otherwise the orphan "Yes" floats in history with no
+    antecedent and risks similar pattern-matching by the LLM."""
+    conversation.messages.append(
+        StoredMessage(direction="inbound", body="Create that estimate", seq=1)
+    )
+    conversation.messages.append(StoredMessage(direction="outbound", body=_APPROVAL_PROMPT, seq=2))
+    conversation.messages.append(StoredMessage(direction="inbound", body="Always", seq=3))
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=4))
+
+    history = await load_conversation_history(conversation)
+    # Only the original "Create that estimate" inbound survives.
+    assert len(history) == 1
+    assert isinstance(history[0], UserMessage)
+    assert history[0].content == "Create that estimate"
+
+
+@pytest.mark.asyncio()
+async def test_load_history_keeps_yes_unrelated_to_approval_prompt(
+    conversation: SessionState,
+) -> None:
+    """A user "Yes" that does NOT immediately follow a stripped
+    approval prompt is preserved. Filtering it would silently drop
+    legitimate one-word replies in normal conversation."""
+    conversation.messages.append(StoredMessage(direction="inbound", body="Should I do X?", seq=1))
+    conversation.messages.append(StoredMessage(direction="outbound", body="Want me to?", seq=2))
+    conversation.messages.append(StoredMessage(direction="inbound", body="Yes", seq=3))
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=4))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 3
+    assert isinstance(history[2], UserMessage)
+    assert history[2].content == "Yes"
+
+
+@pytest.mark.asyncio()
+async def test_load_history_keeps_assistant_reply_that_happens_to_mention_yes_no(
+    conversation: SessionState,
+) -> None:
+    """An ordinary assistant reply that happens to mention "yes or no"
+    in prose but doesn't end with the canonical trailer is preserved."""
+    conversation.messages.append(
+        StoredMessage(direction="inbound", body="What's your policy?", seq=1)
+    )
+    conversation.messages.append(
+        StoredMessage(
+            direction="outbound",
+            body=(
+                "Some questions are yes-or-no, others need more context. "
+                "Tell me which kind you have."
+            ),
+            seq=2,
+        )
+    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 2
+    assert isinstance(history[1], AssistantMessage)
+    assert "yes-or-no" in (history[1].content or "")
+
+
+@pytest.mark.asyncio()
+async def test_load_history_filters_llm_generated_fake_approval_prompt(
+    conversation: SessionState,
+) -> None:
+    """When the LLM produces a fake approval prompt as plain prose
+    (the bug from #1049), it gets persisted as outbound with no
+    tool_interactions. The load-time filter must catch these too so
+    the cycle stops on subsequent turns."""
+    fake_prompt = (
+        "I'd like to: Create Estimate in QuickBooks\n\n"
+        "Reply yes or no (always/never to remember your choice)"
+    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="estimate?", seq=1))
+    conversation.messages.append(
+        StoredMessage(
+            direction="outbound",
+            body=fake_prompt,
+            tool_interactions_json="",
+            seq=2,
+        )
+    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Yes", seq=3))
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=4))
+
+    history = await load_conversation_history(conversation)
+    # Only the original user prompt survives; fake "I'd like to:" and the
+    # orphan "Yes" reply are both stripped.
+    assert len(history) == 1
+    assert isinstance(history[0], UserMessage)
+    assert history[0].content == "estimate?"
