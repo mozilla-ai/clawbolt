@@ -360,8 +360,6 @@ class BlueBubblesChannel(BaseChannel):
                 logger.warning("BlueBubbles webhook received invalid JSON")
                 return JSONResponse(content={"ok": True})
 
-            logger.debug("BlueBubbles webhook received: type=%s", raw.get("type", "?"))
-
             try:
                 payload = BBWebhookPayload.model_validate(raw)
             except Exception:
