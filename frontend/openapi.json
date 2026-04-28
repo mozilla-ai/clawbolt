@@ -1024,6 +1024,46 @@
         }
       }
     },
+    "/api/user/sessions/{session_id}/system-prompt": {
+      "get": {
+        "summary": "Get Session System Prompt",
+        "description": "Return the system prompt that would be sent on the next turn.\n\nReconstructed live from current user state (profile, soul, memory,\nonboarding status, tool availability) so the UI doesn't show a\nstale snapshot from the first turn of the session.\n\nKnown approximations:\n\n* The preview omits specialist tool guidelines that get appended\n  mid-turn when the LLM calls ``list_capabilities`` to activate a\n  category. It matches the start-of-turn tool list, mirroring how\n  the agent itself starts each turn fresh.\n* Tools whose factories require a storage backend or an outbound\n  publish hook (currently ``send_media_reply``,\n  ``upload_to_storage``, and ``organize_file``) are filtered out\n  by the registry's dependency gates because the preview can't\n  safely construct those runtime hooks. Their usage hints will\n  not appear in the Tool Guidelines section.\n* If a user's ``BOOTSTRAP.md`` cannot be created on disk by the\n  runtime (rare, requires an OS-level error), the runtime drops\n  out of onboarding mode while this preview still reports\n  ``is_onboarding=true`` based on the in-memory heuristic.",
+        "operationId": "get_session_system_prompt_api_user_sessions__session_id__system_prompt_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSystemPromptResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/sessions/{session_id}/messages/batch": {
       "delete": {
         "summary": "Delete Messages Batch",
@@ -2504,6 +2544,30 @@
           "timestamp"
         ],
         "title": "SessionMessage"
+      },
+      "SessionSystemPromptResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "system_prompt": {
+            "type": "string",
+            "title": "System Prompt"
+          },
+          "is_onboarding": {
+            "type": "boolean",
+            "title": "Is Onboarding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "system_prompt",
+          "is_onboarding"
+        ],
+        "title": "SessionSystemPromptResponse",
+        "description": "Live system prompt that would be sent to the LLM on the next turn.\n\nReconstructed on demand from current user state (memory, profile,\nonboarding status, available tools) rather than pulled from the\nsession's frozen ``initial_system_prompt`` column. Use this when\nthe UI needs the current prompt; use ``initial_system_prompt`` on\n``SessionDetailResponse`` when the historical first-turn prompt is\nwhat's wanted."
       },
       "StorageConfigResponse": {
         "properties": {

@@ -22,6 +22,7 @@ import type {
   ProviderInfo,
   SessionDetailResponse,
   SessionListResponse,
+  SessionSystemPromptResponse,
   ToolConfigResponse,
   ToolConfigUpdateEntry,
 } from '@/types';
@@ -99,6 +100,14 @@ const api = {
     });
     if (error) _throwApiError(error, 'Failed to list sessions');
     return data as SessionListResponse;
+  },
+  getSessionSystemPrompt: async (sessionId: string) => {
+    const { data, error, response } = await client.GET(
+      '/api/user/sessions/{session_id}/system-prompt',
+      { params: { path: { session_id: sessionId } } },
+    );
+    if (error) _throwApiError(error, 'Failed to get system prompt', response?.status);
+    return data as SessionSystemPromptResponse;
   },
 
   deleteConversationHistory: async (sessionId: string) => {

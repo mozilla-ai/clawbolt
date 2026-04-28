@@ -8,7 +8,7 @@ import { Tooltip } from '@heroui/tooltip';
 import { Spinner } from '@heroui/spinner';
 import api, { ApiError } from '@/api';
 import { toast } from '@/lib/toast';
-import { useSession } from '@/hooks/queries';
+import { useSession, useSessionSystemPrompt } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
 import { useChatActivity } from '@/contexts/ChatActivityContext';
 import type { ToolInteraction } from '@/types';
@@ -110,6 +110,16 @@ export default function ChatPage() {
   } = useSession(activeSessionId);
   const loadingHistory = loadingHistoryPending && !!activeSessionId;
 
+  // Lazy-load the live system prompt. Only fetches once the user expands
+  // the collapsible panel; refetches on every expand so the displayed
+  // prompt reflects current user state (memory edits, profile changes,
+  // onboarding transitions) rather than a stale snapshot.
+  const {
+    data: systemPromptData,
+    isFetching: systemPromptFetching,
+    isError: systemPromptError,
+  } = useSessionSystemPrompt(activeSessionId, { enabled: systemPromptOpen });
+
   // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
   // bug that occurs when scrollIntoView fires during keyboard dismissal.
   const scrollToBottom = useCallback(() => {
@@ -159,6 +169,10 @@ export default function ChatPage() {
     setSelectionMode(false);
     setSelectedSeqs(new Set());
     setConfirmModal(null);
+    // Collapse the system prompt panel so the previous session's prompt
+    // doesn't briefly render under the new session's header while the
+    // refetch is in flight (gcTime keeps the prior data around for 30s).
+    setSystemPromptOpen(false);
   }, [activeSessionId]);
 
   // If the persisted session id no longer exists (e.g. account was purged
@@ -476,7 +490,7 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {sessionDetail?.initial_system_prompt && (
+            {activeSessionId && (
               <div className="border border-border rounded-lg overflow-hidden">
                 <button
                   type="button"
@@ -484,11 +498,24 @@ export default function ChatPage() {
                   className="w-full flex items-center gap-2 px-3 py-2 text-xs text-muted-foreground hover:bg-panel transition-colors"
                 >
                   <ChevronIcon open={systemPromptOpen} />
-                  <span className="font-medium">System Prompt</span>
+                  <span className="font-medium">Current system prompt</span>
+                  {systemPromptData?.is_onboarding && (
+                    <span className="ml-auto rounded bg-warning/20 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-warning-foreground">
+                      Onboarding
+                    </span>
+                  )}
                 </button>
                 {systemPromptOpen && (
                   <div className="px-3 pb-3 text-xs text-muted-foreground whitespace-pre-wrap border-t border-border bg-panel/50">
-                    {sessionDetail.initial_system_prompt}
+                    {systemPromptFetching && !systemPromptData ? (
+                      <div className="py-2">Loading current prompt…</div>
+                    ) : systemPromptError ? (
+                      <div className="py-2 text-destructive">
+                        Failed to load the current system prompt.
+                      </div>
+                    ) : (
+                      systemPromptData?.system_prompt
+                    )}
                   </div>
                 )}
               </div>

@@ -3,6 +3,7 @@ export const queryKeys = {
   sessions: {
     all: ['sessions'] as const,
     detail: (id: string) => ['sessions', 'detail', id] as const,
+    systemPrompt: (id: string) => ['sessions', 'system-prompt', id] as const,
   },
   memory: {
     all: ['memory'] as const,

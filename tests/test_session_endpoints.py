@@ -220,6 +220,189 @@ def test_session_channel_defaults_empty(client: TestClient, test_user: User) -> 
 
 
 # ---------------------------------------------------------------------------
+# GET /api/user/sessions/{session_id}/system-prompt
+# ---------------------------------------------------------------------------
+
+
+def test_get_system_prompt_returns_live_post_onboarding(
+    client: TestClient, test_user: User
+) -> None:
+    """Post-onboarding users get the regular agent system prompt.
+
+    The fixture's ``test_user`` is onboarded, so the endpoint should
+    take the normal path through ``build_agent_system_prompt`` and the
+    response should reflect the user's profile/soul rather than the
+    bootstrap conversation.
+    """
+    _create_session(
+        test_user,
+        "1_700",
+        [
+            {
+                "direction": "inbound",
+                "body": "what's my rate?",
+                "timestamp": "2025-01-15T10:01:00",
+                "seq": 1,
+            },
+            {
+                "direction": "outbound",
+                "body": "$95/hr",
+                "timestamp": "2025-01-15T10:02:00",
+                "seq": 2,
+            },
+        ],
+        channel="webchat",
+    )
+    resp = client.get("/api/user/sessions/1_700/system-prompt")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == "1_700"
+    assert data["is_onboarding"] is False
+    # Normal system prompt has the standard preamble; bootstrap doesn't
+    # contain this exact phrase.
+    assert "AI assistant for solo tradespeople" in data["system_prompt"]
+    assert "blank slate" not in data["system_prompt"]
+
+
+def test_get_system_prompt_returns_bootstrap_during_onboarding(
+    client: TestClient,
+) -> None:
+    """A user still in onboarding gets the bootstrap-flavored prompt."""
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            id="sp-onboard",
+            user_id="onboarding-systemprompt-user",
+            channel_identifier="555700001",
+            preferred_channel="webchat",
+            onboarding_complete=False,
+        )
+        db.add(user)
+        db.commit()
+        db.refresh(user)
+        db.expunge(user)
+    finally:
+        db.close()
+
+    # Create BOOTSTRAP.md so is_onboarding_needed returns True.
+    from pathlib import Path
+
+    from backend.app.agent.prompts import load_prompt
+    from backend.app.config import settings as _settings
+
+    cdir = Path(_settings.data_dir) / "sp-onboard"
+    cdir.mkdir(parents=True, exist_ok=True)
+    (cdir / "BOOTSTRAP.md").write_text(load_prompt("bootstrap") + "\n", encoding="utf-8")
+
+    # Override auth to this onboarding user just for this test.
+    from backend.app.auth.dependencies import get_current_user
+    from backend.app.main import app as _app
+
+    _app.dependency_overrides[get_current_user] = lambda: user
+    try:
+        _create_session(
+            user,
+            "sp-onboard-1",
+            [{"direction": "inbound", "body": "hey", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+            channel="webchat",
+        )
+        resp = client.get("/api/user/sessions/sp-onboard-1/system-prompt")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["is_onboarding"] is True
+        # Bootstrap-flavored prompt has these phrases verbatim.
+        assert "blank slate" in data["system_prompt"]
+    finally:
+        _app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_get_system_prompt_session_not_found(client: TestClient) -> None:
+    resp = client.get("/api/user/sessions/nonexistent/system-prompt")
+    assert resp.status_code == 404
+
+
+def test_get_system_prompt_cross_user_isolation(client: TestClient, test_user: User) -> None:
+    """A session owned by a different user must 404, not leak its prompt."""
+    db = _db_module.SessionLocal()
+    try:
+        other = User(
+            id="sp-other",
+            user_id="other-user",
+            channel_identifier="555700002",
+            preferred_channel="webchat",
+            onboarding_complete=True,
+        )
+        db.add(other)
+        db.commit()
+        db.refresh(other)
+        db.expunge(other)
+    finally:
+        db.close()
+
+    _create_session(
+        other,
+        "sp-other-session",
+        [{"direction": "inbound", "body": "secret", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+        channel="webchat",
+    )
+    # Auth fixture sets request user to test_user, not "sp-other"
+    resp = client.get("/api/user/sessions/sp-other-session/system-prompt")
+    assert resp.status_code == 404
+
+
+def test_get_system_prompt_handles_empty_session(client: TestClient, test_user: User) -> None:
+    """A session with no messages still returns a valid prompt (empty memory query)."""
+    _create_session(test_user, "1_800", [], channel="webchat")
+    resp = client.get("/api/user/sessions/1_800/system-prompt")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["session_id"] == "1_800"
+    assert data["system_prompt"]
+
+
+def test_get_system_prompt_omits_storage_and_outbound_tool_usage_hints(
+    client: TestClient, test_user: User
+) -> None:
+    """Documenting an intentional preview/runtime divergence.
+
+    The tool registry filters factories whose ``requires_storage`` or
+    ``requires_outbound`` flag is set when the ToolContext doesn't
+    provide the matching dependency. The preview path passes ``None``
+    for both (see ``build_initial_turn_tools``) because it can't
+    safely construct a real storage backend or outbound-publish hook.
+
+    Consequence: ``send_media_reply`` (``requires_outbound=True``) and
+    ``upload_to_storage`` / ``organize_file`` (``requires_storage=True``)
+    have their per-tool ``usage_hint`` strings absent from the rendered
+    Tool Guidelines section even though the agent runtime sees them.
+    The tool names themselves still appear in the prompt because the
+    static ``instructions.md`` references them, so the LLM (and a
+    reader) knows the tools exist. The granular usage hints are what
+    diverges.
+
+    This test pins the behavior so the gap is visible. If a future
+    change makes the preview honest about these usage hints, update
+    the assertions accordingly.
+    """
+    _create_session(
+        test_user,
+        "1_900",
+        [{"direction": "inbound", "body": "hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+        channel="webchat",
+    )
+    resp = client.get("/api/user/sessions/1_900/system-prompt")
+    assert resp.status_code == 200
+    prompt = resp.json()["system_prompt"]
+    # Usage-hint strings unique to the requires_storage / requires_outbound
+    # tool factories. If the preview ever instantiates these factories
+    # (option A or C from PR review), these strings will appear and this
+    # test should be flipped to assert presence.
+    assert "When sending estimates or files, use this to send media" not in prompt
+    assert "Upload a recently received file to cloud storage" not in prompt
+    assert "Move an unsorted file into the correct client folder" not in prompt
+
+
+# ---------------------------------------------------------------------------
 # DELETE /api/user/sessions/{session_id}/messages/{seq}
 # ---------------------------------------------------------------------------
 

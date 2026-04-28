@@ -105,8 +105,31 @@ def is_onboarding_complete_heuristic(user: User) -> bool:
     return _has_real_user_profile(user) and _has_user_timezone(user) and _has_custom_soul(user)
 
 
+def is_in_onboarding_flow(user: User) -> bool:
+    """Side-effect-free check for whether a user is mid-onboarding.
+
+    Returns True when the user has neither flipped the
+    ``onboarding_complete`` flag nor accumulated heuristic evidence
+    (real name + timezone + custom soul). Unlike
+    :func:`is_onboarding_needed`, this does NOT touch disk: it never
+    re-creates a missing BOOTSTRAP.md. Use this from read-only paths
+    (preview endpoints, dashboards, anywhere a GET should be safe to
+    repeat).
+
+    Known divergence from :func:`is_onboarding_needed`: if BOOTSTRAP.md
+    is missing AND the runtime fails to recreate it (rare OS-level
+    error), :func:`is_onboarding_needed` returns ``False`` (drops
+    onboarding for that turn) while this function still returns
+    ``True``. Read-only callers will see ``is_onboarding=true`` for
+    such a user even though the next runtime turn won't.
+    """
+    if user.onboarding_complete:
+        return False
+    return not is_onboarding_complete_heuristic(user)
+
+
 def is_onboarding_needed(user: User) -> bool:
-    """Check if user needs onboarding.
+    """Check if user needs onboarding, self-healing on the way.
 
     Returns False once onboarding_complete is set, or if heuristic evidence
     shows the user has already completed onboarding (name and timezone in
@@ -118,6 +141,10 @@ def is_onboarding_needed(user: User) -> bool:
     a re-signup after an admin purge where the on-disk file was wiped but
     the user's onboarding flag remained False. Without this, a missing
     BOOTSTRAP.md would silently skip onboarding forever.
+
+    Because this writes to disk, only call it from the inbound-message
+    pipeline. Read-only / preview paths should use
+    :func:`is_in_onboarding_flow` instead.
     """
     if user.onboarding_complete:
         logger.debug(
@@ -196,10 +223,16 @@ def build_onboarding_system_prompt(
     )
 
     bootstrap = _bootstrap_path(user)
+    base = load_prompt("bootstrap")
     if bootstrap.exists():
-        base = bootstrap.read_text(encoding="utf-8").strip()
-    else:
-        base = load_prompt("bootstrap")
+        try:
+            base = bootstrap.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            logger.exception(
+                "build_onboarding_system_prompt(user=%s): BOOTSTRAP.md exists but "
+                "could not be read; falling back to default template",
+                user.id,
+            )
 
     # Inject available specialist capabilities into the bootstrap section
     capability_lines = _get_tool_capability_descriptions()

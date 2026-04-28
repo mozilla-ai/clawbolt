@@ -9,7 +9,10 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.concurrency import user_locks
 from backend.app.agent.context import StoredToolInteraction
+from backend.app.agent.onboarding import build_onboarding_system_prompt, is_in_onboarding_flow
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.system_prompt import build_agent_system_prompt
+from backend.app.agent.tool_assembly import build_initial_turn_tools
 from backend.app.agent.tool_summary import append_receipts
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import get_db
@@ -22,6 +25,7 @@ from backend.app.schemas import (
     SessionListItem,
     SessionListResponse,
     SessionMessage,
+    SessionSystemPromptResponse,
 )
 
 router = APIRouter()
@@ -122,6 +126,69 @@ async def get_session(
         initial_system_prompt=session.initial_system_prompt,
         last_compacted_seq=session.last_compacted_seq,
         messages=messages,
+    )
+
+
+@router.get(
+    "/user/sessions/{session_id}/system-prompt",
+    response_model=SessionSystemPromptResponse,
+)
+async def get_session_system_prompt(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+) -> SessionSystemPromptResponse:
+    """Return the system prompt that would be sent on the next turn.
+
+    Reconstructed live from current user state (profile, soul, memory,
+    onboarding status, tool availability) so the UI doesn't show a
+    stale snapshot from the first turn of the session.
+
+    Known approximations:
+
+    * The preview omits specialist tool guidelines that get appended
+      mid-turn when the LLM calls ``list_capabilities`` to activate a
+      category. It matches the start-of-turn tool list, mirroring how
+      the agent itself starts each turn fresh.
+    * Tools whose factories require a storage backend or an outbound
+      publish hook (currently ``send_media_reply``,
+      ``upload_to_storage``, and ``organize_file``) are filtered out
+      by the registry's dependency gates because the preview can't
+      safely construct those runtime hooks. Their usage hints will
+      not appear in the Tool Guidelines section.
+    * If a user's ``BOOTSTRAP.md`` cannot be created on disk by the
+      runtime (rare, requires an OS-level error), the runtime drops
+      out of onboarding mode while this preview still reports
+      ``is_onboarding=true`` based on the in-memory heuristic.
+    """
+    store = get_session_store(current_user.id)
+    session = store.load_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    is_onboarding = is_in_onboarding_flow(current_user)
+    tools = await build_initial_turn_tools(current_user, channel=session.channel)
+
+    if is_onboarding:
+        system_prompt = build_onboarding_system_prompt(current_user, tools=tools)
+    else:
+        # build_memory_section currently ignores its query parameter
+        # (it returns the full MEMORY.md), so we pass an empty string
+        # rather than scanning session messages for a "best query" that
+        # would be discarded. If memory ever becomes query-driven, the
+        # endpoint should pass a real query (e.g. the last inbound
+        # message body) so the preview reflects what the next turn
+        # would retrieve.
+        system_prompt = await build_agent_system_prompt(
+            current_user,
+            tools,
+            message_context="",
+            current_session_id=session.session_id,
+        )
+
+    return SessionSystemPromptResponse(
+        session_id=session.session_id,
+        system_prompt=system_prompt,
+        is_onboarding=is_onboarding,
     )
 
 
