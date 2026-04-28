@@ -191,7 +191,6 @@ class WebChatChannel(BaseChannel):
             browser tabs can subscribe concurrently.
             """
             user_id = str(user.id)
-            logger.debug("Activity SSE connected for user %s", user_id)
             queue = message_bus.register_activity_queue(user_id)
 
             async def event_stream() -> collections.abc.AsyncIterator[str]:
@@ -199,17 +198,11 @@ class WebChatChannel(BaseChannel):
                     while True:
                         try:
                             event = await asyncio.wait_for(queue.get(), timeout=15.0)
-                            logger.debug(
-                                "Activity SSE sending event to user %s: %s",
-                                user_id,
-                                event.get("type", "unknown"),
-                            )
                             yield f"data: {json.dumps(event)}\n\n"
                         except TimeoutError:
                             # Send keepalive comment to detect disconnected clients
                             yield ": keepalive\n\n"
                 finally:
-                    logger.debug("Activity SSE disconnected for user %s", user_id)
                     message_bus.remove_activity_queue(user_id, queue)
 
             return StreamingResponse(
