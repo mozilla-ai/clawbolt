@@ -19,6 +19,25 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Minimum number of *user* (inbound) messages before the heuristic fallback
+# can fire. The bootstrap conversation needs at least this many user turns
+# to plausibly cover name, timezone, trade context, and personality. Below
+# this floor we trust that onboarding is still in progress regardless of
+# what's been written to USER.md or SOUL.md. We count user messages, not
+# total messages, because the agent can produce outbound messages without
+# any new user information being captured.
+MIN_ONBOARDING_USER_MESSAGES = 10
+
+# Hard ceiling for force-completing onboarding. If the user has sent this
+# many messages and onboarding has still not completed via either the
+# BOOTSTRAP.md-deletion path or the heuristic+content path, force the
+# flag on so heartbeats and other gated features unblock. This is a last-
+# resort safety net for cases where the LLM never manages to satisfy any
+# completion signal (e.g. user keeps redirecting to real questions, soul
+# never gets customized). After 50 user turns the cost of staying stuck
+# in onboarding outweighs the cost of an incomplete profile.
+MAX_ONBOARDING_USER_MESSAGES = 50
+
 
 def _bootstrap_path(user: User) -> Path:
     """Return the path to the user's BOOTSTRAP.md file."""
@@ -44,6 +63,20 @@ def _has_real_user_profile(user: User) -> bool:
     return bool(re.search(r"^-\s*Name:[ \t]+\S", content, re.MULTILINE))
 
 
+def _has_user_timezone(user: User) -> bool:
+    """Return True if user_text contains a filled-in Timezone field.
+
+    The default template has ``- Timezone:`` with no value. Timezone is
+    one of the two strictly-required fields per the bootstrap prompt
+    (load-bearing for scheduling and heartbeat timing), so its presence
+    is strong evidence that onboarding has progressed past the opening.
+    """
+    content = user.user_text or ""
+    if not content:
+        return False
+    return bool(re.search(r"^-\s*Timezone:[ \t]+\S", content, re.MULTILINE))
+
+
 def _has_custom_soul(user: User) -> bool:
     """Return True if soul_text differs from the default template."""
     content = (user.soul_text or "").strip()
@@ -55,24 +88,29 @@ def _has_custom_soul(user: User) -> bool:
 
 
 def is_onboarding_complete_heuristic(user: User) -> bool:
-    """Heuristic check for onboarding completion.
+    """Heuristic gate for onboarding completion.
 
-    Returns True if there is evidence that the user has been through
-    the onboarding conversation: USER.md has a real name, or SOUL.md
-    has been customized from the default template.
+    Returns True only when ALL three evidence signals are present:
+    USER.md has a real name, USER.md has a real timezone, and SOUL.md has
+    been customized from the default template.
 
-    This catches the case where the LLM forgot to delete BOOTSTRAP.md
-    after onboarding finished.
+    The bootstrap prompt instructs the LLM to save the user's name as
+    soon as it's heard (turn 2-3 of the conversation), so a name-only
+    check fires far too early. Timezone is one of the two strictly-
+    required fields per the prompt and is load-bearing for scheduling.
+    SOUL.md customization happens near the end of onboarding once
+    personality has been discussed. Requiring all three together gates
+    the completion path on onboarding actually being substantively done.
     """
-    return _has_real_user_profile(user) or _has_custom_soul(user)
+    return _has_real_user_profile(user) and _has_user_timezone(user) and _has_custom_soul(user)
 
 
 def is_onboarding_needed(user: User) -> bool:
     """Check if user needs onboarding.
 
     Returns False once onboarding_complete is set, or if heuristic evidence
-    shows the user has already completed onboarding (real name in user_text
-    or a custom soul_text).
+    shows the user has already completed onboarding (name and timezone in
+    user_text plus a custom soul_text).
 
     Self-heal: if onboarding_complete is False and the heuristic shows no
     evidence of a prior onboarding, a missing BOOTSTRAP.md is re-written
@@ -194,24 +232,59 @@ def build_onboarding_system_prompt(
     return builder.build()
 
 
+def _mark_onboarding_complete(user: User) -> None:
+    """Persist onboarding_complete=True for the user."""
+    db = SessionLocal()
+    try:
+        db_user = db.query(User).filter_by(id=user.id).first()
+        if db_user:
+            db_user.onboarding_complete = True
+            db.commit()
+    finally:
+        db.close()
+    user.onboarding_complete = True
+
+
 class OnboardingSubscriber:
     """Event subscriber that detects onboarding completion after agent processing.
 
-    Subscribes to ``AgentEndEvent`` to detect when the agent has deleted
-    BOOTSTRAP.md (signaling onboarding is complete). When that happens,
-    it sets ``onboarding_complete = True``.
+    Four completion paths:
+
+    1. **Primary:** the LLM deletes ``BOOTSTRAP.md`` per the bootstrap prompt.
+       This is the intended signal and fires immediately.
+    2. **Heuristic fallback:** if the LLM gets sidetracked and never deletes
+       the file, the heuristic fires once the user has sent at least
+       :data:`MIN_ONBOARDING_USER_MESSAGES` messages AND USER.md has a real
+       name AND USER.md has a real timezone AND SOUL.md is customized.
+       All gates are required: the bootstrap prompt instructs the LLM to
+       save the user's name as soon as it's heard (turn 2-3), so name +
+       short-conversation alone is not evidence that onboarding has
+       substantively completed.
+    3. **Hard ceiling:** at :data:`MAX_ONBOARDING_USER_MESSAGES` user
+       messages, force-complete regardless of content. Last-resort safety
+       net so heartbeats and other gated features don't stay disabled
+       indefinitely when the LLM never satisfies any completion signal.
+    4. **Pre-populated user:** users created with profile content already
+       in place (migrations, admin seeding) get flipped on the first turn
+       where they're not in onboarding mode.
 
     Usage::
 
-        sub = OnboardingSubscriber(user, was_onboarding=True)
+        sub = OnboardingSubscriber(user, was_onboarding=True, user_message_count=N)
         agent.subscribe(sub)
         response = await agent.process_message(...)
         sub.finalize(response)
     """
 
-    def __init__(self, user: User, was_onboarding: bool) -> None:
+    def __init__(
+        self,
+        user: User,
+        was_onboarding: bool,
+        user_message_count: int = 0,
+    ) -> None:
         self._user = user
         self._was_onboarding = was_onboarding
+        self._user_message_count = user_message_count
 
     async def __call__(self, event: AgentEvent) -> None:
         """Handle agent events. Only acts on ``AgentEndEvent``."""
@@ -223,25 +296,14 @@ class OnboardingSubscriber:
         if self._user.onboarding_complete:
             return
 
-        # Transition: was onboarding and BOOTSTRAP.md is now gone
+        # Path 1: BOOTSTRAP.md deletion (the intended signal).
         if self._was_onboarding and not _bootstrap_path(self._user).exists():
             logger.info("Onboarding complete for user %s: BOOTSTRAP.md deleted", self._user.id)
-            db = SessionLocal()
-            try:
-                db_user = db.query(User).filter_by(id=self._user.id).first()
-                if db_user:
-                    db_user.onboarding_complete = True
-                    db.commit()
-            finally:
-                db.close()
-            self._user.onboarding_complete = True
+            _mark_onboarding_complete(self._user)
             return
 
-        # Heuristic fallback: BOOTSTRAP.md still exists but user profile
-        # shows evidence of completed onboarding (name filled in, or
-        # soul_text customized).  This catches the case where the LLM got
-        # sidetracked and forgot to delete BOOTSTRAP.md.
-        # Re-read from DB since workspace tools may have updated text columns.
+        # Refresh user_text/soul_text from DB before evaluating the heuristic,
+        # since workspace tools may have updated those columns in this turn.
         if self._was_onboarding:
             db = SessionLocal()
             try:
@@ -251,32 +313,54 @@ class OnboardingSubscriber:
                     self._user.soul_text = fresh.soul_text
             finally:
                 db.close()
-        if self._was_onboarding and is_onboarding_complete_heuristic(self._user):
+
+        # Path 2: Heuristic fallback for sidetracked LLMs. All gates must
+        # pass: we were in onboarding this turn, the user has sent enough
+        # messages, name is set, timezone is set, and soul is customized.
+        if (
+            self._was_onboarding
+            and self._user_message_count >= MIN_ONBOARDING_USER_MESSAGES
+            and is_onboarding_complete_heuristic(self._user)
+        ):
             logger.info(
                 "Onboarding complete for user %s: heuristic detected "
-                "(BOOTSTRAP.md still exists, cleaning up)",
+                "(user_message_count=%d, BOOTSTRAP.md still exists, cleaning up)",
                 self._user.id,
+                self._user_message_count,
             )
             bootstrap = _bootstrap_path(self._user)
             if bootstrap.exists():
                 bootstrap.unlink()
-            db = SessionLocal()
-            try:
-                db_user = db.query(User).filter_by(id=self._user.id).first()
-                if db_user:
-                    db_user.onboarding_complete = True
-                    db.commit()
-            finally:
-                db.close()
-            self._user.onboarding_complete = True
+            _mark_onboarding_complete(self._user)
             return
 
-        # Pre-populated user: not in onboarding this turn, and heuristic shows
-        # positive evidence of a prior profile (name set or custom soul). This
-        # catches migrated users whose onboarding_complete flag was never
-        # flipped. Requires heuristic evidence. A bare user with no profile
-        # data must go through onboarding via the self-heal in
-        # is_onboarding_needed.
+        # Path 3: Hard ceiling. After enough user messages, force-complete
+        # regardless of content so heartbeats and other gated features
+        # don't stay disabled indefinitely. Logged at WARNING because this
+        # path firing means the LLM never satisfied any completion signal
+        # over a long conversation, which is worth investigating.
+        if self._was_onboarding and self._user_message_count >= MAX_ONBOARDING_USER_MESSAGES:
+            logger.warning(
+                "Onboarding force-completed for user %s after %d user messages "
+                "(name_set=%s timezone_set=%s custom_soul=%s, BOOTSTRAP.md still "
+                "exists, cleaning up). The LLM never deleted BOOTSTRAP.md and "
+                "never satisfied the heuristic gates over this conversation.",
+                self._user.id,
+                self._user_message_count,
+                _has_real_user_profile(self._user),
+                _has_user_timezone(self._user),
+                _has_custom_soul(self._user),
+            )
+            bootstrap = _bootstrap_path(self._user)
+            if bootstrap.exists():
+                bootstrap.unlink()
+            _mark_onboarding_complete(self._user)
+            return
+
+        # Path 4: pre-populated users. Not onboarding this turn but profile
+        # text already shows positive evidence. Catches migrated users whose
+        # flag was never flipped. A bare user with no profile data takes the
+        # self-heal path in is_onboarding_needed instead.
         if not self._was_onboarding and is_onboarding_complete_heuristic(self._user):
             logger.info(
                 "Onboarding complete for user %s: pre-populated profile detected "
@@ -285,15 +369,7 @@ class OnboardingSubscriber:
                 _has_real_user_profile(self._user),
                 _has_custom_soul(self._user),
             )
-            db = SessionLocal()
-            try:
-                db_user = db.query(User).filter_by(id=self._user.id).first()
-                if db_user:
-                    db_user.onboarding_complete = True
-                    db.commit()
-            finally:
-                db.close()
-            self._user.onboarding_complete = True
+            _mark_onboarding_complete(self._user)
 
     def finalize(self, response: AgentResponse) -> None:
         """No-op. Kept for API compatibility with the pipeline."""

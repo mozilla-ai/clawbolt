@@ -440,7 +440,18 @@ async def load_history_step(ctx: PipelineContext) -> PipelineContext:
     """Load conversation history and set up onboarding."""
     ctx.conversation_history = await load_conversation_history(ctx.session)
     ctx.is_onboarding = is_onboarding_needed(ctx.user)
-    onboarding_sub = OnboardingSubscriber(ctx.user, ctx.is_onboarding)
+    # Pass user (inbound) message count so the onboarding subscriber's
+    # heuristic fallback can require a minimum number of user turns before
+    # firing. ctx.session.messages already includes the current inbound
+    # message, so no off-by-one adjustment is needed.
+    user_message_count = sum(
+        1 for m in ctx.session.messages if m.direction == MessageDirection.INBOUND
+    )
+    onboarding_sub = OnboardingSubscriber(
+        ctx.user,
+        ctx.is_onboarding,
+        user_message_count=user_message_count,
+    )
     ctx.event_subscribers.append(onboarding_sub)
     ctx._onboarding_sub = onboarding_sub
     return ctx
