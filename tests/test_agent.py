@@ -375,13 +375,17 @@ async def test_agent_tool_loop_includes_tool_results_in_followup(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-async def test_agent_echoes_rendered_receipt_into_tool_result(
+async def test_agent_does_not_echo_rendered_receipt_into_tool_result(
     mock_amessages: object, test_user: User
 ) -> None:
-    """Tools that return a ToolReceipt should have the rendered receipt
-    appended to their tool_result content on the LLM side. The LLM needs
-    to see exactly what will be shown to the user so it can write a reply
-    that adds value rather than restating the receipt.
+    """The rendered receipt line must NOT be echoed into the tool result the
+    LLM sees. Doing so caused the LLM to restate the receipt in its prose,
+    which was then duplicated by ``append_receipts`` at dispatch time —
+    producing two copies of every receipt block in the outbound message
+    (issue #1033).
+
+    The LLM still gets the structured tool content (URLs and IDs included)
+    and the receipt is added once at dispatch.
     """
     from backend.app.agent.tools.base import ToolReceipt
 
@@ -425,16 +429,14 @@ async def test_agent_echoes_rendered_receipt_into_tool_result(
     ]
     assert len(tool_result_msgs) == 1
     content = tool_result_msgs[0]["content"][0]["content"]
-    # The LLM must see the rendered receipt line plus the note framing it
-    # as something already sent to the user, so it does not restate.
-    assert "appended to the reply the user sees" in content
-    assert "Created QuickBooks estimate for Jane Smith, $0.00" in content
-    # Compact URL rendering (issue #976): the rendered receipt strips https://
-    # before echoing back to the LLM.
-    assert "app.sandbox.qbo.intuit.com/app/estimate?txnId=161" in content
+    # The receipt-echo wrapper must be gone.
+    assert "appended to the reply the user sees" not in content
+    # The dashed receipt line itself must not appear in the LLM-side content.
+    assert "- Created QuickBooks estimate for Jane Smith" not in content
     # The original tool content is preserved so the LLM can reason about
     # the machine-readable result.
     assert "Id: 161" in content
+    assert "Total: $0.00" in content
 
 
 @pytest.mark.asyncio()

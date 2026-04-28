@@ -395,11 +395,17 @@ async def persist_outbound(
     if response.tool_calls:
         tool_interactions = json.dumps([tc.model_dump() for tc in response.tool_calls])
 
+    # Store the body that was actually dispatched to the user (LLM prose +
+    # any receipt block) so the DB matches what the user saw. Falls back to
+    # ``reply_text`` for code paths that bypass ``dispatch_reply_step``
+    # (heartbeats, error fallbacks).
+    body = response.dispatched_body or response.reply_text
+
     session_store = get_session_store(user_id)
     await session_store.add_message(
         session=session,
         direction=MessageDirection.OUTBOUND,
-        body=response.reply_text,
+        body=body,
         tool_interactions_json=tool_interactions,
     )
 
@@ -506,6 +512,7 @@ async def dispatch_reply_step(ctx: PipelineContext) -> PipelineContext:
         )
         if not sent_reply and ctx.response.reply_text:
             content = append_receipts(ctx.response.reply_text, ctx.response.tool_calls)
+            ctx.response.dispatched_body = content
             outbound = OutboundMessage(
                 channel=ctx.channel,
                 chat_id=ctx.to_address,

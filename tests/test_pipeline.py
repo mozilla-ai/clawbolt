@@ -448,6 +448,34 @@ async def test_dispatch_reply_omits_receipt_for_read_tool() -> None:
     assert outbound.content == "Davis estimate total is $2,360."
 
 
+@pytest.mark.asyncio
+async def test_dispatch_reply_records_dispatched_body_on_response() -> None:
+    """``dispatch_reply_step`` should expose the actually-sent body on the
+    response so ``persist_outbound_step`` can store the same text the user
+    saw, not the receipt-less ``reply_text``."""
+    from unittest.mock import AsyncMock
+
+    response = _make_response_with_receipt(
+        reply_text="Done.",
+        tool_name="companycam_upload_photo",
+        action="Uploaded photo to CompanyCam project",
+        target="Davis",
+        url="https://app.companycam.com/projects/123",
+    )
+    ctx = _make_ctx(channel="bluebubbles", response=response)
+
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
+
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert response.dispatched_body == outbound.content
+    assert response.dispatched_body != response.reply_text  # receipts added
+
+
 # ---------------------------------------------------------------------------
 # build_pipeline() tests
 # ---------------------------------------------------------------------------

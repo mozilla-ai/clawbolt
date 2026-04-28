@@ -52,7 +52,6 @@ from backend.app.agent.tool_errors import (
     build_error_hint,
     format_validation_error,
 )
-from backend.app.agent.tool_summary import render_receipt_line
 from backend.app.agent.tools.base import (
     Tool,
     ToolErrorKind,
@@ -120,6 +119,11 @@ class AgentResponse:
     total_cache_creation_input_tokens: int = 0
     total_cache_read_input_tokens: int = 0
     system_prompt: str = ""
+    # The exact body that was published to the outbound bus, including any
+    # receipt block appended by ``append_receipts``. Set by
+    # ``dispatch_reply_step`` so ``persist_outbound`` can store the user-facing
+    # text instead of just ``reply_text`` (the LLM's prose, pre-receipts).
+    dispatched_body: str = ""
 
 
 class ClawboltAgent:
@@ -802,21 +806,12 @@ class ClawboltAgent:
                         target=result.receipt.target,
                         url=result.receipt.url,
                     )
-                    # Echo the rendered receipt back to the LLM inside the
-                    # tool result. The LLM sees the exact text the user will
-                    # receive and can write a reply that adds value rather
-                    # than restating the receipt. Generic across all tools:
-                    # any tool that returns a receipt opts into this behavior
-                    # automatically.
-                    rendered = render_receipt_line(
-                        result.receipt.action,
-                        result.receipt.target,
-                        result.receipt.url,
-                    )
-                    result_str += (
-                        "\n\nThe following has been appended to the reply "
-                        f"the user sees:\n{rendered}"
-                    )
+                    # We do not echo the rendered receipt into result_str.
+                    # The earlier design appended a "the user already sees
+                    # this" preview hoping the LLM would skip restating it;
+                    # the LLM restated it anyway and ``append_receipts``
+                    # then added a second copy at dispatch, doubling every
+                    # receipt block in the outbound message.
                 tool_call_records.append(
                     StoredToolInteraction(
                         tool_call_id=tc_req.id,
