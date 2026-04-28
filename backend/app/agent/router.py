@@ -541,10 +541,7 @@ async def persist_outbound_step(ctx: PipelineContext) -> PipelineContext:
 async def run_pipeline(ctx: PipelineContext, steps: list[PipelineStep]) -> PipelineContext:
     """Execute pipeline steps in sequence."""
     for step in steps:
-        step_name = getattr(step, "__name__", type(step).__name__)
-        logger.debug("Pipeline step starting: %s", step_name)
         ctx = await step(ctx)
-        logger.debug("Pipeline step completed: %s", step_name)
     return ctx
 
 

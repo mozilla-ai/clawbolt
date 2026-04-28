@@ -450,15 +450,6 @@ async def evaluate_heartbeat_need(
         user, recent_text, heartbeat_md=heartbeat_md, heartbeat_history=heartbeat_history
     )
 
-    logger.debug(
-        "Heartbeat Phase 1 context for user %s: recent_messages=%d, "
-        "heartbeat_length=%d, system_prompt_length=%d",
-        user.id,
-        len(recent),
-        len(heartbeat_md),
-        len(prompt),
-    )
-
     # Send typing indicator before LLM call via the bus
     await _publish_heartbeat_typing(channel, chat_id, stop=False)
 
@@ -507,12 +498,6 @@ async def evaluate_heartbeat_need(
         raise RuntimeError("Heartbeat LLM retry loop exited without response")
 
     log_llm_usage(user.id, model, response, "heartbeat_decision")
-    logger.debug(
-        "Heartbeat Phase 1 response for user %s: stop_reason=%s, blocks=%d",
-        user.id,
-        getattr(response, "stop_reason", "unknown"),
-        len(response.content),
-    )
     decision = _parse_decision_response(response)
     if response.usage:
         decision.input_tokens = response.usage.input_tokens or 0
@@ -783,12 +768,6 @@ async def run_heartbeat_for_user(
         )
 
         if decision.action != "run" or not decision.tasks:
-            logger.debug(
-                "Heartbeat skip Phase 2 for user %s: action=%s, tasks_empty=%s",
-                user.id,
-                decision.action,
-                not decision.tasks,
-            )
             # Log the skip so the admin page shows decision history
             heartbeat_store = HeartbeatStore(user.id)
             await heartbeat_store.log_heartbeat(
@@ -1035,7 +1014,6 @@ class HeartbeatScheduler:
 
     async def tick(self) -> None:
         """Single heartbeat pass: evaluate due users concurrently."""
-        logger.debug("Heartbeat tick starting")
         db = SessionLocal()
         try:
             users = (
@@ -1049,17 +1027,12 @@ class HeartbeatScheduler:
             db.close()
 
         if not users:
-            logger.debug("Heartbeat tick: no onboarded users found")
             return
 
         now = datetime.datetime.now(datetime.UTC)
         due_users = [u for u in users if self._is_user_due(u, now)]
 
         if not due_users:
-            logger.debug(
-                "Heartbeat tick: %d onboarded user(s) but none due yet",
-                len(users),
-            )
             return
 
         logger.info(
