@@ -9,6 +9,7 @@ import ChatPage from './ChatPage';
 vi.mock('@/api', () => ({
   default: {
     getSession: vi.fn(),
+    getSessionSystemPrompt: vi.fn(),
     sendChatMessage: vi.fn(),
     listSessions: vi.fn().mockResolvedValue({ total: 0, items: [] }),
     subscribeToActivity: vi.fn().mockReturnValue(new AbortController()),
@@ -390,5 +391,123 @@ describe('ChatPage concurrent messaging', () => {
     // Attach files button should also remain enabled
     const attachButton = screen.getByLabelText('Attach files');
     expect(attachButton).not.toBeDisabled();
+  });
+});
+
+describe('ChatPage current system prompt panel', () => {
+  it('lazy-loads the live system prompt only when the user expands the panel', async () => {
+    const sessionId = '1_5000';
+    mockApi.getSession.mockResolvedValue({
+      session_id: sessionId,
+      user_id: '1',
+      created_at: '2025-01-01T00:00:00Z',
+      last_message_at: '2025-01-01T00:01:00Z',
+      is_active: true,
+      channel: 'webchat',
+      initial_system_prompt: 'STALE FIRST-TURN PROMPT',
+      last_compacted_seq: 0,
+      messages: [
+        {
+          seq: 1,
+          direction: 'inbound',
+          body: 'Hi',
+          timestamp: '2025-01-01T00:00:00Z',
+          tool_interactions: [],
+        },
+        {
+          seq: 2,
+          direction: 'outbound',
+          body: 'Hello!',
+          timestamp: '2025-01-01T00:01:00Z',
+          tool_interactions: [],
+        },
+      ],
+    });
+    mockApi.getSessionSystemPrompt.mockResolvedValue({
+      session_id: sessionId,
+      system_prompt: 'LIVE PROMPT FROM ENDPOINT',
+      is_onboarding: false,
+    });
+
+    renderWithRouter(
+      <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+      { route: `/app/chat?session=${sessionId}` },
+    );
+
+    // Wait for messages to render so we know the session has loaded.
+    await waitFor(() => {
+      expect(screen.getByText('Hello!')).toBeInTheDocument();
+    });
+
+    // Panel toggle is visible but the endpoint hasn't been hit yet.
+    const toggle = screen.getByRole('button', { name: /current system prompt/i });
+    expect(toggle).toBeInTheDocument();
+    expect(mockApi.getSessionSystemPrompt).not.toHaveBeenCalled();
+
+    // We must NOT show the stale frozen snapshot. Even before opening
+    // the panel, the old initial_system_prompt text should be absent.
+    expect(screen.queryByText('STALE FIRST-TURN PROMPT')).not.toBeInTheDocument();
+
+    // Expanding triggers a single fetch with the active session id and
+    // renders the live prompt body.
+    const user = userEvent.setup();
+    await user.click(toggle);
+
+    await waitFor(() => {
+      expect(screen.getByText('LIVE PROMPT FROM ENDPOINT')).toBeInTheDocument();
+    });
+    expect(mockApi.getSessionSystemPrompt).toHaveBeenCalledWith(sessionId);
+  });
+
+  it('shows the Onboarding badge when the live prompt is in onboarding mode', async () => {
+    const sessionId = '1_5001';
+    mockApi.getSession.mockResolvedValue({
+      session_id: sessionId,
+      user_id: '1',
+      created_at: '2025-01-01T00:00:00Z',
+      last_message_at: '2025-01-01T00:01:00Z',
+      is_active: true,
+      channel: 'webchat',
+      initial_system_prompt: '',
+      last_compacted_seq: 0,
+      messages: [
+        {
+          seq: 1,
+          direction: 'inbound',
+          body: 'hey',
+          timestamp: '2025-01-01T00:00:00Z',
+          tool_interactions: [],
+        },
+        {
+          seq: 2,
+          direction: 'outbound',
+          body: 'Hi, I am Clawbolt',
+          timestamp: '2025-01-01T00:01:00Z',
+          tool_interactions: [],
+        },
+      ],
+    });
+    mockApi.getSessionSystemPrompt.mockResolvedValue({
+      session_id: sessionId,
+      system_prompt: 'BOOTSTRAP CONTENT',
+      is_onboarding: true,
+    });
+
+    renderWithRouter(
+      <ChatActivityProvider><ChatPage /></ChatActivityProvider>,
+      { route: `/app/chat?session=${sessionId}` },
+    );
+    await waitFor(() => {
+      expect(screen.getByText('Hi, I am Clawbolt')).toBeInTheDocument();
+    });
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: /current system prompt/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText('BOOTSTRAP CONTENT')).toBeInTheDocument();
+    });
+    // The Onboarding badge should appear once the live prompt resolves.
+    expect(screen.getByText(/onboarding/i)).toBeInTheDocument();
   });
 });

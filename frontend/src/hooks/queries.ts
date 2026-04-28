@@ -60,6 +60,26 @@ export function useSession(
   });
 }
 
+export function useSessionSystemPrompt(
+  sessionId: string | null,
+  opts: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.sessions.systemPrompt(sessionId!),
+    queryFn: () => api.getSessionSystemPrompt(sessionId!),
+    enabled: !!sessionId && (opts.enabled ?? true),
+    retry: false,
+    // staleTime: 0 means every panel-open kicks off a background refetch,
+    // so the displayed prompt reflects current state (memory edits,
+    // profile changes, onboarding transitions). gcTime: 30s keeps the
+    // last-known data around briefly so quick toggles don't show a
+    // "Loading…" flash; the in-flight refetch updates the view when it
+    // resolves.
+    staleTime: 0,
+    gcTime: 30_000,
+  });
+}
+
 // --- Memory ---
 
 export function useMemory() {

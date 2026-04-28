@@ -6,6 +6,7 @@ export type UserProfileResponse = components['schemas']['UserProfileResponse'];
 export type UserProfileUpdate = components['schemas']['UserProfileUpdate'];
 export type SessionDetailResponse = components['schemas']['SessionDetailResponse'];
 export type SessionListResponse = components['schemas']['SessionListResponse'];
+export type SessionSystemPromptResponse = components['schemas']['SessionSystemPromptResponse'];
 export type MemoryResponse = components['schemas']['MemoryResponse'];
 export type MemoryUpdate = components['schemas']['MemoryUpdate'];
 export type PermissionsResponse = components['schemas']['PermissionsResponse'];

@@ -94,6 +94,22 @@ class SessionDetailResponse(BaseModel):
     messages: list[SessionMessage]
 
 
+class SessionSystemPromptResponse(BaseModel):
+    """Live system prompt that would be sent to the LLM on the next turn.
+
+    Reconstructed on demand from current user state (memory, profile,
+    onboarding status, available tools) rather than pulled from the
+    session's frozen ``initial_system_prompt`` column. Use this when
+    the UI needs the current prompt; use ``initial_system_prompt`` on
+    ``SessionDetailResponse`` when the historical first-turn prompt is
+    what's wanted.
+    """
+
+    session_id: str
+    system_prompt: str
+    is_onboarding: bool
+
+
 # ---------------------------------------------------------------------------
 # Channel config (dashboard)
 # ---------------------------------------------------------------------------
