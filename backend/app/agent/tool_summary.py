@@ -166,7 +166,7 @@ class _Bucket:
         self.entries = entries
 
 
-def _collect_receipts(tool_calls: list[StoredToolInteraction]) -> list[str]:
+def _collect_receipts(tool_calls: list[StoredToolInteraction], reply_text: str = "") -> list[str]:
     """Return rendered receipt lines for every successful tool call that
     populated a ``ToolReceipt``. Errors and read-side tools contribute
     nothing.
@@ -175,6 +175,14 @@ def _collect_receipts(tool_calls: list[StoredToolInteraction]) -> list[str]:
     multi-action turns stay iMessage-compact. Receipts without a URL
     each render as their own line (no grouping possible since the URL
     is the grouping key).
+
+    When *reply_text* already contains a receipt's URL (in compact
+    ``host/path`` form, with or without an ``https://`` prefix), that
+    receipt is skipped so the LLM's prose is not duplicated by the
+    appended block. This is the second line of defence against the
+    LLM restating the receipt format inline; the first is the absence
+    of the rendered receipt from the tool result content itself
+    (see ``backend/app/agent/core.py``).
     """
     buckets: list[_Bucket] = []
     by_url: dict[str, int] = {}
@@ -191,6 +199,11 @@ def _collect_receipts(tool_calls: list[StoredToolInteraction]) -> list[str]:
         if not url:
             # Non-groupable: ship as its own entry.
             buckets.append(_Bucket(url=None, entries=[(action, target)]))
+            continue
+
+        if reply_text and _display_url(url) in reply_text:
+            # The LLM already mentioned this URL in its prose. Skip the
+            # receipt entry so the user does not see two copies.
             continue
 
         if url in by_url:
@@ -236,9 +249,9 @@ def _truncate_block(lines: list[str]) -> str:
     return "\n".join(kept)
 
 
-def format_receipts_block(tool_calls: list[StoredToolInteraction]) -> str:
+def format_receipts_block(tool_calls: list[StoredToolInteraction], reply_text: str = "") -> str:
     """Return the full receipt block or an empty string if nothing applies."""
-    lines = _collect_receipts(tool_calls)
+    lines = _collect_receipts(tool_calls, reply_text=reply_text)
     if not lines:
         return ""
     return _truncate_block(lines)
@@ -247,9 +260,10 @@ def format_receipts_block(tool_calls: list[StoredToolInteraction]) -> str:
 def append_receipts(reply_text: str, tool_calls: list[StoredToolInteraction]) -> str:
     """Append a receipt block to ``reply_text`` if any write-side tool
     returned a receipt. Returns ``reply_text`` unchanged when there is
-    nothing to confirm.
+    nothing to confirm. Receipts whose URL is already mentioned in
+    ``reply_text`` are skipped to avoid duplication.
     """
-    block = format_receipts_block(tool_calls)
+    block = format_receipts_block(tool_calls, reply_text=reply_text)
     if not block:
         return reply_text
     if not reply_text:

@@ -448,6 +448,97 @@ async def test_dispatch_reply_omits_receipt_for_read_tool() -> None:
     assert outbound.content == "Davis estimate total is $2,360."
 
 
+@pytest.mark.asyncio
+async def test_dispatch_reply_does_not_duplicate_receipts_when_llm_restates_them() -> None:
+    """Regression for issue #1033. The LLM sometimes restates the receipt
+    block in its prose (mimicking the rendered form it once saw in tool
+    results). ``dispatch_reply_step`` must still emit only one copy of each
+    receipt entry — no doubling — so iMessage doesn't show 6 URLs for 3
+    photos."""
+    from unittest.mock import AsyncMock
+
+    from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
+    from backend.app.agent.core import AgentResponse
+
+    photo_ids = ["3132637327", "3132637375", "3132637420"]
+    receipts = [
+        StoredToolReceipt(
+            action="Uploaded photo to CompanyCam",
+            target="photo",
+            url=f"https://app.companycam.com/photos/{pid}",
+        )
+        for pid in photo_ids
+    ]
+    # Simulate the LLM restating the rendered receipt format inline. This is
+    # the prose Jesse received: prose followed by three dashed receipt lines
+    # the LLM mimicked from a prior version of the tool result format.
+    restated = "\n".join(
+        f"- Uploaded photo to CompanyCam photo\n  app.companycam.com/photos/{pid}"
+        for pid in photo_ids
+    )
+    reply_text = f"All three are in the Loeffler project.\n\n{restated}"
+
+    response = AgentResponse(
+        reply_text=reply_text,
+        tool_calls=[
+            StoredToolInteraction(
+                tool_call_id=f"tc-{i}",
+                name="companycam_upload_photo",
+                args={"project_id": "99101890"},
+                result=f"Photo uploaded: https://app.companycam.com/photos/{pid}",
+                is_error=False,
+                receipt=receipts[i],
+            )
+            for i, pid in enumerate(photo_ids)
+        ],
+    )
+    ctx = _make_ctx(channel="bluebubbles", response=response)
+
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
+
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    # Each photo URL must appear exactly once in the outbound content,
+    # even though the LLM's prose already mentioned all three.
+    for pid in photo_ids:
+        occurrences = outbound.content.count(f"app.companycam.com/photos/{pid}")
+        assert occurrences == 1, (
+            f"Photo {pid} appears {occurrences} times; expected exactly 1 (see issue #1033)."
+        )
+
+
+@pytest.mark.asyncio
+async def test_dispatch_reply_records_dispatched_body_on_response() -> None:
+    """``dispatch_reply_step`` should expose the actually-sent body on the
+    response so ``persist_outbound_step`` can store the same text the user
+    saw, not the receipt-less ``reply_text``."""
+    from unittest.mock import AsyncMock
+
+    response = _make_response_with_receipt(
+        reply_text="Done.",
+        tool_name="companycam_upload_photo",
+        action="Uploaded photo to CompanyCam project",
+        target="Davis",
+        url="https://app.companycam.com/projects/123",
+    )
+    ctx = _make_ctx(channel="bluebubbles", response=response)
+
+    with patch(
+        "backend.app.bus.message_bus.publish_outbound",
+        new_callable=AsyncMock,
+    ) as mock_publish:
+        await dispatch_reply_step(ctx)
+
+    assert mock_publish.await_args is not None
+    outbound = mock_publish.await_args.args[0]
+    assert response.dispatched_body == outbound.content
+    assert response.dispatched_body != response.reply_text  # receipts added
+
+
 # ---------------------------------------------------------------------------
 # build_pipeline() tests
 # ---------------------------------------------------------------------------
