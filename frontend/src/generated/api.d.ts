@@ -573,6 +573,34 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/sessions/{session_id}/system-prompt": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Session System Prompt
+         * @description Return the system prompt that would be sent on the next turn.
+         *
+         *     Reconstructed live from current user state (profile, soul, memory,
+         *     onboarding status, tool availability) so the UI doesn't show a
+         *     stale snapshot from the first turn of the session. The prompt
+         *     matches what the agent will actually send the next time the user
+         *     posts a message in this session, modulo specialist tool guidelines
+         *     that get appended mid-turn when ``list_capabilities`` activates a
+         *     category.
+         */
+        get: operations["get_session_system_prompt_api_user_sessions__session_id__system_prompt_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/sessions/{session_id}/messages/batch": {
         parameters: {
             query?: never;
@@ -1189,6 +1217,25 @@ export interface components {
             tool_interactions?: {
                 [key: string]: unknown;
             }[];
+        };
+        /**
+         * SessionSystemPromptResponse
+         * @description Live system prompt that would be sent to the LLM on the next turn.
+         *
+         *     Reconstructed on demand from current user state (memory, profile,
+         *     onboarding status, available tools) rather than pulled from the
+         *     session's frozen ``initial_system_prompt`` column. Use this when
+         *     the UI needs the current prompt; use ``initial_system_prompt`` on
+         *     ``SessionDetailResponse`` when the historical first-turn prompt is
+         *     what's wanted.
+         */
+        SessionSystemPromptResponse: {
+            /** Session Id */
+            session_id: string;
+            /** System Prompt */
+            system_prompt: string;
+            /** Is Onboarding */
+            is_onboarding: boolean;
         };
         /** StorageConfigResponse */
         StorageConfigResponse: {
@@ -2193,6 +2240,37 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["SessionDetailResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_session_system_prompt_api_user_sessions__session_id__system_prompt_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                session_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SessionSystemPromptResponse"];
                 };
             };
             /** @description Validation Error */

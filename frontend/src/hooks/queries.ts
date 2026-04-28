@@ -60,6 +60,23 @@ export function useSession(
   });
 }
 
+export function useSessionSystemPrompt(
+  sessionId: string | null,
+  opts: { enabled?: boolean } = {},
+) {
+  return useQuery({
+    queryKey: queryKeys.sessions.systemPrompt(sessionId!),
+    queryFn: () => api.getSessionSystemPrompt(sessionId!),
+    enabled: !!sessionId && (opts.enabled ?? true),
+    retry: false,
+    // Always refetch when re-enabled so the panel reflects current state
+    // (memory edits, profile changes, onboarding transitions) rather than
+    // a snapshot from when the panel was first opened.
+    staleTime: 0,
+    gcTime: 0,
+  });
+}
+
 // --- Memory ---
 
 export function useMemory() {

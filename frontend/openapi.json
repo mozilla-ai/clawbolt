@@ -1024,6 +1024,46 @@
         }
       }
     },
+    "/api/user/sessions/{session_id}/system-prompt": {
+      "get": {
+        "summary": "Get Session System Prompt",
+        "description": "Return the system prompt that would be sent on the next turn.\n\nReconstructed live from current user state (profile, soul, memory,\nonboarding status, tool availability) so the UI doesn't show a\nstale snapshot from the first turn of the session. The prompt\nmatches what the agent will actually send the next time the user\nposts a message in this session, modulo specialist tool guidelines\nthat get appended mid-turn when ``list_capabilities`` activates a\ncategory.",
+        "operationId": "get_session_system_prompt_api_user_sessions__session_id__system_prompt_get",
+        "parameters": [
+          {
+            "name": "session_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Session Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SessionSystemPromptResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/sessions/{session_id}/messages/batch": {
       "delete": {
         "summary": "Delete Messages Batch",
@@ -2504,6 +2544,30 @@
           "timestamp"
         ],
         "title": "SessionMessage"
+      },
+      "SessionSystemPromptResponse": {
+        "properties": {
+          "session_id": {
+            "type": "string",
+            "title": "Session Id"
+          },
+          "system_prompt": {
+            "type": "string",
+            "title": "System Prompt"
+          },
+          "is_onboarding": {
+            "type": "boolean",
+            "title": "Is Onboarding"
+          }
+        },
+        "type": "object",
+        "required": [
+          "session_id",
+          "system_prompt",
+          "is_onboarding"
+        ],
+        "title": "SessionSystemPromptResponse",
+        "description": "Live system prompt that would be sent to the LLM on the next turn.\n\nReconstructed on demand from current user state (memory, profile,\nonboarding status, available tools) rather than pulled from the\nsession's frozen ``initial_system_prompt`` column. Use this when\nthe UI needs the current prompt; use ``initial_system_prompt`` on\n``SessionDetailResponse`` when the historical first-turn prompt is\nwhat's wanted."
       },
       "StorageConfigResponse": {
         "properties": {

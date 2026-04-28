@@ -9,10 +9,14 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.concurrency import user_locks
 from backend.app.agent.context import StoredToolInteraction
+from backend.app.agent.onboarding import build_onboarding_system_prompt, is_onboarding_needed
 from backend.app.agent.session_db import get_session_store
+from backend.app.agent.system_prompt import build_agent_system_prompt
+from backend.app.agent.tool_assembly import build_initial_turn_tools
 from backend.app.agent.tool_summary import append_receipts
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import get_db
+from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, Message, User
 from backend.app.schemas import (
     BatchDeleteRequest,
@@ -22,6 +26,7 @@ from backend.app.schemas import (
     SessionListItem,
     SessionListResponse,
     SessionMessage,
+    SessionSystemPromptResponse,
 )
 
 router = APIRouter()
@@ -122,6 +127,59 @@ async def get_session(
         initial_system_prompt=session.initial_system_prompt,
         last_compacted_seq=session.last_compacted_seq,
         messages=messages,
+    )
+
+
+@router.get(
+    "/user/sessions/{session_id}/system-prompt",
+    response_model=SessionSystemPromptResponse,
+)
+async def get_session_system_prompt(
+    session_id: str,
+    current_user: User = Depends(get_current_user),
+) -> SessionSystemPromptResponse:
+    """Return the system prompt that would be sent on the next turn.
+
+    Reconstructed live from current user state (profile, soul, memory,
+    onboarding status, tool availability) so the UI doesn't show a
+    stale snapshot from the first turn of the session. The prompt
+    matches what the agent will actually send the next time the user
+    posts a message in this session, modulo specialist tool guidelines
+    that get appended mid-turn when ``list_capabilities`` activates a
+    category.
+    """
+    store = get_session_store(current_user.id)
+    session = store.load_session(session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    # Memory retrieval is query-driven, so use the most recent inbound
+    # message as the query. Without a query the memory section degrades
+    # to an empty list, which under-represents what the next turn will
+    # see if the user follows up on the same topic.
+    message_context = ""
+    for msg in reversed(session.messages):
+        if msg.direction == MessageDirection.INBOUND and msg.body:
+            message_context = msg.body
+            break
+
+    is_onboarding = is_onboarding_needed(current_user)
+    tools = await build_initial_turn_tools(current_user, channel=session.channel or None)
+
+    if is_onboarding:
+        system_prompt = build_onboarding_system_prompt(current_user, tools=tools)
+    else:
+        system_prompt = await build_agent_system_prompt(
+            current_user,
+            tools,
+            message_context,
+            current_session_id=session.session_id,
+        )
+
+    return SessionSystemPromptResponse(
+        session_id=session.session_id,
+        system_prompt=system_prompt,
+        is_onboarding=is_onboarding,
     )
 
 
