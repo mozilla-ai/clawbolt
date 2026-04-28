@@ -15,6 +15,7 @@ from backend.app.agent.memory_db import reset_memory_stores
 from backend.app.agent.session_db import reset_session_stores
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
+from backend.app.channels import unknown_sender as unknown_sender_module
 from backend.app.config import settings
 from backend.app.database import Base
 from backend.app.main import app
@@ -182,6 +183,23 @@ def _reset_bus_queues() -> Generator[None]:
     message_bus.reset()
     yield
     message_bus.reset()
+
+
+@pytest.fixture(autouse=True)
+def _stub_unknown_sender_reply() -> Generator[AsyncMock]:
+    """Patch the unknown-sender reply at the import site in ``base.py``.
+
+    Without this, every existing allowlist-rejection test would trigger a real
+    outbound HTTP call (Linq/BlueBubbles/Telegram) and hang on the configured
+    timeout. Tests that exercise the unknown-sender behavior import
+    ``reply_to_unknown_sender`` directly from its module, bypassing this patch.
+    """
+    unknown_sender_module.reset_unknown_sender_cache()
+    with patch(
+        "backend.app.channels.base.reply_to_unknown_sender", new_callable=AsyncMock
+    ) as mock_reply:
+        yield mock_reply
+    unknown_sender_module.reset_unknown_sender_cache()
 
 
 @pytest.fixture()

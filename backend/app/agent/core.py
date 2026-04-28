@@ -52,7 +52,6 @@ from backend.app.agent.tool_errors import (
     build_error_hint,
     format_validation_error,
 )
-from backend.app.agent.tool_summary import render_receipt_line
 from backend.app.agent.tools.base import (
     Tool,
     ToolErrorKind,
@@ -120,6 +119,11 @@ class AgentResponse:
     total_cache_creation_input_tokens: int = 0
     total_cache_read_input_tokens: int = 0
     system_prompt: str = ""
+    # The exact body that was published to the outbound bus, including any
+    # receipt block appended by ``append_receipts``. Set by
+    # ``dispatch_reply_step`` so ``persist_outbound`` can store the user-facing
+    # text instead of just ``reply_text`` (the LLM's prose, pre-receipts).
+    dispatched_body: str = ""
 
 
 class ClawboltAgent:
@@ -203,26 +207,6 @@ class ClawboltAgent:
                 )
             except Exception:
                 logger.debug("Failed to send typing indicator to %s", mask_pii(self._chat_id))
-
-    async def _persist_approval_prompt(self, prompt: str) -> None:
-        """Store the approval prompt as an outbound message in the session.
-
-        This ensures the prompt is visible in the web UI when viewing
-        session history, even if the conversation originated on a
-        different channel (e.g. iMessage or Telegram).
-        """
-        try:
-            from backend.app.agent.session_db import get_session_store
-            from backend.app.enums import MessageDirection
-
-            session_store = get_session_store(self.user.id)
-            await session_store.add_message_by_session_id(
-                session_id=self._session_id,
-                direction=MessageDirection.OUTBOUND,
-                body=prompt,
-            )
-        except Exception:
-            logger.warning("Failed to persist approval prompt for user %s", self.user.id)
 
     def _get_tool_permission(
         self,
@@ -678,8 +662,14 @@ class ClawboltAgent:
                 elif self._publish_outbound is not None and self._chat_id is not None:
                     prompt = format_approval_message(tool_obj.name, description)
 
-                    if self._session_id:
-                        await self._persist_approval_prompt(prompt)
+                    # We deliberately do not persist the approval prompt to the
+                    # session here. Past attempts persisted it as an OUTBOUND
+                    # message which then loaded back as an ``AssistantMessage``
+                    # in the next turn's history. The LLM mimicked the format
+                    # in subsequent prose replies, generating fake permission
+                    # prompts without calling the actual tool. The user sees
+                    # the prompt via the channel; the agent does not need it
+                    # in conversation history.
 
                     if self._request_id:
                         from backend.app.bus import message_bus
@@ -802,21 +792,12 @@ class ClawboltAgent:
                         target=result.receipt.target,
                         url=result.receipt.url,
                     )
-                    # Echo the rendered receipt back to the LLM inside the
-                    # tool result. The LLM sees the exact text the user will
-                    # receive and can write a reply that adds value rather
-                    # than restating the receipt. Generic across all tools:
-                    # any tool that returns a receipt opts into this behavior
-                    # automatically.
-                    rendered = render_receipt_line(
-                        result.receipt.action,
-                        result.receipt.target,
-                        result.receipt.url,
-                    )
-                    result_str += (
-                        "\n\nThe following has been appended to the reply "
-                        f"the user sees:\n{rendered}"
-                    )
+                    # We do not echo the rendered receipt into result_str.
+                    # The earlier design appended a "the user already sees
+                    # this" preview hoping the LLM would skip restating it;
+                    # the LLM restated it anyway and ``append_receipts``
+                    # then added a second copy at dispatch, doubling every
+                    # receipt block in the outbound message.
                 tool_call_records.append(
                     StoredToolInteraction(
                         tool_call_id=tc_req.id,

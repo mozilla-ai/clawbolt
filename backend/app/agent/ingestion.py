@@ -616,19 +616,15 @@ async def process_inbound_from_bus(
                 inbound.text[:100],
             )
             gate.resolve(user.id, decision)
-            # Persist the reply to the session so it appears in conversation history
-            session, _is_new = await get_or_create_conversation(
-                user.id, external_session_id=inbound.session_id
-            )
-            session_store = get_session_store(user.id)
-            await session_store.add_message(
-                session=session,
-                direction=MessageDirection.INBOUND,
-                body=inbound.text,
-                external_message_id=inbound.external_message_id or "",
-                media_urls_json=json.dumps([file_id for file_id, _mime in inbound.media_refs]),
-                channel=inbound.channel,
-            )
+            # We do not persist the user's approval reply ("Yes", "Always", ...)
+            # to the session. The reply is a UX artifact of the approval flow;
+            # the underlying action is captured semantically when the resumed
+            # agent run records its tool_interactions. Persisting it as a
+            # standalone INBOUND message leaves it floating in history without
+            # the (also-unpersisted) approval prompt that motivated it, which
+            # gives the LLM no useful context and risks the same kind of
+            # template-mimicry that caused the fake-prompt loop.
+
             # For webchat: resolve the response future so the SSE stream for
             # this approval message closes cleanly with an empty reply.
             if inbound.request_id:
