@@ -1,9 +1,21 @@
-"""Build the tool list a fresh agent turn would start with.
+"""Preview-only tool-list builder for system-prompt reconstruction.
 
-The agent loop and the system-prompt preview endpoint both need to know
-which tools the LLM sees at the start of a turn. Keeping that
-construction in one place ensures the preview matches what the agent
-actually receives.
+The agent's runtime path in :mod:`backend.app.agent.router` builds its
+tool list inline because it needs a fully-populated :class:`ToolContext`
+(storage backend, outbound-publish hook, downloaded media) and a shared
+mutable ``activated_specialists`` set that the ``list_capabilities``
+closure and the agent loop can both observe. This module mirrors only
+the *start-of-turn* shape of that list with stubbed context fields, so
+preview consumers (the system-prompt endpoint, debugging surfaces) can
+render the same tool guidelines the LLM sees on a fresh turn without
+the runtime plumbing.
+
+Keeping it intentionally separate avoids two coupling pitfalls:
+
+* the runtime's shared mutable activation set leaking into preview code
+  paths where it would be confusing or unsafe;
+* preview callers being forced to construct fake storage/publish hooks
+  just to read tool schemas.
 """
 
 from __future__ import annotations
@@ -14,6 +26,7 @@ from backend.app.agent.tools.registry import (
     ToolContext,
     create_list_capabilities_tool,
     default_registry,
+    ensure_tool_modules_imported,
 )
 from backend.app.models import User
 
@@ -37,6 +50,11 @@ async def build_initial_turn_tools(
     and usage hints (for system-prompt rendering or debugging) -- not
     their executors.
     """
+    # The registry is auto-discovery-driven; ensure all *_tools modules
+    # have run their _register() side effects before we ask it for the
+    # current set of factories. Idempotent / cached after the first call.
+    ensure_tool_modules_imported()
+
     tool_context = ToolContext(
         user=user,
         storage=None,

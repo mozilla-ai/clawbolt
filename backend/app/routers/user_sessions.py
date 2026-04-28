@@ -9,7 +9,7 @@ from sqlalchemy.orm import Session
 
 from backend.app.agent.concurrency import user_locks
 from backend.app.agent.context import StoredToolInteraction
-from backend.app.agent.onboarding import build_onboarding_system_prompt, is_onboarding_needed
+from backend.app.agent.onboarding import build_onboarding_system_prompt, is_in_onboarding_flow
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.system_prompt import build_agent_system_prompt
 from backend.app.agent.tool_assembly import build_initial_turn_tools
@@ -142,11 +142,19 @@ async def get_session_system_prompt(
 
     Reconstructed live from current user state (profile, soul, memory,
     onboarding status, tool availability) so the UI doesn't show a
-    stale snapshot from the first turn of the session. The prompt
-    matches what the agent will actually send the next time the user
-    posts a message in this session, modulo specialist tool guidelines
-    that get appended mid-turn when ``list_capabilities`` activates a
-    category.
+    stale snapshot from the first turn of the session.
+
+    Two intentional approximations:
+
+    * The memory section is query-driven; we use the most recent
+      inbound message body as the query because we can't see what the
+      user is about to type. If the next message is on a different
+      topic, the memory snippets here will under-represent what the
+      LLM actually retrieves.
+    * Specialist tool guidelines appended mid-turn (when the LLM calls
+      ``list_capabilities`` to activate a category) are not included.
+      The preview matches the start-of-turn tool list, mirroring how
+      the agent itself starts each turn fresh.
     """
     store = get_session_store(current_user.id)
     session = store.load_session(session_id)
@@ -163,8 +171,8 @@ async def get_session_system_prompt(
             message_context = msg.body
             break
 
-    is_onboarding = is_onboarding_needed(current_user)
-    tools = await build_initial_turn_tools(current_user, channel=session.channel or None)
+    is_onboarding = is_in_onboarding_flow(current_user)
+    tools = await build_initial_turn_tools(current_user, channel=session.channel)
 
     if is_onboarding:
         system_prompt = build_onboarding_system_prompt(current_user, tools=tools)

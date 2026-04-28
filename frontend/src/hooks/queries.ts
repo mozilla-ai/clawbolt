@@ -69,11 +69,14 @@ export function useSessionSystemPrompt(
     queryFn: () => api.getSessionSystemPrompt(sessionId!),
     enabled: !!sessionId && (opts.enabled ?? true),
     retry: false,
-    // Always refetch when re-enabled so the panel reflects current state
-    // (memory edits, profile changes, onboarding transitions) rather than
-    // a snapshot from when the panel was first opened.
+    // staleTime: 0 means every panel-open kicks off a background refetch,
+    // so the displayed prompt reflects current state (memory edits,
+    // profile changes, onboarding transitions). gcTime: 30s keeps the
+    // last-known data around briefly so quick toggles don't show a
+    // "Loading…" flash; the in-flight refetch updates the view when it
+    // resolves.
     staleTime: 0,
-    gcTime: 0,
+    gcTime: 30_000,
   });
 }
 
