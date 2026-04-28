@@ -14,7 +14,6 @@ download step) and processed through the same vision/audio pipeline.
 import asyncio
 import collections.abc
 import json
-import logging
 import re
 import uuid
 
@@ -30,8 +29,6 @@ from backend.app.channels.base import BaseChannel
 from backend.app.config import settings
 from backend.app.media.download import DEFAULT_MIME_TYPE, DownloadedMedia, generate_filename
 from backend.app.models import User
-
-logger = logging.getLogger(__name__)
 
 _SESSION_ID_RE = re.compile(r"^[\w-]+_\d+(_[\w]+)?$")
 
