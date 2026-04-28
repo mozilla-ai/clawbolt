@@ -129,9 +129,10 @@ def is_onboarding_needed(user: User) -> bool:
     if is_onboarding_complete_heuristic(user):
         logger.debug(
             "is_onboarding_needed(user=%s)=False: heuristic detected existing profile "
-            "(name_set=%s custom_soul=%s)",
+            "(name_set=%s timezone_set=%s custom_soul=%s)",
             user.id,
             _has_real_user_profile(user),
+            _has_user_timezone(user),
             _has_custom_soul(user),
         )
         return False
@@ -364,9 +365,10 @@ class OnboardingSubscriber:
         if not self._was_onboarding and is_onboarding_complete_heuristic(self._user):
             logger.info(
                 "Onboarding complete for user %s: pre-populated profile detected "
-                "(name_set=%s custom_soul=%s)",
+                "(name_set=%s timezone_set=%s custom_soul=%s)",
                 self._user.id,
                 _has_real_user_profile(self._user),
+                _has_user_timezone(self._user),
                 _has_custom_soul(self._user),
             )
             _mark_onboarding_complete(self._user)
