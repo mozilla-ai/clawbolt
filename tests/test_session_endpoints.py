@@ -360,6 +360,48 @@ def test_get_system_prompt_handles_empty_session(client: TestClient, test_user: 
     assert data["system_prompt"]
 
 
+def test_get_system_prompt_omits_storage_and_outbound_tool_usage_hints(
+    client: TestClient, test_user: User
+) -> None:
+    """Documenting an intentional preview/runtime divergence.
+
+    The tool registry filters factories whose ``requires_storage`` or
+    ``requires_outbound`` flag is set when the ToolContext doesn't
+    provide the matching dependency. The preview path passes ``None``
+    for both (see ``build_initial_turn_tools``) because it can't
+    safely construct a real storage backend or outbound-publish hook.
+
+    Consequence: ``send_media_reply`` (``requires_outbound=True``) and
+    ``upload_to_storage`` / ``organize_file`` (``requires_storage=True``)
+    have their per-tool ``usage_hint`` strings absent from the rendered
+    Tool Guidelines section even though the agent runtime sees them.
+    The tool names themselves still appear in the prompt because the
+    static ``instructions.md`` references them, so the LLM (and a
+    reader) knows the tools exist. The granular usage hints are what
+    diverges.
+
+    This test pins the behavior so the gap is visible. If a future
+    change makes the preview honest about these usage hints, update
+    the assertions accordingly.
+    """
+    _create_session(
+        test_user,
+        "1_900",
+        [{"direction": "inbound", "body": "hi", "timestamp": "2025-01-15T10:01:00", "seq": 1}],
+        channel="webchat",
+    )
+    resp = client.get("/api/user/sessions/1_900/system-prompt")
+    assert resp.status_code == 200
+    prompt = resp.json()["system_prompt"]
+    # Usage-hint strings unique to the requires_storage / requires_outbound
+    # tool factories. If the preview ever instantiates these factories
+    # (option A or C from PR review), these strings will appear and this
+    # test should be flipped to assert presence.
+    assert "When sending estimates or files, use this to send media" not in prompt
+    assert "Upload a recently received file to cloud storage" not in prompt
+    assert "Move an unsorted file into the correct client folder" not in prompt
+
+
 # ---------------------------------------------------------------------------
 # DELETE /api/user/sessions/{session_id}/messages/{seq}
 # ---------------------------------------------------------------------------

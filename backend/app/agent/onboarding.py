@@ -115,6 +115,13 @@ def is_in_onboarding_flow(user: User) -> bool:
     re-creates a missing BOOTSTRAP.md. Use this from read-only paths
     (preview endpoints, dashboards, anywhere a GET should be safe to
     repeat).
+
+    Known divergence from :func:`is_onboarding_needed`: if BOOTSTRAP.md
+    is missing AND the runtime fails to recreate it (rare OS-level
+    error), :func:`is_onboarding_needed` returns ``False`` (drops
+    onboarding for that turn) while this function still returns
+    ``True``. Read-only callers will see ``is_onboarding=true`` for
+    such a user even though the next runtime turn won't.
     """
     if user.onboarding_complete:
         return False
@@ -216,10 +223,16 @@ def build_onboarding_system_prompt(
     )
 
     bootstrap = _bootstrap_path(user)
+    base = load_prompt("bootstrap")
     if bootstrap.exists():
-        base = bootstrap.read_text(encoding="utf-8").strip()
-    else:
-        base = load_prompt("bootstrap")
+        try:
+            base = bootstrap.read_text(encoding="utf-8").strip()
+        except (OSError, UnicodeDecodeError):
+            logger.exception(
+                "build_onboarding_system_prompt(user=%s): BOOTSTRAP.md exists but "
+                "could not be read; falling back to default template",
+                user.id,
+            )
 
     # Inject available specialist capabilities into the bootstrap section
     capability_lines = _get_tool_capability_descriptions()

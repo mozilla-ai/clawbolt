@@ -169,6 +169,10 @@ export default function ChatPage() {
     setSelectionMode(false);
     setSelectedSeqs(new Set());
     setConfirmModal(null);
+    // Collapse the system prompt panel so the previous session's prompt
+    // doesn't briefly render under the new session's header while the
+    // refetch is in flight (gcTime keeps the prior data around for 30s).
+    setSystemPromptOpen(false);
   }, [activeSessionId]);
 
   // If the persisted session id no longer exists (e.g. account was purged

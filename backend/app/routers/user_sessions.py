@@ -16,7 +16,6 @@ from backend.app.agent.tool_assembly import build_initial_turn_tools
 from backend.app.agent.tool_summary import append_receipts
 from backend.app.auth.dependencies import get_current_user
 from backend.app.database import get_db
-from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, Message, User
 from backend.app.schemas import (
     BatchDeleteRequest,
@@ -144,32 +143,27 @@ async def get_session_system_prompt(
     onboarding status, tool availability) so the UI doesn't show a
     stale snapshot from the first turn of the session.
 
-    Two intentional approximations:
+    Known approximations:
 
-    * The memory section is query-driven; we use the most recent
-      inbound message body as the query because we can't see what the
-      user is about to type. If the next message is on a different
-      topic, the memory snippets here will under-represent what the
-      LLM actually retrieves.
-    * Specialist tool guidelines appended mid-turn (when the LLM calls
-      ``list_capabilities`` to activate a category) are not included.
-      The preview matches the start-of-turn tool list, mirroring how
+    * The preview omits specialist tool guidelines that get appended
+      mid-turn when the LLM calls ``list_capabilities`` to activate a
+      category. It matches the start-of-turn tool list, mirroring how
       the agent itself starts each turn fresh.
+    * Tools whose factories require a storage backend or an outbound
+      publish hook (currently ``send_media_reply`` and
+      ``upload_to_storage``) are filtered out by the registry's
+      dependency gates because the preview can't safely construct
+      those runtime hooks. Their usage hints will not appear in the
+      Tool Guidelines section.
+    * If a user's ``BOOTSTRAP.md`` cannot be created on disk by the
+      runtime (rare, requires an OS-level error), the runtime drops
+      out of onboarding mode while this preview still reports
+      ``is_onboarding=true`` based on the in-memory heuristic.
     """
     store = get_session_store(current_user.id)
     session = store.load_session(session_id)
     if session is None:
         raise HTTPException(status_code=404, detail="Session not found")
-
-    # Memory retrieval is query-driven, so use the most recent inbound
-    # message as the query. Without a query the memory section degrades
-    # to an empty list, which under-represents what the next turn will
-    # see if the user follows up on the same topic.
-    message_context = ""
-    for msg in reversed(session.messages):
-        if msg.direction == MessageDirection.INBOUND and msg.body:
-            message_context = msg.body
-            break
 
     is_onboarding = is_in_onboarding_flow(current_user)
     tools = await build_initial_turn_tools(current_user, channel=session.channel)
@@ -177,10 +171,17 @@ async def get_session_system_prompt(
     if is_onboarding:
         system_prompt = build_onboarding_system_prompt(current_user, tools=tools)
     else:
+        # build_memory_section currently ignores its query parameter
+        # (it returns the full MEMORY.md), so we pass an empty string
+        # rather than scanning session messages for a "best query" that
+        # would be discarded. If memory ever becomes query-driven, the
+        # endpoint should pass a real query (e.g. the last inbound
+        # message body) so the preview reflects what the next turn
+        # would retrieve.
         system_prompt = await build_agent_system_prompt(
             current_user,
             tools,
-            message_context,
+            message_context="",
             current_session_id=session.session_id,
         )
 
