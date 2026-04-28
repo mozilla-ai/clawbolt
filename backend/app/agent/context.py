@@ -8,6 +8,7 @@ from typing import Any
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from backend.app.agent.approval import _parse_approval_response
 from backend.app.agent.compaction import compact_session
 from backend.app.agent.dto import SessionState
 from backend.app.agent.messages import (
@@ -23,6 +24,12 @@ from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
+
+# Canonical trailer that ``format_approval_message`` appends to every
+# system-issued approval prompt. Used to identify approval-prompt rows
+# in stored history so they can be filtered out before the LLM sees
+# them. See the comment in ``load_history`` for why.
+_APPROVAL_PROMPT_TRAILER = "Reply yes or no (always/never to remember your choice)"
 
 DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 
@@ -297,10 +304,21 @@ async def load_conversation_history(
 
     history: list[AgentMessage] = []
     tool_interaction_count = 0
+    last_was_approval_prompt = False
     for msg in messages:
         # Prefer processed context (includes media descriptions) over raw body
         content = msg.processed_context if msg.processed_context else msg.body
         if msg.direction == MessageDirection.INBOUND:
+            # Drop the user's approval reply ("Yes", "Always", ...) when it
+            # immediately follows a (now-filtered) approval prompt. Without
+            # this, the orphan reply floats in history with no antecedent
+            # and risks confusing the LLM. We only filter the strict
+            # fast-path keyword set so a stray "Yes" in normal conversation
+            # is preserved.
+            if last_was_approval_prompt and _parse_approval_response(content) is not None:
+                last_was_approval_prompt = False
+                continue
+            last_was_approval_prompt = False
             history.append(UserMessage(content=content))
         else:
             # Check for stored tool interactions
@@ -308,8 +326,18 @@ async def load_conversation_history(
             if tool_interactions:
                 tool_interaction_count += len(tool_interactions)
                 history.extend(_expand_outbound_with_tools(tool_interactions, content))
+                last_was_approval_prompt = False
+            elif content.rstrip().endswith(_APPROVAL_PROMPT_TRAILER):
+                # Skip approval prompts (real ones persisted by older code,
+                # plus any LLM-generated fake prompts that mimic the format).
+                # Persisted prompts in past turns trained the LLM to produce
+                # them as prose instead of calling tools, creating an
+                # infinite-loop UX bug. Filtering at load time heals
+                # already-poisoned sessions without a DB migration.
+                last_was_approval_prompt = True
             else:
                 history.append(AssistantMessage(content=content))
+                last_was_approval_prompt = False
     logger.debug(
         "Loaded %d history messages (%d with tool interactions) for session %s",
         len(history),
