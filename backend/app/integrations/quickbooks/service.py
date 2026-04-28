@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Callable
 from typing import Any
@@ -150,7 +151,11 @@ class QuickBooksOnlineService(QuickBooksService):
 
     async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
         path = f"/{entity_type.lower()}"
-        result = await self._request("POST", path, json=data)
+        # Pass a stable requestid so any retry (401 refresh path or transport-level)
+        # is deduped by QBO instead of producing a second entity.
+        result = await self._request(
+            "POST", path, json=data, params={"requestid": uuid.uuid4().hex}
+        )
         # QBO wraps the created entity under the entity type key
         return result.get(entity_type, result)
 
@@ -158,7 +163,9 @@ class QuickBooksOnlineService(QuickBooksService):
         # QBO uses the same POST endpoint for create and update.
         # The presence of Id + SyncToken in the payload triggers an update.
         path = f"/{entity_type.lower()}"
-        result = await self._request("POST", path, json=data)
+        result = await self._request(
+            "POST", path, json=data, params={"requestid": uuid.uuid4().hex}
+        )
         return result.get(entity_type, result)
 
     async def send_entity_email(
@@ -175,5 +182,5 @@ class QuickBooksOnlineService(QuickBooksService):
         return await self._request(
             "POST",
             f"/{entity_type.lower()}/{entity_id.strip()}/send",
-            params={"sendTo": email},
+            params={"sendTo": email, "requestid": uuid.uuid4().hex},
         )
