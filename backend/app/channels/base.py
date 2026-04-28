@@ -12,6 +12,7 @@ from fastapi.responses import JSONResponse
 
 from backend.app.agent.stores import get_idempotency_store
 from backend.app.bus import message_bus
+from backend.app.channels.unknown_sender import reply_to_unknown_sender
 from backend.app.media.download import DownloadedMedia
 
 if TYPE_CHECKING:
@@ -188,6 +189,7 @@ async def handle_webhook_inbound(
             "%s: sender not in allowlist, ignoring",
             channel.name,
         )
+        await reply_to_unknown_sender(channel, inbound.sender_id)
         return JSONResponse(content={"ok": True})
 
     if on_accepted is not None:

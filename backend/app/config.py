@@ -85,6 +85,11 @@ class Settings(BaseSettings):
     webhook_rate_limit_window_seconds: int = Field(default=60, ge=1)
     rate_limit_trust_proxy: bool = False
 
+    # Unknown-sender reply (sent when a non-allowlisted number messages us;
+    # rate-limited per sender so we can't be used as a spam relay).
+    unknown_sender_signup_url: str = ""
+    unknown_sender_reply_cooldown_seconds: int = Field(default=86_400, ge=0)
+
     # Media
     max_media_size_bytes: int = Field(default=20_971_520, ge=1)  # 20 MB
     # Hard wall-time ceiling for any single media download. Guards against
