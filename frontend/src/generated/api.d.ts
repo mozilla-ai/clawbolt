@@ -586,11 +586,24 @@ export interface paths {
          *
          *     Reconstructed live from current user state (profile, soul, memory,
          *     onboarding status, tool availability) so the UI doesn't show a
-         *     stale snapshot from the first turn of the session. The prompt
-         *     matches what the agent will actually send the next time the user
-         *     posts a message in this session, modulo specialist tool guidelines
-         *     that get appended mid-turn when ``list_capabilities`` activates a
-         *     category.
+         *     stale snapshot from the first turn of the session.
+         *
+         *     Known approximations:
+         *
+         *     * The preview omits specialist tool guidelines that get appended
+         *       mid-turn when the LLM calls ``list_capabilities`` to activate a
+         *       category. It matches the start-of-turn tool list, mirroring how
+         *       the agent itself starts each turn fresh.
+         *     * Tools whose factories require a storage backend or an outbound
+         *       publish hook (currently ``send_media_reply``,
+         *       ``upload_to_storage``, and ``organize_file``) are filtered out
+         *       by the registry's dependency gates because the preview can't
+         *       safely construct those runtime hooks. Their usage hints will
+         *       not appear in the Tool Guidelines section.
+         *     * If a user's ``BOOTSTRAP.md`` cannot be created on disk by the
+         *       runtime (rare, requires an OS-level error), the runtime drops
+         *       out of onboarding mode while this preview still reports
+         *       ``is_onboarding=true`` based on the in-memory heuristic.
          */
         get: operations["get_session_system_prompt_api_user_sessions__session_id__system_prompt_get"];
         put?: never;

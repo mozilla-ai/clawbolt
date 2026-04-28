@@ -150,11 +150,11 @@ async def get_session_system_prompt(
       category. It matches the start-of-turn tool list, mirroring how
       the agent itself starts each turn fresh.
     * Tools whose factories require a storage backend or an outbound
-      publish hook (currently ``send_media_reply`` and
-      ``upload_to_storage``) are filtered out by the registry's
-      dependency gates because the preview can't safely construct
-      those runtime hooks. Their usage hints will not appear in the
-      Tool Guidelines section.
+      publish hook (currently ``send_media_reply``,
+      ``upload_to_storage``, and ``organize_file``) are filtered out
+      by the registry's dependency gates because the preview can't
+      safely construct those runtime hooks. Their usage hints will
+      not appear in the Tool Guidelines section.
     * If a user's ``BOOTSTRAP.md`` cannot be created on disk by the
       runtime (rare, requires an OS-level error), the runtime drops
       out of onboarding mode while this preview still reports
