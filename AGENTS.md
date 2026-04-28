@@ -89,6 +89,22 @@ Until this project has its first production release, you do not need to be conce
 - Never use em dashes in user-facing content, comments, or copy -- use periods, commas, colons, or pipes instead
 - All imports at the top of the file. No inline or deferred imports inside functions. The only exception is `TYPE_CHECKING` guarded imports.
 
+## Privacy & PII
+
+**Never write down real names or real personal information anywhere that gets persisted or shared.** This includes, but is not limited to:
+
+- Source code (comments, docstrings, string literals, variable names)
+- Tests and test fixtures (use obviously fake names like `Alice`, `Bob`, `Test User`, or domain-appropriate placeholders)
+- Documentation (READMEs, AGENTS.md, CLAUDE.md, SKILL.md, user guides, design docs)
+- Commit messages, branch names, and PR titles/descriptions/comments
+- GitHub issues, discussions, and any other public artifact
+- Migration files, seed data, and example payloads
+- Logs, error messages, and debug output that may be checked in
+
+Real PII to avoid: real customer/user names, real phone numbers, real email addresses, real addresses, real business names from customer data, real Telegram handles or chat IDs, real OAuth tokens or API keys.
+
+When you need realistic-looking data, use clearly synthetic values: `jane.doe@example.com`, `+15555550123`, `Acme Plumbing`, UUIDs, or `faker`-style placeholders. If you encounter real PII in a debugging session or pasted content, scrub it before committing or pushing anything to GitHub.
+
 ## Testing
 
 - pytest with FastAPI `TestClient`
