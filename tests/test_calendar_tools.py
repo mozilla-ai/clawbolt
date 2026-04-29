@@ -16,6 +16,7 @@ from backend.app.integrations.calendar.factory import (
     _resolve_tz,
     create_calendar_tools,
 )
+from backend.app.integrations.calendar.provider import CalendarEventCreate, CalendarEventData
 from backend.app.models import User
 from tests.mocks.google_calendar import MockGoogleCalendarService
 
@@ -461,6 +462,65 @@ async def test_create_event_happy_path(cal_tools: list[Tool]) -> None:
     assert result.is_error is False
     assert "Event created" in result.content
     assert "Test - Plumbing" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_create_event_passes_reminder_minutes_through(
+    cal_service: MockGoogleCalendarService,
+) -> None:
+    """The tool must forward reminder_minutes_before to the service (#1067).
+
+    This is the path the agent takes for 'remind me at 2pm': start=2pm,
+    reminder_minutes_before=0. The popup must be wired all the way through
+    to the CalendarEventCreate DTO, not silently dropped.
+    """
+    captured: dict[str, object] = {}
+    original = cal_service.create_event
+
+    async def spy(calendar_id: str, event: CalendarEventCreate) -> CalendarEventData:
+        captured["reminder_minutes_before"] = event.reminder_minutes_before
+        return await original(calendar_id, event)
+
+    cal_service.create_event = spy  # type: ignore[assignment]
+
+    tools = create_calendar_tools(cal_service)
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Call client",
+        start="2026-03-28T14:00:00",
+        end="2026-03-28T14:05:00",
+        reminder_minutes_before=0,
+    )
+    assert result.is_error is False
+    assert captured["reminder_minutes_before"] == 0
+
+
+@pytest.mark.asyncio()
+async def test_create_event_default_reminder_is_none(
+    cal_service: MockGoogleCalendarService,
+) -> None:
+    """When reminder_minutes_before is not passed it must default to None.
+
+    None tells the service not to set a `reminders` override on the API
+    body, which preserves the user's Google Calendar default reminders.
+    """
+    captured: dict[str, object] = {}
+    original = cal_service.create_event
+
+    async def spy(calendar_id: str, event: CalendarEventCreate) -> CalendarEventData:
+        captured["reminder_minutes_before"] = event.reminder_minutes_before
+        return await original(calendar_id, event)
+
+    cal_service.create_event = spy  # type: ignore[assignment]
+
+    tools = create_calendar_tools(cal_service)
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    await tool.function(
+        title="T",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert captured["reminder_minutes_before"] is None
 
 
 @pytest.mark.asyncio()

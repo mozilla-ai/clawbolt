@@ -38,6 +38,7 @@ class CalendarEventCreate(BaseModel):
     description: str = ""
     location: str = ""
     all_day: bool = False
+    reminder_minutes_before: int | None = None
 
 
 class CalendarEventUpdate(BaseModel):

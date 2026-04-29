@@ -430,8 +430,14 @@ class TestAgentSystemPromptExcludesTime:
 
 class TestBuildTimeUserContext:
     @patch("backend.app.agent.system_prompt.datetime")
-    def test_includes_time_without_timezone_label(self, mock_dt: MagicMock) -> None:
-        """Should produce a bracketed time string without timezone abbreviation."""
+    def test_includes_time_with_iana_timezone(self, mock_dt: MagicMock) -> None:
+        """Should produce a bracketed time string ending with the IANA timezone.
+
+        The timezone name anchors relative-time math: without it, the LLM
+        has been observed treating local times as UTC and producing wrong
+        deltas (e.g. saying 7:30am is "minutes from now" when local was
+        6:27am). Issue #1067.
+        """
         mock_dt.UTC = datetime.UTC
         mock_dt.datetime.now.return_value = datetime.datetime(
             2025, 6, 15, 17, 30, tzinfo=datetime.UTC
@@ -439,7 +445,7 @@ class TestBuildTimeUserContext:
         user = MagicMock()
         user.timezone = "America/New_York"
         result = build_time_user_context(user)
-        assert result == "[Current time: Sunday, 2025-06-15 01:30 PM]"
+        assert result == "[Current time: Sunday, 2025-06-15 01:30 PM (America/New_York)]"
 
     @patch("backend.app.agent.system_prompt.datetime")
     def test_utc_fallback_when_no_timezone(self, mock_dt: MagicMock) -> None:
@@ -452,9 +458,8 @@ class TestBuildTimeUserContext:
         user.timezone = ""
         result = build_time_user_context(user)
         assert "[Current time:" in result
+        assert "(UTC)" in result
         assert "No timezone has been configured yet" in result
-        assert "EDT" not in result
-        assert "UTC" not in result
 
 
 class TestCrossSessionContext:
