@@ -118,8 +118,7 @@ class QBCreateParams(BaseModel):
     )
     data: dict[str, Any] = Field(
         description=(
-            "QBO API payload for the entity as a JSON object (not a JSON-encoded string). "
-            "See SKILL.md for payload formats."
+            "QBO API payload for the entity as a JSON object. See SKILL.md for payload formats."
         )
     )
 
@@ -134,7 +133,7 @@ class QBUpdateParams(BaseModel):
     )
     data: dict[str, Any] = Field(
         description=(
-            "Full QBO API payload as a JSON object (not a JSON-encoded string), "
+            "Full QBO API payload as a JSON object, "
             "including Id and SyncToken from a prior qb_query. "
             "See SKILL.md for payload formats."
         )
