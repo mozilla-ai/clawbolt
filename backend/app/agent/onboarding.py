@@ -52,29 +52,28 @@ def _user_dir(user: User) -> Path:
 def _has_real_user_profile(user: User) -> bool:
     """Return True if user_text contains a filled-in name field.
 
-    The default template has ``- Name:`` with no value. If the LLM has
-    written a real name (e.g. ``- Name: Nathan``), the user has been
-    through the onboarding conversation even if BOOTSTRAP.md was never
-    deleted.
+    The default template has ``- Name:`` with no value. The LLM is free
+    to rewrite user_text and frequently picks a flat heading-style
+    format (``Name: X``) instead of the bulleted default. Both shapes
+    count as evidence that onboarding has progressed past the opening.
     """
     content = user.user_text or ""
     if not content:
         return False
-    return bool(re.search(r"^-\s*Name:[ \t]+\S", content, re.MULTILINE))
+    return bool(re.search(r"^[ \t]*-?[ \t]*Name:[ \t]+\S", content, re.MULTILINE))
 
 
 def _has_user_timezone(user: User) -> bool:
-    """Return True if user_text contains a filled-in Timezone field.
+    """Return True if the user has a populated timezone.
 
-    The default template has ``- Timezone:`` with no value. Timezone is
-    one of the two strictly-required fields per the bootstrap prompt
-    (load-bearing for scheduling and heartbeat timing), so its presence
+    Prefers the ``users.timezone`` column over text-grepping ``user_text``:
+    the column is the authoritative source (set via ``PUT /user/profile``
+    from the dashboard or browser onboarding flow), while user_text is
+    a free-form summary the LLM may rewrite into any format. Timezone
+    is load-bearing for scheduling and heartbeat timing, so its presence
     is strong evidence that onboarding has progressed past the opening.
     """
-    content = user.user_text or ""
-    if not content:
-        return False
-    return bool(re.search(r"^-\s*Timezone:[ \t]+\S", content, re.MULTILINE))
+    return bool((user.timezone or "").strip())
 
 
 def _has_custom_soul(user: User) -> bool:

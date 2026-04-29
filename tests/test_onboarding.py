@@ -93,7 +93,8 @@ def test_is_onboarding_needed_no_selfheal_when_heuristic_complete() -> None:
         id="2b",
         user_id="truly-prepopulated",
         phone="+15550002223",
-        user_text="# User\n\n- Name: Nathan\n- Timezone: America/New_York\n- Trade: GC\n",
+        timezone="America/New_York",
+        user_text="# User\n\n- Name: Alice\n- Timezone: America/New_York\n- Trade: GC\n",
         soul_text="# Soul\n\nDirect and practical, no fluff.",
     )
     cdir = Path(settings.data_dir) / str(user.id)
@@ -448,7 +449,7 @@ async def test_prepopulated_user_gets_onboarding_complete(
     a genuinely empty profile still go through onboarding (via the
     is_onboarding_needed self-heal).
     """
-    user_md = "# User\n\n- Name: Nathan\n- Timezone: America/New_York\n- Trade: GC\n"
+    user_md = "# User\n\n- Name: Alice\n- Timezone: America/New_York\n- Trade: GC\n"
     soul_md = "# Soul\n\nDirect and practical."
     db = _db_module.SessionLocal()
     try:
@@ -458,6 +459,7 @@ async def test_prepopulated_user_gets_onboarding_complete(
                 user_id="prepopulated-user",
                 channel_identifier="888888888",
                 preferred_channel="telegram",
+                timezone="America/New_York",
                 user_text=user_md,
                 soul_text=soul_md,
             )
@@ -471,6 +473,7 @@ async def test_prepopulated_user_gets_onboarding_complete(
         user_id="prepopulated-user",
         channel_identifier="888888888",
         preferred_channel="telegram",
+        timezone="America/New_York",
         onboarding_complete=False,
         user_text=user_md,
         soul_text=soul_md,
@@ -602,7 +605,7 @@ async def test_prepopulated_user_included_in_heartbeat(
     """User without BOOTSTRAP.md should be eligible for heartbeat after first message."""
     from backend.app.agent.heartbeat import HeartbeatDecision, run_heartbeat_for_user
 
-    user_md = "# User\n\n- Name: Jake\n- Timezone: America/Denver\n- Trade: roofer\n"
+    user_md = "# User\n\n- Name: Alice\n- Timezone: America/Denver\n- Trade: roofer\n"
     soul_md = "# Soul\n\nFriendly and direct."
     db = _db_module.SessionLocal()
     try:
@@ -613,6 +616,7 @@ async def test_prepopulated_user_included_in_heartbeat(
                 phone="+15550009999",
                 channel_identifier="777777777",
                 preferred_channel="telegram",
+                timezone="America/Denver",
                 heartbeat_text="- Check weather for outdoor jobs",
                 user_text=user_md,
                 soul_text=soul_md,
@@ -628,6 +632,7 @@ async def test_prepopulated_user_included_in_heartbeat(
         phone="+15550009999",
         channel_identifier="777777777",
         preferred_channel="telegram",
+        timezone="America/Denver",
         onboarding_complete=False,
         user_text=user_md,
         soul_text=soul_md,
@@ -764,7 +769,14 @@ class TestHasRealUserProfile:
 
     def test_filled_name_field(self) -> None:
         user = User(id="102", user_id="filled-name")
-        _write_user_md(user, "# User\n\n- Name: Nathan\n- Trade: GC\n")
+        _write_user_md(user, "# User\n\n- Name: Alice\n- Trade: GC\n")
+        assert _has_real_user_profile(user) is True
+
+    def test_filled_name_flat_format(self) -> None:
+        """LLM may rewrite user_text into a flat heading-style format
+        without dashes. Both shapes count as evidence of a real profile."""
+        user = User(id="104", user_id="flat-name")
+        _write_user_md(user, "# User Profile\n\nName: Alice\nBusiness: Acme LLC\n")
         assert _has_real_user_profile(user) is True
 
     def test_default_template(self) -> None:
@@ -778,18 +790,23 @@ class TestHasRealUserProfile:
 class TestHasUserTimezone:
     """Tests for _has_user_timezone heuristic."""
 
-    def test_no_user_md(self) -> None:
-        user = User(id="105", user_id="no-tz-md")
+    def test_no_timezone_set(self) -> None:
+        user = User(id="105", user_id="no-tz")
         assert _has_user_timezone(user) is False
 
-    def test_empty_timezone_field(self) -> None:
+    def test_empty_timezone(self) -> None:
         user = User(id="106", user_id="empty-tz")
-        _write_user_md(user, "# User\n\n- Name: Jake\n- Timezone:\n")
+        user.timezone = ""
         assert _has_user_timezone(user) is False
 
-    def test_filled_timezone_field(self) -> None:
+    def test_whitespace_only_timezone(self) -> None:
+        user = User(id="108", user_id="whitespace-tz")
+        user.timezone = "   "
+        assert _has_user_timezone(user) is False
+
+    def test_filled_timezone(self) -> None:
         user = User(id="107", user_id="filled-tz")
-        _write_user_md(user, "# User\n\n- Name: Jake\n- Timezone: America/Denver\n")
+        user.timezone = "America/Denver"
         assert _has_user_timezone(user) is True
 
 
@@ -847,16 +864,28 @@ class TestIsOnboardingCompleteHeuristic:
 
     def test_name_and_soul_without_timezone_is_not_enough(self) -> None:
         user = User(id="123", user_id="name-and-soul")
-        _write_user_md(user, "# User\n\n- Name: Jake\n")
+        _write_user_md(user, "# User\n\n- Name: Alice\n")
         _write_soul_md(user, "# Soul\n\nCustom personality.")
         assert is_onboarding_complete_heuristic(user) is False
 
     def test_name_timezone_and_soul(self) -> None:
         user = User(id="124", user_id="all-three")
+        _write_user_md(user, "# User\n\n- Name: Alice\n- Trade: roofer\n")
+        user.timezone = "America/New_York"
+        _write_soul_md(user, "# Soul\n\nCustom personality.")
+        assert is_onboarding_complete_heuristic(user) is True
+
+    def test_flat_format_user_text_with_db_timezone(self) -> None:
+        """The combined heuristic must pass for the real-world case: LLM
+        writes user_text in flat format and the timezone column is
+        populated by the dedicated TZ tool. Regression test for the bug
+        that left first-user stuck on 'pending' despite a complete profile."""
+        user = User(id="125", user_id="flat-with-db-tz")
         _write_user_md(
             user,
-            "# User\n\n- Name: Jake\n- Timezone: America/New_York\n- Trade: roofer\n",
+            "# User Profile\n\nName: Alice\nBusiness: Acme LLC\nTrade: GC\n",
         )
+        user.timezone = "America/New_York"
         _write_soul_md(user, "# Soul\n\nCustom personality.")
         assert is_onboarding_complete_heuristic(user) is True
 
@@ -867,8 +896,9 @@ def test_is_onboarding_needed_heuristic_override() -> None:
     _create_bootstrap(user)
     _write_user_md(
         user,
-        "# User\n\n- Name: Nathan\n- Timezone: America/New_York\n- Trade: GC\n",
+        "# User\n\n- Name: Alice\n- Trade: GC\n",
     )
+    user.timezone = "America/New_York"
     _write_soul_md(user, "# Soul\n\nDirect and practical.")
     # BOOTSTRAP.md exists, but heuristic detects completed onboarding
     assert is_onboarding_needed(user) is False
@@ -897,12 +927,16 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     """
     db = _db_module.SessionLocal()
     try:
+        # Timezone is set via the dashboard / browser PUT /user/profile flow,
+        # not by an in-conversation tool. Pre-populate it so the heuristic
+        # has the timezone signal it expects from the DB column.
         db.add(
             User(
                 id="140",
                 user_id="sidetracked-user",
                 channel_identifier="555555555",
                 preferred_channel="telegram",
+                timezone="America/New_York",
             )
         )
         db.commit()
@@ -914,6 +948,7 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
         user_id="sidetracked-user",
         channel_identifier="555555555",
         preferred_channel="telegram",
+        timezone="America/New_York",
         onboarding_complete=False,
     )
     _create_bootstrap(user)
