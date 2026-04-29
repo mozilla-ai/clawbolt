@@ -11,12 +11,18 @@ Covers:
 
 from __future__ import annotations
 
+import base64
+import importlib.util
 import secrets
 import uuid
 from collections.abc import Generator
+from pathlib import Path
 from typing import cast
 
 import pytest
+from cryptography.fernet import Fernet
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.kdf.hkdf import HKDF
 
 import backend.app.auth.loader as auth_loader
 import backend.app.database as _db_module
@@ -30,6 +36,32 @@ from backend.app.security.encryption import (
     encrypt,
     is_envelope,
 )
+
+
+def _load_migration_018():  # noqa: ANN202
+    """Load migration 018 by file path because module names cannot start with a digit."""
+    spec = importlib.util.spec_from_file_location(
+        "migration_018",
+        Path(__file__).parent.parent
+        / "alembic"
+        / "versions"
+        / "018_envelope_encrypt_oauth_tokens.py",
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _legacy_fernet_for(key_material: bytes) -> Fernet:
+    """Reproduce the pre-envelope HKDF/Fernet derivation for tests."""
+    hkdf = HKDF(
+        algorithm=hashes.SHA256(),
+        length=32,
+        salt=None,
+        info=b"oauth-token-encryption",
+    )
+    return Fernet(base64.urlsafe_b64encode(hkdf.derive(key_material)))
 
 
 @pytest.fixture()
@@ -208,30 +240,14 @@ def test_get_kek_provider_defaults_to_local() -> None:
         auth_loader.reset_kek_provider()
 
 
-def test_migration_018_rekey_helper_round_trip() -> None:
-    """The migration's ``_rekey`` helper turns a pre-envelope value into
-    an envelope that decrypts back to the original plaintext.
-
-    Imports the migration via importlib because module names starting
-    with a digit aren't valid Python identifiers.
+def test_migration_018_rekey_helper_plaintext_path() -> None:
+    """When the pre-envelope deployment had ``ENCRYPTION_KEY`` unset,
+    rows were stored as plaintext. ``_rekey`` should pass them through
+    to envelope encryption with no decryption attempt.
     """
-    import importlib.util
-    from pathlib import Path
-
-    spec = importlib.util.spec_from_file_location(
-        "migration_018",
-        Path(__file__).parent.parent
-        / "alembic"
-        / "versions"
-        / "018_envelope_encrypt_oauth_tokens.py",
-    )
-    assert spec and spec.loader
-    migration = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migration)
-
+    migration = _load_migration_018()
     provider = LocalKEKProvider()
-    # Pre-envelope plaintext (the path taken when ENCRYPTION_KEY was unset
-    # in the prior deployment). legacy=None signals "row is plaintext."
+
     rekeyed = migration._rekey("plain-access", None, provider, "access_token")
     assert isinstance(rekeyed, str)
     assert rekeyed.startswith(ENVELOPE_PREFIX + ".")
@@ -246,3 +262,66 @@ def test_migration_018_rekey_helper_round_trip() -> None:
     # Empty / None rows are skipped.
     assert migration._rekey("", None, provider, "access_token") == ""
     assert migration._rekey(None, None, provider, "access_token") is None
+
+
+def test_migration_018_decrypts_legacy_fernet_then_rekeys() -> None:
+    """The branch that takes a pre-envelope Fernet ciphertext, decrypts
+    it with the legacy HKDF derivation, and re-encrypts under the new
+    envelope. This is the path most rows take in a real deployment that
+    had ``ENCRYPTION_KEY`` set; the plaintext fallback only fires when
+    the prior deployment ran without a key.
+
+    Round-trip assertion: a row encrypted by the old code path decrypts
+    via ``_rekey`` to the original plaintext, with the new envelope as
+    the surface form.
+    """
+    migration = _load_migration_018()
+
+    # Build a legacy Fernet matching the pre-envelope derivation, encrypt
+    # a token under it, and confirm the ciphertext is not envelope-shaped.
+    key_material = secrets.token_bytes(32)
+    legacy = _legacy_fernet_for(key_material)
+    legacy_ciphertext = legacy.encrypt(b"legacy-access-token").decode()
+    assert not is_envelope(legacy_ciphertext)
+
+    # The new KEK provider must use the same key material so its derived
+    # KEK can wrap DEKs that downstream reads will unwrap. (The legacy
+    # and new HKDF info parameters differ, so the keys themselves are
+    # distinct even when the input material is shared.)
+    provider = LocalKEKProvider(key_material=key_material)
+    rekeyed = migration._rekey(legacy_ciphertext, legacy, provider, "access_token")
+
+    assert is_envelope(rekeyed)
+    assert (
+        decrypt(rekeyed, provider, {"table": "oauth_tokens", "column": "access_token"})
+        == "legacy-access-token"
+    )
+
+
+def test_migration_018_falls_back_to_plaintext_on_invalid_legacy_token() -> None:
+    """If a row's ciphertext fails to decrypt under the configured
+    legacy key (``InvalidToken``), the migration treats it as plaintext.
+
+    Documents the behavior so a future change can't silently regress to
+    raising. The realistic path here is "row was stored as plaintext
+    before the operator set ENCRYPTION_KEY"; the dangerous path is
+    "ENCRYPTION_KEY was rotated since the row was written," which would
+    re-encrypt unrecoverable ciphertext as if it were plaintext. The
+    migration's no-downgrade docstring calls out backup-restore as the
+    recovery path for that case.
+    """
+    migration = _load_migration_018()
+
+    legacy = _legacy_fernet_for(secrets.token_bytes(32))
+    provider = LocalKEKProvider(key_material=secrets.token_bytes(32))
+
+    # Pass a value that isn't valid Fernet ciphertext. Legacy decryption
+    # will raise InvalidToken; _decrypt_legacy returns the value as-is;
+    # _rekey envelope-encrypts that string verbatim.
+    rekeyed = migration._rekey("not-a-fernet-token", legacy, provider, "access_token")
+
+    assert is_envelope(rekeyed)
+    assert (
+        decrypt(rekeyed, provider, {"table": "oauth_tokens", "column": "access_token"})
+        == "not-a-fernet-token"
+    )
