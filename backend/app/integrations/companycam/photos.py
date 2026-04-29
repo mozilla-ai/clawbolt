@@ -217,7 +217,7 @@ def build_photo_tools(service: CompanyCamService, ctx: ToolContext) -> list[Tool
         if status == "pending":
             status_note = " (still processing, may take a moment to appear)"
         return ToolResult(
-            content=f"Photo uploaded to CompanyCam project {project_id}: {app_url}{status_note}",
+            content=f"Photo uploaded to CompanyCam project {project_id}{status_note}.",
             receipt=ToolReceipt(
                 action="Uploaded photo to CompanyCam",
                 target=photo_target(photo),

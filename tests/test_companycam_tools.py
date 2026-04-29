@@ -1130,8 +1130,12 @@ async def test_receipt_upload_photo_uses_app_url() -> None:
 
     _assert_receipt_clean(result.receipt, expect_url=True)
     assert "photos/39951388" in result.receipt.url
-    # Content shown to the LLM should also use the app URL, not the CDN URL
+    # Content shown to the LLM should not surface the CDN URL.
     assert "img.companycam.com" not in result.content
+    # Regression #1069: the receipt URL must not appear in the content
+    # string. Inlining it teaches the LLM to mimic the URL in prose,
+    # which the receipts appender then duplicates.
+    assert result.receipt.url not in result.content
 
 
 @pytest.mark.asyncio()
@@ -1301,3 +1305,252 @@ async def test_receipt_rendered_output_has_no_raw_ids() -> None:
 
     # Block stays compact (grouping saves lines).
     assert len(block) < 500
+
+
+# ---------------------------------------------------------------------------
+# Invariant: ToolResult.content must not contain ToolReceipt.url
+# ---------------------------------------------------------------------------
+#
+# Regression for #1069. The receipt is the canonical channel for surfacing
+# deep links on plain-text channels: the receipts appender adds the URL to
+# the outbound reply at dispatch. If a tool also embeds the URL in
+# ToolResult.content, the LLM sees it and reproduces it in prose, so the
+# user receives the same URL twice.
+
+
+from backend.app.agent.tools.base import ToolResult  # noqa: E402
+
+
+def _assert_no_url_duplication(result: ToolResult) -> None:
+    """If a tool sets ToolReceipt(url=...), that URL must not also appear
+    in ToolResult.content."""
+    if result.receipt is not None and result.receipt.url:
+        assert result.receipt.url not in result.content, (
+            "tool result inlined receipt URL into content "
+            f"(content={result.content!r}, url={result.receipt.url!r})"
+        )
+
+
+async def _run_companycam_receipt_tools() -> list[ToolResult]:
+    """Build every CompanyCam tool that returns a receipt-with-URL and
+    return the ToolResult from invoking it. Used by the invariant test
+    below to assert the no-duplication rule across the full surface."""
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import (
+        Checklist,
+        Comment,
+        ImageURI,
+        Photo,
+        Project,
+        Tag,
+    )
+    from backend.app.media.download import DownloadedMedia
+
+    service = MagicMock(spec=CompanyCamService)
+    service.create_project = AsyncMock(
+        return_value=Project.model_validate(
+            {
+                "id": "94772883",
+                "name": "Smith Residence",
+                "project_url": "https://app.companycam.com/projects/94772883",
+            }
+        )
+    )
+    service.update_project = AsyncMock(
+        return_value=Project.model_validate(
+            {
+                "id": "94772883",
+                "name": "Smith Residence",
+                "project_url": "https://app.companycam.com/projects/94772883",
+            }
+        )
+    )
+    service.archive_project = AsyncMock(return_value=None)
+    service.update_notepad = AsyncMock(return_value=None)
+    service.add_project_comment = AsyncMock(
+        return_value=Comment.model_validate({"id": "555", "content": "All demo done"})
+    )
+    service.add_photo_tags = AsyncMock(
+        return_value=[Tag.model_validate({"id": "1", "display_value": "kitchen"})]
+    )
+    service.create_project_checklist = AsyncMock(
+        return_value=Checklist.model_validate({"id": "777", "name": "Roof"})
+    )
+    service.upload_photo = AsyncMock(
+        return_value=Photo(
+            id="39951388",
+            description="",
+            processing_status="processed",
+            uris=[ImageURI(type="original", uri="https://img.companycam.com/abc.jpg")],
+        )
+    )
+
+    ctx = MagicMock()
+    ctx.user.id = "test-user"
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url="https://example.com/photo.jpg",
+            filename="photo.jpg",
+        )
+    ]
+
+    project_tools = build_project_tools(service)
+    checklist_tools = build_checklist_tools(service)
+
+    with (
+        patch(
+            "backend.app.services.webhook.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.routers.media_temp.create_temp_media_url",
+            return_value="https://tunnel.example.com/media/tmp/abc",
+        ),
+    ):
+        photo_tools = build_photo_tools(service, ctx)
+        upload_result = await _get_tool(photo_tools, ToolName.COMPANYCAM_UPLOAD_PHOTO).function(
+            project_id="94772883"
+        )
+
+    results: list[ToolResult] = [
+        await _get_tool(project_tools, ToolName.COMPANYCAM_CREATE_PROJECT).function(
+            name="Smith Residence", address=""
+        ),
+        await _get_tool(project_tools, ToolName.COMPANYCAM_UPDATE_PROJECT).function(
+            project_id="94772883", name="Smith Residence"
+        ),
+        await _get_tool(project_tools, ToolName.COMPANYCAM_ARCHIVE_PROJECT).function(
+            project_id="94772883"
+        ),
+        await _get_tool(project_tools, ToolName.COMPANYCAM_UPDATE_NOTEPAD).function(
+            project_id="94772883", notepad="On track"
+        ),
+        await _get_tool(photo_tools, ToolName.COMPANYCAM_ADD_COMMENT).function(
+            target_type="project", target_id="94772883", content="Done"
+        ),
+        await _get_tool(photo_tools, ToolName.COMPANYCAM_TAG_PHOTO).function(
+            photo_id="8675309", tags=["kitchen"]
+        ),
+        await _get_tool(checklist_tools, ToolName.COMPANYCAM_CREATE_CHECKLIST).function(
+            project_id="94772883", template_id="abc"
+        ),
+        upload_result,
+    ]
+    return results
+
+
+@pytest.mark.asyncio()
+async def test_invariant_no_url_duplication_across_companycam_tools() -> None:
+    """For every CompanyCam tool returning a ToolReceipt with a URL,
+    ToolResult.content must not contain that URL. Regression for #1069."""
+    results = await _run_companycam_receipt_tools()
+    receipts_with_url = [r for r in results if r.receipt is not None and r.receipt.url]
+    assert receipts_with_url, "expected at least one tool to populate a URL receipt"
+    for result in results:
+        _assert_no_url_duplication(result)
+
+
+@pytest.mark.asyncio()
+async def test_two_photo_upload_renders_each_url_exactly_once() -> None:
+    """Regression for #1069 (seq 112): a turn that uploads two photos must
+    produce a final reply where each photo URL appears exactly once.
+
+    The LLM, having stopped seeing URLs in tool results, no longer mimics
+    them in prose, and the receipts appender supplies the canonical link.
+    """
+    from backend.app.agent.context import StoredToolInteraction, StoredToolReceipt
+    from backend.app.agent.tool_summary import append_receipts
+    from backend.app.agent.tools.names import ToolName
+    from backend.app.integrations.companycam.models import ImageURI, Photo
+    from backend.app.media.download import DownloadedMedia
+
+    service = MagicMock(spec=CompanyCamService)
+    service.upload_photo = AsyncMock(
+        side_effect=[
+            Photo(
+                id="3136949848",
+                description="",
+                processing_status="processed",
+                uris=[ImageURI(type="original", uri="https://img.companycam.com/a.jpg")],
+            ),
+            Photo(
+                id="3136949871",
+                description="",
+                processing_status="processed",
+                uris=[ImageURI(type="original", uri="https://img.companycam.com/b.jpg")],
+            ),
+        ]
+    )
+
+    ctx = MagicMock()
+    ctx.user.id = "test-user"
+    ctx.downloaded_media = [
+        DownloadedMedia(
+            content=b"fake-jpg",
+            mime_type="image/jpeg",
+            original_url="https://example.com/photo.jpg",
+            filename="photo.jpg",
+        )
+    ]
+
+    with (
+        patch(
+            "backend.app.services.webhook.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value="https://tunnel.example.com",
+        ),
+        patch(
+            "backend.app.routers.media_temp.create_temp_media_url",
+            return_value="https://tunnel.example.com/media/tmp/abc",
+        ),
+    ):
+        upload = _get_tool(build_photo_tools(service, ctx), ToolName.COMPANYCAM_UPLOAD_PHOTO)
+        result_one = await upload.function(project_id="98845509")
+        result_two = await upload.function(project_id="98845509")
+
+    # The tool now keeps URLs out of content — the LLM cannot copy them.
+    assert result_one.receipt is not None and result_one.receipt.url
+    assert result_two.receipt is not None and result_two.receipt.url
+    assert result_one.receipt.url not in result_one.content
+    assert result_two.receipt.url not in result_two.content
+
+    # Simulate the LLM's prose reply (no URLs, since the tool didn't show
+    # any). The receipts appender supplies the canonical link.
+    reply_text = "Both photos uploaded to the Beggs job and tagged as materials."
+    tool_calls = [
+        StoredToolInteraction(
+            tool_call_id="cc-1",
+            name=ToolName.COMPANYCAM_UPLOAD_PHOTO,
+            args={},
+            result=result_one.content,
+            is_error=False,
+            receipt=StoredToolReceipt(
+                action=result_one.receipt.action,
+                target=result_one.receipt.target,
+                url=result_one.receipt.url,
+            ),
+        ),
+        StoredToolInteraction(
+            tool_call_id="cc-2",
+            name=ToolName.COMPANYCAM_UPLOAD_PHOTO,
+            args={},
+            result=result_two.content,
+            is_error=False,
+            receipt=StoredToolReceipt(
+                action=result_two.receipt.action,
+                target=result_two.receipt.target,
+                url=result_two.receipt.url,
+            ),
+        ),
+    ]
+
+    final = append_receipts(reply_text, tool_calls)
+
+    # Each URL appears exactly once in the user-visible reply. URLs are
+    # rendered in compact form (https:// stripped) by the receipt
+    # renderer, so we count the host+path.
+    assert final.count("app.companycam.com/photos/3136949848") == 1
+    assert final.count("app.companycam.com/photos/3136949871") == 1
