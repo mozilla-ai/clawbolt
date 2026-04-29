@@ -103,7 +103,7 @@ Until this project has its first production release, you do not need to be conce
 
 Real PII to avoid: real customer/user names, real phone numbers, real email addresses, real addresses, real business names from customer data, real Telegram handles or chat IDs, real OAuth tokens or API keys.
 
-**Soft PII**: use judgment for content that isn't on the hard list above but still ties back to a specific user. Generalize in your own writing; verbatim quotes of upstream messages are fine.
+**Soft PII**: use judgment for content that isn't on the hard list above but still ties back to a specific user. Generalize in your own writing.
 
 When you need realistic-looking data, use clearly synthetic values: `jane.doe@example.com`, `+15555550123`, `Acme Plumbing`, UUIDs, or `faker`-style placeholders. If you encounter real PII in a debugging session or pasted content, scrub it before committing or pushing anything to GitHub.
 
