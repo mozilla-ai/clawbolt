@@ -240,6 +240,57 @@ def test_get_kek_provider_defaults_to_local() -> None:
         auth_loader.reset_kek_provider()
 
 
+def test_get_kek_provider_falls_back_to_local_when_plugin_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A premium plugin can opt out of the KEK override at runtime by
+    returning ``None`` from ``get_kek_provider()``. The loader then
+    falls back to ``LocalKEKProvider`` instead of caching ``None`` and
+    breaking subsequent reads.
+
+    Lets premium ship the KMS provider dormant: when the env vars
+    aren't set yet, the plugin returns ``None`` and OSS encryption
+    keeps working unchanged.
+    """
+    import sys
+    import types
+
+    fake_module = types.ModuleType("fake_premium_plugin")
+    fake_module.get_kek_provider = lambda: None  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fake_premium_plugin", fake_module)
+    monkeypatch.setattr(auth_loader.settings, "premium_plugin", "fake_premium_plugin")
+
+    auth_loader.reset_kek_provider()
+    try:
+        provider = auth_loader.get_kek_provider()
+        assert isinstance(provider, LocalKEKProvider)
+    finally:
+        auth_loader.reset_kek_provider()
+
+
+def test_get_kek_provider_uses_plugin_provider_when_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the plugin returns a real provider, the loader uses it
+    instead of the OSS default. Mirror of the dormant-fallback test
+    above, on the active branch."""
+    import sys
+    import types
+
+    sentinel_provider = _RecordingProvider()
+    fake_module = types.ModuleType("fake_premium_plugin_active")
+    fake_module.get_kek_provider = lambda: sentinel_provider  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "fake_premium_plugin_active", fake_module)
+    monkeypatch.setattr(auth_loader.settings, "premium_plugin", "fake_premium_plugin_active")
+
+    auth_loader.reset_kek_provider()
+    try:
+        provider = auth_loader.get_kek_provider()
+        assert provider is sentinel_provider
+    finally:
+        auth_loader.reset_kek_provider()
+
+
 def test_migration_018_rekey_helper_plaintext_path() -> None:
     """When the pre-envelope deployment had ``ENCRYPTION_KEY`` unset,
     rows were stored as plaintext. ``_rekey`` should pass them through
