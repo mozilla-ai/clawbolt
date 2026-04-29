@@ -103,7 +103,7 @@ Until this project has its first production release, you do not need to be conce
 
 Real PII to avoid: real customer/user names, real phone numbers, real email addresses, real addresses, real business names from customer data, real Telegram handles or chat IDs, real OAuth tokens or API keys.
 
-**Soft PII: user-chosen names for the Clawbolt assistant.** Each user can rename their assistant via `SOUL.md` (e.g. someone might call theirs "Sparky" or "Buddy"). These names are personal to that user and tie content back to them. When you write anything that gets persisted or shared (commit messages, branch names, PR titles or bodies, GitHub issue/PR comments, design docs, code comments), use the canonical product name "Clawbolt" or a generic phrase like "the agent" or "the assistant." Do not propagate the user-chosen name into your own additions, even if the original issue title or pasted transcript uses it. Quoting an existing message verbatim is fine; generalize in your own copy around the quote.
+**Soft PII**: user-chosen assistant names (set in `SOUL.md`). Use "Clawbolt" or "the agent" in your own writing; verbatim quotes of upstream messages are fine.
 
 When you need realistic-looking data, use clearly synthetic values: `jane.doe@example.com`, `+15555550123`, `Acme Plumbing`, UUIDs, or `faker`-style placeholders. If you encounter real PII in a debugging session or pasted content, scrub it before committing or pushing anything to GitHub.
 
