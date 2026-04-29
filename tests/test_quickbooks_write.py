@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import AsyncMock
 
+import httpx
 import pytest
 
 from backend.app.integrations.quickbooks.factory import create_quickbooks_tools
@@ -399,6 +400,39 @@ async def test_qb_send_failure() -> None:
 
     assert result.is_error is True
     assert "Failed to send invoice" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_qb_send_failure_surfaces_qbo_error_envelope() -> None:
+    """When QBO returns a Fault.Error[] envelope on a send failure, qb_send
+    must surface that body so users see Intuit's reason instead of just
+    'HTTPStatusError 500'."""
+    fault_body = {
+        "Fault": {
+            "Error": [
+                {
+                    "Message": "Invalid Email",
+                    "Detail": "The supplied email address is not valid.",
+                    "code": "2030",
+                }
+            ],
+            "type": "ValidationFault",
+        }
+    }
+    request = httpx.Request("POST", "https://example.invalid/estimate/1/send")
+    response = httpx.Response(400, json=fault_body, request=request)
+    err = httpx.HTTPStatusError("400 Bad Request", request=request, response=response)
+
+    svc = FakeQBService()
+    svc.send_entity_email = AsyncMock(side_effect=err)  # type: ignore[method-assign]
+    tools = create_quickbooks_tools(svc)
+    fn = _get_tool(tools, "qb_send")
+
+    result = await fn(entity_type="Estimate", entity_id="1", email="bad@example.com")
+
+    assert result.is_error is True
+    assert "Invalid Email" in result.content
+    assert "2030" in result.content
 
 
 # ---------------------------------------------------------------------------
