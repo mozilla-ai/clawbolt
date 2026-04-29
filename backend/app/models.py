@@ -1,6 +1,5 @@
 """SQLAlchemy ORM models for clawbolt."""
 
-import base64
 import logging
 import uuid as _uuid
 from collections.abc import Callable
@@ -23,68 +22,73 @@ from sqlalchemy.types import TypeDecorator
 
 from .config import settings
 from .database import Base
+from .security import encryption as _encryption
 
 _logger = logging.getLogger(__name__)
 
 
 class EncryptedString(TypeDecorator):
-    """Transparently encrypts/decrypts string values using Fernet.
+    """Envelope-encrypts string values at rest.
 
-    When ``encryption_key`` is set in settings, values are encrypted before
-    storage and decrypted on retrieval. When the key is empty (local dev),
-    values pass through as plaintext with a logged warning on first use.
+    On write, generates a fresh per-row data-encryption key (DEK),
+    Fernet-encrypts the plaintext with it, and asks the configured
+    ``KEKProvider`` to wrap the DEK. The wrapped DEK and the ciphertext
+    are serialized into a single inline envelope (see
+    ``backend.app.security.encryption``).
+
+    On read, the envelope is parsed, the DEK is unwrapped via the
+    provider, and the plaintext is recovered.
+
+    The provider is selected through ``backend.app.auth.loader``: OSS
+    ships ``LocalKEKProvider`` (Fernet wrapping derived from
+    ``settings.encryption_key``); premium plugins override with a
+    KMS-backed provider for per-tenant DEK wrapping.
     """
 
     impl = Text
     cache_ok = True
 
-    _warned_no_key = False
+    def __init__(self, *, table: str = "", column: str = "") -> None:
+        super().__init__()
+        self._table = table
+        self._column = column
 
-    def _get_fernet(self):  # noqa: ANN202
-        key = settings.encryption_key.get_secret_value()
-        if not key:
-            if not EncryptedString._warned_no_key:
-                _logger.warning("encryption_key not set; OAuth tokens stored unencrypted")
-                EncryptedString._warned_no_key = True
-            return None
+    def _context(self) -> _encryption.EncryptionContext:
+        ctx: _encryption.EncryptionContext = {}
+        if self._table:
+            ctx["table"] = self._table
+        if self._column:
+            ctx["column"] = self._column
+        return ctx
 
-        from cryptography.fernet import Fernet
-        from cryptography.hazmat.primitives import hashes
-        from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+    def _get_provider(self) -> _encryption.KEKProvider:
+        # Imported lazily to avoid an import cycle: loader imports models
+        # transitively via the auth backend stack.
+        from backend.app.auth.loader import get_kek_provider
 
-        hkdf = HKDF(
-            algorithm=hashes.SHA256(),
-            length=32,
-            salt=None,
-            info=b"oauth-token-encryption",
-        )
-        derived = hkdf.derive(key.encode())
-        return Fernet(base64.urlsafe_b64encode(derived))
+        return get_kek_provider()
 
     def process_bind_param(self, value, dialect):  # noqa: ANN001, ANN201
-        if value is None:
+        if value is None or value == "":
             return value
-        fernet = self._get_fernet()
-        if fernet is None:
-            return value
-        return fernet.encrypt(value.encode()).decode()
+        provider = self._get_provider()
+        return _encryption.encrypt(value, provider, self._context())
 
     def process_result_value(self, value, dialect):  # noqa: ANN001, ANN201
-        if value is None:
+        if value is None or value == "":
             return value
-        fernet = self._get_fernet()
-        if fernet is None:
-            return value
-        try:
-            return fernet.decrypt(value.encode()).decode()
-        except Exception:
-            # Value may be plaintext (stored before encryption was enabled).
-            # Log so operators can distinguish misconfigured keys from migration.
-            _logger.warning(
-                "Fernet decryption failed; returning value as-is"
-                " (expected during migration from plaintext)"
+        if not _encryption.is_envelope(value):
+            # Migration 018 re-keys every existing row to the envelope
+            # format. A non-envelope value here means the migration
+            # didn't run (or a legacy code path bypassed the type
+            # decorator). Fail loudly rather than silently return
+            # ciphertext or plaintext that would corrupt downstream use.
+            raise RuntimeError(
+                "EncryptedString read found a non-envelope value. Run "
+                "`uv run alembic upgrade head` to re-key existing rows."
             )
-            return value
+        provider = self._get_provider()
+        return _encryption.decrypt(value, provider, self._context())
 
 
 class User(Base):
@@ -408,8 +412,10 @@ class ToolConfig(Base):
 class OAuthToken(Base):
     """Persisted OAuth token for a user-integration pair.
 
-    Sensitive fields (access_token, refresh_token) are encrypted at rest
-    via the ``EncryptedString`` type when ``ENCRYPTION_KEY`` is configured.
+    Sensitive fields (access_token, refresh_token) are envelope-encrypted
+    at rest via ``EncryptedString``: per-row DEK wrapped by the configured
+    ``KEKProvider`` (OSS: ``LocalKEKProvider`` keyed by ``ENCRYPTION_KEY``;
+    premium: KMS-backed, per-tenant).
     """
 
     __tablename__ = "oauth_tokens"
@@ -422,8 +428,12 @@ class OAuthToken(Base):
         String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
     integration: Mapped[str] = mapped_column(String, nullable=False)
-    access_token: Mapped[str] = mapped_column(EncryptedString(), default="")
-    refresh_token: Mapped[str] = mapped_column(EncryptedString(), default="")
+    access_token: Mapped[str] = mapped_column(
+        EncryptedString(table="oauth_tokens", column="access_token"), default=""
+    )
+    refresh_token: Mapped[str] = mapped_column(
+        EncryptedString(table="oauth_tokens", column="refresh_token"), default=""
+    )
     token_type: Mapped[str] = mapped_column(String, default="Bearer")
     expires_at: Mapped[float] = mapped_column(Float, default=0.0)
     scopes_json: Mapped[str] = mapped_column(Text, default="[]")
