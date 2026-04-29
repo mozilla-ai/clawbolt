@@ -373,6 +373,11 @@ class OAuthService:
         """Load token data from the oauth_tokens table."""
         from backend.app.models import OAuthToken
 
+        logger.info(
+            "credential.read action=load user=%s integration=%s",
+            user_id,
+            integration,
+        )
         with db_session() as db:
             row = db.execute(
                 select(OAuthToken).where(
@@ -412,6 +417,11 @@ class OAuthService:
         """Remove a stored token row."""
         from backend.app.models import OAuthToken
 
+        logger.info(
+            "credential.read action=revoke user=%s integration=%s",
+            user_id,
+            integration,
+        )
         with db_session() as db:
             row = db.execute(
                 select(OAuthToken).where(
@@ -565,6 +575,11 @@ class OAuthService:
         acquiring the lock we re-load the token and skip the HTTP call
         entirely if another worker already refreshed it.
         """
+        logger.info(
+            "credential.read action=refresh user=%s integration=%s",
+            user_id,
+            integration,
+        )
         db = SessionLocal()
         lock_key = _refresh_lock_key(user_id, integration)
         try:
