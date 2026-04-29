@@ -7,6 +7,7 @@ import logging
 import re
 from typing import TYPE_CHECKING, Any
 
+import httpx
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
@@ -284,10 +285,10 @@ def create_quickbooks_tools(
         except Exception as exc:
             logger.exception("QuickBooks query failed")
             error_str = str(exc)
-            if hasattr(exc, "response"):
+            if isinstance(exc, httpx.HTTPStatusError):
                 try:
-                    body = exc.response.json()  # type: ignore[union-attr]
-                    error_str = json.dumps(body, indent=2)
+                    error_body = exc.response.json()
+                    error_str = json.dumps(error_body, indent=2)
                 except Exception:
                     pass
             return ToolResult(
@@ -313,9 +314,9 @@ def create_quickbooks_tools(
         except Exception as exc:
             logger.exception("QB create %s failed", entity_type)
             error_str = str(exc)
-            if hasattr(exc, "response"):
+            if isinstance(exc, httpx.HTTPStatusError):
                 try:
-                    error_body = exc.response.json()  # type: ignore[union-attr]
+                    error_body = exc.response.json()
                     error_str = json.dumps(error_body, indent=2)
                 except Exception:
                     pass
@@ -362,9 +363,9 @@ def create_quickbooks_tools(
         except Exception as exc:
             logger.exception("QB update %s failed", entity_type)
             error_str = str(exc)
-            if hasattr(exc, "response"):
+            if isinstance(exc, httpx.HTTPStatusError):
                 try:
-                    error_body = exc.response.json()  # type: ignore[union-attr]
+                    error_body = exc.response.json()
                     error_str = json.dumps(error_body, indent=2)
                 except Exception:
                     pass
@@ -410,8 +411,15 @@ def create_quickbooks_tools(
             await qb_service.send_entity_email(entity_type, entity_id, email)
         except Exception as exc:
             logger.exception("QB send %s email failed", entity_type)
+            error_str = str(exc)
+            if isinstance(exc, httpx.HTTPStatusError):
+                try:
+                    error_body = exc.response.json()
+                    error_str = json.dumps(error_body, indent=2)
+                except Exception:
+                    pass
             return ToolResult(
-                content=f"Failed to send {entity_type.lower()}: {exc}",
+                content=f"Failed to send {entity_type.lower()}: {error_str}",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )

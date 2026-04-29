@@ -100,6 +100,57 @@ async def test_send_entity_email_includes_requestid_alongside_sendTo(
 
 
 @pytest.mark.asyncio()
+async def test_send_entity_email_uses_octet_stream_content_type(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Intuit's /send endpoint requires application/octet-stream and 500s
+    on application/json. Every other endpoint stays on application/json."""
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"Estimate": {"Id": "1", "EmailStatus": "EmailSent"}})
+
+    _patch_transport(monkeypatch, handler)
+    svc = _service()
+    await svc.send_entity_email("Estimate", "1", "to@example.com")
+
+    assert captured[0].headers.get("content-type") == "application/octet-stream"
+    # /send takes its recipient via query param, not body.
+    assert captured[0].content == b""
+
+
+@pytest.mark.asyncio()
+async def test_create_entity_uses_json_content_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"Estimate": {"Id": "1", "TotalAmt": 10.0}})
+
+    _patch_transport(monkeypatch, handler)
+    svc = _service()
+    await svc.create_entity("Estimate", {"CustomerRef": {"value": "1"}, "Line": []})
+
+    assert captured[0].headers.get("content-type") == "application/json"
+
+
+@pytest.mark.asyncio()
+async def test_query_uses_json_content_type(monkeypatch: pytest.MonkeyPatch) -> None:
+    captured: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        captured.append(request)
+        return httpx.Response(200, json={"QueryResponse": {"Estimate": []}})
+
+    _patch_transport(monkeypatch, handler)
+    svc = _service()
+    await svc.query("SELECT * FROM Estimate")
+
+    assert captured[0].headers.get("content-type") == "application/json"
+
+
+@pytest.mark.asyncio()
 async def test_query_does_not_set_requestid(monkeypatch: pytest.MonkeyPatch) -> None:
     captured: list[httpx.Request] = []
 
