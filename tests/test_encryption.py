@@ -14,6 +14,8 @@ from __future__ import annotations
 import base64
 import importlib.util
 import secrets
+import sys
+import types
 import uuid
 from collections.abc import Generator
 from pathlib import Path
@@ -236,6 +238,59 @@ def test_get_kek_provider_defaults_to_local() -> None:
     try:
         provider = auth_loader.get_kek_provider()
         assert isinstance(provider, LocalKEKProvider)
+    finally:
+        auth_loader.reset_kek_provider()
+
+
+def _install_fake_plugin(
+    monkeypatch: pytest.MonkeyPatch, name: str, get_kek_provider: object
+) -> None:
+    """Install a fake premium plugin module that exposes ``get_kek_provider``.
+
+    Cleans up automatically when the test's monkeypatch fixture tears
+    down: the sys.modules entry and the settings override both revert.
+    """
+    fake_module = types.ModuleType(name)
+    fake_module.get_kek_provider = get_kek_provider  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, name, fake_module)
+    monkeypatch.setattr(auth_loader.settings, "premium_plugin", name)
+
+
+def test_get_kek_provider_falls_back_to_local_when_plugin_returns_none(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A premium plugin can opt out of the KEK override at runtime by
+    returning ``None`` from ``get_kek_provider()``. The loader then
+    falls back to ``LocalKEKProvider`` instead of caching ``None`` and
+    breaking subsequent reads.
+
+    Lets premium ship the KMS provider dormant: when the env vars
+    aren't set yet, the plugin returns ``None`` and OSS encryption
+    keeps working unchanged.
+    """
+    _install_fake_plugin(monkeypatch, "fake_premium_plugin_dormant", lambda: None)
+
+    auth_loader.reset_kek_provider()
+    try:
+        provider = auth_loader.get_kek_provider()
+        assert isinstance(provider, LocalKEKProvider)
+    finally:
+        auth_loader.reset_kek_provider()
+
+
+def test_get_kek_provider_uses_plugin_provider_when_returned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When the plugin returns a real provider, the loader uses it
+    instead of the OSS default. Mirror of the dormant-fallback test
+    above, on the active branch."""
+    sentinel_provider = _RecordingProvider()
+    _install_fake_plugin(monkeypatch, "fake_premium_plugin_active", lambda: sentinel_provider)
+
+    auth_loader.reset_kek_provider()
+    try:
+        provider = auth_loader.get_kek_provider()
+        assert provider is sentinel_provider
     finally:
         auth_loader.reset_kek_provider()
 
