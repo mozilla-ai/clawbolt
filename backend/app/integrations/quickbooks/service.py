@@ -113,13 +113,19 @@ class QuickBooksOnlineService(QuickBooksService):
         *,
         json: dict[str, Any] | None = None,
         params: dict[str, str] | None = None,
+        content_type: str = "application/json",
     ) -> dict[str, Any]:
-        """Make an authenticated request to the QBO API with token refresh on 401."""
+        """Make an authenticated request to the QBO API with token refresh on 401.
+
+        ``content_type`` defaults to JSON because every entity CRUD endpoint
+        wants JSON. The ``/send`` endpoint is the lone exception: Intuit
+        requires ``application/octet-stream`` and 500s on JSON.
+        """
         url = f"{self._api_base}{path}"
         headers = {
             "Authorization": f"Bearer {self._access_token}",
             "Accept": "application/json",
-            "Content-Type": "application/json",
+            "Content-Type": content_type,
         }
 
         async with httpx.AsyncClient(timeout=30.0) as client:
@@ -183,4 +189,5 @@ class QuickBooksOnlineService(QuickBooksService):
             "POST",
             f"/{entity_type.lower()}/{entity_id.strip()}/send",
             params={"sendTo": email, "requestid": uuid.uuid4().hex},
+            content_type="application/octet-stream",
         )

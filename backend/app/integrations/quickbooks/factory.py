@@ -410,8 +410,15 @@ def create_quickbooks_tools(
             await qb_service.send_entity_email(entity_type, entity_id, email)
         except Exception as exc:
             logger.exception("QB send %s email failed", entity_type)
+            error_str = str(exc)
+            if hasattr(exc, "response"):
+                try:
+                    error_body = exc.response.json()  # type: ignore[union-attr]
+                    error_str = json.dumps(error_body, indent=2)
+                except Exception:
+                    pass
             return ToolResult(
-                content=f"Failed to send {entity_type.lower()}: {exc}",
+                content=f"Failed to send {entity_type.lower()}: {error_str}",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
