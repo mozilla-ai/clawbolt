@@ -113,6 +113,36 @@ async def test_update_heartbeat_description_warns_about_overwrite(test_user: Use
 
 
 @pytest.mark.asyncio()
+async def test_update_heartbeat_description_steers_away_from_timed_reminders(
+    test_user: User,
+) -> None:
+    """update_heartbeat description must not let the LLM use it as a scheduler (#1067).
+
+    The original bug: the agent stored "remind me at noon" requests in heartbeat
+    notes and told the user "all set." Heartbeat is not a scheduler. The
+    description must explicitly redirect timed reminder requests to
+    calendar_create_event.
+    """
+    tools = create_heartbeat_tools(test_user.id)
+    update_tool = tools[1]
+    desc = update_tool.description.lower()
+    assert "not a scheduler" in desc or "not user-facing scheduled reminders" in desc
+    assert "calendar_create_event" in desc
+
+
+@pytest.mark.asyncio()
+async def test_get_heartbeat_usage_hint_does_not_promise_reminders(
+    test_user: User,
+) -> None:
+    """get_heartbeat usage_hint must not conflate heartbeat notes with reminders (#1067)."""
+    tools = create_heartbeat_tools(test_user.id)
+    get_tool = tools[0]
+    hint = (get_tool.usage_hint or "").lower()
+    assert "heartbeat notes" in hint
+    assert "or reminders" not in hint
+
+
+@pytest.mark.asyncio()
 async def test_heartbeat_scoped_to_user(test_user: User) -> None:
     """Each user's heartbeat text is independent."""
     db = _db_module.SessionLocal()

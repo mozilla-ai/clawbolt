@@ -96,6 +96,20 @@ class CalendarCreateEventParams(BaseModel):
             "Calendar ID to create the event on. Required when multiple calendars are enabled."
         ),
     )
+    reminder_minutes_before: int | None = Field(
+        default=None,
+        ge=0,
+        le=40320,
+        description=(
+            "Popup reminder offset in minutes before the event start. "
+            "Set this for timed reminders the user requested. Pass 0 to fire "
+            "the popup at the exact event start (use this for 'remind me at "
+            "2pm': set start to 2pm and reminder_minutes_before to 0). Pass "
+            "a positive value (e.g. 5) to fire ahead of the event. Omit to "
+            "let the user's Google Calendar default reminders apply. Max "
+            "40320 (4 weeks)."
+        ),
+    )
 
 
 class CalendarUpdateEventParams(BaseModel):
@@ -433,6 +447,7 @@ def create_calendar_tools(
         description: str = "",
         location: str = "",
         calendar_id: str = "",
+        reminder_minutes_before: int | None = None,
     ) -> ToolResult:
         """Create a new calendar event."""
         logger.debug("create_event called: title=%r calendar_id=%r", title, calendar_id)
@@ -465,6 +480,7 @@ def create_calendar_tools(
             end=end_dt,
             description=description,
             location=location,
+            reminder_minutes_before=reminder_minutes_before,
         )
 
         try:
