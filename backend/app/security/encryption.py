@@ -33,7 +33,6 @@ from backend.app.config import settings
 _logger = logging.getLogger(__name__)
 
 ENVELOPE_PREFIX = "clw1"
-ENVELOPE_VERSION = 1
 
 
 class EncryptionContext(TypedDict, total=False):
@@ -183,7 +182,6 @@ def _parse(envelope: str) -> tuple[str, bytes, str]:
 # Re-export for convenience in tests/scripts.
 __all__ = [
     "ENVELOPE_PREFIX",
-    "ENVELOPE_VERSION",
     "EncryptionContext",
     "InvalidToken",
     "KEKProvider",
