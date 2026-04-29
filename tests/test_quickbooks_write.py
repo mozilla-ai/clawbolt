@@ -9,7 +9,7 @@ import httpx
 import pytest
 
 from backend.app.integrations.quickbooks.factory import create_quickbooks_tools
-from backend.app.integrations.quickbooks.service import QuickBooksService
+from backend.app.integrations.quickbooks.service import QuickBooksOnlineService, QuickBooksService
 
 
 class FakeQBService(QuickBooksService):
@@ -495,3 +495,102 @@ async def test_qb_query_does_not_return_a_receipt() -> None:
     result = await fn(query="SELECT * FROM Invoice MAXRESULTS 5")
 
     assert result.receipt is None
+
+
+# ---------------------------------------------------------------------------
+# Invariant: ToolResult.content must not contain ToolReceipt.url
+# ---------------------------------------------------------------------------
+#
+# Regression for #1069. The receipt is the canonical channel for surfacing
+# deep links on plain-text channels. If a tool also embeds the URL in
+# ToolResult.content, the LLM sees it and reproduces it in prose, so the
+# user receives the same URL twice.
+#
+# QB receipt URLs are only built when the service is a
+# ``QuickBooksOnlineService`` (see ``_build_qbo_url``), so the invariant
+# test below uses a fake that subclasses that concrete type.
+
+
+class FakeQBOServiceWithURL(QuickBooksOnlineService):
+    """Fake QBO service that yields realistic receipt URLs for the
+    invariant test. Subclasses ``QuickBooksOnlineService`` so
+    ``_build_qbo_url`` returns a real deep link."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            client_id="test",
+            client_secret="test",
+            realm_id="9999",
+            access_token="test",
+            refresh_token="test",
+            environment="sandbox",
+        )
+        self._next_id = 2000
+
+    async def query(self, query_str: str) -> list[dict[str, Any]]:
+        return []
+
+    async def create_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        self._next_id += 1
+        result: dict[str, Any] = {"Id": str(self._next_id), **data}
+        if entity_type == "Customer":
+            result["DisplayName"] = data.get("DisplayName", "")
+        else:
+            result["DocNumber"] = f"10{self._next_id}"
+            result["TotalAmt"] = sum(line.get("Amount", 0) for line in data.get("Line", []))
+        return result
+
+    async def update_entity(self, entity_type: str, data: dict[str, Any]) -> dict[str, Any]:
+        result: dict[str, Any] = {**data}
+        if entity_type == "Customer":
+            result["DisplayName"] = data.get("DisplayName", "")
+        else:
+            result["DocNumber"] = data.get("DocNumber", "10000")
+            result["TotalAmt"] = sum(line.get("Amount", 0) for line in data.get("Line", []))
+        return result
+
+    async def send_entity_email(
+        self, entity_type: str, entity_id: str, email: str
+    ) -> dict[str, Any]:
+        return {entity_type: {"Id": entity_id, "EmailStatus": "EmailSent"}}
+
+
+@pytest.mark.asyncio()
+async def test_invariant_no_url_duplication_across_qb_tools() -> None:
+    """For every QuickBooks tool returning a ToolReceipt with a URL,
+    ToolResult.content must not contain that URL. Regression for #1069."""
+    svc = FakeQBOServiceWithURL()
+    tools = create_quickbooks_tools(svc)
+    create_fn = _get_tool(tools, "qb_create")
+    update_fn = _get_tool(tools, "qb_update")
+    send_fn = _get_tool(tools, "qb_send")
+
+    invoice_data = {
+        "CustomerRef": {"value": "1", "name": "Acme Plumbing"},
+        "Line": [
+            {
+                "Amount": 350.00,
+                "DetailType": "SalesItemLineDetail",
+                "Description": "Pipe repair",
+                "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 350.0},
+            },
+        ],
+    }
+
+    results = [
+        await create_fn(entity_type="Invoice", data=invoice_data),
+        await update_fn(
+            entity_type="Invoice",
+            data={"Id": "2001", "SyncToken": "0", **invoice_data},
+        ),
+        await send_fn(entity_type="Invoice", entity_id="2001", email="client@example.com"),
+    ]
+
+    receipts_with_url = [r for r in results if r.receipt is not None and r.receipt.url]
+    assert receipts_with_url, "expected QB tools to populate URL receipts"
+    for result in results:
+        if result.receipt is not None and result.receipt.url:
+            assert result.receipt.url not in result.content, (
+                "tool result inlined receipt URL into content "
+                f"(content={result.content!r}, url={result.receipt.url!r})"
+            )
