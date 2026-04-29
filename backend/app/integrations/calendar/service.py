@@ -303,4 +303,16 @@ def _build_event_body(event: CalendarEventCreate) -> dict[str, Any]:
         body["start"] = {"dateTime": _to_rfc3339(event.start)}
         body["end"] = {"dateTime": _to_rfc3339(event.end)}
 
+    # When reminder_minutes_before is set (including 0 for fire-at-start),
+    # request a single popup reminder. Leave the field off entirely so the
+    # user's default Calendar reminders apply. The Calendar API caps minutes
+    # at 40320 (4 weeks); validation lives on the Pydantic model.
+    if event.reminder_minutes_before is not None:
+        body["reminders"] = {
+            "useDefault": False,
+            "overrides": [
+                {"method": "popup", "minutes": event.reminder_minutes_before},
+            ],
+        }
+
     return body

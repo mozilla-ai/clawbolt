@@ -223,6 +223,91 @@ async def test_create_event_success(service: GoogleCalendarService) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_create_event_no_reminder_omits_field(service: GoogleCalendarService) -> None:
+    """Without reminder_minutes_before, the request body must omit `reminders`.
+
+    Google then applies the user's default Calendar reminders. Sending an
+    explicit `reminders.useDefault=False` with no overrides would silence
+    notifications entirely, which is not what the legacy callers expect.
+    """
+    api_response = {
+        "id": "x",
+        "summary": "T",
+        "start": {"dateTime": "2026-03-28T09:00:00+00:00"},
+        "end": {"dateTime": "2026-03-28T17:00:00+00:00"},
+        "status": "confirmed",
+    }
+    with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = api_response
+        await service.create_event(
+            "primary",
+            CalendarEventCreate(
+                title="T",
+                start=datetime(2026, 3, 28, 9, 0, tzinfo=UTC),
+                end=datetime(2026, 3, 28, 17, 0, tzinfo=UTC),
+            ),
+        )
+        body = mock_req.call_args.kwargs["json"]
+        assert "reminders" not in body
+
+
+@pytest.mark.asyncio()
+async def test_create_event_with_reminder_at_start(service: GoogleCalendarService) -> None:
+    """reminder_minutes_before=0 must produce a popup override at exact start (#1067)."""
+    api_response = {
+        "id": "x",
+        "summary": "T",
+        "start": {"dateTime": "2026-03-28T14:00:00+00:00"},
+        "end": {"dateTime": "2026-03-28T14:05:00+00:00"},
+        "status": "confirmed",
+    }
+    with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = api_response
+        await service.create_event(
+            "primary",
+            CalendarEventCreate(
+                title="Call client",
+                start=datetime(2026, 3, 28, 14, 0, tzinfo=UTC),
+                end=datetime(2026, 3, 28, 14, 5, tzinfo=UTC),
+                reminder_minutes_before=0,
+            ),
+        )
+        body = mock_req.call_args.kwargs["json"]
+        assert body["reminders"] == {
+            "useDefault": False,
+            "overrides": [{"method": "popup", "minutes": 0}],
+        }
+
+
+@pytest.mark.asyncio()
+async def test_create_event_with_reminder_minutes_before(
+    service: GoogleCalendarService,
+) -> None:
+    """Positive reminder_minutes_before must produce a popup override N min ahead."""
+    api_response = {
+        "id": "x",
+        "summary": "T",
+        "start": {"dateTime": "2026-03-28T14:00:00+00:00"},
+        "end": {"dateTime": "2026-03-28T15:00:00+00:00"},
+        "status": "confirmed",
+    }
+    with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:
+        mock_req.return_value = api_response
+        await service.create_event(
+            "primary",
+            CalendarEventCreate(
+                title="T",
+                start=datetime(2026, 3, 28, 14, 0, tzinfo=UTC),
+                end=datetime(2026, 3, 28, 15, 0, tzinfo=UTC),
+                reminder_minutes_before=15,
+            ),
+        )
+        body = mock_req.call_args.kwargs["json"]
+        assert body["reminders"]["overrides"][0]["minutes"] == 15
+        assert body["reminders"]["useDefault"] is False
+
+
+@pytest.mark.asyncio()
 async def test_create_event_api_error(service: GoogleCalendarService) -> None:
     """Should propagate API errors on create."""
     with patch.object(service, "_request", new_callable=AsyncMock) as mock_req:

@@ -33,7 +33,7 @@ Update these files proactively as you learn new things. Do not ask permission. J
 You cannot fire reminders at exact clock times yourself. The heartbeat system is not a scheduler.
 
 When the user asks for a reminder at a specific time:
-- If Google Calendar is connected (the calendar tool is enabled), call calendar_create_event with the requested start time and a short pre-event alert. Google's notification system fires the reminder at the exact time.
+- If Google Calendar is connected (the calendar tool is enabled), call calendar_create_event with start set to the requested time and reminder_minutes_before=0 so the popup fires at the exact moment. End can be a few minutes after start. Google's notification system delivers the popup.
 - If calendar is not connected, tell the user plainly that you cannot fire at exact times. Offer to either help them connect Google Calendar (use manage_integration) or have them set the reminder in their phone.
 
 Never silently store a timed request as a heartbeat item, and never claim "I'll ping you at X" unless calendar_create_event has been called successfully.
