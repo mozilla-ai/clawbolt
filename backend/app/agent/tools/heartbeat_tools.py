@@ -54,18 +54,27 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
             description="Read the user's heartbeat notes.",
             function=get_heartbeat,
             params_model=GetHeartbeatParams,
-            usage_hint="When asked about heartbeat notes or reminders, read them.",
+            usage_hint=(
+                "When asked about heartbeat notes, read them. "
+                "Do not call this for time-specific reminder requests."
+            ),
         ),
         Tool(
             name=ToolName.UPDATE_HEARTBEAT,
             description=(
                 "Update the user's heartbeat notes with new markdown text. "
-                "Overwrites the entire file: include the current items plus "
-                "whatever the user asked to add or change, and never re-add "
-                "items not in the current file. Write timed items as windows "
-                "('every morning', 'Mondays') rather than exact clock times; "
-                "the heartbeat system checks periodically and fires each item "
-                "once per window."
+                "These notes drive the agent's own periodic check-ins, not "
+                "user-facing scheduled reminders. The heartbeat system runs "
+                "every 30 minutes and may surface items in any window. Do "
+                "not use this tool for time-specific reminders ('at 2pm', "
+                "'7:30am'). For those, call calendar_create_event if Google "
+                "Calendar is connected; otherwise tell the user you cannot "
+                "fire at exact times and offer to connect calendar or have "
+                "them set it in their phone. Overwrites the entire file: "
+                "include the current items plus whatever the user asked to "
+                "add or change, and never re-add items not in the current "
+                "file. Write recurring items as windows ('every morning', "
+                "'Mondays') rather than exact clock times."
             ),
             function=update_heartbeat,
             params_model=UpdateHeartbeatParams,
