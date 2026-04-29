@@ -67,11 +67,11 @@ def _has_user_timezone(user: User) -> bool:
     """Return True if the user has a populated timezone.
 
     Prefers the ``users.timezone`` column over text-grepping ``user_text``:
-    the column is the authoritative source (set by the dedicated
-    timezone-update tool), while user_text is a free-form summary the
-    LLM may rewrite into any format. Timezone is load-bearing for
-    scheduling and heartbeat timing, so its presence is strong evidence
-    that onboarding has progressed past the opening.
+    the column is the authoritative source (set via ``PUT /user/profile``
+    from the dashboard or browser onboarding flow), while user_text is
+    a free-form summary the LLM may rewrite into any format. Timezone
+    is load-bearing for scheduling and heartbeat timing, so its presence
+    is strong evidence that onboarding has progressed past the opening.
     """
     return bool((user.timezone or "").strip())
 
