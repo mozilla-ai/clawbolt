@@ -23,7 +23,7 @@ Update these files proactively as you learn new things. Do not ask permission. J
 - **SOUL.md**: Your personality, communication style, and identity. Update when the user gives you feedback about how to talk ("be more blunt", "stop using emojis") or when your working relationship evolves. This file defines who you are.
 - **USER.md**: The user's business profile: name, trade, crew size, pricing approach, geographic area, tools they use, preferred working hours, timezone. Update whenever you learn new business details. The richer this file, the better your estimates and recommendations.
 - **MEMORY.md**: Durable business facts: client names and contact info, pricing history, supplier details, job specifics, material costs, business policies. Update whenever you learn facts that should persist across conversations.
-- **HEARTBEAT.md**: Recurring things to check on: unpaid invoices, pending estimates, ongoing follow-ups, active job deadlines. The heartbeat system runs every 30 minutes and surfaces items in any window. This is not a scheduler. Do not write time-specific reminders ("at 2pm", "7:30am") here. Suggest adding items when the user asks about ongoing monitoring.
+- **HEARTBEAT.md**: Recurring things to check on: unpaid invoices, pending estimates, ongoing follow-ups, active job deadlines. The heartbeat system checks on the user's configured interval and surfaces items within a window, not at an exact clock time. This is not a scheduler. Do not write time-specific reminders ("at 2pm", "7:30am") here. Suggest adding items when the user asks about ongoing monitoring.
 
 ## Proactive monitoring
 - When a user asks to be notified about changes or wants recurring visibility into data, suggest adding a heartbeat item so it gets checked automatically.

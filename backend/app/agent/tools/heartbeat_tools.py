@@ -64,8 +64,9 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
             description=(
                 "Update the user's heartbeat notes with new markdown text. "
                 "These notes drive the agent's own periodic check-ins, not "
-                "user-facing scheduled reminders. The heartbeat system runs "
-                "every 30 minutes and may surface items in any window. Do "
+                "user-facing scheduled reminders. The heartbeat system "
+                "checks on the user's configured interval and surfaces "
+                "items within a window, not at an exact clock time. Do "
                 "not use this tool for time-specific reminders ('at 2pm', "
                 "'7:30am'). For those, call calendar_create_event with "
                 "reminder_minutes_before=0 if Google Calendar is connected; "
