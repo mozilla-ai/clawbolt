@@ -8,7 +8,7 @@ import re
 from typing import TYPE_CHECKING, Any
 
 import httpx
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
@@ -87,6 +87,29 @@ class QBQueryParams(BaseModel):
     )
 
 
+def _coerce_data_to_dict(value: Any) -> Any:
+    """Parse JSON-encoded strings into dicts so the LLM can pass either shape.
+
+    The LLM occasionally over-quotes deeply nested QBO payloads and emits
+    `data` as a JSON string rather than a JSON object. Accept both forms
+    on the first round to avoid a wasted retry.
+    """
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "data must be a JSON object or a JSON-encoded object string; "
+                f"could not parse string as JSON: {exc.msg}"
+            ) from exc
+        if not isinstance(parsed, dict):
+            raise ValueError(
+                f"data must be a JSON object; got a JSON-encoded {type(parsed).__name__}"
+            )
+        return parsed
+    return value
+
+
 class QBCreateParams(BaseModel):
     """Parameters for the qb_create tool."""
 
@@ -94,8 +117,13 @@ class QBCreateParams(BaseModel):
         description="QBO entity type to create: Customer, Estimate, or Invoice"
     )
     data: dict[str, Any] = Field(
-        description="QBO API payload for the entity. See SKILL.md for payload formats."
+        description=(
+            "QBO API payload for the entity as a JSON object (not a JSON-encoded string). "
+            "See SKILL.md for payload formats."
+        )
     )
+
+    _coerce_data = field_validator("data", mode="before")(_coerce_data_to_dict)
 
 
 class QBUpdateParams(BaseModel):
@@ -106,10 +134,13 @@ class QBUpdateParams(BaseModel):
     )
     data: dict[str, Any] = Field(
         description=(
-            "Full QBO API payload including Id and SyncToken from a prior qb_query. "
+            "Full QBO API payload as a JSON object (not a JSON-encoded string), "
+            "including Id and SyncToken from a prior qb_query. "
             "See SKILL.md for payload formats."
         )
     )
+
+    _coerce_data = field_validator("data", mode="before")(_coerce_data_to_dict)
 
 
 class QBSendParams(BaseModel):

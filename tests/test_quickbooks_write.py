@@ -2,13 +2,19 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
-from backend.app.integrations.quickbooks.factory import create_quickbooks_tools
+from backend.app.integrations.quickbooks.factory import (
+    QBCreateParams,
+    QBUpdateParams,
+    create_quickbooks_tools,
+)
 from backend.app.integrations.quickbooks.service import QuickBooksOnlineService, QuickBooksService
 
 
@@ -328,6 +334,63 @@ async def test_qb_update_rejects_disallowed_entity() -> None:
 
     assert result.is_error is True
     assert "not allowed" in result.content
+
+
+# ---------------------------------------------------------------------------
+# data param coercion: accept JSON-encoded strings as well as dicts
+# ---------------------------------------------------------------------------
+
+
+def test_qb_create_params_accepts_json_string_data() -> None:
+    """The LLM occasionally passes `data` as a JSON-encoded string instead
+    of a dict. The params model should parse it transparently so the call
+    succeeds on the first round."""
+    payload = {
+        "CustomerRef": {"value": "3"},
+        "Line": [
+            {
+                "Amount": 100.0,
+                "DetailType": "SalesItemLineDetail",
+                "SalesItemLineDetail": {"Qty": 1, "UnitPrice": 100.0},
+            }
+        ],
+    }
+    encoded = json.dumps(payload)
+
+    from_string = QBCreateParams.model_validate({"entity_type": "Estimate", "data": encoded})
+    from_dict = QBCreateParams.model_validate({"entity_type": "Estimate", "data": payload})
+
+    assert from_string.data == payload
+    assert from_string.data == from_dict.data
+
+
+def test_qb_update_params_accepts_json_string_data() -> None:
+    payload = {
+        "Id": "3",
+        "SyncToken": "2",
+        "CustomerRef": {"value": "100"},
+    }
+    encoded = json.dumps(payload)
+
+    parsed = QBUpdateParams.model_validate({"entity_type": "Estimate", "data": encoded})
+
+    assert parsed.data == payload
+
+
+def test_qb_create_params_unparseable_string_raises_validation_error() -> None:
+    """An unparseable string must surface as a Pydantic ValidationError so
+    the agent can hand a structured retry hint back to the LLM, rather than
+    blowing up later as a ServerError inside the tool function."""
+    with pytest.raises(ValidationError) as exc_info:
+        QBCreateParams.model_validate({"entity_type": "Customer", "data": "{not valid json"})
+
+    assert "data" in str(exc_info.value)
+
+
+def test_qb_create_params_json_string_of_non_object_raises() -> None:
+    """A JSON-encoded list or scalar is still not a valid QBO payload."""
+    with pytest.raises(ValidationError):
+        QBCreateParams.model_validate({"entity_type": "Customer", "data": json.dumps([1, 2, 3])})
 
 
 @pytest.mark.asyncio()
