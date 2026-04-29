@@ -26,6 +26,7 @@ from backend.app.services.llm_service import (
     prepare_system_with_caching,
     reasoning_effort_to_thinking,
 )
+from backend.app.services.llm_usage import log_llm_usage
 
 logger = logging.getLogger(__name__)
 
@@ -197,6 +198,8 @@ async def compact_session(
     except Exception:
         logger.exception("Compaction LLM call failed for user %s", user_id)
         return "", None
+
+    log_llm_usage(user_id, model, response, purpose="compaction")
 
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)

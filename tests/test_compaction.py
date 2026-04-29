@@ -684,6 +684,85 @@ async def test_compact_session_falls_back_to_llm_model(test_user: UserData) -> N
     assert call_kwargs.kwargs.get("provider") == "test-provider"
 
 
+# --- compact_session llm_usage_logs tests ---
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_logs_llm_usage(test_user: UserData) -> None:
+    """Successful compaction should record a llm_usage_logs row with purpose='compaction'."""
+    mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
+
+    messages: list[AgentMessage] = [UserMessage(content="hello")]
+
+    with (
+        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch("backend.app.agent.compaction.log_llm_usage") as mock_log,
+        patch("backend.app.agent.compaction.settings") as mock_settings,
+    ):
+        mock_settings.compaction_enabled = True
+        mock_settings.compaction_model = "test-compact-model"
+        mock_settings.compaction_provider = "test-provider"
+        mock_settings.compaction_max_tokens = 300
+        mock_settings.llm_model = "test-model"
+        mock_settings.llm_provider = "test-provider"
+        mock_settings.llm_api_base = None
+        await compact_session(test_user.id, messages)
+
+    mock_log.assert_called_once()
+    args, kwargs = mock_log.call_args
+    assert args[0] == test_user.id
+    assert args[1] == "test-compact-model"
+    assert args[2] is mock_response
+    assert kwargs.get("purpose") == "compaction"
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_does_not_log_when_llm_fails(test_user: UserData) -> None:
+    """A failed amessages call should not emit a usage log row."""
+    messages: list[AgentMessage] = [UserMessage(content="hello")]
+
+    with (
+        patch(
+            "backend.app.agent.compaction.amessages",
+            side_effect=Exception("LLM unavailable"),
+        ),
+        patch("backend.app.agent.compaction.log_llm_usage") as mock_log,
+    ):
+        await compact_session(test_user.id, messages)
+
+    mock_log.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_does_not_log_when_disabled(test_user: UserData) -> None:
+    """When compaction is disabled, no usage log row should be written."""
+    messages: list[AgentMessage] = [UserMessage(content="hello")]
+
+    with (
+        patch("backend.app.agent.compaction.settings") as mock_settings,
+        patch("backend.app.agent.compaction.amessages") as mock_llm,
+        patch("backend.app.agent.compaction.log_llm_usage") as mock_log,
+    ):
+        mock_settings.compaction_enabled = False
+        await compact_session(test_user.id, messages)
+
+    mock_llm.assert_not_called()
+    mock_log.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_does_not_log_when_no_messages(test_user: UserData) -> None:
+    """An empty message list should short-circuit before any usage log is written."""
+    with (
+        patch("backend.app.agent.compaction.amessages") as mock_llm,
+        patch("backend.app.agent.compaction.log_llm_usage") as mock_log,
+    ):
+        await compact_session(test_user.id, [])
+
+    mock_llm.assert_not_called()
+    mock_log.assert_not_called()
+
+
 # --- Integration: load_conversation_history no longer triggers compaction ---
 # Compaction is now triggered from process_message() when trim_messages() drops
 # messages, not from load_conversation_history(). The tests below verify the new
