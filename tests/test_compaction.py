@@ -635,6 +635,102 @@ async def test_compact_session_no_new_info(test_user: UserData) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_compact_session_emits_structured_summary_log(
+    test_user: UserData, caplog: pytest.LogCaptureFixture
+) -> None:
+    """compact_session must emit a single ``compaction.summary`` line with the
+    fields downstream telemetry will aggregate.
+
+    Ties down the field set so changes here are intentional. Compaction is
+    a routine operation for active users (every ~27 days at 15k tokens/day),
+    so the summary line is the primary signal we have for tracking
+    frequency, cost, and whether the LLM is producing meaningful updates.
+    """
+    import logging
+
+    llm_response_content = json.dumps(
+        {
+            "memory_update": "## Pricing\n- Day rate: $500",
+            "summary": "[TIMESTAMP] Discussed pricing.",
+            "user_profile_update": "- Day rate: $500",
+            "soul_update": "",
+        }
+    )
+    mock_response = make_text_response(
+        llm_response_content,
+        input_tokens=1234,
+        output_tokens=42,
+    )
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="My day rate is $500"),
+        AssistantMessage(content="Got it."),
+    ]
+
+    with (
+        caplog.at_level(logging.INFO, logger="backend.app.agent.compaction"),
+        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+    ):
+        await compact_session(test_user.id, messages)
+
+    summary_lines = [r for r in caplog.records if "compaction.summary" in r.getMessage()]
+    assert len(summary_lines) == 1, (
+        f"expected exactly one compaction.summary line, got {len(summary_lines)}"
+    )
+    msg = summary_lines[0].getMessage()
+    assert f"user={test_user.id}" in msg
+    assert "trimmed_count=2" in msg
+    assert "input_tokens=1234" in msg
+    assert "output_tokens=42" in msg
+    assert "memory_updated=True" in msg
+    assert "user_updated=True" in msg
+    assert "soul_updated=False" in msg
+    # summary_len is the byte length of the parsed summary field, which
+    # has the [TIMESTAMP] placeholder still in it (the run replaces it
+    # before appending to HISTORY.md, but the log captures the parsed
+    # value, not the substituted one).
+    assert "summary_len=" in msg
+    assert "duration_ms=" in msg
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_summary_log_marks_all_updates_false_when_llm_returns_empty(
+    test_user: UserData, caplog: pytest.LogCaptureFixture
+) -> None:
+    """When the LLM returns empty fields, the summary line still fires but
+    all ``*_updated`` flags must be False.
+
+    This is the signal we use to detect "compaction ran but found nothing
+    to persist" -- which is fine occasionally but persistent emptiness
+    points to an upstream issue (agent isn't surfacing facts in the
+    conversation, or the prompt isn't extracting them).
+    """
+    import logging
+
+    mock_response = make_text_response(
+        json.dumps(
+            {"memory_update": "", "summary": "", "user_profile_update": "", "soul_update": ""}
+        )
+    )
+
+    messages: list[AgentMessage] = [UserMessage(content="just a chat")]
+
+    with (
+        caplog.at_level(logging.INFO, logger="backend.app.agent.compaction"),
+        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+    ):
+        await compact_session(test_user.id, messages)
+
+    summary_lines = [r for r in caplog.records if "compaction.summary" in r.getMessage()]
+    assert len(summary_lines) == 1
+    msg = summary_lines[0].getMessage()
+    assert "memory_updated=False" in msg
+    assert "user_updated=False" in msg
+    assert "soul_updated=False" in msg
+    assert "summary_len=0" in msg
+
+
+@pytest.mark.asyncio()
 async def test_compact_session_uses_configured_model(test_user: UserData) -> None:
     """compact_session should use compaction_model/provider when configured."""
     mock_response = make_text_response(json.dumps({"memory_update": "", "summary": ""}))
