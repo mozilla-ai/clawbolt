@@ -130,14 +130,20 @@ def build_instructions_section() -> str:
     body += (
         "\n\n## Media handling\n"
         "When the user sends a photo, the attachment appears in your context"
-        " with a handle like `media_ab12cd`. Decide per-photo based on the"
-        " conversation. Call analyze_photo if vision would help you"
-        " understand or route the content. Call upload_to_storage when the"
-        " photo belongs in the user's personal storage. Call"
-        " push_to_companycam_project for jobsite documentation. Call"
-        " discard_media when the user explicitly asks you not to save."
-        " Skipping all of these on a photo is fine if the user hasn't asked"
-        " for anything file-related."
+        " with a handle like `media_ab12cd`. Decide per-photo based on what"
+        " the user asked for. Default: do NOT analyze the photo. Just route"
+        " or store it as requested.\n"
+        "- Call analyze_photo ONLY when the user explicitly asked you to"
+        " describe, identify, estimate from, or analyze the photo. Phrases"
+        " like 'what is this', 'what's in this photo', 'estimate from this',"
+        " 'is this damaged' are explicit asks. Sending a photo with 'save"
+        " this to the Acme job' is NOT an ask for analysis.\n"
+        "- Call upload_to_storage when the photo belongs in the user's"
+        " personal storage.\n"
+        "- Call push_to_companycam_project for jobsite documentation.\n"
+        "- Call discard_media when the user explicitly asks you not to save.\n"
+        "Skipping all of these on a photo is fine. Don't run vision just"
+        " because a photo arrived; the user is paying for those tokens."
     )
     return body
 

@@ -15,18 +15,19 @@ export const MESSAGING_CHANNELS = [
 ] as const;
 
 /** Return the subset of MESSAGING_CHANNELS the user should see, filtered by
- * which iMessage backend (if any) the admin has configured. The mutual
- * exclusion between Linq and BlueBubbles is enforced at server startup, so at
- * most one of them will ever be present in the visible list. */
+ * what the admin has actually configured. The mutual exclusion between Linq
+ * and BlueBubbles is enforced at server startup, so at most one of them will
+ * ever appear in the visible list. Telegram appears only when the bot token
+ * is set; otherwise it is hidden entirely (not greyed out), since a user who
+ * does not know what Telegram is will never have configured it. */
 export function getVisibleChannels(
   config: ChannelConfigResponse | undefined,
 ): ReadonlyArray<(typeof MESSAGING_CHANNELS)[number]> {
-  // Before the config loads we can't know which iMessage backend (if any) to
-  // render, so we show only the always-available entries. Once config arrives
-  // we include the single iMessage card matching config.imessage_backend.
-  if (!config) return MESSAGING_CHANNELS.filter((ch) => ch.key === 'telegram');
+  // Before the config loads we cannot know what is configured. Render
+  // nothing rather than guess; the caller should show a loading state.
+  if (!config) return [];
   return MESSAGING_CHANNELS.filter((ch) => {
-    if (ch.key === 'telegram') return true;
+    if (ch.key === 'telegram') return config.telegram_bot_token_set;
     return ch.key === config.imessage_backend;
   });
 }

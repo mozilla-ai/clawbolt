@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react';
-import { useSearchParams, Link } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import Card from '@/components/ui/card';
+import Button from '@/components/ui/button';
 
 export default function OAuthCallbackPage() {
+  const navigate = useNavigate();
   const [params] = useSearchParams();
   const status = params.get('status');
   const integration = params.get('integration') ?? 'unknown';
@@ -28,21 +30,22 @@ export default function OAuthCallbackPage() {
     return (
       <div className="flex flex-col items-center justify-center min-h-dvh gap-4 px-4">
         <Card className="max-w-md w-full text-center p-6">
-          <div className="text-4xl mb-4">&#10003;</div>
+          <div className="text-4xl mb-4" aria-hidden>&#10003;</div>
           <h1 className="text-xl font-semibold font-display mb-2">Connected</h1>
           <p className="text-sm text-muted-foreground mb-4">
             <span className="capitalize">{integration}</span> has been connected successfully.
             You can now use {integration} tools.
           </p>
-          <p className="text-xs text-muted-foreground mb-4">
-            Redirecting to Tools in {countdown}s...
-          </p>
-          <Link
-            to="/app/tools"
-            className="text-sm text-primary hover:underline"
+          <Button
+            variant="primary"
+            className="w-full sm:w-auto"
+            onClick={() => navigate('/app/tools')}
           >
-            Go to Tools now
-          </Link>
+            Back to Tools
+          </Button>
+          <p className="text-xs text-muted-foreground mt-3">
+            Redirecting in {countdown}s...
+          </p>
         </Card>
       </div>
     );
@@ -51,17 +54,18 @@ export default function OAuthCallbackPage() {
   return (
     <div className="flex flex-col items-center justify-center min-h-dvh gap-4 px-4">
       <Card className="max-w-md w-full text-center p-6">
-        <div className="text-4xl mb-4">&#10007;</div>
+        <div className="text-4xl mb-4" aria-hidden>&#10007;</div>
         <h1 className="text-xl font-semibold font-display mb-2">Connection Failed</h1>
         <p className="text-sm text-muted-foreground mb-4">
           {error || 'Something went wrong during authorization. Please try again.'}
         </p>
-        <Link
-          to="/app/tools"
-          className="text-sm text-primary hover:underline"
+        <Button
+          variant="primary"
+          className="w-full sm:w-auto"
+          onClick={() => navigate('/app/tools')}
         >
           Back to Tools
-        </Link>
+        </Button>
       </Card>
     </div>
   );

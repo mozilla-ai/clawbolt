@@ -92,17 +92,38 @@ describe('GetStartedPage', () => {
     expect(screen.getByText("You're off to the races")).toBeInTheDocument();
   });
 
-  it('renders channel selection radio options: Telegram, iMessage, None', async () => {
+  it('renders channel selection radio options for configured channels only', async () => {
+    // Default fixture has telegram_bot_token_set=false and imessage_backend=linq.
+    // After issues #1029 and #1040, Telegram is hidden when not configured.
     renderWithRouter(<GetStartedPage />);
 
-    // Wait for channel config to load so getVisibleChannels can filter the list.
     await waitFor(() => {
       expect(screen.getAllByText('iMessage')).toHaveLength(1);
     });
-    expect(screen.getByText('Telegram')).toBeInTheDocument();
+    expect(screen.queryByText('Telegram')).not.toBeInTheDocument();
     expect(screen.queryByText(/Text Messaging/)).not.toBeInTheDocument();
     expect(screen.queryByText(/BlueBubbles/)).not.toBeInTheDocument();
     expect(screen.getByText('None')).toBeInTheDocument();
+  });
+
+  it('shows Telegram as a radio option when the bot token is set', async () => {
+    mockGetChannelConfig.mockResolvedValueOnce({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: true,
+      linq_from_number: '+15559876543',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+      imessage_backend: 'linq',
+    });
+
+    renderWithRouter(<GetStartedPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Telegram')).toBeInTheDocument();
+    });
   });
 
   it('renders the dismiss button defaulting to chat when no channel selected', () => {

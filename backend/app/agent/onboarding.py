@@ -93,13 +93,16 @@ def is_onboarding_complete_heuristic(user: User) -> bool:
     USER.md has a real name, USER.md has a real timezone, and SOUL.md has
     been customized from the default template.
 
-    The bootstrap prompt instructs the LLM to save the user's name as
-    soon as it's heard (turn 2-3 of the conversation), so a name-only
-    check fires far too early. Timezone is one of the two strictly-
-    required fields per the prompt and is load-bearing for scheduling.
-    SOUL.md customization happens near the end of onboarding once
-    personality has been discussed. Requiring all three together gates
-    the completion path on onboarding actually being substantively done.
+    Note on the soul gate after the 2026-04 bootstrap rewrite: the new
+    bootstrap.md no longer asks the user to specify a personality, so
+    the primary completion path is BOOTSTRAP.md deletion (path 1 in
+    OnboardingSubscriber). This heuristic is now mainly a backstop for
+    users whose conversation customized SOUL.md without the LLM
+    deleting BOOTSTRAP.md. Keeping the soul gate prevents a silent
+    auto-completion of mid-flight users who answered the old
+    personality question yesterday and are replying today: their
+    custom soul keeps them gated through this path until path 1 or
+    path 3 (hard ceiling) fires.
     """
     return _has_real_user_profile(user) and _has_user_timezone(user) and _has_custom_soul(user)
 
