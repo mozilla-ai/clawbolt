@@ -54,14 +54,20 @@ export function useChannelStates(): ChannelStatesResult {
   const routesQuery = useChannelRoutes();
   const configQuery = useChannelConfig();
 
-  // Premium link queries (only fire when isPremium)
-  const telegramLinkQuery = useTelegramLink(isPremium);
-  const telegramBotInfoQuery = useTelegramBotInfo(isPremium);
-  const linqLinkQuery = useLinqLink(isPremium);
-  const blueBubblesLinkQuery = useBlueBubblesLink(isPremium);
-
   const routes = routesQuery.data?.routes ?? [];
   const channelConfig = configQuery.data;
+
+  // Premium link queries (only fire when isPremium).
+  // Bot info is additionally gated on telegram_bot_token_set: in premium
+  // prod, tenants are routed via tenant-specific bots and the global
+  // TELEGRAM_BOT_TOKEN env var is empty, so the OSS /bot-info endpoint
+  // returns 404 (issue #332). Skipping the call when no bot token is
+  // configured eliminates the noise without touching backend behavior.
+  const telegramBotTokenSet = channelConfig?.telegram_bot_token_set ?? false;
+  const telegramLinkQuery = useTelegramLink(isPremium);
+  const telegramBotInfoQuery = useTelegramBotInfo(isPremium && telegramBotTokenSet);
+  const linqLinkQuery = useLinqLink(isPremium);
+  const blueBubblesLinkQuery = useBlueBubblesLink(isPremium);
 
   // Build premium data from React Query results
   const linkDataMap = useMemo<Partial<Record<ChannelKey, PremiumLinkData | null>>>(() => {
