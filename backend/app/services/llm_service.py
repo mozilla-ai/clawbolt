@@ -6,6 +6,7 @@ from typing import Any
 
 from any_llm import LLMProvider, alist_models
 
+from backend.app.config import settings
 from backend.app.schemas import ProviderInfo
 
 # Valid reasoning effort levels (matches any_llm.types.completion.ReasoningEffort).
@@ -71,6 +72,20 @@ async def get_models(
 _CACHE_BOUNDARY = "<!-- CACHE_BOUNDARY -->"
 
 
+def _cache_control() -> dict[str, Any]:
+    """Build the ``cache_control`` block honoring the extended-TTL flag.
+
+    Default Anthropic ephemeral cache TTL is 5 minutes. Users with gaps
+    greater than 5 minutes between messages always miss the cache on
+    their next turn. Setting ``ttl: "1h"`` extends to 1 hour at a 1.5x
+    cache-write premium (vs 1.25x for 5min). Reads are unchanged.
+    Providers that do not understand ``ttl`` silently ignore it.
+    """
+    if settings.llm_cache_extended_ttl:
+        return {"type": "ephemeral", "ttl": "1h"}
+    return {"type": "ephemeral"}
+
+
 def prepare_system_with_caching(system: str) -> list[dict[str, Any]]:
     """Wrap a system prompt string as content blocks with cache_control.
 
@@ -86,13 +101,13 @@ def prepare_system_with_caching(system: str) -> list[dict[str, Any]]:
     if _CACHE_BOUNDARY in system:
         stable, dynamic = system.split(_CACHE_BOUNDARY, 1)
         blocks: list[dict[str, Any]] = [
-            {"type": "text", "text": stable.strip(), "cache_control": {"type": "ephemeral"}},
+            {"type": "text", "text": stable.strip(), "cache_control": _cache_control()},
         ]
         dynamic = dynamic.strip()
         if dynamic:
             blocks.append({"type": "text", "text": dynamic})
         return blocks
-    return [{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]
+    return [{"type": "text", "text": system, "cache_control": _cache_control()}]
 
 
 def apply_tool_caching(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -104,5 +119,5 @@ def apply_tool_caching(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     if not tools:
         return tools
-    tools[-1] = {**tools[-1], "cache_control": {"type": "ephemeral"}}
+    tools[-1] = {**tools[-1], "cache_control": _cache_control()}
     return tools

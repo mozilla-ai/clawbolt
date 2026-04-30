@@ -71,6 +71,16 @@ class Settings(BaseSettings):
     max_input_tokens: int = Field(default=600_000, ge=1)
     context_trim_target_tokens: int = Field(default=400_000, ge=1)
     llm_max_retries: int = Field(default=3, ge=1)
+    # Use Anthropic's 1-hour extended-TTL cache instead of the default
+    # 5-minute ephemeral cache. Inactive users with conversation gaps
+    # >5 min currently always miss the prompt cache on their first
+    # turn after returning. The 1h TTL covers their typical re-engage
+    # pattern at a 1.5x cache_create premium (vs 1.25x for 5min);
+    # the read cost is unchanged. Net cost goes down for any user
+    # whose median inter-message gap is more than ~5 min.
+    # Set to ``False`` to opt back into the default 5-minute TTL,
+    # e.g. if a non-Anthropic provider rejects the ttl field.
+    llm_cache_extended_ttl: bool = True
 
     # Conversation & memory
     conversation_history_limit: int = Field(default=500, ge=1)
