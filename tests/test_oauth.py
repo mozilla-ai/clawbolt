@@ -305,6 +305,64 @@ def test_build_on_refresh_callback_preserves_refresh_token_when_empty(
     assert reloaded.refresh_token == "rt-original"
 
 
+def test_build_on_refresh_callback_bypasses_cache_for_post_lock_reload(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """The on_refresh callback must observe a peer worker's just-persisted
+    rotated refresh_token rather than reading a stale cached value.
+
+    Regression for #1085 review feedback. The callback acquires the same
+    advisory lock as refresh_token to avoid losing the rotated
+    refresh_token. Inside that critical section it reloads the current
+    token to merge the new access/refresh values onto fields it doesn't
+    know about (realm_id, scopes). If a stale cache hides a peer worker's
+    recent save here, the callback writes back stale realm_id/scopes
+    on top of the peer's update.
+    """
+    original = OAuthTokenData(
+        access_token="at-old",
+        refresh_token="rt-old",
+        realm_id="realm-stale",
+        scopes=["scope.stale"],
+        expires_at=time.time() - 100,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", original)
+    # Prime the cache via load_token.
+    primed = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert primed is not None and primed.realm_id == "realm-stale"
+
+    # Simulate a peer worker writing fresh realm_id and scopes_json to
+    # the DB while our cache still has the stale values.
+    from sqlalchemy import update
+
+    from backend.app.database import db_session
+    from backend.app.models import OAuthToken
+
+    with db_session() as db:
+        db.execute(
+            update(OAuthToken)
+            .where(
+                OAuthToken.user_id == test_user.id,
+                OAuthToken.integration == "quickbooks",
+            )
+            .values(realm_id="realm-peer-fresh", scopes_json='["scope.peer"]')
+        )
+        db.commit()
+
+    # Run the callback as the provider client would.
+    callback = oauth_svc.build_on_refresh_callback(test_user.id, "quickbooks")
+    callback("at-new", "rt-new", time.time() + 7200)
+
+    # The merged write must have started from the peer's fresh values,
+    # not the cached stale ones.
+    reloaded = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert reloaded is not None
+    assert reloaded.access_token == "at-new"
+    assert reloaded.refresh_token == "rt-new"
+    assert reloaded.realm_id == "realm-peer-fresh"
+    assert reloaded.scopes == ["scope.peer"]
+
+
 def test_save_token_upsert(oauth_svc: OAuthService, test_user: User) -> None:
     """Saving a token twice should update the existing row, not create a duplicate."""
     token1 = OAuthTokenData(access_token="first")
