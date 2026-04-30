@@ -35,6 +35,10 @@ clawbolt-premium/
 clawbolt-infra/
 data/
 
+# Agent planning docs (output of /autoplan and similar). Intended to be
+# ephemeral working state, not committed to the repo.
+/PLAN_*.md
+
 # Frontend
 frontend/node_modules/
 frontend/dist/
