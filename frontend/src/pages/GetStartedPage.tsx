@@ -6,7 +6,12 @@ import Input from '@/components/ui/input';
 import Field from '@/components/ui/field';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
-import { useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
+import {
+  useChannelConfig,
+  useToggleChannelRoute,
+  useChannelRoutes,
+  useUpdateChannelConfig,
+} from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
 import { useIsMobile } from '@/hooks/useIsMobile';
 import { getVisibleChannels, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
@@ -380,12 +385,29 @@ function MobileGetStarted({
   onActivateRoute,
 }: MobileProps) {
   const navigate = useNavigate();
+  const updateChannelConfig = useUpdateChannelConfig();
   const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [linked, setLinked] = useState(false);
 
   const canStart = imessageBackend !== null && imessageNumber !== '';
+  // BlueBubbles can be configured with either a phone number or an iCloud
+  // email. An ``sms:user@icloud.com`` deep-link is malformed and most OS
+  // handlers reject it, so the email shape gets a copy-the-address UX
+  // instead.
+  const imessageIsEmail = imessageNumber.includes('@');
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(imessageNumber);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API may be blocked; the user can long-press to copy.
+    }
+  };
 
   const handleStart = async () => {
     setError(null);
@@ -400,11 +422,25 @@ function MobileGetStarted({
       if (isPremium) {
         if (imessageBackend === 'linq') await api.setLinqLink(normalized);
         else await api.setBlueBubblesLink(normalized);
+      } else {
+        // OSS: persist the phone to the server-level allowed list so the
+        // backend will route the user's first inbound back to this account.
+        // Without this, the OSS user would type their number into the
+        // wizard and the bot would silently reject their first message.
+        const updates =
+          imessageBackend === 'linq'
+            ? { linq_allowed_numbers: normalized }
+            : { bluebubbles_allowed_numbers: normalized };
+        await updateChannelConfig.mutateAsync(updates);
       }
       onActivateRoute(imessageBackend);
       setLinked(true);
-      // Open the SMS app so the user can fire off their first message.
-      window.location.href = `sms:${imessageNumber}`;
+      // Phone-shaped iMessage backends: open the SMS app so the user can
+      // fire off their first message. Email-shaped (BlueBubbles iCloud)
+      // backends fall through to the linked card with copy-the-address.
+      if (!imessageIsEmail) {
+        window.location.href = `sms:${imessageNumber}`;
+      }
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to save');
       setSaving(false);
@@ -488,13 +524,35 @@ function MobileGetStarted({
         </>
       ) : (
         <Card className="p-4 grid gap-3">
-          <div className="text-sm">
-            Saved. If your Messages app didn't open, tap the button below.
-          </div>
-          <a href={`sms:${imessageNumber}`} className="block">
-            <Button variant="primary" className="w-full">Open Messages</Button>
-          </a>
-          <p className="text-center text-sm font-mono">{imessageNumber}</p>
+          {imessageIsEmail ? (
+            <>
+              <div className="text-sm">
+                Saved. Open Messages on your iCloud-connected device and send
+                a note to this address to get started.
+              </div>
+              <button
+                type="button"
+                onClick={onCopy}
+                className="text-center text-sm font-mono py-2 rounded-md hover:bg-secondary-hover focus:outline-none focus:ring-2 focus:ring-primary/30"
+                aria-label={`Copy address ${imessageNumber}`}
+              >
+                {imessageNumber}
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {copied ? '(copied)' : '(tap to copy)'}
+                </span>
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="text-sm">
+                Saved. If your Messages app didn't open, tap the button below.
+              </div>
+              <a href={`sms:${imessageNumber}`} className="block">
+                <Button variant="primary" className="w-full">Open Messages</Button>
+              </a>
+              <p className="text-center text-sm font-mono">{imessageNumber}</p>
+            </>
+          )}
           <PhotoAccessHint />
           <Button variant="secondary" className="w-full" onClick={onDismiss}>
             Done

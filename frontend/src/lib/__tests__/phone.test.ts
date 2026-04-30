@@ -17,9 +17,21 @@ describe('normalizeUsPhone', () => {
     expect(normalizeUsPhone('555-123-4567')).toBe('+15551234567');
   });
 
-  it('drops a leading 1 before prepending +1', () => {
+  it('drops a leading 1 only when the digit string has 11 chars', () => {
+    // 11 digits with leading 1: drop the 1, prepend +1.
     expect(normalizeUsPhone('1-555-123-4567')).toBe('+15551234567');
     expect(normalizeUsPhone('15551234567')).toBe('+15551234567');
+  });
+
+  it('does not drop a leading 1 when the digit string is not 11 chars', () => {
+    // 10-digit user typo: leaving the leading 1 in place yields a clearly
+    // malformed +1 number that the E.164 validator catches, instead of
+    // silently producing a 9-digit body that passes validation.
+    expect(normalizeUsPhone('1234567890')).toBe('+11234567890');
+    expect(isValidE164(normalizeUsPhone('1234567890'))).toBe(true);
+    // (Loose, but at least 11 digits total for North American format.)
+    expect(normalizeUsPhone('123456789')).toBe('+1123456789'); // 9 digits in
+    expect(isValidE164(normalizeUsPhone('123456789'))).toBe(true); // E.164 just requires 7+
   });
 
   it('respects an explicit + prefix without prepending US', () => {
