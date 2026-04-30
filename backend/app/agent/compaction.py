@@ -11,6 +11,7 @@ remains searchable after the raw messages are gone.
 import datetime
 import json
 import logging
+import time
 from typing import Any, cast
 
 from any_llm import amessages
@@ -146,6 +147,14 @@ async def compact_session(
     if not conversation_text.strip():
         return "", None
 
+    # Telemetry: compaction is a routine operation for active users (every
+    # ~27 days at 15k tokens/day, more often for power users). Capturing
+    # per-run shape so we can audit frequency, cost, and whether the LLM
+    # is actually picking up new facts vs producing empty rewrites.
+    _start_monotonic = time.monotonic()
+    _trimmed_count = len(trimmed_messages)
+    _input_chars = sum(len(m.content or "") for m in trimmed_messages if hasattr(m, "content"))
+
     memory_store = get_memory_store(user_id)
     current_memory = memory_store.read_memory()
     current_user_profile = memory_store.read_user()
@@ -228,5 +237,30 @@ async def compact_session(
     if result.soul_update:
         memory_store.write_soul(result.soul_update)
         logger.info("Compaction updated SOUL.md for user %s", user_id)
+
+    # Single structured summary line. Fields are space-separated key=value
+    # so log aggregators (Railway, Loki) can group / filter without
+    # needing JSON. ``input_tokens`` reflects the tokens Anthropic
+    # billed; the ``trimmed_chars`` field gives a provider-agnostic
+    # input-size proxy. ``*_updated`` flags reveal whether the LLM
+    # actually produced content for each file vs returning empty.
+    _input_tokens = response.usage.input_tokens or 0 if response.usage else 0
+    _output_tokens = response.usage.output_tokens or 0 if response.usage else 0
+    _duration_ms = int((time.monotonic() - _start_monotonic) * 1000)
+    logger.info(
+        "compaction.summary user=%s trimmed_count=%d trimmed_chars=%d "
+        "input_tokens=%d output_tokens=%d duration_ms=%d "
+        "memory_updated=%s user_updated=%s soul_updated=%s summary_len=%d",
+        user_id,
+        _trimmed_count,
+        _input_chars,
+        _input_tokens,
+        _output_tokens,
+        _duration_ms,
+        bool(result.memory_update),
+        bool(result.user_profile_update),
+        bool(result.soul_update),
+        len(result.summary or ""),
+    )
 
     return result.memory_update, max_message_seq
