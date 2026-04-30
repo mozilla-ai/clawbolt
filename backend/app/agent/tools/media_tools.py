@@ -140,21 +140,18 @@ def create_media_tools(
         Tool(
             name=ToolName.ANALYZE_PHOTO,
             description=(
-                "Run vision analysis on a staged photo. Call ONLY when the user "
-                "explicitly asked you to describe, identify, estimate from, or "
-                "analyze the photo (phrases like 'what is this', 'what's in this "
-                "photo', 'estimate from this', 'how bad is this damage'). DO NOT "
-                "call when the user is sending a photo to save, route to "
-                "CompanyCam, attach to a job, or store under a client. Default: "
-                "do not call. Results are cached per-handle within the session "
-                "so calling twice on the same handle is cheap."
+                "Run vision analysis on a staged photo. Default: do not call. "
+                "Use only when the user has asked you to look at the image, or "
+                "you have a clear need to see its contents to help. Results "
+                "are cached per-handle within the session so calling twice on "
+                "the same handle is cheap."
             ),
             function=analyze_photo,
             params_model=AnalyzePhotoParams,
             usage_hint=(
-                "analyze_photo describes a photo. Call only when the user asked "
-                "for analysis. Do not call when the user is just storing or "
-                "routing a photo."
+                "analyze_photo describes a photo. Call only when the user "
+                "asked for analysis or you genuinely need to see what's in "
+                "the image to help."
             ),
         ),
         Tool(
