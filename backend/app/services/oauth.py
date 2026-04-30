@@ -33,6 +33,16 @@ def _refresh_lock_key(user_id: str, integration: str) -> str:
     return f"oauth_refresh:{user_id}:{integration}"
 
 
+# Per-process TTL on cached tokens. A single agent turn loads OAuth
+# credentials repeatedly (auth_check during registry build, factory
+# create() during tool instantiation, then again per actual tool call).
+# In production logs we saw 6+ load_token DB hits per inbound. This
+# cache deduplicates them. Kept short so a refresh in another worker
+# becomes visible quickly; even a stale read here is safe because the
+# returned access_token has its own expires_at that callers honor.
+_TOKEN_CACHE_TTL_SECONDS = 30.0
+
+
 # Token expiry buffer: refresh 5 minutes before actual expiry.
 _EXPIRY_BUFFER_SECONDS = 300
 
@@ -201,6 +211,9 @@ class OAuthService:
     def __init__(self) -> None:
         self._pending_states: dict[str, _PendingState] = {}
         self._http: httpx.AsyncClient | None = None
+        # In-memory TTL cache for load_token. Keyed by (user_id, integration);
+        # value is (token_data_or_none, monotonic_expires_at).
+        self._token_cache: dict[tuple[str, str], tuple[OAuthTokenData | None, float]] = {}
 
     def _get_http(self) -> httpx.AsyncClient:
         if self._http is None or self._http.is_closed:
@@ -364,13 +377,28 @@ class OAuthService:
         with db_session() as db:
             db.execute(stmt)
             db.commit()
+        # Drop any cached entry so the next load_token re-reads the
+        # freshly persisted row (e.g. after a refresh writes new tokens).
+        self._token_cache.pop((user_id, integration), None)
 
     def load_token(
         self,
         user_id: str,
         integration: str,
     ) -> OAuthTokenData | None:
-        """Load token data from the oauth_tokens table."""
+        """Load token data from the oauth_tokens table.
+
+        Results are cached in-memory for ``_TOKEN_CACHE_TTL_SECONDS`` so a
+        single agent turn (auth_check, factory create, tool invocation)
+        does not produce N duplicate DB roundtrips. Cache is invalidated
+        on ``save_token`` and ``delete_token`` within this process.
+        """
+        cache_key = (user_id, integration)
+        now = time.monotonic()
+        cached = self._token_cache.get(cache_key)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+
         from backend.app.models import OAuthToken
 
         logger.info(
@@ -387,6 +415,7 @@ class OAuthService:
             ).scalar_one_or_none()
 
             if row is None:
+                self._token_cache[cache_key] = (None, now + _TOKEN_CACHE_TTL_SECONDS)
                 return None
 
             try:
@@ -399,7 +428,7 @@ class OAuthService:
             except json.JSONDecodeError:
                 extra = {}
 
-            return OAuthTokenData(
+            token = OAuthTokenData(
                 access_token=row.access_token,
                 refresh_token=row.refresh_token,
                 token_type=row.token_type,
@@ -408,6 +437,8 @@ class OAuthService:
                 realm_id=row.realm_id,
                 extra=extra,
             )
+            self._token_cache[cache_key] = (token, now + _TOKEN_CACHE_TTL_SECONDS)
+            return token
 
     def delete_token(
         self,
@@ -431,10 +462,12 @@ class OAuthService:
             ).scalar_one_or_none()
 
             if row is None:
+                self._token_cache.pop((user_id, integration), None)
                 return False
 
             db.delete(row)
             db.commit()
+            self._token_cache.pop((user_id, integration), None)
             return True
 
     def is_connected(self, user_id: str, integration: str) -> bool:
@@ -592,6 +625,11 @@ class OAuthService:
             # session-scoped and survives the commit.
             db.commit()
             try:
+                # Drop any cached entry: the whole point of the post-lock
+                # reload is to detect that a peer worker just refreshed
+                # this token and persisted a new value. A stale in-memory
+                # cache would mask that and cause a redundant HTTP refresh.
+                self._token_cache.pop((user_id, integration), None)
                 token = self.load_token(user_id, integration)
                 if not token or not token.refresh_token:
                     logger.debug(
