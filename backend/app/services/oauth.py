@@ -7,10 +7,12 @@ table) with encrypted access/refresh token columns.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
 import logging
+import random
 import secrets
 import time
 from collections.abc import Callable
@@ -921,6 +923,145 @@ class OAuthService:
 
 # Module-level singleton.
 oauth_service = OAuthService()
+
+
+# ---------------------------------------------------------------------------
+# Background refresh scheduler
+# ---------------------------------------------------------------------------
+
+# How often the background sweep runs.
+_REFRESH_SWEEP_INTERVAL_SECONDS = 120.0
+
+# Random jitter applied to each inter-sweep sleep so that schedulers
+# running in N uvicorn workers do not synchronize and stampede the DB
+# / advisory locks at the same instant. Bounded so the effective
+# interval stays in the [105s, 135s] range.
+_REFRESH_SWEEP_JITTER_SECONDS = 15.0
+
+# How far ahead the sweep looks for tokens to refresh. Slightly larger
+# than ``_EXPIRY_BUFFER_SECONDS`` (300s) so the sweep catches tokens
+# before ``OAuthTokenData.is_expired()`` flips True and the inline
+# refresh in ``get_valid_token`` would fire on the user-facing path.
+_REFRESH_LOOKAHEAD_SECONDS = 360.0
+
+# Only refresh in the background for users who have been active in the
+# last N days. Why: refresh tokens for some providers (notably
+# QuickBooks, 100 day inactivity expiry) are designed to expire when
+# a user stops using the integration, forcing reconnection and a fresh
+# user-consent confirmation. Background refresh would silently bypass
+# that signal for dormant accounts. Activity is "received an inbound
+# message via any channel route" -- this captures iMessage, Telegram,
+# webchat, etc. Inactive users still get the inline refresh path on
+# their next interaction.
+_REFRESH_ACTIVITY_WINDOW_DAYS = 14
+
+
+class OAuthRefreshScheduler:
+    """Periodically refresh OAuth tokens before they expire.
+
+    Without this, every user message that arrives during the 5 minute
+    pre-expiry window pays the cost of an inline HTTP refresh
+    (~150ms). Sweeping in the background pulls that cost off the
+    critical path: by the time the user texts, the token is already
+    fresh and ``get_valid_token`` returns immediately.
+
+    Failures are logged and swallowed; a single bad token never stops
+    the sweep from processing the rest. Inline refresh in
+    ``get_valid_token`` remains the safety net for tokens the sweep
+    missed (e.g. process just started, sweep hasn't run yet).
+    """
+
+    def __init__(self, service: OAuthService) -> None:
+        self._service = service
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        """Start the sweep loop (idempotent)."""
+        if self._task is not None and not self._task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop (sync test harness, etc.): skip silently.
+            return
+        self._task = loop.create_task(self._run())
+        logger.info(
+            "OAuth refresh sweep started (interval=%.0fs lookahead=%.0fs)",
+            _REFRESH_SWEEP_INTERVAL_SECONDS,
+            _REFRESH_LOOKAHEAD_SECONDS,
+        )
+
+    def stop(self) -> None:
+        """Cancel the sweep loop."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+            logger.info("OAuth refresh sweep stopped")
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                await self.sweep()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("OAuth refresh sweep failed")
+            jitter = random.uniform(-_REFRESH_SWEEP_JITTER_SECONDS, _REFRESH_SWEEP_JITTER_SECONDS)
+            await asyncio.sleep(_REFRESH_SWEEP_INTERVAL_SECONDS + jitter)
+
+    async def sweep(self) -> int:
+        """Run one sweep. Returns the number of tokens that were refreshed.
+
+        Only refreshes tokens for users who have been active in the last
+        ``_REFRESH_ACTIVITY_WINDOW_DAYS`` days, so dormant users still
+        hit the natural provider-side inactivity expiry on their refresh
+        tokens (e.g. QuickBooks 100 day rule). Inactive users fall back
+        to the inline refresh path the next time they interact.
+
+        Exposed publicly so tests can drive a single tick without
+        spinning up the background task.
+        """
+        import datetime as _dt
+
+        from backend.app.models import ChannelRoute, OAuthToken
+
+        cutoff = time.time() + _REFRESH_LOOKAHEAD_SECONDS
+        activity_cutoff = _dt.datetime.now(_dt.UTC) - _dt.timedelta(
+            days=_REFRESH_ACTIVITY_WINDOW_DAYS
+        )
+        active_user_ids = (
+            select(ChannelRoute.user_id)
+            .where(ChannelRoute.last_inbound_at.is_not(None))
+            .where(ChannelRoute.last_inbound_at > activity_cutoff)
+        )
+        with db_session() as db:
+            rows = db.execute(
+                select(OAuthToken.user_id, OAuthToken.integration)
+                .where(OAuthToken.expires_at > 0)
+                .where(OAuthToken.expires_at < cutoff)
+                .where(OAuthToken.refresh_token != "")
+                .where(OAuthToken.user_id.in_(active_user_ids))
+            ).all()
+        if not rows:
+            return 0
+        logger.info("OAuth refresh sweep: %d token(s) due for refresh", len(rows))
+        refreshed = 0
+        for user_id, integration in rows:
+            try:
+                result = await self._service.refresh_token(user_id, integration)
+            except Exception:
+                logger.exception(
+                    "Background OAuth refresh failed: user=%s integration=%s",
+                    user_id,
+                    integration,
+                )
+                continue
+            if result is not None:
+                refreshed += 1
+        return refreshed
+
+
+oauth_refresh_scheduler = OAuthRefreshScheduler(oauth_service)
 
 
 # ---------------------------------------------------------------------------
