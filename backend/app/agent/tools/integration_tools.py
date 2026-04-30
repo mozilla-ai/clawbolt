@@ -116,7 +116,9 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
             params_model=ManageIntegrationParams,
             usage_hint=(
                 "Use manage_integration to help users control their integrations. "
-                "Call with action='status' to see all integrations. "
+                "Before offering ANY connect link, call action='status' first and "
+                "skip integrations already showing as connected (do not re-prompt "
+                "for something they already set up). "
                 "Call with action='connect' and target='google_calendar' or 'quickbooks' "
                 "to generate an OAuth link the user can tap to connect. "
                 "Call with action='enable'/'disable' and target=group_name to toggle tools."

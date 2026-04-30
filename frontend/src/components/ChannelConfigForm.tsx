@@ -6,6 +6,7 @@ import Select from '@/components/ui/select';
 import { Tooltip } from '@heroui/tooltip';
 import { toast } from '@/lib/toast';
 import { useUpdateChannelConfig } from '@/hooks/queries';
+import { normalizeUsPhone, isValidE164, PHONE_FORMAT_ERROR } from '@/lib/phone';
 import type { ChannelKey } from '@/lib/channel-utils';
 import type { ChannelConfigResponse } from '@/types';
 import api from '@/api';
@@ -85,17 +86,25 @@ function PremiumChannelLinkForm({
 }: { config: PremiumLinkConfig } & Omit<ChannelConfigFormProps, 'channelKey' | 'isPremium'>) {
   const [identifier, setIdentifier] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   const displayedValue = identifier ?? premiumLinkData?.identifier ?? '';
+  const isPhoneInput = config.inputMode === 'tel';
 
   const handleSave = async () => {
-    if (premiumLinkData && displayedValue === (premiumLinkData.identifier ?? '')) {
+    setError(null);
+    const normalized = isPhoneInput ? normalizeUsPhone(displayedValue) : displayedValue.trim();
+    if (isPhoneInput && normalized && !isValidE164(normalized)) {
+      setError(PHONE_FORMAT_ERROR);
+      return;
+    }
+    if (premiumLinkData && normalized === (premiumLinkData.identifier ?? '')) {
       toast.error('No changes to save');
       return;
     }
     setSaving(true);
     try {
-      await config.setLink(displayedValue);
+      await config.setLink(normalized);
       setIdentifier(null);
       toast.success(`${config.displayName} settings updated`);
       onSaved();
@@ -111,13 +120,20 @@ function PremiumChannelLinkForm({
       <Field label={config.label}>
         <Input
           value={displayedValue}
-          onChange={(e) => setIdentifier(e.target.value)}
+          onChange={(e) => {
+            setIdentifier(e.target.value);
+            if (error) setError(null);
+          }}
           placeholder={config.placeholder}
           inputMode={config.inputMode}
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'channel-link-error' : undefined}
         />
-        <p className="text-xs text-muted-foreground mt-1">
-          {config.helpText}
-        </p>
+        {error ? (
+          <p id="channel-link-error" className="text-xs text-danger mt-1">{error}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-1">{config.helpText}</p>
+        )}
       </Field>
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={saving || premiumLinkData === null} isLoading={saving}>
@@ -217,14 +233,23 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
   const updateMutation = useUpdateChannelConfig();
   const [allowedNumber, setAllowedNumber] = useState<string | null>(null);
   const [preferredService, setPreferredService] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const displayedNumber = allowedNumber ?? channelConfig?.linq_allowed_numbers ?? '';
   const displayedService = preferredService ?? channelConfig?.linq_preferred_service ?? 'iMessage';
 
   const handleSave = () => {
+    setError(null);
     const updates: Record<string, string> = {};
-    if (allowedNumber !== null && allowedNumber !== (channelConfig?.linq_allowed_numbers ?? '')) {
-      updates.linq_allowed_numbers = allowedNumber;
+    // Allow "*" (allow-all) and "" (deny-all) verbatim; only normalize phone-shaped input.
+    const trimmed = (allowedNumber ?? '').trim();
+    const normalized = trimmed && trimmed !== '*' ? normalizeUsPhone(trimmed) : trimmed;
+    if (normalized && normalized !== '*' && !isValidE164(normalized)) {
+      setError(PHONE_FORMAT_ERROR);
+      return;
+    }
+    if (allowedNumber !== null && normalized !== (channelConfig?.linq_allowed_numbers ?? '')) {
+      updates.linq_allowed_numbers = normalized;
     }
     if (preferredService !== null && preferredService !== (channelConfig?.linq_preferred_service ?? 'iMessage')) {
       updates.linq_preferred_service = preferredService;
@@ -249,13 +274,22 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
       <Field label="Allowed Phone Number">
         <Input
           value={displayedNumber}
-          onChange={(e) => setAllowedNumber(e.target.value)}
+          onChange={(e) => {
+            setAllowedNumber(e.target.value);
+            if (error) setError(null);
+          }}
           placeholder="e.g. +15551234567"
           inputMode="tel"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'oss-linq-error' : undefined}
         />
-        <p className="text-xs text-muted-foreground mt-1">
-          E.164 phone number, or * to allow all. Empty = deny all.
-        </p>
+        {error ? (
+          <p id="oss-linq-error" className="text-xs text-danger mt-1">{error}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-1">
+            E.164 phone number, or * to allow all. Empty = deny all.
+          </p>
+        )}
       </Field>
       <Field label="Preferred Service">
         <Select
@@ -282,15 +316,27 @@ function OssLinqForm({ channelConfig, onSaved }: SubFormProps) {
 function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
   const updateMutation = useUpdateChannelConfig();
   const [allowedNumbers, setAllowedNumbers] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const displayedNumbers = allowedNumbers ?? channelConfig?.bluebubbles_allowed_numbers ?? '';
 
   const handleSave = () => {
-    if (allowedNumbers === null || allowedNumbers === (channelConfig?.bluebubbles_allowed_numbers ?? '')) {
+    setError(null);
+    const trimmed = (allowedNumbers ?? '').trim();
+    // BlueBubbles also accepts iCloud email, so only normalize phone-shaped input.
+    const looksLikeEmail = trimmed.includes('@');
+    const normalized = trimmed && trimmed !== '*' && !looksLikeEmail
+      ? normalizeUsPhone(trimmed)
+      : trimmed;
+    if (normalized && normalized !== '*' && !looksLikeEmail && !isValidE164(normalized)) {
+      setError(PHONE_FORMAT_ERROR);
+      return;
+    }
+    if (allowedNumbers === null || normalized === (channelConfig?.bluebubbles_allowed_numbers ?? '')) {
       toast.error('No changes to save');
       return;
     }
-    updateMutation.mutate({ bluebubbles_allowed_numbers: allowedNumbers }, {
+    updateMutation.mutate({ bluebubbles_allowed_numbers: normalized }, {
       onSuccess: () => {
         setAllowedNumbers(null);
         toast.success('iMessage settings updated');
@@ -305,13 +351,22 @@ function BlueBubblesForm({ channelConfig, onSaved }: SubFormProps) {
       <Field label="Allowed Sender">
         <Input
           value={displayedNumbers}
-          onChange={(e) => setAllowedNumbers(e.target.value)}
+          onChange={(e) => {
+            setAllowedNumbers(e.target.value);
+            if (error) setError(null);
+          }}
           placeholder="e.g. +15551234567 or user@icloud.com"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'bluebubbles-error' : undefined}
         />
-        <p className="text-xs text-muted-foreground mt-1">
-          E.164 phone number or iCloud email, or * to allow all. Empty = deny all.
-          The iMessage address is set by the administrator and shown on the channel card.
-        </p>
+        {error ? (
+          <p id="bluebubbles-error" className="text-xs text-danger mt-1">{error}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-1">
+            E.164 phone number or iCloud email, or * to allow all. Empty = deny all.
+            The iMessage address is set by the administrator and shown on the channel card.
+          </p>
+        )}
       </Field>
       <div className="flex justify-end">
         <Button onClick={handleSave} disabled={updateMutation.isPending || channelConfig === undefined} isLoading={updateMutation.isPending}>

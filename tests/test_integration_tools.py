@@ -82,6 +82,28 @@ async def test_status_shows_enabled_disabled(test_user: User) -> None:
 
 
 @pytest.mark.asyncio()
+async def test_usage_hint_instructs_status_check_first(test_user: User) -> None:
+    """The manage_integration usage_hint must tell the agent to call
+    action='status' before offering connect links.
+
+    Regression for #1037: the agent re-prompted for already-connected
+    integrations because the rule lived only in bootstrap.md, which
+    gets deleted at the end of onboarding. The durable home is the
+    tool's usage_hint.
+    """
+    ctx = ToolContext(user=test_user)
+    tools = create_integration_tools(ctx)
+    tool = next(t for t in tools if t.name == ToolName.MANAGE_INTEGRATION)
+    assert tool.usage_hint is not None
+    hint = tool.usage_hint.lower()
+    assert "status" in hint
+    assert "connect" in hint
+    assert "before offering" in hint or "first" in hint or "skip" in hint, (
+        "usage_hint should instruct status check before offering a connect link"
+    )
+
+
+@pytest.mark.asyncio()
 async def test_status_shows_oauth_connection_state(test_user: User) -> None:
     """Status should show connected/not connected for OAuth integrations."""
     mock_config = OAuthConfig(

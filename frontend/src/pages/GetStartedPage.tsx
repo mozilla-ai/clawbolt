@@ -1,18 +1,28 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import Card from '@/components/ui/card';
 import Button from '@/components/ui/button';
+import Input from '@/components/ui/input';
+import Field from '@/components/ui/field';
 import TextAssistantCard from '@/components/TextAssistantCard';
 import { toast } from '@/lib/toast';
-import { useChannelConfig, useToggleChannelRoute, useChannelRoutes } from '@/hooks/queries';
+import {
+  useChannelConfig,
+  useToggleChannelRoute,
+  useChannelRoutes,
+  useUpdateChannelConfig,
+} from '@/hooks/queries';
 import { useAuth } from '@/contexts/AuthContext';
+import { useIsMobile } from '@/hooks/useIsMobile';
 import { getVisibleChannels, isServerAvailable, type ChannelKey } from '@/lib/channel-utils';
 import { ChannelConfigForm, type TelegramLinkData, type PremiumLinkData } from '@/components/ChannelConfigForm';
+import { normalizeUsPhone, isValidE164, PHONE_FORMAT_ERROR } from '@/lib/phone';
 import api from '@/api';
 
 type Selection = ChannelKey | 'none';
 
 export default function GetStartedPage() {
+  const isMobile = useIsMobile();
   const navigate = useNavigate();
   const { isPremium } = useAuth();
   const { data: channelConfig } = useChannelConfig();
@@ -47,6 +57,10 @@ export default function GetStartedPage() {
   const fromNumber = channelConfig?.linq_from_number ?? '';
   const bbAddress = channelConfig?.bluebubbles_imessage_address ?? '';
   const bbConfigured = channelConfig ? isServerAvailable('bluebubbles', channelConfig) : false;
+  const imessageNumber = linqConfigured && fromNumber
+    ? fromNumber
+    : (bbConfigured && bbAddress ? bbAddress : '');
+  const imessageBackend: ChannelKey | null = linqConfigured ? 'linq' : (bbConfigured ? 'bluebubbles' : null);
 
   // Find the currently active channel route
   const activeChannelKey = visibleChannels.find(
@@ -64,15 +78,13 @@ export default function GetStartedPage() {
     }
   }, [channelConfig, routesData, activeChannelKey]);
 
-  const handleSelectChannel = (channel: Selection) => {
+  const handleSelectChannel = useCallback((channel: Selection) => {
     setSelectedChannel(channel);
 
     if (channel === 'none') {
-      // Disable the currently active channel
       const toDisable = confirmedChannel && confirmedChannel !== 'none'
         ? confirmedChannel
         : activeChannelKey;
-
       if (toDisable) {
         toggleChannelRoute.mutate(
           { channel: toDisable, enabled: false },
@@ -90,7 +102,6 @@ export default function GetStartedPage() {
       return;
     }
 
-    // Enable the selected channel route (backend auto-disables others)
     toggleChannelRoute.mutate(
       { channel, enabled: true },
       {
@@ -101,10 +112,9 @@ export default function GetStartedPage() {
         },
       },
     );
-  };
+  }, [activeChannelKey, confirmedChannel, toggleChannelRoute]);
 
   const handleConfigSaved = (key: ChannelKey) => {
-    // Refresh premium link data after save
     if (isPremium) {
       if (key === 'telegram') api.getTelegramLink().then(setTelegramLinkData).catch(() => {});
       const fetchers: Partial<Record<ChannelKey, () => Promise<{ phone_number: string | null; connected: boolean }>>> = {
@@ -126,6 +136,19 @@ export default function GetStartedPage() {
       replace: true,
     });
   };
+
+  if (isMobile) {
+    return (
+      <MobileGetStarted
+        channelConfig={channelConfig}
+        imessageBackend={imessageBackend}
+        imessageNumber={imessageNumber}
+        isPremium={isPremium}
+        onDismiss={handleDismiss}
+        onActivateRoute={(key) => handleSelectChannel(key)}
+      />
+    );
+  }
 
   // Determine Step 2 heading based on selection
   const step2Label = selectedChannel === 'none'
@@ -160,22 +183,18 @@ export default function GetStartedPage() {
                 Pick how you want to talk to Clawbolt. You can change this later.
               </p>
               <div className="mt-3 grid gap-2" role="radiogroup" aria-label="Messaging channel">
-                {visibleChannels.map(({ key, label }) => {
-                  const configured = channelConfig ? isServerAvailable(key, channelConfig) : false;
-                  return (
-                    <ChannelRadioItem
-                      key={key}
-                      value={key}
-                      label={label}
-                      isSelected={selectedChannel === key}
-                      isConfirmed={confirmedChannel === key}
-                      isDisabled={!configured}
-                      isSwitching={toggleChannelRoute.isPending && selectedChannel === key && confirmedChannel !== key}
-                      isMutating={toggleChannelRoute.isPending}
-                      onSelect={() => handleSelectChannel(key)}
-                    />
-                  );
-                })}
+                {visibleChannels.map(({ key, label }) => (
+                  <ChannelRadioItem
+                    key={key}
+                    value={key}
+                    label={label}
+                    isSelected={selectedChannel === key}
+                    isConfirmed={confirmedChannel === key}
+                    isSwitching={toggleChannelRoute.isPending && selectedChannel === key && confirmedChannel !== key}
+                    isMutating={toggleChannelRoute.isPending}
+                    onSelect={() => handleSelectChannel(key)}
+                  />
+                ))}
 
                 <ChannelRadioItem
                   value="none"
@@ -187,6 +206,12 @@ export default function GetStartedPage() {
                   isMutating={toggleChannelRoute.isPending}
                   onSelect={() => handleSelectChannel('none')}
                 />
+                {visibleChannels.length === 0 && (
+                  <p className="text-xs text-muted-foreground italic px-3 py-2">
+                    No messaging channels are configured on the server yet.
+                    Use web chat for now, or ask your admin to enable iMessage or Telegram.
+                  </p>
+                )}
               </div>
             </div>
           </div>
@@ -243,20 +268,22 @@ export default function GetStartedPage() {
               </div>
               <h3 className="text-sm font-semibold font-display">Send a message</h3>
               {selectedChannel === 'linq' && linqConfigured && fromNumber ? (
-                <div className="mt-2">
+                <div className="mt-2 grid gap-2">
                   <TextAssistantCard
                     fromNumber={fromNumber}
                     subtitle="Send an iMessage to this address to get started."
-                    qrSize={80}
+                    qrSize={120}
                   />
+                  <PhotoAccessHint />
                 </div>
               ) : selectedChannel === 'bluebubbles' && bbConfigured && bbAddress ? (
-                <div className="mt-2">
+                <div className="mt-2 grid gap-2">
                   <TextAssistantCard
                     fromNumber={bbAddress}
                     subtitle="Send an iMessage to this address to get started."
-                    qrSize={80}
+                    qrSize={120}
                   />
+                  <PhotoAccessHint />
                 </div>
               ) : (
                 <p className="text-sm text-muted-foreground mt-1">
@@ -336,13 +363,224 @@ export default function GetStartedPage() {
   );
 }
 
+// ---------------------------------------------------------------------------
+// Mobile single-screen layout
+// ---------------------------------------------------------------------------
+
+interface MobileProps {
+  channelConfig: ReturnType<typeof useChannelConfig>['data'];
+  imessageBackend: ChannelKey | null;
+  imessageNumber: string;
+  isPremium: boolean;
+  onDismiss: () => void;
+  onActivateRoute: (key: ChannelKey) => void;
+}
+
+function MobileGetStarted({
+  channelConfig,
+  imessageBackend,
+  imessageNumber,
+  isPremium,
+  onDismiss,
+  onActivateRoute,
+}: MobileProps) {
+  const navigate = useNavigate();
+  const updateChannelConfig = useUpdateChannelConfig();
+  const [phone, setPhone] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [linked, setLinked] = useState(false);
+
+  const canStart = imessageBackend !== null && imessageNumber !== '';
+  // BlueBubbles can be configured with either a phone number or an iCloud
+  // email. An ``sms:user@icloud.com`` deep-link is malformed and most OS
+  // handlers reject it, so the email shape gets a copy-the-address UX
+  // instead.
+  const imessageIsEmail = imessageNumber.includes('@');
+  const [copied, setCopied] = useState(false);
+
+  const onCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(imessageNumber);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Clipboard API may be blocked; the user can long-press to copy.
+    }
+  };
+
+  const handleStart = async () => {
+    setError(null);
+    if (!imessageBackend) return;
+    const normalized = normalizeUsPhone(phone);
+    if (!isValidE164(normalized)) {
+      setError(PHONE_FORMAT_ERROR);
+      return;
+    }
+    setSaving(true);
+    try {
+      if (isPremium) {
+        if (imessageBackend === 'linq') await api.setLinqLink(normalized);
+        else await api.setBlueBubblesLink(normalized);
+      } else {
+        // OSS: persist the phone to the server-level allowed list so the
+        // backend will route the user's first inbound back to this account.
+        // Without this, the OSS user would type their number into the
+        // wizard and the bot would silently reject their first message.
+        const updates =
+          imessageBackend === 'linq'
+            ? { linq_allowed_numbers: normalized }
+            : { bluebubbles_allowed_numbers: normalized };
+        await updateChannelConfig.mutateAsync(updates);
+      }
+      onActivateRoute(imessageBackend);
+      setLinked(true);
+      // Phone-shaped iMessage backends: open the SMS app so the user can
+      // fire off their first message. Email-shaped (BlueBubbles iCloud)
+      // backends fall through to the linked card with copy-the-address.
+      if (!imessageIsEmail) {
+        window.location.href = `sms:${imessageNumber}`;
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save');
+      setSaving(false);
+    }
+  };
+
+  if (!channelConfig) {
+    return (
+      <div className="px-4 py-8 max-w-md mx-auto">
+        <div className="animate-pulse h-32 bg-panel rounded-md" aria-hidden />
+      </div>
+    );
+  }
+
+  if (!canStart) {
+    return (
+      <div className="px-4 py-8 max-w-md mx-auto grid gap-4">
+        <h2 className="text-lg font-semibold font-display">Get Started</h2>
+        <p className="text-sm text-muted-foreground">
+          No messaging channel is configured on the server yet. Use web chat
+          for now, or ask your admin to enable iMessage.
+        </p>
+        <Button variant="primary" className="w-full" onClick={() => navigate('/app/chat')}>
+          Open web chat
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-6 max-w-md mx-auto grid gap-5">
+      <div>
+        <h2 className="text-xl font-semibold font-display">Hey, I'm Clawbolt</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          Text me to get started. I'm an AI assistant for tradespeople.
+          Tell me your phone number so I know it's you when you message me.
+        </p>
+      </div>
+
+      {!linked ? (
+        <>
+          <Field label="Your phone number">
+            <Input
+              value={phone}
+              onChange={(e) => {
+                setPhone(e.target.value);
+                if (error) setError(null);
+              }}
+              placeholder="(555) 123-4567"
+              inputMode="tel"
+              autoComplete="tel"
+              aria-invalid={error ? true : undefined}
+              aria-describedby={error ? 'mobile-phone-error' : undefined}
+            />
+            {error ? (
+              <p id="mobile-phone-error" className="text-xs text-danger mt-1">{error}</p>
+            ) : (
+              <p className="text-xs text-muted-foreground mt-1">
+                US numbers default to +1. Type a leading + for other countries.
+              </p>
+            )}
+          </Field>
+
+          <Button
+            variant="primary"
+            className="w-full"
+            isLoading={saving}
+            disabled={saving || !phone.trim()}
+            onClick={handleStart}
+          >
+            Text Clawbolt
+          </Button>
+
+          <button
+            type="button"
+            className="text-sm text-primary hover:underline self-center"
+            onClick={() => navigate('/app/chat')}
+          >
+            Use web chat instead
+          </button>
+        </>
+      ) : (
+        <Card className="p-4 grid gap-3">
+          {imessageIsEmail ? (
+            <>
+              <div className="text-sm">
+                Saved. Open Messages on your iCloud-connected device and send
+                a note to this address to get started.
+              </div>
+              <button
+                type="button"
+                onClick={onCopy}
+                className="text-center text-sm font-mono py-2 rounded-md hover:bg-secondary-hover focus:outline-none focus:ring-2 focus:ring-primary/30"
+                aria-label={`Copy address ${imessageNumber}`}
+              >
+                {imessageNumber}
+                <span className="ml-2 text-xs text-muted-foreground">
+                  {copied ? '(copied)' : '(tap to copy)'}
+                </span>
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="text-sm">
+                Saved. If your Messages app didn't open, tap the button below.
+              </div>
+              <a href={`sms:${imessageNumber}`} className="block">
+                <Button variant="primary" className="w-full">Open Messages</Button>
+              </a>
+              <p className="text-center text-sm font-mono">{imessageNumber}</p>
+            </>
+          )}
+          <PhotoAccessHint />
+          <Button variant="secondary" className="w-full" onClick={onDismiss}>
+            Done
+          </Button>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// Shared bits
+// ---------------------------------------------------------------------------
+
+function PhotoAccessHint() {
+  return (
+    <p className="text-xs text-muted-foreground italic">
+      Clawbolt only sees photos you send it. It can't browse your camera roll.
+    </p>
+  );
+}
+
 function ChannelRadioItem({
   value,
   label,
   description,
   isSelected,
   isConfirmed,
-  isDisabled,
   isSwitching,
   isMutating,
   onSelect,
@@ -352,7 +590,6 @@ function ChannelRadioItem({
   description?: string;
   isSelected: boolean;
   isConfirmed: boolean;
-  isDisabled?: boolean;
   isSwitching: boolean;
   isMutating: boolean;
   onSelect: () => void;
@@ -360,15 +597,13 @@ function ChannelRadioItem({
   return (
     <label
       className={`flex items-center gap-3 p-3 rounded-xl border transition-colors ${
-        isDisabled
-          ? 'opacity-50 cursor-not-allowed'
-          : isSelected
-            ? 'border-primary bg-primary-light cursor-pointer'
-            : 'border-border hover:border-primary/40 cursor-pointer'
+        isSelected
+          ? 'border-primary bg-primary-light cursor-pointer'
+          : 'border-border hover:border-primary/40 cursor-pointer'
       }`}
     >
       {isSwitching ? (
-        <span className="w-4 h-4 shrink-0 flex items-center justify-center">
+        <span className="w-4 h-4 shrink-0 flex items-center justify-center" aria-busy="true">
           <span className="w-3.5 h-3.5 border-2 border-primary border-t-transparent rounded-full animate-spin" />
         </span>
       ) : (
@@ -378,7 +613,7 @@ function ChannelRadioItem({
           value={value}
           checked={isSelected}
           onChange={onSelect}
-          disabled={isDisabled || isMutating}
+          disabled={isMutating}
           className="accent-primary w-4 h-4 shrink-0"
         />
       )}
@@ -387,8 +622,8 @@ function ChannelRadioItem({
         {description && <p className="text-xs text-muted-foreground">{description}</p>}
       </div>
       {isConfirmed && (
-        <span className="text-xs text-success flex items-center gap-1">
-          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <span className="text-xs text-success flex items-center gap-1" aria-label="Confirmed">
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" />
           </svg>
         </span>
@@ -401,7 +636,7 @@ function ChannelRadioItem({
 
 function ChannelIcon() {
   return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8.625 12a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
     </svg>
   );
@@ -409,7 +644,7 @@ function ChannelIcon() {
 
 function SettingsIcon() {
   return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.594 3.94c.09-.542.56-.94 1.11-.94h2.593c.55 0 1.02.398 1.11.94l.213 1.281c.063.374.313.686.645.87.074.04.147.083.22.127.325.196.72.257 1.075.124l1.217-.456a1.125 1.125 0 0 1 1.37.49l1.296 2.247a1.125 1.125 0 0 1-.26 1.431l-1.003.827c-.293.241-.438.613-.43.992a7.723 7.723 0 0 1 0 .255c-.008.378.137.75.43.991l1.004.827c.424.35.534.955.26 1.43l-1.298 2.247a1.125 1.125 0 0 1-1.369.491l-1.217-.456c-.355-.133-.75-.072-1.076.124a6.47 6.47 0 0 1-.22.128c-.331.183-.581.495-.644.869l-.213 1.281c-.09.543-.56.94-1.11.94h-2.594c-.55 0-1.019-.398-1.11-.94l-.213-1.281c-.062-.374-.312-.686-.644-.87a6.52 6.52 0 0 1-.22-.127c-.325-.196-.72-.257-1.076-.124l-1.217.456a1.125 1.125 0 0 1-1.369-.49l-1.297-2.247a1.125 1.125 0 0 1 .26-1.431l1.004-.827c.292-.24.437-.613.43-.991a6.932 6.932 0 0 1 0-.255c.007-.38-.138-.751-.43-.992l-1.004-.827a1.125 1.125 0 0 1-.26-1.43l1.297-2.247a1.125 1.125 0 0 1 1.37-.491l1.216.456c.356.133.751.072 1.076-.124.072-.044.146-.086.22-.128.332-.183.582-.495.644-.869l.214-1.28Z" />
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
     </svg>
@@ -418,7 +653,7 @@ function SettingsIcon() {
 
 function ChatIcon() {
   return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M7 8h10M7 12h4m1 8l-4-4H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-3l-4 4z" />
     </svg>
   );
@@ -426,7 +661,7 @@ function ChatIcon() {
 
 function RocketIcon() {
   return (
-    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.63 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.841M3.75 21h.008v.008H3.75V21z" />
     </svg>
   );

@@ -140,14 +140,19 @@ def create_media_tools(
         Tool(
             name=ToolName.ANALYZE_PHOTO,
             description=(
-                "Run vision analysis on a staged photo referenced by its handle. "
-                "Use this when the conversation doesn't already describe the photo "
-                "contents. Results are cached per-handle within the session, so "
-                "calling twice for the same handle is cheap."
+                "Run vision analysis on a staged photo. Default: do not call. "
+                "Use only when the user has asked you to look at the image, or "
+                "you have a clear need to see its contents to help. Results "
+                "are cached per-handle within the session so calling twice on "
+                "the same handle is cheap."
             ),
             function=analyze_photo,
             params_model=AnalyzePhotoParams,
-            usage_hint="Describe a photo the user sent.",
+            usage_hint=(
+                "analyze_photo describes a photo. Call only when the user "
+                "asked for analysis or you genuinely need to see what's in "
+                "the image to help."
+            ),
         ),
         Tool(
             name=ToolName.DISCARD_MEDIA,

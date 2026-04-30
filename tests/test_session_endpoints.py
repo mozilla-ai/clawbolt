@@ -261,7 +261,8 @@ def test_get_system_prompt_returns_live_post_onboarding(
     # Normal system prompt has the standard preamble; bootstrap doesn't
     # contain this exact phrase.
     assert "AI assistant for solo tradespeople" in data["system_prompt"]
-    assert "blank slate" not in data["system_prompt"]
+    # Bootstrap-only phrasing should not leak into a normal-mode prompt.
+    assert "first conversation with them" not in data["system_prompt"]
 
 
 def test_get_system_prompt_returns_bootstrap_during_onboarding(
@@ -310,8 +311,8 @@ def test_get_system_prompt_returns_bootstrap_during_onboarding(
         assert resp.status_code == 200
         data = resp.json()
         assert data["is_onboarding"] is True
-        # Bootstrap-flavored prompt has these phrases verbatim.
-        assert "blank slate" in data["system_prompt"]
+        # Bootstrap-flavored prompt has this phrase verbatim.
+        assert "first conversation with them" in data["system_prompt"]
     finally:
         _app.dependency_overrides.pop(get_current_user, None)
 

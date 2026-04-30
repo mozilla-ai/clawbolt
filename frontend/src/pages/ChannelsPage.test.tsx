@@ -362,9 +362,12 @@ describe('ChannelsPage - Config Forms', () => {
   });
 });
 
-describe('ChannelsPage - Unavailable hints', () => {
-  it('shows admin-contact hint for unavailable Telegram without leaking env var names', async () => {
-    // Telegram unavailable, linq is the iMessage backend so page renders channel cards (not empty state).
+describe('ChannelsPage - Unavailable channels are hidden', () => {
+  it('hides Telegram entirely when the bot token is not configured', async () => {
+    // Per #1029 / #1040 we no longer render greyed-out unavailable channel
+    // cards. Telegram disappears from the list when telegram_bot_token_set
+    // is false; the user does not see a Telegram card at all (and so no
+    // env var name can leak into user-facing copy).
     mockGetChannelConfig.mockResolvedValue({
       telegram_bot_token_set: false,
       telegram_allowed_chat_id: '',
@@ -381,10 +384,12 @@ describe('ChannelsPage - Unavailable hints', () => {
 
     renderWithRouter(<ChannelsPage />);
 
+    // iMessage card renders; Telegram does not.
     await waitFor(() => {
-      expect(screen.getByText(/Contact your administrator to enable Telegram/)).toBeInTheDocument();
+      expect(screen.queryByText('iMessage')).toBeInTheDocument();
     });
-    // The hint must not leak the backend env var name.
+    expect(screen.queryByText('Telegram')).not.toBeInTheDocument();
+    expect(screen.queryByText(/Contact your administrator to enable Telegram/)).not.toBeInTheDocument();
     expect(screen.queryByText(/TELEGRAM_BOT_TOKEN/)).not.toBeInTheDocument();
   });
 });

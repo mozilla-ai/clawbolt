@@ -28,14 +28,20 @@ logger = logging.getLogger(__name__)
 # any new user information being captured.
 MIN_ONBOARDING_USER_MESSAGES = 10
 
+# Floor for the system-driven auto-exit path. After this many user
+# messages, if name + timezone are captured, the system removes
+# BOOTSTRAP.md and marks onboarding complete without asking the LLM
+# for a decision. The point of the floor is conversational texture:
+# even a maximally-cooperative user who supplies name + timezone in
+# turn 1 stays in bootstrap mode long enough for the "things worth
+# weaving in" (dictation hint, photo policy) to land naturally.
+# Calibrated to keep the user in onboarding for ~3-5 LLM replies.
+MIN_USER_MESSAGES_FOR_AUTO_EXIT = 4
+
 # Hard ceiling for force-completing onboarding. If the user has sent this
-# many messages and onboarding has still not completed via either the
-# BOOTSTRAP.md-deletion path or the heuristic+content path, force the
-# flag on so heartbeats and other gated features unblock. This is a last-
-# resort safety net for cases where the LLM never manages to satisfy any
-# completion signal (e.g. user keeps redirecting to real questions, soul
-# never gets customized). After 50 user turns the cost of staying stuck
-# in onboarding outweighs the cost of an incomplete profile.
+# many messages and onboarding has still not completed via the auto-exit
+# path or the heuristic, force the flag on so heartbeats and other gated
+# features unblock. Last-resort safety net for stuck flows.
 MAX_ONBOARDING_USER_MESSAGES = 50
 
 
@@ -86,6 +92,25 @@ def _has_custom_soul(user: User) -> bool:
     return content != default and content != default_wrapped
 
 
+def is_ready_for_auto_exit(user: User) -> bool:
+    """Return True when the system can flip the user out of bootstrap mode.
+
+    Fires when both load-bearing fields (name + timezone) are populated.
+    The conversation-length floor is enforced by the caller (see
+    :data:`MIN_USER_MESSAGES_FOR_AUTO_EXIT`), so this function only
+    captures the data condition.
+
+    Distinct from :func:`is_onboarding_complete_heuristic`: that
+    function is the strict heuristic backstop (also requires a custom
+    soul + 10 messages) for users who somehow customized SOUL.md
+    without exiting via the auto-exit path. The auto-exit path is the
+    primary completion signal in the post-2026-04 bootstrap design,
+    where the LLM no longer asks for personality and the system
+    removes BOOTSTRAP.md once the user is established.
+    """
+    return _has_real_user_profile(user) and _has_user_timezone(user)
+
+
 def is_onboarding_complete_heuristic(user: User) -> bool:
     """Heuristic gate for onboarding completion.
 
@@ -93,13 +118,16 @@ def is_onboarding_complete_heuristic(user: User) -> bool:
     USER.md has a real name, USER.md has a real timezone, and SOUL.md has
     been customized from the default template.
 
-    The bootstrap prompt instructs the LLM to save the user's name as
-    soon as it's heard (turn 2-3 of the conversation), so a name-only
-    check fires far too early. Timezone is one of the two strictly-
-    required fields per the prompt and is load-bearing for scheduling.
-    SOUL.md customization happens near the end of onboarding once
-    personality has been discussed. Requiring all three together gates
-    the completion path on onboarding actually being substantively done.
+    Note on the soul gate after the 2026-04 bootstrap rewrite: the new
+    bootstrap.md no longer asks the user to specify a personality, so
+    the primary completion path is BOOTSTRAP.md deletion (path 1 in
+    OnboardingSubscriber). This heuristic is now mainly a backstop for
+    users whose conversation customized SOUL.md without the LLM
+    deleting BOOTSTRAP.md. Keeping the soul gate prevents a silent
+    auto-completion of mid-flight users who answered the old
+    personality question yesterday and are replying today: their
+    custom soul keeps them gated through this path until path 1 or
+    path 3 (hard ceiling) fires.
     """
     return _has_real_user_profile(user) and _has_user_timezone(user) and _has_custom_soul(user)
 
@@ -281,25 +309,31 @@ def _mark_onboarding_complete(user: User) -> None:
 class OnboardingSubscriber:
     """Event subscriber that detects onboarding completion after agent processing.
 
-    Four completion paths:
+    Five completion paths, evaluated in order:
 
-    1. **Primary:** the LLM deletes ``BOOTSTRAP.md`` per the bootstrap prompt.
-       This is the intended signal and fires immediately.
-    2. **Heuristic fallback:** if the LLM gets sidetracked and never deletes
-       the file, the heuristic fires once the user has sent at least
-       :data:`MIN_ONBOARDING_USER_MESSAGES` messages AND USER.md has a real
-       name AND USER.md has a real timezone AND SOUL.md is customized.
-       All gates are required: the bootstrap prompt instructs the LLM to
-       save the user's name as soon as it's heard (turn 2-3), so name +
-       short-conversation alone is not evidence that onboarding has
-       substantively completed.
-    3. **Hard ceiling:** at :data:`MAX_ONBOARDING_USER_MESSAGES` user
-       messages, force-complete regardless of content. Last-resort safety
-       net so heartbeats and other gated features don't stay disabled
-       indefinitely when the LLM never satisfies any completion signal.
-    4. **Pre-populated user:** users created with profile content already
-       in place (migrations, admin seeding) get flipped on the first turn
-       where they're not in onboarding mode.
+    1. **Defense-in-depth:** ``BOOTSTRAP.md`` is missing for any reason
+       (LLM ran ``delete_file`` despite the prompt no longer asking, the
+       file was wiped externally, etc.). Fires immediately.
+    2. **Auto-exit (primary):** name + timezone captured AND the user has
+       sent at least :data:`MIN_USER_MESSAGES_FOR_AUTO_EXIT` messages.
+       The system removes ``BOOTSTRAP.md`` itself; the LLM has no
+       exit-decision burden. The message floor ensures the conversation
+       has texture (so the "things worth weaving in" content has a
+       chance to land) even when the user supplies name + timezone
+       in turn 1.
+    3. **Strict heuristic backstop:** for mid-flight users from the
+       pre-2026-04 bootstrap who customized SOUL.md (the old prompt
+       asked them to). Fires once name + timezone + custom soul AND
+       :data:`MIN_ONBOARDING_USER_MESSAGES` messages are present. After
+       the new bootstrap is fully rolled out this path effectively
+       disappears, since the new prompt does not ask for personality.
+    4. **Hard ceiling:** at :data:`MAX_ONBOARDING_USER_MESSAGES` user
+       messages, force-complete regardless of content. Last-resort
+       safety net so heartbeats and other gated features don't stay
+       disabled indefinitely when no completion signal fires.
+    5. **Pre-populated user:** users created with profile content
+       already in place (migrations, admin seeding) get flipped on the
+       first turn where they're not in onboarding mode.
 
     Usage::
 
@@ -329,13 +363,15 @@ class OnboardingSubscriber:
         if self._user.onboarding_complete:
             return
 
-        # Path 1: BOOTSTRAP.md deletion (the intended signal).
+        # Path 1: BOOTSTRAP.md missing for any reason. Defense-in-depth
+        # for cases where the LLM (or a workspace operation) removed the
+        # file even though the prompt no longer asks the LLM to.
         if self._was_onboarding and not _bootstrap_path(self._user).exists():
-            logger.info("Onboarding complete for user %s: BOOTSTRAP.md deleted", self._user.id)
+            logger.info("Onboarding complete for user %s: BOOTSTRAP.md missing", self._user.id)
             _mark_onboarding_complete(self._user)
             return
 
-        # Refresh user_text/soul_text from DB before evaluating the heuristic,
+        # Refresh user_text/soul_text from DB before evaluating the gates,
         # since workspace tools may have updated those columns in this turn.
         if self._was_onboarding:
             db = SessionLocal()
@@ -347,9 +383,35 @@ class OnboardingSubscriber:
             finally:
                 db.close()
 
-        # Path 2: Heuristic fallback for sidetracked LLMs. All gates must
-        # pass: we were in onboarding this turn, the user has sent enough
-        # messages, name is set, timezone is set, and soul is customized.
+        # Path 2 (auto-exit, primary completion path in the post-2026-04
+        # bootstrap design): name + timezone captured AND the user has
+        # sent enough messages for the conversation to have texture. The
+        # system removes BOOTSTRAP.md so the LLM has no exit-decision
+        # burden and bootstrap-only guidance disappears from the system
+        # prompt automatically once the user is established.
+        if (
+            self._was_onboarding
+            and self._user_message_count >= MIN_USER_MESSAGES_FOR_AUTO_EXIT
+            and is_ready_for_auto_exit(self._user)
+        ):
+            logger.info(
+                "Onboarding auto-complete for user %s "
+                "(user_message_count=%d, name+tz captured, removing BOOTSTRAP.md)",
+                self._user.id,
+                self._user_message_count,
+            )
+            bootstrap = _bootstrap_path(self._user)
+            if bootstrap.exists():
+                bootstrap.unlink()
+            _mark_onboarding_complete(self._user)
+            return
+
+        # Path 3: Strict heuristic backstop. Fires for users who somehow
+        # customized SOUL.md without exiting via path 2 (e.g. mid-flight
+        # users from before the bootstrap rewrite who answered the old
+        # personality question). Requires custom soul AND the long
+        # message floor so we never cut off a real personality
+        # conversation in progress.
         if (
             self._was_onboarding
             and self._user_message_count >= MIN_ONBOARDING_USER_MESSAGES

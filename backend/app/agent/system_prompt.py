@@ -130,14 +130,13 @@ def build_instructions_section() -> str:
     body += (
         "\n\n## Media handling\n"
         "When the user sends a photo, the attachment appears in your context"
-        " with a handle like `media_ab12cd`. Decide per-photo based on the"
-        " conversation. Call analyze_photo if vision would help you"
-        " understand or route the content. Call upload_to_storage when the"
-        " photo belongs in the user's personal storage. Call"
-        " push_to_companycam_project for jobsite documentation. Call"
-        " discard_media when the user explicitly asks you not to save."
-        " Skipping all of these on a photo is fine if the user hasn't asked"
-        " for anything file-related."
+        " with a handle like `media_ab12cd`. Default: do not analyze the"
+        " photo. Use analyze_photo only when the user has asked you to"
+        " look at the image, or you genuinely need to see its contents"
+        " to help. The agent has separate tools for storing, attaching,"
+        " and discarding photos; pick the right one based on what the"
+        " user asked for. Skipping all media tools on a photo is fine"
+        " when the user did not ask for anything file-related."
     )
     return body
 
