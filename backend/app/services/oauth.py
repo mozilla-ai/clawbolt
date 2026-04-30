@@ -944,6 +944,17 @@ _REFRESH_SWEEP_JITTER_SECONDS = 15.0
 # refresh in ``get_valid_token`` would fire on the user-facing path.
 _REFRESH_LOOKAHEAD_SECONDS = 360.0
 
+# Only refresh in the background for users who have been active in the
+# last N days. Why: refresh tokens for some providers (notably
+# QuickBooks, 100 day inactivity expiry) are designed to expire when
+# a user stops using the integration, forcing reconnection and a fresh
+# user-consent confirmation. Background refresh would silently bypass
+# that signal for dormant accounts. Activity is "received an inbound
+# message via any channel route" -- this captures iMessage, Telegram,
+# webchat, etc. Inactive users still get the inline refresh path on
+# their next interaction.
+_REFRESH_ACTIVITY_WINDOW_DAYS = 14
+
 
 class OAuthRefreshScheduler:
     """Periodically refresh OAuth tokens before they expire.
@@ -1001,18 +1012,35 @@ class OAuthRefreshScheduler:
     async def sweep(self) -> int:
         """Run one sweep. Returns the number of tokens that were refreshed.
 
+        Only refreshes tokens for users who have been active in the last
+        ``_REFRESH_ACTIVITY_WINDOW_DAYS`` days, so dormant users still
+        hit the natural provider-side inactivity expiry on their refresh
+        tokens (e.g. QuickBooks 100 day rule). Inactive users fall back
+        to the inline refresh path the next time they interact.
+
         Exposed publicly so tests can drive a single tick without
         spinning up the background task.
         """
-        from backend.app.models import OAuthToken
+        import datetime as _dt
+
+        from backend.app.models import ChannelRoute, OAuthToken
 
         cutoff = time.time() + _REFRESH_LOOKAHEAD_SECONDS
+        activity_cutoff = _dt.datetime.now(_dt.UTC) - _dt.timedelta(
+            days=_REFRESH_ACTIVITY_WINDOW_DAYS
+        )
+        active_user_ids = (
+            select(ChannelRoute.user_id)
+            .where(ChannelRoute.last_inbound_at.is_not(None))
+            .where(ChannelRoute.last_inbound_at > activity_cutoff)
+        )
         with db_session() as db:
             rows = db.execute(
                 select(OAuthToken.user_id, OAuthToken.integration)
                 .where(OAuthToken.expires_at > 0)
                 .where(OAuthToken.expires_at < cutoff)
                 .where(OAuthToken.refresh_token != "")
+                .where(OAuthToken.user_id.in_(active_user_ids))
             ).all()
         if not rows:
             return 0

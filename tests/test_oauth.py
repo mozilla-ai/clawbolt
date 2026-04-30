@@ -1230,10 +1230,38 @@ def test_quickbooks_config_uses_discovery_endpoints(_reset_discovery_cache: None
 # ---------------------------------------------------------------------------
 
 
+def _mark_user_active(user_id: str, days_ago: int = 0) -> None:
+    """Insert a channel_route row with last_inbound_at = now - days_ago.
+
+    The sweep gates on recent activity so dormant users do not get their
+    refresh tokens silently kept alive past the provider's natural
+    inactivity expiry. Tests that expect a token to be refreshed must
+    register the user as recently active first.
+    """
+    import datetime as _dt
+
+    from backend.app.database import db_session
+    from backend.app.models import ChannelRoute
+
+    last = _dt.datetime.now(_dt.UTC) - _dt.timedelta(days=days_ago)
+    with db_session() as db:
+        db.add(
+            ChannelRoute(
+                user_id=user_id,
+                channel="webchat",
+                channel_identifier=f"test-{user_id}",
+                enabled=True,
+                last_inbound_at=last,
+            )
+        )
+        db.commit()
+
+
 async def test_refresh_sweep_refreshes_tokens_within_lookahead(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """A token expiring within the lookahead window must be refreshed."""
+    _mark_user_active(test_user.id)
     # 4 minutes from now: well inside the 6 minute lookahead.
     near_expiry = OAuthTokenData(
         access_token="at-near",
@@ -1256,10 +1284,57 @@ async def test_refresh_sweep_refreshes_tokens_within_lookahead(
     assert refresh_calls == [(test_user.id, "quickbooks")]
 
 
+async def test_refresh_sweep_skips_inactive_users(oauth_svc: OAuthService, test_user: User) -> None:
+    """Tokens for users dormant past the activity window must not be refreshed.
+
+    Regression for security review of #1087. Refresh tokens for some
+    providers (notably QuickBooks, 100 day inactivity expiry) are
+    designed to expire when the user stops using the integration so
+    re-consent is required on return. Background refresh would silently
+    keep them alive forever; we gate it on recent activity.
+    """
+    _mark_user_active(test_user.id, days_ago=30)  # past the 14 day window
+    near_expiry = OAuthTokenData(
+        access_token="at",
+        refresh_token="rt",
+        expires_at=time.time() + 240,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", near_expiry)
+
+    scheduler = OAuthRefreshScheduler(oauth_svc)
+    with patch.object(oauth_svc, "refresh_token", new_callable=AsyncMock) as mock_refresh:
+        count = await scheduler.sweep()
+
+    assert count == 0
+    mock_refresh.assert_not_called()
+
+
+async def test_refresh_sweep_skips_users_with_no_channel_route(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """A user with no channel_route at all has no activity signal and
+    must not be background-refreshed."""
+    near_expiry = OAuthTokenData(
+        access_token="at",
+        refresh_token="rt",
+        expires_at=time.time() + 240,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", near_expiry)
+    # Note: deliberately no _mark_user_active call here.
+
+    scheduler = OAuthRefreshScheduler(oauth_svc)
+    with patch.object(oauth_svc, "refresh_token", new_callable=AsyncMock) as mock_refresh:
+        count = await scheduler.sweep()
+
+    assert count == 0
+    mock_refresh.assert_not_called()
+
+
 async def test_refresh_sweep_skips_tokens_outside_lookahead(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """A token with plenty of time left must not be refreshed."""
+    _mark_user_active(test_user.id)
     # 30 minutes out: outside the 6 minute lookahead.
     far_expiry = OAuthTokenData(
         access_token="at",
@@ -1284,6 +1359,7 @@ async def test_refresh_sweep_skips_tokens_without_refresh_token(
     Without this guard the sweep would call refresh_token, which then
     immediately returns None after a wasted DB read and log line.
     """
+    _mark_user_active(test_user.id)
     no_refresh = OAuthTokenData(
         access_token="at",
         refresh_token="",
@@ -1303,6 +1379,7 @@ async def test_refresh_sweep_skips_non_expiring_tokens(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """Tokens with expires_at <= 0 never expire and need no refresh."""
+    _mark_user_active(test_user.id)
     non_expiring = OAuthTokenData(
         access_token="at",
         refresh_token="rt",
@@ -1344,6 +1421,7 @@ async def test_refresh_sweep_continues_after_individual_failure(
     Otherwise a single user with a revoked grant would block all other
     users' background refreshes.
     """
+    _mark_user_active(test_user.id)
     # Two due tokens, one for each integration.
     for integration in ("quickbooks", "google_calendar"):
         oauth_svc.save_token(
