@@ -34,6 +34,11 @@ class ChannelManager:
     def __init__(self) -> None:
         self._channels: dict[str, BaseChannel] = {}
         self._bus_tasks: list[asyncio.Task[None]] = []
+        # Typing indicators run as fire-and-forget tasks so a slow upstream
+        # (e.g. an unreachable BlueBubbles server) does not block the
+        # outbound dispatcher and delay actual message delivery. We track
+        # them so shutdown can cancel any still in flight.
+        self._typing_tasks: set[asyncio.Task[None]] = set()
 
     # -- Registration ----------------------------------------------------------
 
@@ -158,9 +163,15 @@ class ChannelManager:
 
             try:
                 if outbound.is_typing_stop:
-                    await channel.stop_typing_indicator(to=outbound.chat_id)
+                    self._spawn_typing_task(
+                        channel.stop_typing_indicator(to=outbound.chat_id),
+                        outbound.channel,
+                    )
                 elif outbound.is_typing_indicator:
-                    await channel.send_typing_indicator(to=outbound.chat_id)
+                    self._spawn_typing_task(
+                        channel.send_typing_indicator(to=outbound.chat_id),
+                        outbound.channel,
+                    )
                 elif outbound.media:
                     await channel.send_message(
                         to=outbound.chat_id,
@@ -175,6 +186,28 @@ class ChannelManager:
                     outbound.channel,
                     outbound.chat_id,
                 )
+
+    def _spawn_typing_task(self, coro: Awaitable[None], channel_name: str) -> None:
+        """Run a typing-indicator coroutine as a background task.
+
+        Typing indicators are best-effort UX polish. Awaiting them inline
+        on the outbound dispatcher means a slow or unreachable upstream
+        (BlueBubbles in particular) blocks every reply behind it. By
+        spawning the call as a background task we keep the dispatcher
+        free to deliver real messages immediately. Errors are swallowed
+        with a debug log; the channel implementations already log their
+        own failures.
+        """
+
+        async def _runner() -> None:
+            try:
+                await coro
+            except Exception:
+                logger.debug("Typing indicator task on %s failed", channel_name, exc_info=True)
+
+        task = asyncio.create_task(_runner(), name=f"typing-{channel_name}")
+        self._typing_tasks.add(task)
+        task.add_done_callback(self._typing_tasks.discard)
 
     # -- Lifecycle -------------------------------------------------------------
 
@@ -211,6 +244,16 @@ class ChannelManager:
                 await task
         self._bus_tasks.clear()
         logger.info("Stopped message bus consumer and outbound dispatcher")
+
+        # Cancel any in-flight typing-indicator tasks so they do not extend
+        # shutdown waiting on an unreachable upstream.
+        for task in list(self._typing_tasks):
+            if not task.done():
+                task.cancel()
+        for task in list(self._typing_tasks):
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        self._typing_tasks.clear()
 
         for channel in self._channels.values():
             try:

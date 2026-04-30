@@ -24,6 +24,31 @@ logger = logging.getLogger(__name__)
 
 STARTUP_DELAY_SECONDS = 3
 
+# Typing indicators run as fire-and-forget tasks (see ChannelManager).
+# Bound them tightly so even if the BlueBubbles server is wedged the task
+# clears quickly instead of consuming an HTTP slot for the full default
+# request timeout.
+_TYPING_TIMEOUT_SECONDS = 3.0
+
+# Outbound send retry policy. Self-hosted BlueBubbles servers running on
+# consumer hardware frequently hit transient failures (Mac wakes from
+# sleep, brief WiFi blip, BlueBubbles process restart). Without retry,
+# the dispatcher catches the exception and silently drops the reply.
+#
+# Per-attempt timeout is shorter than the default ``http_timeout_seconds``
+# (30s) so a hung server does not stretch the worst case past ~50s. With
+# 1 initial attempt + 3 retries and 1s/2s/4s backoff that totals
+# 10+1+10+2+10+4+10 = 47s before giving up.
+_SEND_TIMEOUT_SECONDS = 10.0
+_SEND_RETRY_BACKOFFS = (1.0, 2.0, 4.0)
+_TRANSIENT_HTTP_EXCEPTIONS = (
+    httpx.ConnectError,
+    httpx.ReadTimeout,
+    httpx.WriteTimeout,
+    httpx.PoolTimeout,
+    httpx.RemoteProtocolError,
+)
+
 
 def _derive_webhook_token(password: str) -> str:
     """Derive a webhook authentication token from the BlueBubbles server password.
@@ -398,6 +423,48 @@ class BlueBubblesChannel(BaseChannel):
             return cached
         return f"iMessage;-;{to}"
 
+    async def _post_with_retry(self, url: str, **kwargs: object) -> httpx.Response:
+        """POST to BlueBubbles with bounded retries on transient failures.
+
+        Retries on connection errors, read/write/pool timeouts, remote
+        protocol errors, and 5xx responses. Does not retry on 4xx (those
+        indicate caller error: bad payload, missing chat, auth failure)
+        or non-network exceptions. Retries are safe because BlueBubbles
+        dedupes on ``tempGuid`` which the caller passes through unchanged.
+        """
+        delays: tuple[float, ...] = (0.0, *_SEND_RETRY_BACKOFFS)
+        last_exc: Exception | None = None
+        for attempt, delay in enumerate(delays):
+            if delay:
+                await asyncio.sleep(delay)
+            try:
+                resp = await self._http.post(url, timeout=_SEND_TIMEOUT_SECONDS, **kwargs)  # type: ignore[arg-type]
+            except _TRANSIENT_HTTP_EXCEPTIONS as exc:
+                last_exc = exc
+                logger.warning(
+                    "BlueBubbles %s transient failure (attempt %d/%d): %s",
+                    url,
+                    attempt + 1,
+                    len(delays),
+                    type(exc).__name__,
+                )
+                continue
+            if resp.status_code < 500:
+                return resp
+            # 5xx: server error, worth retrying
+            last_exc = httpx.HTTPStatusError(
+                f"{resp.status_code} from {url}", request=resp.request, response=resp
+            )
+            logger.warning(
+                "BlueBubbles %s 5xx (attempt %d/%d): status=%d",
+                url,
+                attempt + 1,
+                len(delays),
+                resp.status_code,
+            )
+        assert last_exc is not None
+        raise last_exc
+
     async def send_text(self, to: str, body: str) -> str:
         """Send a text message via BlueBubbles API."""
         chat_guid = self._get_chat_guid(to)
@@ -414,7 +481,7 @@ class BlueBubblesChannel(BaseChannel):
             settings.bluebubbles_send_method,
             len(body),
         )
-        resp = await self._http.post(
+        resp = await self._post_with_retry(
             "/api/v1/message/text",
             json=payload,
             params={"password": settings.bluebubbles_password},
@@ -450,7 +517,7 @@ class BlueBubblesChannel(BaseChannel):
         if body:
             data_fields["message"] = body
 
-        resp = await self._http.post(
+        resp = await self._post_with_retry(
             "/api/v1/message/attachment",
             data=data_fields,
             files=files,
@@ -475,6 +542,7 @@ class BlueBubblesChannel(BaseChannel):
             resp = await self._http.post(
                 f"/api/v1/chat/{chat_guid}/typing",
                 params={"password": settings.bluebubbles_password},
+                timeout=_TYPING_TIMEOUT_SECONDS,
             )
             if resp.status_code >= 400:
                 logger.warning(
@@ -501,6 +569,7 @@ class BlueBubblesChannel(BaseChannel):
             resp = await self._http.delete(
                 f"/api/v1/chat/{chat_guid}/typing",
                 params={"password": settings.bluebubbles_password},
+                timeout=_TYPING_TIMEOUT_SECONDS,
             )
             if resp.status_code >= 400:
                 logger.warning(

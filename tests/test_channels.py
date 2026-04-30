@@ -228,3 +228,79 @@ async def test_dispatcher_routes_typing_stop_to_channel() -> None:
 
     assert recipient == "+15551234567"
     assert ch.stopped_typing_for == ["+15551234567"]
+
+
+@pytest.mark.asyncio
+async def test_dispatcher_does_not_block_on_slow_typing_indicator() -> None:
+    """Outbound dispatcher must keep delivering messages even when a
+    typing-indicator call hangs.
+
+    Regression for #1083. In production, an unreachable BlueBubbles server
+    caused ``send_typing_indicator`` to block for the full HTTP timeout
+    (~30s). Because the dispatcher was awaiting the typing call inline,
+    every queued reply behind it sat for the same duration. The fix runs
+    typing indicators as fire-and-forget tasks; this test pins that
+    behavior by queuing a slow typing call followed by a text message and
+    asserting the text message is delivered without waiting for typing to
+    resolve.
+    """
+    from backend.app.bus import OutboundMessage
+
+    mgr = ChannelManager()
+    ch = _StubChannel("bluebubbles")
+    mgr.register(ch)
+
+    typing_started = asyncio.get_running_loop().create_future()
+    typing_release = asyncio.get_running_loop().create_future()
+    text_sent = asyncio.get_running_loop().create_future()
+
+    async def slow_typing(to: str) -> None:
+        if not typing_started.done():
+            typing_started.set_result(to)
+        # Block until the test releases us, simulating an unreachable server.
+        await typing_release
+
+    async def fast_send_text(to: str, body: str) -> str:
+        if not text_sent.done():
+            text_sent.set_result((to, body))
+        return "stub-id"
+
+    ch.send_typing_indicator = slow_typing  # type: ignore[method-assign]
+    ch.send_text = fast_send_text  # type: ignore[method-assign]
+
+    # Drain anything already queued.
+    while not message_bus.outbound.empty():
+        message_bus.outbound.get_nowait()
+
+    await message_bus.publish_outbound(
+        OutboundMessage(
+            channel="bluebubbles",
+            chat_id="+15551234567",
+            content="",
+            is_typing_indicator=True,
+        )
+    )
+    await message_bus.publish_outbound(
+        OutboundMessage(
+            channel="bluebubbles",
+            chat_id="+15551234567",
+            content="hello world",
+        )
+    )
+
+    dispatcher = asyncio.create_task(mgr._run_outbound_dispatcher())
+    try:
+        # Typing call must enter, but the text reply must follow without
+        # waiting for typing to finish.
+        await asyncio.wait_for(typing_started, timeout=1.0)
+        recipient, body = await asyncio.wait_for(text_sent, timeout=1.0)
+        assert recipient == "+15551234567"
+        assert body == "hello world"
+    finally:
+        # Release the hung typing call so the background task can exit.
+        if not typing_release.done():
+            typing_release.set_result(None)
+        dispatcher.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await dispatcher
+        await mgr.stop_all()

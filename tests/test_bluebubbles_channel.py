@@ -486,6 +486,160 @@ async def test_stop_typing_indicator_no_error_on_failure() -> None:
         await channel.stop_typing_indicator("+15551234567")
 
 
+# ---------------------------------------------------------------------------
+# Retry tests (regression for #1088)
+# ---------------------------------------------------------------------------
+
+
+async def test_send_text_retries_transient_connect_error_then_succeeds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """First attempt raises httpx.ConnectError, retry succeeds.
+
+    Regression for #1088. Self-hosted BlueBubbles servers running on
+    consumer hardware drop occasional connections (Mac waking from sleep,
+    WiFi blip). Without retry these requests silently lost the user's
+    reply.
+    """
+    # Skip the actual sleeps to keep the test fast.
+    monkeypatch.setattr("backend.app.channels.bluebubbles._SEND_RETRY_BACKOFFS", (0.0, 0.0, 0.0))
+
+    attempts: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        attempts.append(len(attempts) + 1)
+        if len(attempts) == 1:
+            raise httpx.ConnectError("connection refused", request=request)
+        return httpx.Response(200, json={"guid": "msg-after-retry"})
+
+    channel = BlueBubblesChannel()
+    channel._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://bluebubbles.example"
+    )
+
+    result = await channel.send_text("+15551234567", "Hello")
+
+    assert result == "msg-after-retry"
+    assert len(attempts) == 2
+
+
+async def test_send_text_retries_5xx_then_succeeds(monkeypatch: pytest.MonkeyPatch) -> None:
+    """First attempt returns 503, retry returns 200."""
+    monkeypatch.setattr("backend.app.channels.bluebubbles._SEND_RETRY_BACKOFFS", (0.0, 0.0, 0.0))
+
+    statuses: list[int] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if not statuses:
+            statuses.append(503)
+            return httpx.Response(503, text="bb backend unavailable")
+        statuses.append(200)
+        return httpx.Response(200, json={"guid": "msg-after-retry"})
+
+    channel = BlueBubblesChannel()
+    channel._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://bluebubbles.example"
+    )
+
+    result = await channel.send_text("+15551234567", "Hello")
+
+    assert result == "msg-after-retry"
+    assert statuses == [503, 200]
+
+
+async def test_send_text_does_not_retry_4xx(monkeypatch: pytest.MonkeyPatch) -> None:
+    """4xx responses are caller errors and must not be retried.
+
+    A 401 means our credentials are wrong; retrying would just hammer the
+    server. Same for 400 (bad payload) and 404 (chat does not exist).
+    """
+    monkeypatch.setattr("backend.app.channels.bluebubbles._SEND_RETRY_BACKOFFS", (0.0, 0.0, 0.0))
+
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        return httpx.Response(401, text="unauthorized")
+
+    channel = BlueBubblesChannel()
+    channel._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://bluebubbles.example"
+    )
+
+    with pytest.raises(httpx.HTTPStatusError):
+        await channel.send_text("+15551234567", "Hello")
+
+    assert call_count == 1
+
+
+async def test_send_text_gives_up_after_max_retries_and_raises(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """If every attempt fails transiently, the helper exhausts retries and raises.
+
+    The dispatcher catches the exception, logs it, and moves on, so the
+    caller observes a single raised exception (not a silent drop).
+    """
+    monkeypatch.setattr("backend.app.channels.bluebubbles._SEND_RETRY_BACKOFFS", (0.0, 0.0, 0.0))
+
+    call_count = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal call_count
+        call_count += 1
+        raise httpx.ConnectError("connection refused", request=request)
+
+    channel = BlueBubblesChannel()
+    channel._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://bluebubbles.example"
+    )
+
+    with pytest.raises(httpx.ConnectError):
+        await channel.send_text("+15551234567", "Hello")
+
+    # 1 initial + 3 retries = 4 attempts
+    assert call_count == 4
+
+
+async def test_send_text_preserves_temp_guid_across_retries(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Retried POSTs must carry the same tempGuid so BlueBubbles dedupes.
+
+    Without this, a retry after a partial-success would create a duplicate
+    iMessage. BlueBubbles uses tempGuid as the client-side dedup key.
+    """
+    monkeypatch.setattr("backend.app.channels.bluebubbles._SEND_RETRY_BACKOFFS", (0.0, 0.0, 0.0))
+
+    seen_temp_guids: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        body = request.read()
+        import json as _json
+
+        payload = _json.loads(body)
+        seen_temp_guids.append(payload["tempGuid"])
+        if len(seen_temp_guids) == 1:
+            raise httpx.ConnectError("transient", request=request)
+        return httpx.Response(200, json={"guid": "ok"})
+
+    channel = BlueBubblesChannel()
+    channel._client = httpx.AsyncClient(
+        transport=httpx.MockTransport(handler), base_url="http://bluebubbles.example"
+    )
+
+    await channel.send_text("+15551234567", "Hello")
+
+    assert len(seen_temp_guids) == 2
+    assert seen_temp_guids[0] == seen_temp_guids[1]
+
+
+# ---------------------------------------------------------------------------
+# Send media tests
+# ---------------------------------------------------------------------------
+
+
 async def test_send_media_multipart_upload() -> None:
     """send_media should download media then upload as multipart form data."""
     channel = BlueBubblesChannel()

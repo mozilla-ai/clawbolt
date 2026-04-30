@@ -11,8 +11,43 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        /** Health Check */
+        /**
+         * Health Check
+         * @description Full health check: process is up AND can reach the database.
+         *
+         *     Use for ops dashboards and richer monitoring. NOT recommended as the
+         *     deployment platform's healthcheck path: a sync DB call from an async
+         *     handler can block the event loop, and during an incident a healthcheck
+         *     that waits on the same DB can pile up alongside whatever already broke.
+         *     Use ``/health/live`` for that.
+         */
         get: operations["health_check_api_health_get"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/health/live": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Health Live
+         * @description Liveness probe: the process is up and the event loop is responsive.
+         *
+         *     No DB hit, no external calls. Returns instantly when the worker can
+         *     process requests. Designed for the deployment platform's healthcheck
+         *     so a stuck DB / external dep / slow query does not also block the
+         *     healthcheck and prevent traffic from rolling to a fresh container.
+         *     Use ``/health`` for the deeper "is the system actually working" check.
+         */
+        get: operations["health_live_api_health_live_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -1445,6 +1480,26 @@ export interface components {
 export type $defs = Record<string, never>;
 export interface operations {
     health_check_api_health_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    health_live_api_health_live_get: {
         parameters: {
             query?: never;
             header?: never;
