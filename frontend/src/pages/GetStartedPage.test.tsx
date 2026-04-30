@@ -92,17 +92,38 @@ describe('GetStartedPage', () => {
     expect(screen.getByText("You're off to the races")).toBeInTheDocument();
   });
 
-  it('renders channel selection radio options: Telegram, iMessage, None', async () => {
+  it('renders channel selection radio options for configured channels only', async () => {
+    // Default fixture has telegram_bot_token_set=false and imessage_backend=linq.
+    // After issues #1029 and #1040, Telegram is hidden when not configured.
     renderWithRouter(<GetStartedPage />);
 
-    // Wait for channel config to load so getVisibleChannels can filter the list.
     await waitFor(() => {
       expect(screen.getAllByText('iMessage')).toHaveLength(1);
     });
-    expect(screen.getByText('Telegram')).toBeInTheDocument();
+    expect(screen.queryByText('Telegram')).not.toBeInTheDocument();
     expect(screen.queryByText(/Text Messaging/)).not.toBeInTheDocument();
     expect(screen.queryByText(/BlueBubbles/)).not.toBeInTheDocument();
     expect(screen.getByText('None')).toBeInTheDocument();
+  });
+
+  it('shows Telegram as a radio option when the bot token is set', async () => {
+    mockGetChannelConfig.mockResolvedValueOnce({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: true,
+      linq_from_number: '+15559876543',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+      imessage_backend: 'linq',
+    });
+
+    renderWithRouter(<GetStartedPage />);
+
+    await waitFor(() => {
+      expect(screen.getByText('Telegram')).toBeInTheDocument();
+    });
   });
 
   it('renders the dismiss button defaulting to chat when no channel selected', () => {
@@ -295,5 +316,119 @@ describe('GetStartedPage', () => {
     });
     // Should show the telegram config form since it's pre-selected
     expect(screen.getByText(/Configure Telegram/)).toBeInTheDocument();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Mobile single-screen flow
+// ---------------------------------------------------------------------------
+
+const mockMatchMediaMobile = (mobile: boolean) => {
+  Object.defineProperty(window, 'matchMedia', {
+    writable: true,
+    configurable: true,
+    value: vi.fn().mockImplementation((query: string) => ({
+      matches: query === '(max-width: 640px)' ? mobile : false,
+      media: query,
+      onchange: null,
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+      addListener: vi.fn(),
+      removeListener: vi.fn(),
+      dispatchEvent: vi.fn(),
+    })),
+  });
+};
+
+describe('GetStartedPage (mobile flow)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockIsPremium = false;
+    mockMatchMediaMobile(true);
+  });
+
+  it('renders the single-screen mobile layout instead of the 4-step wizard', async () => {
+    renderWithRouter(<GetStartedPage />);
+    await waitFor(() => {
+      expect(screen.getByText("Hey, I'm Clawbolt")).toBeInTheDocument();
+    });
+    // Wizard step copy must NOT be present on mobile.
+    expect(screen.queryByText('Choose your messaging channel')).not.toBeInTheDocument();
+    expect(screen.queryByText("You're off to the races")).not.toBeInTheDocument();
+    // Single-screen affordances.
+    expect(screen.getByPlaceholderText('(555) 123-4567')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Text Clawbolt' })).toBeInTheDocument();
+  });
+
+  it('shows phone validation error when format is bad', async () => {
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+    const input = await screen.findByPlaceholderText('(555) 123-4567');
+    await user.type(input, 'abc');
+    await user.click(screen.getByRole('button', { name: 'Text Clawbolt' }));
+    await waitFor(() => {
+      expect(screen.getByText(/Use a phone number like/)).toBeInTheDocument();
+    });
+    // Server-side calls must NOT have been attempted on a bad value.
+    expect(mockUpdateChannelConfig).not.toHaveBeenCalled();
+  });
+
+  it('OSS persists phone via updateChannelConfig (linq_allowed_numbers)', async () => {
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+    const input = await screen.findByPlaceholderText('(555) 123-4567');
+    await user.type(input, '5551234567');
+    await user.click(screen.getByRole('button', { name: 'Text Clawbolt' }));
+    await waitFor(() => {
+      expect(mockUpdateChannelConfig).toHaveBeenCalledWith({
+        linq_allowed_numbers: '+15551234567',
+      });
+    });
+  });
+
+  it('OSS bluebubbles persists via updateChannelConfig (bluebubbles_allowed_numbers)', async () => {
+    mockGetChannelConfig.mockResolvedValueOnce({
+      telegram_bot_token_set: false,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: true,
+      bluebubbles_allowed_numbers: '',
+      bluebubbles_imessage_address: '+15559876543',
+      imessage_backend: 'bluebubbles',
+    });
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+    const input = await screen.findByPlaceholderText('(555) 123-4567');
+    await user.type(input, '5551234567');
+    await user.click(screen.getByRole('button', { name: 'Text Clawbolt' }));
+    await waitFor(() => {
+      expect(mockUpdateChannelConfig).toHaveBeenCalledWith({
+        bluebubbles_allowed_numbers: '+15551234567',
+      });
+    });
+  });
+
+  it('shows empty-state copy when no iMessage backend is configured', async () => {
+    mockGetChannelConfig.mockResolvedValueOnce({
+      telegram_bot_token_set: false,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+      imessage_backend: null,
+    });
+    renderWithRouter(<GetStartedPage />);
+    await waitFor(() => {
+      expect(
+        screen.getByText(/No messaging channel is configured on the server yet/),
+      ).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Open web chat' })).toBeInTheDocument();
   });
 });

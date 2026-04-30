@@ -1301,6 +1301,280 @@ async def test_onboarding_force_completes_at_max_user_messages(
 
 
 # ---------------------------------------------------------------------------
+# Auto-exit path (post-2026-04 bootstrap): system removes BOOTSTRAP.md
+# once name + timezone are captured AND the conversation has texture.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_auto_exit_when_name_tz_captured_and_min_turns_reached(
+    mock_amessages: object,
+) -> None:
+    """The system removes BOOTSTRAP.md once name + tz are captured AND the
+    user has sent at least MIN_USER_MESSAGES_FOR_AUTO_EXIT messages.
+
+    The LLM does NOT need to call delete_file. This is the primary
+    completion path in the post-2026-04 bootstrap design: the LLM
+    has no exit-decision burden, and bootstrap-only guidance
+    disappears from the system prompt automatically.
+    """
+    from backend.app.agent.onboarding import MIN_USER_MESSAGES_FOR_AUTO_EXIT
+
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="201",
+                user_id="auto-exit-user",
+                channel_identifier="555200001",
+                preferred_channel="telegram",
+                timezone="America/Chicago",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    user = User(
+        id="201",
+        user_id="auto-exit-user",
+        channel_identifier="555200001",
+        preferred_channel="telegram",
+        timezone="America/Chicago",
+        onboarding_complete=False,
+    )
+    _create_bootstrap(user)
+
+    # LLM saves name + timezone to USER.md (no soul customization needed
+    # under the new design).
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_user",
+                "name": "write_file",
+                "arguments": json.dumps(
+                    {
+                        "path": "USER.md",
+                        "content": ("# User\n\n- Name: Jordan\n- Timezone: America/Chicago\n"),
+                    }
+                ),
+            }
+        ]
+    )
+    text_response = make_text_response("Got it.")
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    # Build a session with exactly MIN_USER_MESSAGES_FOR_AUTO_EXIT inbound
+    # messages, current message included.
+    prior_messages: list[StoredMessage] = []
+    seq = 1
+    for _ in range(MIN_USER_MESSAGES_FOR_AUTO_EXIT - 1):
+        prior_messages.append(StoredMessage(direction="inbound", body="u", seq=seq))
+        seq += 1
+        prior_messages.append(StoredMessage(direction="outbound", body="a", seq=seq))
+        seq += 1
+    current_message = StoredMessage(direction="inbound", body="I'm Jordan in Chicago", seq=seq)
+    session = SessionState(
+        session_id="auto-exit-session",
+        user_id=user.id,
+        is_active=True,
+        messages=[*prior_messages, current_message],
+    )
+    _ensure_session_on_disk(user, session)
+
+    await handle_inbound_message(
+        user=user,
+        session=session,
+        message=current_message,
+        media_urls=[],
+        channel="telegram",
+    )
+
+    bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
+    assert not bootstrap.exists(), "auto-exit should remove BOOTSTRAP.md"
+
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
+    assert refreshed is not None
+    assert refreshed.onboarding_complete is True
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_auto_exit_does_not_fire_below_min_turns(
+    mock_amessages: object,
+) -> None:
+    """Even with name + timezone captured, auto-exit waits for the message
+    floor so the conversation has texture beyond data capture."""
+    db = _db_module.SessionLocal()
+    try:
+        db.add(
+            User(
+                id="202",
+                user_id="too-fast-user",
+                channel_identifier="555200002",
+                preferred_channel="telegram",
+                timezone="America/Chicago",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    user = User(
+        id="202",
+        user_id="too-fast-user",
+        channel_identifier="555200002",
+        preferred_channel="telegram",
+        timezone="America/Chicago",
+        onboarding_complete=False,
+    )
+    _create_bootstrap(user)
+
+    # LLM lands name + tz on the very first inbound.
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_user",
+                "name": "write_file",
+                "arguments": json.dumps(
+                    {
+                        "path": "USER.md",
+                        "content": "# User\n\n- Name: Sam\n- Timezone: America/Chicago\n",
+                    }
+                ),
+            }
+        ]
+    )
+    text_response = make_text_response("Got it.")
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    current_message = StoredMessage(direction="inbound", body="I'm Sam in Chicago", seq=1)
+    session = SessionState(
+        session_id="too-fast-session",
+        user_id=user.id,
+        is_active=True,
+        messages=[current_message],
+    )
+    _ensure_session_on_disk(user, session)
+
+    await handle_inbound_message(
+        user=user,
+        session=session,
+        message=current_message,
+        media_urls=[],
+        channel="telegram",
+    )
+
+    bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
+    assert bootstrap.exists(), "auto-exit should NOT fire on turn 1"
+
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
+    assert refreshed is not None
+    assert refreshed.onboarding_complete is False
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_auto_exit_does_not_fire_without_timezone(
+    mock_amessages: object,
+) -> None:
+    """Auto-exit requires both name AND timezone. Name alone is not enough."""
+    from backend.app.agent.onboarding import MIN_USER_MESSAGES_FOR_AUTO_EXIT
+
+    db = _db_module.SessionLocal()
+    try:
+        # Note: no timezone set on the user row.
+        db.add(
+            User(
+                id="203",
+                user_id="no-tz-user",
+                channel_identifier="555200003",
+                preferred_channel="telegram",
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    user = User(
+        id="203",
+        user_id="no-tz-user",
+        channel_identifier="555200003",
+        preferred_channel="telegram",
+        onboarding_complete=False,
+    )
+    _create_bootstrap(user)
+
+    # LLM saves name only (no timezone).
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "id": "call_user",
+                "name": "write_file",
+                "arguments": json.dumps(
+                    {
+                        "path": "USER.md",
+                        "content": "# User\n\n- Name: Casey\n",
+                    }
+                ),
+            }
+        ]
+    )
+    text_response = make_text_response("Got it, where are you based?")
+    mock_amessages.side_effect = [tool_response, text_response]  # type: ignore[union-attr]
+
+    prior_messages: list[StoredMessage] = []
+    seq = 1
+    for _ in range(MIN_USER_MESSAGES_FOR_AUTO_EXIT - 1):
+        prior_messages.append(StoredMessage(direction="inbound", body="u", seq=seq))
+        seq += 1
+        prior_messages.append(StoredMessage(direction="outbound", body="a", seq=seq))
+        seq += 1
+    current_message = StoredMessage(direction="inbound", body="I'm Casey", seq=seq)
+    session = SessionState(
+        session_id="no-tz-session",
+        user_id=user.id,
+        is_active=True,
+        messages=[*prior_messages, current_message],
+    )
+    _ensure_session_on_disk(user, session)
+
+    await handle_inbound_message(
+        user=user,
+        session=session,
+        message=current_message,
+        media_urls=[],
+        channel="telegram",
+    )
+
+    bootstrap = Path(settings.data_dir) / str(user.id) / "BOOTSTRAP.md"
+    assert bootstrap.exists(), "auto-exit must NOT fire without timezone"
+
+    db = _db_module.SessionLocal()
+    try:
+        refreshed = db.query(User).filter_by(id=user.id).first()
+        if refreshed:
+            db.expunge(refreshed)
+    finally:
+        db.close()
+    assert refreshed is not None
+    assert refreshed.onboarding_complete is False
+
+
+# ---------------------------------------------------------------------------
 # Regression test: premium OAuth users must be provisioned on first chat
 # ---------------------------------------------------------------------------
 
