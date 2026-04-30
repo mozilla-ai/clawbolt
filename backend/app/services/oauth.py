@@ -7,6 +7,7 @@ table) with encrypted access/refresh token columns.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import hashlib
 import json
@@ -921,6 +922,110 @@ class OAuthService:
 
 # Module-level singleton.
 oauth_service = OAuthService()
+
+
+# ---------------------------------------------------------------------------
+# Background refresh scheduler
+# ---------------------------------------------------------------------------
+
+# How often the background sweep runs.
+_REFRESH_SWEEP_INTERVAL_SECONDS = 120.0
+
+# How far ahead the sweep looks for tokens to refresh. Slightly larger
+# than ``_EXPIRY_BUFFER_SECONDS`` (300s) so the sweep catches tokens
+# before ``OAuthTokenData.is_expired()`` flips True and the inline
+# refresh in ``get_valid_token`` would fire on the user-facing path.
+_REFRESH_LOOKAHEAD_SECONDS = 360.0
+
+
+class OAuthRefreshScheduler:
+    """Periodically refresh OAuth tokens before they expire.
+
+    Without this, every user message that arrives during the 5 minute
+    pre-expiry window pays the cost of an inline HTTP refresh
+    (~150ms). Sweeping in the background pulls that cost off the
+    critical path: by the time the user texts, the token is already
+    fresh and ``get_valid_token`` returns immediately.
+
+    Failures are logged and swallowed; a single bad token never stops
+    the sweep from processing the rest. Inline refresh in
+    ``get_valid_token`` remains the safety net for tokens the sweep
+    missed (e.g. process just started, sweep hasn't run yet).
+    """
+
+    def __init__(self, service: OAuthService) -> None:
+        self._service = service
+        self._task: asyncio.Task[None] | None = None
+
+    def start(self) -> None:
+        """Start the sweep loop (idempotent)."""
+        if self._task is not None and not self._task.done():
+            return
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            # No event loop (sync test harness, etc.): skip silently.
+            return
+        self._task = loop.create_task(self._run())
+        logger.info(
+            "OAuth refresh sweep started (interval=%.0fs lookahead=%.0fs)",
+            _REFRESH_SWEEP_INTERVAL_SECONDS,
+            _REFRESH_LOOKAHEAD_SECONDS,
+        )
+
+    def stop(self) -> None:
+        """Cancel the sweep loop."""
+        if self._task is not None:
+            self._task.cancel()
+            self._task = None
+            logger.info("OAuth refresh sweep stopped")
+
+    async def _run(self) -> None:
+        while True:
+            try:
+                await self.sweep()
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("OAuth refresh sweep failed")
+            await asyncio.sleep(_REFRESH_SWEEP_INTERVAL_SECONDS)
+
+    async def sweep(self) -> int:
+        """Run one sweep. Returns the number of tokens that were refreshed.
+
+        Exposed publicly so tests can drive a single tick without
+        spinning up the background task.
+        """
+        from backend.app.models import OAuthToken
+
+        cutoff = time.time() + _REFRESH_LOOKAHEAD_SECONDS
+        with db_session() as db:
+            rows = db.execute(
+                select(OAuthToken.user_id, OAuthToken.integration)
+                .where(OAuthToken.expires_at > 0)
+                .where(OAuthToken.expires_at < cutoff)
+                .where(OAuthToken.refresh_token != "")
+            ).all()
+        if not rows:
+            return 0
+        logger.info("OAuth refresh sweep: %d token(s) due for refresh", len(rows))
+        refreshed = 0
+        for user_id, integration in rows:
+            try:
+                result = await self._service.refresh_token(user_id, integration)
+            except Exception:
+                logger.exception(
+                    "Background OAuth refresh failed: user=%s integration=%s",
+                    user_id,
+                    integration,
+                )
+                continue
+            if result is not None:
+                refreshed += 1
+        return refreshed
+
+
+oauth_refresh_scheduler = OAuthRefreshScheduler(oauth_service)
 
 
 # ---------------------------------------------------------------------------
