@@ -266,24 +266,23 @@ def append_receipts(reply_text: str, tool_calls: list[StoredToolInteraction]) ->
 
 
 # Action verbs the LLM reaches for when it fabricates a receipt-shaped
-# bullet from a tool result. Past-tense, lowercase. Verbs cover create,
-# update, delete, and other write-side actions across our integrations.
+# bullet from a tool result. Past-tense, lowercase. Restricted to verbs
+# that read as receipt confirmations rather than generic English (no
+# "saved", "added", "set", "moved", "named", "organized") to avoid
+# stripping legitimate user-facing prose like "Saved $5k by switching
+# estimate templates" or "Added 3 hours to the labor estimate".
+# In prod we only saw the LLM fabricate with "Created", "Scheduled",
+# "Deleted"; the rest are receipt-flavored siblings of those.
 _FABRICATED_RECEIPT_VERBS: frozenset[str] = frozenset(
     {
-        "added",
         "archived",
         "canceled",
         "cancelled",
         "created",
         "deleted",
         "modified",
-        "moved",
-        "named",
-        "organized",
         "removed",
-        "saved",
         "scheduled",
-        "set",
         "tagged",
         "updated",
         "uploaded",

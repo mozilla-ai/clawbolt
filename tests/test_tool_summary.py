@@ -260,6 +260,37 @@ def test_append_keeps_unrelated_bullets_when_receipt_present() -> None:
     assert "- Smith: paid in full" in body
 
 
+def test_append_does_not_strip_generic_english_verb_bullets() -> None:
+    """Bullets starting with generic English verbs ("Saved", "Added", "Set",
+    "Moved", "Named", "Organized") must survive the scrub even when the turn
+    has a real receipt.
+
+    The receipt-flavored noun set is broad enough that a sentence like
+    "Saved $5k by switching estimate templates" or "Added 3 hours to the
+    labor estimate" would be a false positive if the verb set included
+    these generic verbs. Restricting verbs to receipt-flavored ones
+    (Created, Scheduled, Updated, Deleted, etc.) keeps the filter safe.
+    """
+    body = append_receipts(
+        (
+            "Here's the summary:\n"
+            "- Saved $5k by switching estimate templates\n"
+            "- Added 3 hours to the labor estimate\n"
+            "- Set up a reminder for next Tuesday's invoice"
+        ),
+        [
+            _tc_with_receipt(
+                "memory_save",
+                action="Saved memory",
+                target="estimate-templates note",
+            )
+        ],
+    )
+    assert "Saved $5k" in body
+    assert "Added 3 hours" in body
+    assert "Set up a reminder" in body
+
+
 def test_append_does_not_strip_when_no_real_receipt() -> None:
     """Without a real receipt this turn, leave the LLM's text alone.
 
