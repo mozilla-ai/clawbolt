@@ -160,6 +160,121 @@ def test_append_returns_reply_unchanged_when_no_receipts() -> None:
     assert body == "Here's what I found."
 
 
+def test_append_strips_llm_fabricated_calendar_bullet() -> None:
+    """When the LLM restates a calendar receipt as its own bullet, scrub it.
+
+    Regression for the prod calendar bug observed 2026-04-29: the LLM was
+    emitting a "- Created Google Calendar event: Lunch with Tam\\n  Thu Apr
+    30, 12:00 PM..." bullet inside reply_text and ``append_receipts``
+    appended the canonical "- Scheduled calendar event Lunch with Tam on
+    2026-04-30 12:00" below it, so the user saw two receipts per event.
+    """
+    body = append_receipts(
+        (
+            "Done! Lunch with Tam is on your calendar for tomorrow at noon.\n\n"
+            "- Created Google Calendar event: Lunch with Tam\n"
+            "  Thu Apr 30, 12:00 PM – 1:00 PM"  # noqa: RUF001
+        ),
+        [
+            _tc_with_receipt(
+                "calendar_create_event",
+                action="Scheduled calendar event",
+                target="Lunch with Tam on 2026-04-30 12:00",
+            )
+        ],
+    )
+    # Fabricated bullet and its indented date line are gone.
+    assert "Created Google Calendar event" not in body
+    assert "Thu Apr 30" not in body
+    # Real receipt is appended.
+    assert "- Scheduled calendar event Lunch with Tam on 2026-04-30 12:00" in body
+    # Reply preface is preserved.
+    assert body.startswith("Done! Lunch with Tam is on your calendar")
+
+
+def test_append_strips_multiple_fabricated_bullets() -> None:
+    """Two events created in one turn produce two fabricated bullets;
+    both should be stripped so only the canonical receipts remain.
+    """
+    body = append_receipts(
+        (
+            "Both reminders are set.\n\n"
+            "- Scheduled calendar event: Call PNC Bank about a vehicle loan\n"
+            "  Thu Apr 30, 11:00 AM\n\n"
+            "- Scheduled calendar event: Call Maryann and Mark about jobs\n"
+            "  Thu Apr 30, 9:00 AM"
+        ),
+        [
+            _tc_with_receipt(
+                "calendar_create_event",
+                action="Scheduled calendar event",
+                target="Call PNC Bank about a vehicle loan on 2026-04-30 11:00",
+            ),
+            _tc_with_receipt(
+                "calendar_create_event",
+                action="Scheduled calendar event",
+                target="Call Maryann and Mark about jobs on 2026-04-30 09:00",
+            ),
+        ],
+    )
+    # Only the canonical receipts should appear, once each.
+    assert body.count("- Scheduled calendar event") == 2
+    assert "Thu Apr 30, 11:00 AM" not in body
+    assert "Thu Apr 30, 9:00 AM" not in body
+    assert body.startswith("Both reminders are set.")
+
+
+def test_append_strips_delete_fabricated_bullet() -> None:
+    """The LLM also fabricates "Deleted Google Calendar event:" lines for
+    cancellations. Same scrub should catch them."""
+    body = append_receipts(
+        ("Done, that's off your calendar.\n\n- Deleted Google Calendar event: Lunch with Tam"),
+        [
+            _tc_with_receipt(
+                "calendar_delete_event",
+                action="Canceled calendar event",
+                target="abc123",
+            )
+        ],
+    )
+    assert "Deleted Google Calendar event" not in body
+    assert "- Canceled calendar event abc123" in body
+
+
+def test_append_keeps_unrelated_bullets_when_receipt_present() -> None:
+    """A non-receipt bullet ("- Acme: $5k owed") in the LLM's reply must
+    survive the scrub. The filter only fires on lines that look like
+    fabricated tool receipts (action verb + receipt-flavored noun)."""
+    body = append_receipts(
+        ("Here's what I found:\n- Acme: $5k owed\n- Smith: paid in full"),
+        [
+            _tc_with_receipt(
+                "qb_create",
+                action="Created QuickBooks invoice for",
+                target="Davis",
+                url="https://app.qbo.intuit.com/app/invoice?txnId=1",
+            )
+        ],
+    )
+    assert "- Acme: $5k owed" in body
+    assert "- Smith: paid in full" in body
+
+
+def test_append_does_not_strip_when_no_real_receipt() -> None:
+    """Without a real receipt this turn, leave the LLM's text alone.
+
+    The scrub only fires when a canonical receipt block will be appended
+    below. If the agent had no write-side tool calls, an LLM bullet that
+    happens to start with a receipt-like verb is just user-relevant
+    text and must pass through untouched.
+    """
+    body = append_receipts(
+        "- Created a draft of the proposal in your notes.",
+        [_tc_no_receipt("read_file")],
+    )
+    assert body == "- Created a draft of the proposal in your notes."
+
+
 def test_append_handles_empty_reply_text() -> None:
     """If the LLM returned no text but a mutation ran, the receipt block
     still ships so the user sees the confirmation."""

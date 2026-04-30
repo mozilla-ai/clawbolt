@@ -501,13 +501,15 @@ def create_calendar_tools(
                 error_kind=ToolErrorKind.SERVICE,
             )
 
+        # Minimal content. The rich record (title, start, end) lives only in
+        # the ToolReceipt below, which is rendered server-side and shown to
+        # the user. Don't echo title/dates back to the LLM here: when we did,
+        # the model pattern-matched the formatted "field | field | field"
+        # layout into a fabricated bullet ("- Created Google Calendar event:
+        # Lunch with Tam\n  Thu Apr 30, 12:00 PM") that doubled the receipt
+        # block in the outbound. Matches the CompanyCam convention.
         return ToolResult(
-            content=(
-                f"Event created: {event.title} | "
-                f"{event.start.strftime('%Y-%m-%d %H:%M')} - "
-                f"{event.end.strftime('%H:%M')} | "
-                f"id: {event.id}"
-            ),
+            content=f"Event created (id={event.id}).",
             receipt=ToolReceipt(
                 action="Scheduled calendar event",
                 target=(f"{event.title} on {event.start.strftime('%Y-%m-%d %H:%M')}"),
@@ -578,13 +580,10 @@ def create_calendar_tools(
                 error_kind=ToolErrorKind.SERVICE,
             )
 
+        # Minimal content. See calendar_create_event above for why the rich
+        # record stays in the receipt and not in content.
         return ToolResult(
-            content=(
-                f"Event updated: {event.title} | "
-                f"{event.start.strftime('%Y-%m-%d %H:%M')} - "
-                f"{event.end.strftime('%H:%M')} | "
-                f"id: {event.id}"
-            ),
+            content=f"Event updated (id={event.id}).",
             receipt=ToolReceipt(
                 action="Updated calendar event",
                 target=(f"{event.title} on {event.start.strftime('%Y-%m-%d %H:%M')}"),

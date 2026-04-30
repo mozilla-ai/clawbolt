@@ -461,7 +461,59 @@ async def test_create_event_happy_path(cal_tools: list[Tool]) -> None:
     )
     assert result.is_error is False
     assert "Event created" in result.content
-    assert "Test - Plumbing" in result.content
+    # Title and times are intentionally NOT in content -- they live in the
+    # ToolReceipt below to stop the LLM from pattern-matching the structured
+    # content into a fabricated bullet that doubles the receipt block.
+    assert "Test - Plumbing" not in result.content
+    assert result.receipt is not None
+    assert result.receipt.target.startswith("Job: Test - Plumbing on 2026-03-28")
+
+
+@pytest.mark.asyncio()
+async def test_create_event_content_is_minimal(cal_tools: list[Tool]) -> None:
+    """The LLM-visible content for create_event must omit title and dates.
+
+    Regression for the prod calendar bug observed 2026-04-29: when create_event
+    returned content like "Event created: Lunch with Tam | 2026-04-30 12:00 -
+    13:00 | id: abc", the LLM pattern-matched the formatted layout into a
+    fabricated "- Created Google Calendar event: Lunch with Tam\\n  Thu Apr
+    30, 12:00 PM" bullet that doubled the receipt block. Match the CompanyCam
+    convention: title and dates only in the ToolReceipt, never in content.
+    """
+    tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Lunch with Tam",
+        start="2026-04-30T12:00:00",
+        end="2026-04-30T13:00:00",
+        calendar_id="primary",
+    )
+    assert result.is_error is False
+    # Content must not contain anything the LLM could mirror as a fake receipt.
+    assert "Lunch with Tam" not in result.content
+    assert "2026-04-30" not in result.content
+    assert "12:00" not in result.content
+    assert "|" not in result.content
+    # But the receipt has the full record so the user sees it.
+    assert result.receipt is not None
+    assert "Lunch with Tam" in result.receipt.target
+    assert "2026-04-30" in result.receipt.target
+
+
+@pytest.mark.asyncio()
+async def test_update_event_content_is_minimal() -> None:
+    """update_event content must also exclude title/dates (same reason as create)."""
+    service = MockGoogleCalendarService()
+    tools = create_calendar_tools(service, enabled_calendars=[("primary", "Personal", [], "owner")])
+    tool = _get_tool(tools, ToolName.CALENDAR_UPDATE_EVENT)
+    result = await tool.function(
+        event_id="evt-001",
+        title="Lunch with Tam (revised)",
+    )
+    assert result.is_error is False
+    assert "Lunch with Tam" not in result.content
+    assert "|" not in result.content
+    assert result.receipt is not None
+    assert "Lunch with Tam (revised)" in result.receipt.target
 
 
 @pytest.mark.asyncio()
@@ -590,7 +642,10 @@ async def test_update_event_happy_path() -> None:
     )
     assert result.is_error is False
     assert "Event updated" in result.content
-    assert "Revised" in result.content
+    # Title is intentionally NOT in content; it lives in the receipt only.
+    assert "Revised" not in result.content
+    assert result.receipt is not None
+    assert "Revised" in result.receipt.target
 
 
 @pytest.mark.asyncio()

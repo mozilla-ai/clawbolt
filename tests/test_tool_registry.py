@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import importlib
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 import backend.app.agent.tools.registry as _reg
+from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.registry import (
     ToolContext,
     default_registry,
@@ -78,6 +80,111 @@ def test_auto_discovery_ignores_non_tool_modules() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_create_ready_specialist_tools_skips_unauthenticated() -> None:
+    """A specialist whose ``auth_check`` returns a reason string (user has
+    not connected the integration yet) must NOT appear in the ready list.
+
+    Regression for the prod calendar bug observed 2026-04-29: the LLM was
+    forced to call ``list_capabilities('calendar')`` on every turn because
+    specialist tools were never pre-activated. Pre-activation now happens
+    at agent boot for ready specialists, but only those passing auth.
+    """
+    from backend.app.agent.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    async def _build_calendar(_ctx: ToolContext) -> list[Tool]:
+        return [cast(Tool, MagicMock(name="calendar_create_event"))]
+
+    async def _build_qb(_ctx: ToolContext) -> list[Tool]:
+        return [cast(Tool, MagicMock(name="qb_query"))]
+
+    reg.register(
+        "calendar",
+        _build_calendar,
+        core=False,
+        summary="Calendar tools",
+        auth_check=lambda _ctx: None,  # connected
+    )
+    reg.register(
+        "quickbooks",
+        _build_qb,
+        core=False,
+        summary="QuickBooks tools",
+        auth_check=lambda _ctx: "Not connected",  # NOT connected
+    )
+
+    ctx = MagicMock(spec=ToolContext)
+    ctx.user = MagicMock()
+    ctx.storage = MagicMock()
+    ctx.publish_outbound = AsyncMock()
+
+    tools, names = await reg.create_ready_specialist_tools(ctx)
+    assert names == {"calendar"}
+    assert len(tools) == 1
+
+
+@pytest.mark.asyncio()
+async def test_create_ready_specialist_tools_returns_empty_when_none_ready() -> None:
+    """No connected specialists -> empty tool list and empty name set.
+
+    Important: the caller uses the returned name set to seed
+    ``activated_specialists``. An empty set must not pre-activate anything.
+    """
+    from backend.app.agent.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    async def _build(_ctx: ToolContext) -> list[Tool]:
+        return [cast(Tool, MagicMock())]
+
+    reg.register(
+        "qb",
+        _build,
+        core=False,
+        summary="QB",
+        auth_check=lambda _ctx: "Not connected",
+    )
+
+    ctx = MagicMock(spec=ToolContext)
+    ctx.user = MagicMock()
+    ctx.storage = MagicMock()
+    ctx.publish_outbound = AsyncMock()
+
+    tools, names = await reg.create_ready_specialist_tools(ctx)
+    assert tools == []
+    assert names == set()
+
+
+@pytest.mark.asyncio()
+async def test_create_ready_specialist_tools_respects_excluded_factories() -> None:
+    """User-disabled tool groups must not be pre-activated even when connected."""
+    from backend.app.agent.tools.registry import ToolRegistry
+
+    reg = ToolRegistry()
+
+    async def _build(_ctx: ToolContext) -> list[Tool]:
+        return [cast(Tool, MagicMock())]
+
+    reg.register(
+        "calendar",
+        _build,
+        core=False,
+        summary="Calendar",
+        auth_check=lambda _ctx: None,
+    )
+
+    ctx = MagicMock(spec=ToolContext)
+    ctx.user = MagicMock()
+    ctx.storage = MagicMock()
+    ctx.publish_outbound = AsyncMock()
+
+    tools, names = await reg.create_ready_specialist_tools(ctx, excluded_factories={"calendar"})
+    assert tools == []
+    assert names == set()
+
+
+@pytest.mark.asyncio()
 async def test_ask_sub_tools_have_approval_policy() -> None:
     """Every tool with default_permission='ask' must have an ApprovalPolicy.
 
@@ -113,8 +220,6 @@ async def test_ask_sub_tools_have_approval_policy() -> None:
         # can't build tools without credentials).
         try:
             import inspect
-
-            from backend.app.agent.tools.base import Tool
 
             result = factory.create(ctx)
             tools: list[Tool] = await result if inspect.isawaitable(result) else result  # type: ignore[assignment]

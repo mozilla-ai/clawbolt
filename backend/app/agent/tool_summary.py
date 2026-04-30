@@ -248,10 +248,123 @@ def append_receipts(reply_text: str, tool_calls: list[StoredToolInteraction]) ->
     """Append a receipt block to ``reply_text`` if any write-side tool
     returned a receipt. Returns ``reply_text`` unchanged when there is
     nothing to confirm.
+
+    Before appending, scrub LLM-fabricated receipt bullets from
+    ``reply_text`` (see :func:`_strip_fabricated_receipts`). The LLM is
+    instructed not to restate tool confirmations but does so anyway,
+    pattern-matching the tool result content into a bullet of its own.
+    Without this scrub the user sees two receipts: the LLM's restatement
+    and the canonical block we append below.
     """
     block = format_receipts_block(tool_calls)
     if not block:
         return reply_text
-    if not reply_text:
+    cleaned = _strip_fabricated_receipts(reply_text, tool_calls)
+    if not cleaned:
         return block
-    return f"{reply_text}{_SUMMARY_SEPARATOR}{block}"
+    return f"{cleaned}{_SUMMARY_SEPARATOR}{block}"
+
+
+# Action verbs the LLM reaches for when it fabricates a receipt-shaped
+# bullet from a tool result. Past-tense, lowercase. Verbs cover create,
+# update, delete, and other write-side actions across our integrations.
+_FABRICATED_RECEIPT_VERBS: frozenset[str] = frozenset(
+    {
+        "added",
+        "archived",
+        "canceled",
+        "cancelled",
+        "created",
+        "deleted",
+        "modified",
+        "moved",
+        "named",
+        "organized",
+        "removed",
+        "saved",
+        "scheduled",
+        "set",
+        "tagged",
+        "updated",
+        "uploaded",
+    }
+)
+
+# Subject nouns the LLM uses when it fabricates a receipt-shaped bullet
+# for a calendar/photo/job/accounting action. The bullet must mention
+# at least one of these to qualify for stripping; this keeps the filter
+# conservative (an unrelated bullet like "- Saved progress for next
+# time" stays put because none of these nouns appear).
+_FABRICATED_RECEIPT_NOUNS: frozenset[str] = frozenset(
+    {
+        "appointment",
+        "bill",
+        "calendar",
+        "checklist",
+        "comment",
+        "customer",
+        "document",
+        "estimate",
+        "event",
+        "file",
+        "image",
+        "invoice",
+        "meeting",
+        "memo",
+        "note",
+        "photo",
+        "project",
+        "reminder",
+        "tag",
+    }
+)
+
+_BULLET_RE = re.compile(r"^\s*-\s+(\w+)(.*)$")
+_INDENT_RE = re.compile(r"^\s{2,}\S")
+
+
+def _strip_fabricated_receipts(
+    reply_text: str,
+    tool_calls: list[StoredToolInteraction],
+) -> str:
+    """Remove receipt-shaped bullets the LLM fabricated in ``reply_text``.
+
+    Triggers only when at least one tool call this turn produced a real
+    receipt, so on tool-less responses (or read-only tool turns) we never
+    touch the LLM's output. A bullet qualifies for stripping when it
+    starts with ``-`` followed by a known write-side action verb AND
+    mentions a known subject noun (``event``, ``photo``, ``project``,
+    etc.). Any indented continuation line immediately after a stripped
+    bullet (the LLM's "Thu Apr 30, 12:00 PM" date line) is also dropped.
+
+    Trailing blank lines created by the strip are collapsed so the
+    canonical receipt block joins cleanly afterward.
+    """
+    if not reply_text:
+        return reply_text
+    has_real_receipt = any(not tc.is_error and tc.receipt is not None for tc in tool_calls)
+    if not has_real_receipt:
+        return reply_text
+
+    lines = reply_text.split("\n")
+    kept: list[str] = []
+    drop_indented = False
+    for line in lines:
+        if drop_indented:
+            if _INDENT_RE.match(line):
+                continue
+            drop_indented = False
+        match = _BULLET_RE.match(line)
+        if match:
+            verb = match.group(1).lower()
+            rest = match.group(2).lower()
+            if verb in _FABRICATED_RECEIPT_VERBS and any(
+                noun in rest for noun in _FABRICATED_RECEIPT_NOUNS
+            ):
+                drop_indented = True
+                continue
+        kept.append(line)
+
+    while kept and not kept[-1].strip():
+        kept.pop()
+    return "\n".join(kept)
