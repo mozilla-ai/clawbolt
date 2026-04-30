@@ -57,6 +57,13 @@ export default function GetStartedPage() {
   const fromNumber = channelConfig?.linq_from_number ?? '';
   const bbAddress = channelConfig?.bluebubbles_imessage_address ?? '';
   const bbConfigured = channelConfig ? isServerAvailable('bluebubbles', channelConfig) : false;
+  const telegramConfigured = channelConfig ? isServerAvailable('telegram', channelConfig) : false;
+  const [telegramBotInfo, setTelegramBotInfo] = useState<{ bot_username: string; bot_link: string } | null>(null);
+  useEffect(() => {
+    if (telegramConfigured) {
+      api.getTelegramBotInfo().then(setTelegramBotInfo).catch(() => {});
+    }
+  }, [telegramConfigured]);
   const imessageNumber = linqConfigured && fromNumber
     ? fromNumber
     : (bbConfigured && bbAddress ? bbAddress : '');
@@ -143,6 +150,9 @@ export default function GetStartedPage() {
         channelConfig={channelConfig}
         imessageBackend={imessageBackend}
         imessageNumber={imessageNumber}
+        telegramConfigured={telegramConfigured}
+        telegramBotInfo={telegramBotInfo}
+        telegramLinkData={telegramLinkData}
         isPremium={isPremium}
         onDismiss={handleDismiss}
         onActivateRoute={(key) => handleSelectChannel(key)}
@@ -371,33 +381,148 @@ interface MobileProps {
   channelConfig: ReturnType<typeof useChannelConfig>['data'];
   imessageBackend: ChannelKey | null;
   imessageNumber: string;
+  telegramConfigured: boolean;
+  telegramBotInfo: { bot_username: string; bot_link: string } | null;
+  telegramLinkData: TelegramLinkData | null;
   isPremium: boolean;
   onDismiss: () => void;
   onActivateRoute: (key: ChannelKey) => void;
 }
 
-function MobileGetStarted({
-  channelConfig,
+function MobileGetStarted(props: MobileProps) {
+  const navigate = useNavigate();
+  const {
+    channelConfig,
+    imessageBackend,
+    imessageNumber,
+    telegramConfigured,
+    onDismiss,
+  } = props;
+
+  const imessageAvailable = imessageBackend !== null && imessageNumber !== '';
+  const telegramAvailable = telegramConfigured;
+  const eitherAvailable = imessageAvailable || telegramAvailable;
+
+  // Derive activeChannel rather than seeding it from props at mount. The
+  // useState initializer runs once and would lock in 'telegram' if
+  // channelConfig hadn't loaded yet (imessageAvailable=false at that
+  // moment). Pattern: store only the user's explicit choice; fall back
+  // to the natural default ("iMessage if available, else Telegram"),
+  // which re-evaluates as channelConfig loads.
+  const [userChannelChoice, setUserChannelChoice] = useState<
+    'imessage' | 'telegram' | null
+  >(null);
+  const defaultChannel: 'imessage' | 'telegram' = imessageAvailable
+    ? 'imessage'
+    : 'telegram';
+  const activeChannel = userChannelChoice ?? defaultChannel;
+
+  if (!channelConfig) {
+    return (
+      <div className="px-4 py-8 max-w-md mx-auto">
+        <div className="animate-pulse h-32 bg-panel rounded-md" aria-hidden />
+      </div>
+    );
+  }
+
+  if (!eitherAvailable) {
+    return (
+      <div className="px-4 py-8 max-w-md mx-auto grid gap-4">
+        <h2 className="text-lg font-semibold font-display">Get Started</h2>
+        <p className="text-sm text-muted-foreground">
+          No messaging channels are configured on the server yet. Use web chat
+          for now, or ask your admin to enable iMessage or Telegram.
+        </p>
+        <Button variant="primary" className="w-full" onClick={() => navigate('/app/chat')}>
+          Open web chat
+        </Button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="px-4 py-6 max-w-md mx-auto grid gap-5">
+      <div>
+        <h2 className="text-xl font-semibold font-display">Hey, I'm Clawbolt</h2>
+        <p className="text-sm text-muted-foreground mt-1">
+          {activeChannel === 'imessage'
+            ? "Text me to get started. I'm an AI assistant for tradespeople. Tell me your phone number so I know it's you when you message me."
+            : "I'm an AI assistant for tradespeople. Open Telegram to start chatting with me."}
+        </p>
+      </div>
+
+      {imessageAvailable && telegramAvailable && (
+        <MobileChannelToggle active={activeChannel} onSelect={setUserChannelChoice} />
+      )}
+
+      {activeChannel === 'imessage' ? (
+        <MobileImessageFlow {...props} />
+      ) : (
+        <MobileTelegramFlow {...props} />
+      )}
+
+      <button
+        type="button"
+        className="text-sm text-primary hover:underline self-center"
+        onClick={onDismiss}
+      >
+        Use web chat instead
+      </button>
+    </div>
+  );
+}
+
+function MobileChannelToggle({
+  active,
+  onSelect,
+}: {
+  active: 'imessage' | 'telegram';
+  onSelect: (c: 'imessage' | 'telegram') => void;
+}) {
+  return (
+    <div
+      role="tablist"
+      aria-label="Messaging channel"
+      className="grid grid-cols-2 gap-1 p-1 bg-panel rounded-xl"
+    >
+      {(['imessage', 'telegram'] as const).map((c) => (
+        <button
+          key={c}
+          type="button"
+          role="tab"
+          aria-selected={active === c}
+          onClick={() => onSelect(c)}
+          className={`px-3 py-2 text-sm font-medium rounded-lg transition-colors ${
+            active === c
+              ? 'bg-card text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground'
+          }`}
+        >
+          {c === 'imessage' ? 'iMessage' : 'Telegram'}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function MobileImessageFlow({
   imessageBackend,
   imessageNumber,
   isPremium,
-  onDismiss,
   onActivateRoute,
 }: MobileProps) {
-  const navigate = useNavigate();
   const updateChannelConfig = useUpdateChannelConfig();
   const [phone, setPhone] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [linked, setLinked] = useState(false);
+  const [copied, setCopied] = useState(false);
 
-  const canStart = imessageBackend !== null && imessageNumber !== '';
   // BlueBubbles can be configured with either a phone number or an iCloud
   // email. An ``sms:user@icloud.com`` deep-link is malformed and most OS
   // handlers reject it, so the email shape gets a copy-the-address UX
   // instead.
   const imessageIsEmail = imessageNumber.includes('@');
-  const [copied, setCopied] = useState(false);
 
   const onCopy = async () => {
     try {
@@ -425,8 +550,6 @@ function MobileGetStarted({
       } else {
         // OSS: persist the phone to the server-level allowed list so the
         // backend will route the user's first inbound back to this account.
-        // Without this, the OSS user would type their number into the
-        // wizard and the bot would silently reject their first message.
         const updates =
           imessageBackend === 'linq'
             ? { linq_allowed_numbers: normalized }
@@ -435,9 +558,6 @@ function MobileGetStarted({
       }
       onActivateRoute(imessageBackend);
       setLinked(true);
-      // Phone-shaped iMessage backends: open the SMS app so the user can
-      // fire off their first message. Email-shaped (BlueBubbles iCloud)
-      // backends fall through to the linked card with copy-the-address.
       if (!imessageIsEmail) {
         window.location.href = `sms:${imessageNumber}`;
       }
@@ -447,119 +567,184 @@ function MobileGetStarted({
     }
   };
 
-  if (!channelConfig) {
+  if (linked) {
     return (
-      <div className="px-4 py-8 max-w-md mx-auto">
-        <div className="animate-pulse h-32 bg-panel rounded-md" aria-hidden />
-      </div>
-    );
-  }
-
-  if (!canStart) {
-    return (
-      <div className="px-4 py-8 max-w-md mx-auto grid gap-4">
-        <h2 className="text-lg font-semibold font-display">Get Started</h2>
-        <p className="text-sm text-muted-foreground">
-          No messaging channel is configured on the server yet. Use web chat
-          for now, or ask your admin to enable iMessage.
-        </p>
-        <Button variant="primary" className="w-full" onClick={() => navigate('/app/chat')}>
-          Open web chat
-        </Button>
-      </div>
+      <Card className="p-4 grid gap-3">
+        {imessageIsEmail ? (
+          <>
+            <div className="text-sm">
+              Saved. Open Messages on your iCloud-connected device and send a
+              note to this address to get started.
+            </div>
+            <button
+              type="button"
+              onClick={onCopy}
+              className="text-center text-sm font-mono py-2 rounded-md hover:bg-secondary-hover focus:outline-none focus:ring-2 focus:ring-primary/30"
+              aria-label={`Copy address ${imessageNumber}`}
+            >
+              {imessageNumber}
+              <span className="ml-2 text-xs text-muted-foreground">
+                {copied ? '(copied)' : '(tap to copy)'}
+              </span>
+            </button>
+          </>
+        ) : (
+          <>
+            <div className="text-sm">
+              Saved. If your Messages app didn't open, tap the button below.
+            </div>
+            <a href={`sms:${imessageNumber}`} className="block">
+              <Button variant="primary" className="w-full">Open Messages</Button>
+            </a>
+            <p className="text-center text-sm font-mono">{imessageNumber}</p>
+          </>
+        )}
+        <PhotoAccessHint />
+      </Card>
     );
   }
 
   return (
-    <div className="px-4 py-6 max-w-md mx-auto grid gap-5">
-      <div>
-        <h2 className="text-xl font-semibold font-display">Hey, I'm Clawbolt</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Text me to get started. I'm an AI assistant for tradespeople.
-          Tell me your phone number so I know it's you when you message me.
-        </p>
-      </div>
+    <>
+      <Field label="Your phone number">
+        <Input
+          value={phone}
+          onChange={(e) => {
+            setPhone(e.target.value);
+            if (error) setError(null);
+          }}
+          placeholder="(555) 123-4567"
+          inputMode="tel"
+          autoComplete="tel"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'mobile-phone-error' : undefined}
+        />
+        {error ? (
+          <p id="mobile-phone-error" className="text-xs text-danger mt-1">{error}</p>
+        ) : (
+          <p className="text-xs text-muted-foreground mt-1">
+            US numbers default to +1. Type a leading + for other countries.
+          </p>
+        )}
+      </Field>
 
-      {!linked ? (
-        <>
-          <Field label="Your phone number">
-            <Input
-              value={phone}
-              onChange={(e) => {
-                setPhone(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder="(555) 123-4567"
-              inputMode="tel"
-              autoComplete="tel"
-              aria-invalid={error ? true : undefined}
-              aria-describedby={error ? 'mobile-phone-error' : undefined}
-            />
-            {error ? (
-              <p id="mobile-phone-error" className="text-xs text-danger mt-1">{error}</p>
-            ) : (
-              <p className="text-xs text-muted-foreground mt-1">
-                US numbers default to +1. Type a leading + for other countries.
-              </p>
-            )}
-          </Field>
+      <Button
+        variant="primary"
+        className="w-full"
+        isLoading={saving}
+        disabled={saving || !phone.trim()}
+        onClick={handleStart}
+      >
+        Text Clawbolt
+      </Button>
+    </>
+  );
+}
 
-          <Button
-            variant="primary"
-            className="w-full"
-            isLoading={saving}
-            disabled={saving || !phone.trim()}
-            onClick={handleStart}
-          >
-            Text Clawbolt
-          </Button>
+function MobileTelegramFlow({
+  telegramBotInfo,
+  telegramLinkData,
+  isPremium,
+  onActivateRoute,
+}: MobileProps) {
+  const updateChannelConfig = useUpdateChannelConfig();
+  const [telegramId, setTelegramId] = useState<string>('');
+  const [error, setError] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [linked, setLinked] = useState(false);
 
-          <button
-            type="button"
-            className="text-sm text-primary hover:underline self-center"
-            onClick={() => navigate('/app/chat')}
-          >
-            Use web chat instead
-          </button>
-        </>
-      ) : (
-        <Card className="p-4 grid gap-3">
-          {imessageIsEmail ? (
-            <>
-              <div className="text-sm">
-                Saved. Open Messages on your iCloud-connected device and send
-                a note to this address to get started.
-              </div>
-              <button
-                type="button"
-                onClick={onCopy}
-                className="text-center text-sm font-mono py-2 rounded-md hover:bg-secondary-hover focus:outline-none focus:ring-2 focus:ring-primary/30"
-                aria-label={`Copy address ${imessageNumber}`}
-              >
-                {imessageNumber}
-                <span className="ml-2 text-xs text-muted-foreground">
-                  {copied ? '(copied)' : '(tap to copy)'}
-                </span>
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="text-sm">
-                Saved. If your Messages app didn't open, tap the button below.
-              </div>
-              <a href={`sms:${imessageNumber}`} className="block">
-                <Button variant="primary" className="w-full">Open Messages</Button>
-              </a>
-              <p className="text-center text-sm font-mono">{imessageNumber}</p>
-            </>
-          )}
-          <PhotoAccessHint />
-          <Button variant="secondary" className="w-full" onClick={onDismiss}>
-            Done
-          </Button>
-        </Card>
-      )}
-    </div>
+  const initialId = telegramLinkData?.telegram_user_id ?? '';
+  const displayedId = telegramId || initialId;
+
+  const handleStart = async () => {
+    setError(null);
+    const trimmed = displayedId.trim();
+    // Telegram numeric user IDs are positive integers; in practice 9-12
+    // digits today but Telegram has hinted they may grow. Validate as
+    // digits only with a sane lower bound.
+    if (!/^\d{6,15}$/.test(trimmed)) {
+      setError('Use your numeric Telegram user ID (digits only).');
+      return;
+    }
+    setSaving(true);
+    try {
+      if (isPremium) {
+        await api.setTelegramLink(trimmed);
+      } else {
+        await updateChannelConfig.mutateAsync({ telegram_allowed_chat_id: trimmed });
+      }
+      onActivateRoute('telegram');
+      setLinked(true);
+      // Open the Telegram bot in the app if installed; web fallback.
+      if (telegramBotInfo?.bot_link) {
+        window.location.href = telegramBotInfo.bot_link;
+      }
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : 'Failed to save');
+      setSaving(false);
+    }
+  };
+
+  if (linked) {
+    return (
+      <Card className="p-4 grid gap-3">
+        <div className="text-sm">
+          Saved. If Telegram didn't open, tap the button below.
+        </div>
+        {telegramBotInfo?.bot_link ? (
+          <a href={telegramBotInfo.bot_link} className="block">
+            <Button variant="primary" className="w-full">
+              Open Telegram
+            </Button>
+          </a>
+        ) : (
+          <p className="text-xs text-muted-foreground">
+            Search for the Clawbolt bot in Telegram and send your first
+            message.
+          </p>
+        )}
+        {telegramBotInfo?.bot_username && (
+          <p className="text-center text-sm font-mono">@{telegramBotInfo.bot_username}</p>
+        )}
+        <PhotoAccessHint />
+      </Card>
+    );
+  }
+
+  return (
+    <>
+      <Field label="Your Telegram user ID">
+        <Input
+          value={displayedId}
+          onChange={(e) => {
+            setTelegramId(e.target.value);
+            if (error) setError(null);
+          }}
+          placeholder="123456789"
+          inputMode="numeric"
+          aria-invalid={error ? true : undefined}
+          aria-describedby={error ? 'mobile-telegram-error' : 'mobile-telegram-help'}
+        />
+        {error ? (
+          <p id="mobile-telegram-error" className="text-xs text-danger mt-1">{error}</p>
+        ) : (
+          <p id="mobile-telegram-help" className="text-xs text-muted-foreground mt-1">
+            Your numeric Telegram user ID. Send /start to @userinfobot on
+            Telegram to find it.
+          </p>
+        )}
+      </Field>
+
+      <Button
+        variant="primary"
+        className="w-full"
+        isLoading={saving}
+        disabled={saving || !displayedId.trim()}
+        onClick={handleStart}
+      >
+        Open Telegram
+      </Button>
+    </>
   );
 }
 
