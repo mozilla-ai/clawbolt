@@ -12,6 +12,7 @@ import base64
 import hashlib
 import json
 import logging
+import random
 import secrets
 import time
 from collections.abc import Callable
@@ -931,6 +932,12 @@ oauth_service = OAuthService()
 # How often the background sweep runs.
 _REFRESH_SWEEP_INTERVAL_SECONDS = 120.0
 
+# Random jitter applied to each inter-sweep sleep so that schedulers
+# running in N uvicorn workers do not synchronize and stampede the DB
+# / advisory locks at the same instant. Bounded so the effective
+# interval stays in the [105s, 135s] range.
+_REFRESH_SWEEP_JITTER_SECONDS = 15.0
+
 # How far ahead the sweep looks for tokens to refresh. Slightly larger
 # than ``_EXPIRY_BUFFER_SECONDS`` (300s) so the sweep catches tokens
 # before ``OAuthTokenData.is_expired()`` flips True and the inline
@@ -988,7 +995,8 @@ class OAuthRefreshScheduler:
                 raise
             except Exception:
                 logger.exception("OAuth refresh sweep failed")
-            await asyncio.sleep(_REFRESH_SWEEP_INTERVAL_SECONDS)
+            jitter = random.uniform(-_REFRESH_SWEEP_JITTER_SECONDS, _REFRESH_SWEEP_JITTER_SECONDS)
+            await asyncio.sleep(_REFRESH_SWEEP_INTERVAL_SECONDS + jitter)
 
     async def sweep(self) -> int:
         """Run one sweep. Returns the number of tokens that were refreshed.

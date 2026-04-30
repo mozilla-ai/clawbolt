@@ -1318,6 +1318,24 @@ async def test_refresh_sweep_skips_non_expiring_tokens(
     mock_refresh.assert_not_called()
 
 
+async def test_scheduler_start_is_idempotent(oauth_svc: OAuthService) -> None:
+    """Calling start() twice in a row must not spawn a second sweep task.
+
+    The lifespan reload code path (or any caller that re-invokes start()
+    by mistake) should be a no-op the second time.
+    """
+    scheduler = OAuthRefreshScheduler(oauth_svc)
+    try:
+        scheduler.start()
+        first_task = scheduler._task
+        assert first_task is not None
+        scheduler.start()
+        # Same task object: the second call returned early.
+        assert scheduler._task is first_task
+    finally:
+        scheduler.stop()
+
+
 async def test_refresh_sweep_continues_after_individual_failure(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
