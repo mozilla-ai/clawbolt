@@ -219,6 +219,13 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     await _verify_llm_settings()
     heartbeat_scheduler.start()
 
+    # Background OAuth token refresh: keep tokens fresh proactively so
+    # user-facing tool calls do not pay the inline ~150ms refresh cost
+    # during the 5 minute pre-expiry window.
+    from backend.app.services.oauth import oauth_refresh_scheduler
+
+    oauth_refresh_scheduler.start()
+
     if settings.telegram_bot_token:
         if settings.telegram_webhook_secret:
             logger.info("Webhook secret: using explicit TELEGRAM_WEBHOOK_SECRET")
@@ -273,6 +280,9 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
             task.cancel()
     await manager.stop_all()
     heartbeat_scheduler.stop()
+    from backend.app.services.oauth import oauth_refresh_scheduler
+
+    oauth_refresh_scheduler.stop()
 
 
 app = FastAPI(title="Clawbolt", version="0.1.0", lifespan=lifespan)

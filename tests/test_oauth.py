@@ -20,6 +20,7 @@ from backend.app.models import User
 from backend.app.services.oauth import (
     _DISCOVERY_CACHE_TTL_SECONDS,
     OAuthConfig,
+    OAuthRefreshScheduler,
     OAuthService,
     OAuthTokenData,
     _generate_pkce_pair,
@@ -1222,3 +1223,134 @@ def test_quickbooks_config_uses_discovery_endpoints(_reset_discovery_cache: None
     assert config is not None
     assert config.authorize_url == "https://discovered.intuit.com/oauth2/authorize"
     assert config.token_url == "https://discovered.intuit.com/oauth2/token"
+
+
+# ---------------------------------------------------------------------------
+# OAuthRefreshScheduler tests (#1087)
+# ---------------------------------------------------------------------------
+
+
+async def test_refresh_sweep_refreshes_tokens_within_lookahead(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """A token expiring within the lookahead window must be refreshed."""
+    # 4 minutes from now: well inside the 6 minute lookahead.
+    near_expiry = OAuthTokenData(
+        access_token="at-near",
+        refresh_token="rt-near",
+        expires_at=time.time() + 240,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", near_expiry)
+
+    refresh_calls: list[tuple[str, str]] = []
+
+    async def fake_refresh(user_id: str, integration: str) -> OAuthTokenData | None:
+        refresh_calls.append((user_id, integration))
+        return OAuthTokenData(access_token="at-refreshed", expires_at=time.time() + 3600)
+
+    scheduler = OAuthRefreshScheduler(oauth_svc)
+    with patch.object(oauth_svc, "refresh_token", side_effect=fake_refresh):
+        count = await scheduler.sweep()
+
+    assert count == 1
+    assert refresh_calls == [(test_user.id, "quickbooks")]
+
+
+async def test_refresh_sweep_skips_tokens_outside_lookahead(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """A token with plenty of time left must not be refreshed."""
+    # 30 minutes out: outside the 6 minute lookahead.
+    far_expiry = OAuthTokenData(
+        access_token="at",
+        refresh_token="rt",
+        expires_at=time.time() + 1800,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", far_expiry)
+
+    scheduler = OAuthRefreshScheduler(oauth_svc)
+    with patch.object(oauth_svc, "refresh_token", new_callable=AsyncMock) as mock_refresh:
+        count = await scheduler.sweep()
+
+    assert count == 0
+    mock_refresh.assert_not_called()
+
+
+async def test_refresh_sweep_skips_tokens_without_refresh_token(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """Tokens without a refresh_token cannot be refreshed and must be skipped.
+
+    Without this guard the sweep would call refresh_token, which then
+    immediately returns None after a wasted DB read and log line.
+    """
+    no_refresh = OAuthTokenData(
+        access_token="at",
+        refresh_token="",
+        expires_at=time.time() + 60,  # would otherwise be in lookahead
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", no_refresh)
+
+    scheduler = OAuthRefreshScheduler(oauth_svc)
+    with patch.object(oauth_svc, "refresh_token", new_callable=AsyncMock) as mock_refresh:
+        count = await scheduler.sweep()
+
+    assert count == 0
+    mock_refresh.assert_not_called()
+
+
+async def test_refresh_sweep_skips_non_expiring_tokens(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """Tokens with expires_at <= 0 never expire and need no refresh."""
+    non_expiring = OAuthTokenData(
+        access_token="at",
+        refresh_token="rt",
+        expires_at=0.0,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", non_expiring)
+
+    scheduler = OAuthRefreshScheduler(oauth_svc)
+    with patch.object(oauth_svc, "refresh_token", new_callable=AsyncMock) as mock_refresh:
+        count = await scheduler.sweep()
+
+    assert count == 0
+    mock_refresh.assert_not_called()
+
+
+async def test_refresh_sweep_continues_after_individual_failure(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """One failing refresh must not prevent the rest of the sweep.
+
+    Otherwise a single user with a revoked grant would block all other
+    users' background refreshes.
+    """
+    # Two due tokens, one for each integration.
+    for integration in ("quickbooks", "google_calendar"):
+        oauth_svc.save_token(
+            test_user.id,
+            integration,
+            OAuthTokenData(
+                access_token=f"at-{integration}",
+                refresh_token=f"rt-{integration}",
+                expires_at=time.time() + 60,
+            ),
+        )
+
+    seen: list[str] = []
+
+    async def fake_refresh(user_id: str, integration: str) -> OAuthTokenData | None:
+        seen.append(integration)
+        if integration == "quickbooks":
+            raise RuntimeError("boom")
+        return OAuthTokenData(access_token="at-new", expires_at=time.time() + 3600)
+
+    scheduler = OAuthRefreshScheduler(oauth_svc)
+    with patch.object(oauth_svc, "refresh_token", side_effect=fake_refresh):
+        count = await scheduler.sweep()
+
+    # Both integrations were attempted; the QB one failed and the
+    # google_calendar one succeeded.
+    assert sorted(seen) == ["google_calendar", "quickbooks"]
+    assert count == 1
