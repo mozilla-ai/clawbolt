@@ -8,7 +8,27 @@
     "/api/health": {
       "get": {
         "summary": "Health Check",
+        "description": "Full health check: process is up AND can reach the database.\n\nUse for ops dashboards and richer monitoring. NOT recommended as the\ndeployment platform's healthcheck path: a sync DB call from an async\nhandler can block the event loop, and during an incident a healthcheck\nthat waits on the same DB can pile up alongside whatever already broke.\nUse ``/health/live`` for that.",
         "operationId": "health_check_api_health_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/health/live": {
+      "get": {
+        "summary": "Health Live",
+        "description": "Liveness probe: the process is up and the event loop is responsive.\n\nNo DB hit, no external calls. Returns instantly when the worker can\nprocess requests. Designed for the deployment platform's healthcheck\nso a stuck DB / external dep / slow query does not also block the\nhealthcheck and prevent traffic from rolling to a fresh container.\nUse ``/health`` for the deeper \"is the system actually working\" check.",
+        "operationId": "health_live_api_health_live_get",
         "responses": {
           "200": {
             "description": "Successful Response",
