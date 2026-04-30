@@ -391,6 +391,48 @@ class ToolRegistry:
             summaries[name] = factory.summary
         return summaries
 
+    async def create_ready_specialist_tools(
+        self,
+        context: ToolContext,
+        *,
+        excluded_factories: set[str] | None = None,
+        excluded_tool_names: set[str] | None = None,
+    ) -> tuple[list[Tool], set[str]]:
+        """Materialize specialist tools for categories the user is ready to use.
+
+        A specialist is "ready" when:
+        - it is not excluded,
+        - its infrastructure deps (storage, outbound) are met,
+        - its ``auth_check`` is None OR returns None (user authenticated).
+
+        Returns ``(tools, factory_names)`` so callers can both register the
+        tools with the agent AND pre-populate the shared
+        ``activated_specialists`` set. Pre-activation skips the otherwise-mandatory
+        round trip through ``list_capabilities`` for users with connected
+        integrations: the calendar tools are simply on the schema from turn 1.
+        """
+        ready: set[str] = set()
+        for name, factory in self._factories.items():
+            if factory.core:
+                continue
+            if excluded_factories and name in excluded_factories:
+                continue
+            if factory.requires_storage and context.storage is None:
+                continue
+            if factory.requires_outbound and context.publish_outbound is None:
+                continue
+            if factory.auth_check is not None and factory.auth_check(context) is not None:
+                continue
+            ready.add(name)
+        if not ready:
+            return [], set()
+        tools = await self.create_tools(
+            context,
+            selected_factories=ready,
+            excluded_tool_names=excluded_tool_names,
+        )
+        return tools, ready
+
     def get_unauthenticated_specialists(
         self,
         context: ToolContext,

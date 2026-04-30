@@ -74,6 +74,18 @@ async def build_initial_turn_tools(
         excluded_factories=disabled_groups or None,
         excluded_tool_names=disabled_sub_tools or None,
     )
+    # Mirror router.py: specialist tools for connected integrations are
+    # pre-activated at agent boot, so the preview's tool list reflects what
+    # the LLM actually sees on a fresh turn.
+    (
+        ready_specialist_tools,
+        ready_specialist_names,
+    ) = await default_registry.create_ready_specialist_tools(
+        tool_context,
+        excluded_factories=disabled_groups or None,
+        excluded_tool_names=disabled_sub_tools or None,
+    )
+    tools.extend(ready_specialist_tools)
     specialist_summaries = default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=disabled_groups or None
     )
@@ -89,7 +101,7 @@ async def build_initial_turn_tools(
                 specialist_summaries,
                 unauthenticated=unauthenticated,
                 disabled_sub_tools=disabled_specialist_subs or None,
-                activated_specialists=set(),
+                activated_specialists=ready_specialist_names,
             )
         )
     return tools

@@ -286,14 +286,28 @@ async def run_agent(
         activated_specialists=activated_specialists,
     )
 
-    # Start with core tools only; specialist tools are discovered on demand
-    # via the list_capabilities meta-tool. Exclude user-disabled groups and
-    # individual sub-tools.
+    # Core tools (always-on). Exclude user-disabled groups and sub-tools.
     tools = await default_registry.create_core_tools(
         tool_context,
         excluded_factories=disabled_groups or None,
         excluded_tool_names=disabled_sub_tools or None,
     )
+    # Pre-activate specialists the user is already authenticated for. Without
+    # this, the LLM had to call list_capabilities('calendar') / ('quickbooks')
+    # / ('companycam') on every inbound, which adds a round trip per turn for
+    # users who text about their calendar daily. Now those tools are on the
+    # schema from turn 1; list_capabilities still surfaces unconnected
+    # integrations for discovery.
+    (
+        ready_specialist_tools,
+        ready_specialist_names,
+    ) = await default_registry.create_ready_specialist_tools(
+        tool_context,
+        excluded_factories=disabled_groups or None,
+        excluded_tool_names=disabled_sub_tools or None,
+    )
+    tools.extend(ready_specialist_tools)
+    activated_specialists |= ready_specialist_names
     specialist_summaries = default_registry.get_available_specialist_summaries(
         tool_context, excluded_factories=disabled_groups or None
     )
