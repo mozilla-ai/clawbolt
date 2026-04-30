@@ -71,9 +71,10 @@ vi.mock('@/api', () => ({
     getChannelRoutes: (...args: unknown[]) => mockGetChannelRoutes(...args),
     toggleChannelRoute: (...args: unknown[]) => mockToggleChannelRoute(...args),
     getTelegramLink: vi.fn().mockResolvedValue({ telegram_user_id: null, connected: false }),
+    getTelegramBotInfo: vi.fn().mockResolvedValue({ bot_username: 'clawbolt_bot', bot_link: 'https://t.me/clawbolt_bot' }),
     getLinqLink: vi.fn().mockResolvedValue({ phone_number: null, connected: false }),
     setLinqLink: vi.fn().mockResolvedValue({ phone_number: '+15551234567', connected: true }),
-    setTelegramLink: vi.fn().mockResolvedValue({ telegram_user_id: null, connected: false }),
+    setTelegramLink: vi.fn().mockResolvedValue({ telegram_user_id: '12345', connected: true }),
   },
 }));
 
@@ -426,9 +427,111 @@ describe('GetStartedPage (mobile flow)', () => {
     renderWithRouter(<GetStartedPage />);
     await waitFor(() => {
       expect(
-        screen.getByText(/No messaging channel is configured on the server yet/),
+        screen.getByText(/No messaging channels are configured on the server yet/),
       ).toBeInTheDocument();
     });
     expect(screen.getByRole('button', { name: 'Open web chat' })).toBeInTheDocument();
+  });
+
+  it('renders the Telegram flow when only Telegram is configured', async () => {
+    mockGetChannelConfig.mockResolvedValueOnce({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+      bluebubbles_imessage_address: '',
+      imessage_backend: null,
+    });
+    renderWithRouter(<GetStartedPage />);
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('123456789')).toBeInTheDocument();
+    });
+    expect(screen.getByRole('button', { name: 'Open Telegram' })).toBeInTheDocument();
+    // No iMessage form when Telegram is the only option.
+    expect(screen.queryByPlaceholderText('(555) 123-4567')).not.toBeInTheDocument();
+    // No tab toggle either.
+    expect(screen.queryByRole('tab', { name: 'iMessage' })).not.toBeInTheDocument();
+  });
+
+  it('shows the channel toggle and defaults to iMessage when both are configured', async () => {
+    mockGetChannelConfig.mockResolvedValueOnce({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: true,
+      linq_from_number: '+15559876543',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+      bluebubbles_imessage_address: '',
+      imessage_backend: 'linq',
+    });
+    renderWithRouter(<GetStartedPage />);
+    // Both tabs visible; iMessage active by default.
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'iMessage', selected: true })).toBeInTheDocument();
+    });
+    expect(screen.getByRole('tab', { name: 'Telegram', selected: false })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText('(555) 123-4567')).toBeInTheDocument();
+    // Click Telegram tab; iMessage form goes away, Telegram form appears.
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('tab', { name: 'Telegram' }));
+    await waitFor(() => {
+      expect(screen.getByPlaceholderText('123456789')).toBeInTheDocument();
+    });
+    expect(screen.queryByPlaceholderText('(555) 123-4567')).not.toBeInTheDocument();
+  });
+
+  it('OSS Telegram persists via updateChannelConfig (telegram_allowed_chat_id)', async () => {
+    mockGetChannelConfig.mockResolvedValueOnce({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+      bluebubbles_imessage_address: '',
+      imessage_backend: null,
+    });
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+    const input = await screen.findByPlaceholderText('123456789');
+    await user.type(input, '987654321');
+    await user.click(screen.getByRole('button', { name: 'Open Telegram' }));
+    await waitFor(() => {
+      expect(mockUpdateChannelConfig).toHaveBeenCalledWith({
+        telegram_allowed_chat_id: '987654321',
+      });
+    });
+  });
+
+  it('Telegram flow rejects non-numeric IDs with an inline error', async () => {
+    mockGetChannelConfig.mockResolvedValueOnce({
+      telegram_bot_token_set: true,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: false,
+      linq_from_number: '',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+      bluebubbles_imessage_address: '',
+      imessage_backend: null,
+    });
+    renderWithRouter(<GetStartedPage />);
+    const user = userEvent.setup();
+    const input = await screen.findByPlaceholderText('123456789');
+    await user.type(input, 'not-a-number');
+    await user.click(screen.getByRole('button', { name: 'Open Telegram' }));
+    await waitFor(() => {
+      expect(screen.getByText(/Use your numeric Telegram user ID/)).toBeInTheDocument();
+    });
+    expect(mockUpdateChannelConfig).not.toHaveBeenCalled();
   });
 });
