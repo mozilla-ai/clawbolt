@@ -230,6 +230,60 @@ async def test_refresh_token_returns_early_when_peer_worker_already_refreshed(
     mock_client.post.assert_not_called()
 
 
+async def test_refresh_token_bypasses_cache_for_post_lock_reload(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """The post-advisory-lock reload inside refresh_token must bypass the cache.
+
+    Regression for #1085. Without the bypass, the in-memory token cache
+    can hide a peer worker's recently-persisted refresh from this worker:
+    we'd return the stale (still-expired) cached token, fall through to
+    an unnecessary HTTP refresh, and risk overwriting the rotated
+    refresh_token. Simulate the race by priming the cache with an
+    expired token, then writing a fresh one straight to the DB to mimic
+    a peer worker, and asserting refresh_token observes the fresh value
+    without a network call.
+    """
+    expired = OAuthTokenData(
+        access_token="at-stale",
+        refresh_token="rt-stale",
+        expires_at=time.time() - 100,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", expired)
+    # Prime the cache.
+    cached = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert cached is not None and cached.access_token == "at-stale"
+
+    # Simulate a peer worker writing a freshly-refreshed token directly
+    # to the DB (bypassing this OAuthService instance, so our cache stays
+    # populated with the expired version).
+    fresh_expires = time.time() + 7200
+    from sqlalchemy import update
+
+    from backend.app.database import db_session
+    from backend.app.models import OAuthToken
+
+    with db_session() as db:
+        db.execute(
+            update(OAuthToken)
+            .where(
+                OAuthToken.user_id == test_user.id,
+                OAuthToken.integration == "quickbooks",
+            )
+            .values(access_token="at-peer-fresh", expires_at=fresh_expires)
+        )
+        db.commit()
+
+    with patch.object(oauth_svc, "_get_http") as mock_http_fn:
+        mock_client = AsyncMock()
+        mock_http_fn.return_value = mock_client
+        result = await oauth_svc.refresh_token(test_user.id, "quickbooks")
+
+    assert result is not None
+    assert result.access_token == "at-peer-fresh"
+    mock_client.post.assert_not_called()
+
+
 def test_build_on_refresh_callback_preserves_refresh_token_when_empty(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
@@ -249,6 +303,64 @@ def test_build_on_refresh_callback_preserves_refresh_token_when_empty(
     assert reloaded is not None
     assert reloaded.access_token == "at-new"
     assert reloaded.refresh_token == "rt-original"
+
+
+def test_build_on_refresh_callback_bypasses_cache_for_post_lock_reload(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
+    """The on_refresh callback must observe a peer worker's just-persisted
+    rotated refresh_token rather than reading a stale cached value.
+
+    Regression for #1085 review feedback. The callback acquires the same
+    advisory lock as refresh_token to avoid losing the rotated
+    refresh_token. Inside that critical section it reloads the current
+    token to merge the new access/refresh values onto fields it doesn't
+    know about (realm_id, scopes). If a stale cache hides a peer worker's
+    recent save here, the callback writes back stale realm_id/scopes
+    on top of the peer's update.
+    """
+    original = OAuthTokenData(
+        access_token="at-old",
+        refresh_token="rt-old",
+        realm_id="realm-stale",
+        scopes=["scope.stale"],
+        expires_at=time.time() - 100,
+    )
+    oauth_svc.save_token(test_user.id, "quickbooks", original)
+    # Prime the cache via load_token.
+    primed = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert primed is not None and primed.realm_id == "realm-stale"
+
+    # Simulate a peer worker writing fresh realm_id and scopes_json to
+    # the DB while our cache still has the stale values.
+    from sqlalchemy import update
+
+    from backend.app.database import db_session
+    from backend.app.models import OAuthToken
+
+    with db_session() as db:
+        db.execute(
+            update(OAuthToken)
+            .where(
+                OAuthToken.user_id == test_user.id,
+                OAuthToken.integration == "quickbooks",
+            )
+            .values(realm_id="realm-peer-fresh", scopes_json='["scope.peer"]')
+        )
+        db.commit()
+
+    # Run the callback as the provider client would.
+    callback = oauth_svc.build_on_refresh_callback(test_user.id, "quickbooks")
+    callback("at-new", "rt-new", time.time() + 7200)
+
+    # The merged write must have started from the peer's fresh values,
+    # not the cached stale ones.
+    reloaded = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert reloaded is not None
+    assert reloaded.access_token == "at-new"
+    assert reloaded.refresh_token == "rt-new"
+    assert reloaded.realm_id == "realm-peer-fresh"
+    assert reloaded.scopes == ["scope.peer"]
 
 
 def test_save_token_upsert(oauth_svc: OAuthService, test_user: User) -> None:
@@ -326,6 +438,108 @@ def test_delete_token(oauth_svc: OAuthService, test_user: User) -> None:
 def test_delete_nonexistent_token(oauth_svc: OAuthService) -> None:
     """Deleting a non-existent token should return False."""
     assert oauth_svc.delete_token("999", "quickbooks") is False
+
+
+def test_load_token_cached_within_ttl(oauth_svc: OAuthService, test_user: User) -> None:
+    """A second load_token within the TTL window should not hit the database.
+
+    Regression for #1085. A single agent turn loads OAuth credentials
+    multiple times (auth_check, factory create, tool invocation). Without
+    a cache, that produced 6+ duplicate DB roundtrips per inbound message
+    in production logs.
+    """
+    token = OAuthTokenData(access_token="at-cached", expires_at=time.time() + 3600)
+    oauth_svc.save_token(test_user.id, "quickbooks", token)
+
+    # Prime the cache.
+    first = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert first is not None and first.access_token == "at-cached"
+
+    # Out-of-band delete the row so a fresh DB read would return None.
+    # If the cache works, the second load_token should still return
+    # the cached value.
+    from sqlalchemy import delete
+
+    from backend.app.database import db_session
+    from backend.app.models import OAuthToken
+
+    with db_session() as db:
+        db.execute(
+            delete(OAuthToken).where(
+                OAuthToken.user_id == test_user.id,
+                OAuthToken.integration == "quickbooks",
+            )
+        )
+        db.commit()
+
+    second = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert second is not None
+    assert second.access_token == "at-cached"
+
+
+def test_save_token_invalidates_cache(oauth_svc: OAuthService, test_user: User) -> None:
+    """save_token must drop the cache entry so the next load sees the new value."""
+    initial = OAuthTokenData(access_token="at-initial", expires_at=time.time() + 3600)
+    oauth_svc.save_token(test_user.id, "quickbooks", initial)
+    primed = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert primed is not None and primed.access_token == "at-initial"
+
+    rotated = OAuthTokenData(access_token="at-rotated", expires_at=time.time() + 3600)
+    oauth_svc.save_token(test_user.id, "quickbooks", rotated)
+
+    reloaded = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert reloaded is not None
+    assert reloaded.access_token == "at-rotated"
+
+
+def test_delete_token_invalidates_cache(oauth_svc: OAuthService, test_user: User) -> None:
+    """delete_token must drop the cache entry so the next load returns None."""
+    token = OAuthTokenData(access_token="at", expires_at=time.time() + 3600)
+    oauth_svc.save_token(test_user.id, "quickbooks", token)
+    primed = oauth_svc.load_token(test_user.id, "quickbooks")
+    assert primed is not None
+
+    oauth_svc.delete_token(test_user.id, "quickbooks")
+    assert oauth_svc.load_token(test_user.id, "quickbooks") is None
+
+
+def test_load_token_caches_negative_lookup(oauth_svc: OAuthService, test_user: User) -> None:
+    """A None result is also cached so repeated 'not connected' checks
+    do not flood the DB.
+
+    Real-world trigger: the agent runs auth_check on every specialist
+    factory at registry build time. For users who have not connected
+    QuickBooks, that is N negative DB reads per inbound. Cache both
+    positive and negative results.
+    """
+    # First load: row does not exist, returns None.
+    assert oauth_svc.load_token(test_user.id, "quickbooks") is None
+
+    # Out-of-band insert a row.
+    token = OAuthTokenData(access_token="at-now-exists", expires_at=time.time() + 3600)
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+    from backend.app.database import db_session
+    from backend.app.models import OAuthToken
+
+    with db_session() as db:
+        db.execute(
+            pg_insert(OAuthToken).values(
+                user_id=test_user.id,
+                integration="quickbooks",
+                access_token=token.access_token,
+                refresh_token="",
+                token_type="Bearer",
+                expires_at=token.expires_at,
+                scopes_json="[]",
+                realm_id="",
+                extra_json="{}",
+            )
+        )
+        db.commit()
+
+    # Within the TTL the cached None should still be returned.
+    assert oauth_svc.load_token(test_user.id, "quickbooks") is None
 
 
 def test_is_connected(oauth_svc: OAuthService, test_user: User) -> None:

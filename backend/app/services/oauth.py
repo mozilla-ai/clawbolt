@@ -33,6 +33,26 @@ def _refresh_lock_key(user_id: str, integration: str) -> str:
     return f"oauth_refresh:{user_id}:{integration}"
 
 
+# Per-process TTL on cached tokens. A single agent turn loads OAuth
+# credentials repeatedly (auth_check during registry build, factory
+# create() during tool instantiation, then again per actual tool call).
+# In production logs we saw 6+ load_token DB hits per inbound. This
+# cache deduplicates them. Kept short so a refresh in another worker
+# becomes visible quickly; even a stale read here is safe because the
+# returned access_token has its own expires_at that callers honor.
+_TOKEN_CACHE_TTL_SECONDS = 30.0
+
+# Shorter TTL for negative results (no token row exists). Cross-worker
+# OAuth completion race: worker B handles the OAuth callback and
+# save_token invalidates B's local cache, but worker A's cache still
+# has a "not connected" entry from a recent is_connected() check. Until
+# A's entry expires, A reports the user as unconnected even though
+# they just finished connecting. Keep negative TTL short enough that
+# the post-OAuth blackout is barely noticeable, but long enough to
+# still dedupe the multiple auth_check reads within a single agent turn.
+_NEGATIVE_TOKEN_CACHE_TTL_SECONDS = 5.0
+
+
 # Token expiry buffer: refresh 5 minutes before actual expiry.
 _EXPIRY_BUFFER_SECONDS = 300
 
@@ -194,13 +214,33 @@ def _generate_pkce_pair() -> tuple[str, str]:
 class OAuthService:
     """Manages OAuth flows and token lifecycle.
 
-    State is held in memory (pending authorization flows) and in PostgreSQL
-    (persisted tokens via the oauth_tokens table).
+    State is held in memory (pending authorization flows, a small TTL
+    cache of recent token reads) and in PostgreSQL (persisted tokens via
+    the oauth_tokens table).
+
+    Token cache semantics:
+
+    - Per-process: each uvicorn worker has its own cache, no shared memory.
+    - Positive entries live ``_TOKEN_CACHE_TTL_SECONDS``; negative entries
+      live ``_NEGATIVE_TOKEN_CACHE_TTL_SECONDS`` (shorter, to keep the
+      post-OAuth-completion blackout small).
+    - ``save_token`` and ``delete_token`` invalidate the local cache.
+    - Inside an advisory-lock critical section, callers MUST use
+      ``_load_token_uncached`` to defeat the cache: the whole point of
+      the post-lock reload is to observe a peer worker's just-persisted
+      refresh, and a stale cache would mask it.
+    - Cross-worker staleness is bounded by the TTL. Within that window a
+      worker may return a token whose access_token was rotated by a peer,
+      but the cached access_token's own expires_at is honored by callers,
+      so behavior is correct.
     """
 
     def __init__(self) -> None:
         self._pending_states: dict[str, _PendingState] = {}
         self._http: httpx.AsyncClient | None = None
+        # In-memory TTL cache for load_token. Keyed by (user_id, integration);
+        # value is (token_data_or_none, monotonic_expires_at).
+        self._token_cache: dict[tuple[str, str], tuple[OAuthTokenData | None, float]] = {}
 
     def _get_http(self) -> httpx.AsyncClient:
         if self._http is None or self._http.is_closed:
@@ -364,13 +404,33 @@ class OAuthService:
         with db_session() as db:
             db.execute(stmt)
             db.commit()
+        # Drop any cached entry so the next load_token re-reads the
+        # freshly persisted row (e.g. after a refresh writes new tokens).
+        self._token_cache.pop((user_id, integration), None)
 
     def load_token(
         self,
         user_id: str,
         integration: str,
     ) -> OAuthTokenData | None:
-        """Load token data from the oauth_tokens table."""
+        """Load token data from the oauth_tokens table.
+
+        Results are cached in-memory so a single agent turn (auth_check,
+        factory create, tool invocation) does not produce N duplicate DB
+        roundtrips. Positive entries cache for ``_TOKEN_CACHE_TTL_SECONDS``;
+        negative entries (no row) cache for the shorter
+        ``_NEGATIVE_TOKEN_CACHE_TTL_SECONDS`` so a freshly-completed
+        OAuth flow on a peer worker becomes visible quickly. The cache
+        is invalidated on ``save_token`` and ``delete_token`` within this
+        process. Callers inside an advisory-lock critical section must
+        use ``_load_token_uncached`` instead.
+        """
+        cache_key = (user_id, integration)
+        now = time.monotonic()
+        cached = self._token_cache.get(cache_key)
+        if cached is not None and cached[1] > now:
+            return cached[0]
+
         from backend.app.models import OAuthToken
 
         logger.info(
@@ -387,6 +447,10 @@ class OAuthService:
             ).scalar_one_or_none()
 
             if row is None:
+                self._token_cache[cache_key] = (
+                    None,
+                    now + _NEGATIVE_TOKEN_CACHE_TTL_SECONDS,
+                )
                 return None
 
             try:
@@ -399,7 +463,7 @@ class OAuthService:
             except json.JSONDecodeError:
                 extra = {}
 
-            return OAuthTokenData(
+            token = OAuthTokenData(
                 access_token=row.access_token,
                 refresh_token=row.refresh_token,
                 token_type=row.token_type,
@@ -408,6 +472,25 @@ class OAuthService:
                 realm_id=row.realm_id,
                 extra=extra,
             )
+            self._token_cache[cache_key] = (token, now + _TOKEN_CACHE_TTL_SECONDS)
+            return token
+
+    def _load_token_uncached(
+        self,
+        user_id: str,
+        integration: str,
+    ) -> OAuthTokenData | None:
+        """Force a DB read by dropping any cached entry first.
+
+        Use only inside an advisory-lock critical section where the
+        whole point of the read is to observe a peer worker's just-
+        persisted token. A stale cache would mask the peer's write and
+        cause this worker to repeat work (e.g. duplicate HTTP refresh
+        that overwrites the rotated refresh_token). All other callers
+        should use ``load_token``.
+        """
+        self._token_cache.pop((user_id, integration), None)
+        return self.load_token(user_id, integration)
 
     def delete_token(
         self,
@@ -431,10 +514,12 @@ class OAuthService:
             ).scalar_one_or_none()
 
             if row is None:
+                self._token_cache.pop((user_id, integration), None)
                 return False
 
             db.delete(row)
             db.commit()
+            self._token_cache.pop((user_id, integration), None)
             return True
 
     def is_connected(self, user_id: str, integration: str) -> bool:
@@ -486,7 +571,10 @@ class OAuthService:
                 # session-scoped and survives the commit.
                 db.commit()
                 try:
-                    current = self.load_token(user_id, integration)
+                    # Bypass the cache: this load is the peer-write detection
+                    # point for the on_refresh callback path. Same race as
+                    # in refresh_token's post-lock reload.
+                    current = self._load_token_uncached(user_id, integration)
                     if current is None:
                         logger.warning(
                             "on_refresh callback fired for missing token: user=%s integration=%s",
@@ -592,7 +680,10 @@ class OAuthService:
             # session-scoped and survives the commit.
             db.commit()
             try:
-                token = self.load_token(user_id, integration)
+                # Bypass the cache: the post-lock reload exists to detect
+                # a peer worker's just-persisted refresh, which an in-memory
+                # cache from before the lock would mask.
+                token = self._load_token_uncached(user_id, integration)
                 if not token or not token.refresh_token:
                     logger.debug(
                         "Cannot refresh token (missing): user=%s integration=%s "
