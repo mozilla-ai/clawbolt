@@ -392,6 +392,32 @@ describe('ChannelsPage - Unavailable channels are hidden', () => {
     expect(screen.queryByText(/Contact your administrator to enable Telegram/)).not.toBeInTheDocument();
     expect(screen.queryByText(/TELEGRAM_BOT_TOKEN/)).not.toBeInTheDocument();
   });
+
+  it('does not call /bot-info when telegram_bot_token_set is false (regression #332)', async () => {
+    // In premium prod, tenants are routed via tenant-specific bots and the
+    // global TELEGRAM_BOT_TOKEN env var is empty, so the OSS /bot-info
+    // endpoint returns 404. The frontend must not call it in that state.
+    mockGetChannelConfig.mockResolvedValue({
+      telegram_bot_token_set: false,
+      telegram_allowed_chat_id: '',
+      linq_api_token_set: true,
+      linq_from_number: '+15551234567',
+      linq_allowed_numbers: '',
+      linq_preferred_service: 'iMessage',
+      bluebubbles_configured: false,
+      bluebubbles_allowed_numbers: '',
+      imessage_backend: 'linq',
+    });
+    mockGetTelegramLink.mockResolvedValue({ telegram_user_id: null, connected: false });
+    mockGetLinqLink.mockResolvedValue({ phone_number: null, connected: false });
+
+    renderWithRouter(<ChannelsPage />);
+
+    await waitFor(() => {
+      expect(screen.queryByText('iMessage')).toBeInTheDocument();
+    });
+    expect(mockGetTelegramBotInfo).not.toHaveBeenCalled();
+  });
 });
 
 describe('ChannelsPage - Empty state', () => {
