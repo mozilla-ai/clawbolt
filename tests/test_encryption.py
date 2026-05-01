@@ -74,6 +74,21 @@ def _load_migration_020():  # noqa: ANN202
     return module
 
 
+def _load_migration_022():  # noqa: ANN202
+    """Load migration 022 by file path; module names can't start with a digit."""
+    spec = importlib.util.spec_from_file_location(
+        "migration_022",
+        Path(__file__).parent.parent
+        / "alembic"
+        / "versions"
+        / "022_envelope_encrypt_heartbeat_and_memory.py",
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _legacy_fernet_for(key_material: bytes) -> Fernet:
     """Reproduce the pre-envelope HKDF/Fernet derivation for tests."""
     hkdf = HKDF(
@@ -679,3 +694,177 @@ def test_migration_018_falls_back_to_plaintext_on_invalid_legacy_token() -> None
         decrypt(rekeyed, provider, {"table": "oauth_tokens", "column": "access_token"})
         == "not-a-fernet-token"
     )
+
+
+def test_migration_022_rekey_helper_envelopes_plaintext_per_table_column() -> None:
+    """The helper threads ``(table, column)`` into the envelope context
+    so each column's envelopes decrypt under the matching context tag.
+    Without this the on-disk envelope would carry one context but the
+    application's ``EncryptedString`` reads would expect another, and
+    cross-context decrypts would silently succeed under
+    ``LocalKEKProvider`` while breaking on a per-tenant KMS provider.
+    """
+    migration = _load_migration_022()
+    provider = LocalKEKProvider()
+
+    cases = [
+        ("heartbeat_logs", "message_text", "I noticed you've been working late"),
+        ("heartbeat_logs", "reasoning", "user mentioned feeling burnt out"),
+        ("heartbeat_logs", "tasks", '[{"title": "reply to client"}]'),
+        ("memory_documents", "memory_text", "user prefers being called Alex"),
+        ("memory_documents", "history_text", "older session compaction"),
+    ]
+    for table, column, plaintext in cases:
+        rekeyed = migration._rekey(plaintext, provider, table, column)
+        assert isinstance(rekeyed, str)
+        assert rekeyed.startswith(ENVELOPE_PREFIX + ".")
+        assert decrypt(rekeyed, provider, {"table": table, "column": column}) == plaintext
+        # Idempotent re-run.
+        assert migration._rekey(rekeyed, provider, table, column) is rekeyed
+        # Empty / None pass through.
+        assert migration._rekey("", provider, table, column) == ""
+        assert migration._rekey(None, provider, table, column) is None
+
+
+def test_migration_022_full_upgrade_loop_against_real_db(
+    install_recording_provider: _RecordingProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: insert plaintext rows directly into both target
+    tables, run ``upgrade()``, assert envelopes on disk for non-empty
+    rows + empty-string passthrough for empty rows. Re-run confirms
+    idempotency.
+    """
+    monkeypatch.setattr(_app_settings, "encryption_key", SecretStr("a" * 32))
+
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            id=str(uuid.uuid4()),
+            user_id="hb-mem-mig-test",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.flush()
+
+        # MemoryDocument: one row with non-empty text.
+        db.execute(
+            _sa_text(
+                "INSERT INTO memory_documents (user_id, memory_text, history_text, "
+                "created_at, updated_at) VALUES (:u, :m, :h, NOW(), NOW())"
+            ),
+            {"u": user.id, "m": "memory plaintext", "h": "history plaintext"},
+        )
+        # HeartbeatLog: three rows. One full, one partial (empty
+        # reasoning + tasks), one all-empty.
+        for i, (msg, reason, tasks_) in enumerate(
+            [
+                ("first message", "first reasoning", "first tasks"),
+                ("second message", "", ""),
+                ("", "", ""),
+            ],
+            start=1,
+        ):
+            db.execute(
+                _sa_text(
+                    "INSERT INTO heartbeat_logs (user_id, action_type, message_text, "
+                    "channel, reasoning, tasks, created_at) VALUES "
+                    "(:u, 'send', :m, 'imessage', :r, :t, NOW())"
+                ),
+                {"u": user.id, "m": msg, "r": reason, "t": tasks_},
+            )
+            assert i  # silence unused var
+        db.commit()
+        user_id = user.id
+    finally:
+        db.close()
+
+    migration = _load_migration_022()
+    db = _db_module.SessionLocal()
+    try:
+        monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
+        migration.upgrade()
+        db.commit()
+    finally:
+        db.close()
+
+    # Verify envelopes on disk for non-empty rows; empties stay empty.
+    db = _db_module.SessionLocal()
+    try:
+        mem = db.execute(
+            _sa_text("SELECT memory_text, history_text FROM memory_documents WHERE user_id = :u"),
+            {"u": user_id},
+        ).one()
+        assert mem.memory_text.startswith(ENVELOPE_PREFIX + ".")
+        assert mem.history_text.startswith(ENVELOPE_PREFIX + ".")
+
+        hb_rows = db.execute(
+            _sa_text(
+                "SELECT message_text, reasoning, tasks FROM heartbeat_logs "
+                "WHERE user_id = :u ORDER BY id"
+            ),
+            {"u": user_id},
+        ).all()
+        # Row 1: all three columns envelope-encrypted.
+        assert hb_rows[0].message_text.startswith(ENVELOPE_PREFIX + ".")
+        assert hb_rows[0].reasoning.startswith(ENVELOPE_PREFIX + ".")
+        assert hb_rows[0].tasks.startswith(ENVELOPE_PREFIX + ".")
+        # Row 2: message envelope, reasoning + tasks stay empty.
+        assert hb_rows[1].message_text.startswith(ENVELOPE_PREFIX + ".")
+        assert hb_rows[1].reasoning == ""
+        assert hb_rows[1].tasks == ""
+        # Row 3: all empty, must remain empty.
+        assert hb_rows[2].message_text == ""
+        assert hb_rows[2].reasoning == ""
+        assert hb_rows[2].tasks == ""
+    finally:
+        db.close()
+
+    # Idempotent re-run terminates instead of looping forever (regression
+    # for the cursor reach-around at end of batch).
+    db = _db_module.SessionLocal()
+    try:
+        monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
+        migration.upgrade()
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_migration_022_refuses_when_encryption_key_unset_and_data_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operator preflight: a non-empty target table + unset
+    ``ENCRYPTION_KEY`` raises rather than silently encrypting under an
+    ephemeral key that vanishes on the next process restart."""
+    monkeypatch.setattr(_app_settings, "encryption_key", SecretStr(""))
+
+    db = _db_module.SessionLocal()
+    try:
+        user = User(
+            id=str(uuid.uuid4()),
+            user_id="hb-mem-preflight-test",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        db.flush()
+        db.execute(
+            _sa_text(
+                "INSERT INTO heartbeat_logs (user_id, action_type, message_text, "
+                "channel, reasoning, tasks, created_at) VALUES "
+                "(:u, 'send', 'x', '', '', '', NOW())"
+            ),
+            {"u": user.id},
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    migration = _load_migration_022()
+    db = _db_module.SessionLocal()
+    try:
+        monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
+        with pytest.raises(RuntimeError, match="ENCRYPTION_KEY"):
+            migration.upgrade()
+    finally:
+        db.close()
