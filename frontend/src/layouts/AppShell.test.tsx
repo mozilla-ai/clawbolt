@@ -70,28 +70,29 @@ describe('AppShell', () => {
     expect(screen.getByText('Integrations')).toBeInTheDocument();
     expect(screen.getByText('Settings')).toBeInTheDocument();
     expect(screen.getByText('Chat')).toBeInTheDocument();
-    // Knowledge/Priorities/Personality/About You/Approvals live under the
-    // "Advanced" fold.
-    expect(screen.getByText('Advanced')).toBeInTheDocument();
+    // Knowledge/Priorities/Personality/About You live under the
+    // "Personalize" fold; Approvals moved into Settings tabs.
+    expect(screen.getByText('Personalize')).toBeInTheDocument();
     expect(screen.queryByText('Knowledge')).not.toBeInTheDocument();
   });
 
-  it('reveals advanced nav items when the Advanced section is expanded', async () => {
+  it('reveals Personalize nav items when the section is expanded', async () => {
     renderWithRouter(<AppShell />, { route: '/app' });
 
     await waitFor(() => {
-      expect(screen.getByText('Advanced')).toBeInTheDocument();
+      expect(screen.getByText('Personalize')).toBeInTheDocument();
     });
     expect(screen.queryByText('Priorities')).not.toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.click(screen.getByText('Advanced'));
+    await user.click(screen.getByText('Personalize'));
 
     expect(screen.getByText('Knowledge')).toBeInTheDocument();
     expect(screen.getByText('Priorities')).toBeInTheDocument();
     expect(screen.getByText('Personality')).toBeInTheDocument();
     expect(screen.getByText('About You')).toBeInTheDocument();
-    expect(screen.getByText('Approvals')).toBeInTheDocument();
+    // Approvals is no longer a sidebar nav item; it's a Settings tab now.
+    expect(screen.queryByText('Approvals')).not.toBeInTheDocument();
   });
 
   it('renders Dashboard first and Chat last in sidebar', async () => {
@@ -163,7 +164,7 @@ describe('AppShell', () => {
       <Routes>
         <Route path="/app" element={<AppShell />}>
           <Route path="chat" element={<div>Chat route</div>} />
-          <Route path="permissions" element={<div>Permissions route</div>} />
+          <Route path="tools" element={<div>Tools route</div>} />
         </Route>
       </Routes>,
       { route: '/app/chat' },
@@ -175,13 +176,10 @@ describe('AppShell', () => {
     expect(mockApi.subscribeToActivity).toHaveBeenCalledTimes(1);
 
     const user = userEvent.setup();
-    // "Approvals" (route /app/permissions) sits under the collapsed "Advanced"
-    // section now; expand it first.
-    await user.click(screen.getByText('Advanced'));
-    await user.click(screen.getByText('Approvals'));
+    await user.click(screen.getByText('Integrations'));
 
     await waitFor(() => {
-      expect(screen.getByText('Permissions route')).toBeInTheDocument();
+      expect(screen.getByText('Tools route')).toBeInTheDocument();
     });
 
     expect(mockApi.subscribeToActivity).toHaveBeenCalledTimes(1);
