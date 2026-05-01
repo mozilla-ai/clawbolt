@@ -69,6 +69,20 @@ class Tool:
     tags: set[ToolTags] = field(default_factory=set)
     usage_hint: str = ""
     approval_policy: ApprovalPolicy | None = None
+    concurrency_group: str | None = None
+    """Serialization key for parallel tool execution.
+
+    The agent runs approved tool calls from a single model turn concurrently.
+    Tools that share a non-None ``concurrency_group`` value run sequentially
+    in submission order; tools with different keys (or ``None``) may run in
+    parallel.
+
+    Set this for tools that mutate shared state another tool could touch in
+    the same turn (a shared DB row, a workspace document, a disk file, the
+    user-facing message stream). Read-only and stateless tools should leave
+    it ``None``. Common groups in this codebase: ``"workspace_writes"`` for
+    workspace document mutations, ``"user_outbound"`` for reply senders.
+    """
 
 
 def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:

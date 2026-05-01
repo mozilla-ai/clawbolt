@@ -763,43 +763,55 @@ class ClawboltAgent:
                         ToolResultMessage(tool_call_id=tc_req.id, content=deny_msg, is_error=True)
                     )
 
-        # Execute all approved tools
-        for i, tool_obj, validated_args in approved_entries:
-            tc_req = parsed_calls[i]
-            tool_name = tc_req.name
-            tool_tags = self._get_tool_tags(tool_name)
-
+        # Execute all approved tools.
+        #
+        # Tools from a single LLM turn run concurrently by default. Tools that
+        # share a non-None ``concurrency_group`` serialize within that group
+        # in submission order; different groups (and ungrouped tools) run in
+        # parallel. The model is responsible for sequencing dependent calls
+        # across turns; within a turn we only fan out what the model asked for.
+        if approved_entries:
             await self._send_typing_indicator()
-            await self._emit(ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args))
-            tool_start = time.monotonic()
-            result_str = ""
-            is_error = False
-            try:
-                result = await tool_obj.function(**validated_args)
-                result_str = result.content
-                is_error = result.is_error
-                if is_error:
-                    hint = build_error_hint(result)
-                    result_str += "\n\n" + hint
-                if is_error:
-                    actions_taken.append(f"Failed: {tool_name}")
-                else:
-                    actions_taken.append(f"Called {tool_name}")
-                stored_receipt = None
-                if not is_error and result.receipt is not None:
-                    stored_receipt = StoredToolReceipt(
-                        action=result.receipt.action,
-                        target=result.receipt.target,
-                        url=result.receipt.url,
-                    )
-                    # We do not echo the rendered receipt into result_str.
-                    # The earlier design appended a "the user already sees
-                    # this" preview hoping the LLM would skip restating it;
-                    # the LLM restated it anyway and ``append_receipts``
-                    # then added a second copy at dispatch, doubling every
-                    # receipt block in the outbound message.
-                tool_call_records.append(
-                    StoredToolInteraction(
+
+            async def _run_one(
+                idx: int, tool_obj: Tool, validated_args: dict[str, Any]
+            ) -> tuple[StoredToolInteraction, ToolResultMessage, str]:
+                tc_req = parsed_calls[idx]
+                tool_name = tc_req.name
+                tool_tags = self._get_tool_tags(tool_name)
+
+                await self._emit(
+                    ToolExecutionStartEvent(tool_name=tool_name, arguments=validated_args)
+                )
+                tool_start = time.monotonic()
+                result_str = ""
+                is_error = False
+                action_label = ""
+                record: StoredToolInteraction
+                try:
+                    result = await tool_obj.function(**validated_args)
+                    result_str = result.content
+                    is_error = result.is_error
+                    if is_error:
+                        hint = build_error_hint(result)
+                        result_str += "\n\n" + hint
+                        action_label = f"Failed: {tool_name}"
+                    else:
+                        action_label = f"Called {tool_name}"
+                    stored_receipt = None
+                    if not is_error and result.receipt is not None:
+                        stored_receipt = StoredToolReceipt(
+                            action=result.receipt.action,
+                            target=result.receipt.target,
+                            url=result.receipt.url,
+                        )
+                        # We do not echo the rendered receipt into result_str.
+                        # The earlier design appended a "the user already sees
+                        # this" preview hoping the LLM would skip restating it;
+                        # the LLM restated it anyway and ``append_receipts``
+                        # then added a second copy at dispatch, doubling every
+                        # receipt block in the outbound message.
+                    record = StoredToolInteraction(
                         tool_call_id=tc_req.id,
                         name=tool_name,
                         args=validated_args,
@@ -808,25 +820,23 @@ class ClawboltAgent:
                         tags=set(tool_tags),
                         receipt=stored_receipt,
                     )
-                )
-            except Exception as exc:
-                logger.exception("Tool call failed: %s", tool_name)
-                hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
-                # Surface the real exception so the LLM can decide whether to
-                # retry, adjust its args, or report the issue back to the user.
-                # Scrub well-known secret formats first so a tool that wraps an
-                # API key or OAuth token in its exception does not leak it into
-                # the LLM context (and thus into provider logs and the messages
-                # table). Cap the rendered string so a long traceback can not
-                # blow the context budget.
-                err_text = _scrub_secrets(f"{type(exc).__name__}: {exc}")
-                result_str = f"Error: tool {tool_name} raised {err_text}\n\n{hint}"[:1500]
-                is_error = True
-                actions_taken.append(f"Failed: {tool_name}")
-                # Persist the failure as a tool interaction so the admin
-                # inspection view can see what blew up.
-                tool_call_records.append(
-                    StoredToolInteraction(
+                except Exception as exc:
+                    logger.exception("Tool call failed: %s", tool_name)
+                    hint = _ERROR_KIND_HINTS[ToolErrorKind.INTERNAL]
+                    # Surface the real exception so the LLM can decide whether to
+                    # retry, adjust its args, or report the issue back to the user.
+                    # Scrub well-known secret formats first so a tool that wraps an
+                    # API key or OAuth token in its exception does not leak it into
+                    # the LLM context (and thus into provider logs and the messages
+                    # table). Cap the rendered string so a long traceback can not
+                    # blow the context budget.
+                    err_text = _scrub_secrets(f"{type(exc).__name__}: {exc}")
+                    result_str = f"Error: tool {tool_name} raised {err_text}\n\n{hint}"[:1500]
+                    is_error = True
+                    action_label = f"Failed: {tool_name}"
+                    # Persist the failure as a tool interaction so the admin
+                    # inspection view can see what blew up.
+                    record = StoredToolInteraction(
                         tool_call_id=tc_req.id,
                         name=tool_name,
                         args=validated_args,
@@ -835,30 +845,68 @@ class ClawboltAgent:
                         tags=set(tool_tags),
                         receipt=None,
                     )
+                tool_duration = (time.monotonic() - tool_start) * 1000
+                logger.debug(
+                    "Tool %s completed in %.1fms, is_error=%s, result_length=%d",
+                    tool_name,
+                    tool_duration,
+                    is_error,
+                    len(result_str),
                 )
-            tool_duration = (time.monotonic() - tool_start) * 1000
-            logger.debug(
-                "Tool %s completed in %.1fms, is_error=%s, result_length=%d",
-                tool_name,
-                tool_duration,
-                is_error,
-                len(result_str),
-            )
-            await self._emit(
-                ToolExecutionEndEvent(
-                    tool_name=tool_name,
-                    result=result_str,
-                    is_error=is_error,
-                    duration_ms=tool_duration,
+                await self._emit(
+                    ToolExecutionEndEvent(
+                        tool_name=tool_name,
+                        result=result_str,
+                        is_error=is_error,
+                        duration_ms=tool_duration,
+                    )
                 )
-            )
-            tool_results.append(
-                ToolResultMessage(
+                tool_message = ToolResultMessage(
                     tool_call_id=tc_req.id,
                     content=result_str,
                     is_error=is_error,
                 )
-            )
+                return record, tool_message, action_label
+
+            # Bucket entries by concurrency_group while remembering each one's
+            # position in approved_entries. None-group entries each become
+            # their own (parallel) unit; entries sharing a non-None group form
+            # a single sequential unit.
+            buckets: dict[str | None, list[tuple[int, _ToolEntry]]] = {}
+            for pos, entry in enumerate(approved_entries):
+                _idx, tool_obj_b, _va = entry
+                buckets.setdefault(tool_obj_b.concurrency_group, []).append((pos, entry))
+
+            schedule_units: list[list[tuple[int, _ToolEntry]]] = []
+            for group_key, items in buckets.items():
+                if group_key is None:
+                    schedule_units.extend([item] for item in items)
+                else:
+                    schedule_units.append(items)
+
+            async def _run_unit(
+                unit: list[tuple[int, _ToolEntry]],
+            ) -> list[tuple[int, StoredToolInteraction, ToolResultMessage, str]]:
+                results: list[tuple[int, StoredToolInteraction, ToolResultMessage, str]] = []
+                for pos, (idx, tool_obj_u, validated_args) in unit:
+                    record, msg, label = await _run_one(idx, tool_obj_u, validated_args)
+                    results.append((pos, record, msg, label))
+                return results
+
+            unit_outputs = await asyncio.gather(*(_run_unit(u) for u in schedule_units))
+
+            results_by_pos: dict[int, tuple[StoredToolInteraction, ToolResultMessage, str]] = {}
+            for unit_output in unit_outputs:
+                for pos, record, msg, label in unit_output:
+                    results_by_pos[pos] = (record, msg, label)
+
+            # Append in original approved_entries order so persisted records
+            # and tool_results match the sequence the model emitted.
+            for pos in range(len(approved_entries)):
+                record, msg, label = results_by_pos[pos]
+                actions_taken.append(label)
+                tool_call_records.append(record)
+                tool_results.append(msg)
 
         return tool_results
 

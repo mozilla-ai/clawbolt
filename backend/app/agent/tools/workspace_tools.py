@@ -550,6 +550,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 resource_extractor=_extract_path,
                 description_builder=lambda args: f"Write to {args.get('path', 'file')}",
             ),
+            concurrency_group="workspace_writes",
         ),
         Tool(
             name=ToolName.EDIT_FILE,
@@ -566,6 +567,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 resource_extractor=_extract_path,
                 description_builder=lambda args: f"Edit {args.get('path', 'file')}",
             ),
+            concurrency_group="workspace_writes",
         ),
         Tool(
             name=ToolName.DELETE_FILE,
@@ -581,6 +583,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 resource_extractor=_extract_path,
                 description_builder=lambda args: f"Delete {args.get('path', 'file')}",
             ),
+            concurrency_group="workspace_writes",
         ),
     ]
 
