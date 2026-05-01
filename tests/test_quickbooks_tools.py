@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from backend.app.agent.tools.base import Tool
 from backend.app.agent.tools.registry import ToolContext
 from backend.app.integrations.quickbooks.factory import (
     _describe_qb_query,
+    _format_intuit_fault,
     _quickbooks_factory,
     create_quickbooks_tools,
 )
@@ -231,3 +233,68 @@ class TestDescribeQbQuery:
         """Empty query returns generic fallback."""
         desc = _describe_qb_query({})
         assert desc == "Look up data in QuickBooks"
+
+
+# -- Intuit fault formatting --
+
+
+def _make_http_error(status: int, body: object) -> httpx.HTTPStatusError:
+    """Build a fake HTTPStatusError with a JSON body for the formatter."""
+    request = httpx.Request("GET", "https://example.invalid/q")
+    response = httpx.Response(status, json=body, request=request)
+    return httpx.HTTPStatusError("error", request=request, response=response)
+
+
+class TestFormatIntuitFault:
+    """The error formatter is the one place that converts QBO's nested
+    ``Fault.Error[]`` JSON into a single line the LLM can act on. These
+    tests pin the contract: the formatter must always return SOMETHING
+    useful, even on malformed input."""
+
+    def test_pulls_message_and_detail_from_fault(self) -> None:
+        body = {
+            "Fault": {
+                "Error": [
+                    {
+                        "Message": "Invalid enumeration value",
+                        "Detail": "TxnStatus 'In Progress' is not valid.",
+                        "code": "2030",
+                    }
+                ],
+                "type": "ValidationFault",
+            }
+        }
+        out = _format_intuit_fault(_make_http_error(400, body), entity="Estimate")
+        assert "code=2030" in out
+        assert "Invalid enumeration value" in out
+        assert "TxnStatus 'In Progress' is not valid" in out
+
+    def test_appends_enum_hint_when_entity_is_known(self) -> None:
+        """A 400 mentioning TxnStatus on Estimate should append the
+        full valid set so the model self-corrects on the next turn."""
+        body = {
+            "Fault": {
+                "Error": [{"Message": "validation", "Detail": "TxnStatus 'Frozen' is invalid"}]
+            }
+        }
+        out = _format_intuit_fault(_make_http_error(400, body), entity="Estimate")
+        assert "Hint: Valid TxnStatus for Estimate:" in out
+        for valid in ("Pending", "Accepted", "Closed", "Rejected"):
+            assert valid in out
+
+    def test_no_hint_when_entity_unknown(self) -> None:
+        """The hint set is curated; unknown entities get the raw error only."""
+        body = {"Fault": {"Error": [{"Message": "X", "Detail": "TxnStatus blah"}]}}
+        out = _format_intuit_fault(_make_http_error(400, body), entity="Customer")
+        assert "Hint:" not in out
+
+    def test_falls_back_to_raw_body_on_unexpected_shape(self) -> None:
+        """When QBO returns something unfaultlike (e.g. an HTML 502), the
+        formatter must still return a non-empty message containing the
+        status code so the LLM is not left guessing."""
+        request = httpx.Request("GET", "https://example.invalid/q")
+        response = httpx.Response(502, content=b"<html>Bad Gateway</html>", request=request)
+        exc = httpx.HTTPStatusError("error", request=request, response=response)
+        out = _format_intuit_fault(exc, entity="Estimate")
+        assert "502" in out
+        assert "Bad Gateway" in out
