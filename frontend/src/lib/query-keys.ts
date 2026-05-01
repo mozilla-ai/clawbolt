@@ -1,5 +1,6 @@
 export const queryKeys = {
   profile: ['profile'] as const,
+  dataSharingConsent: ['dataSharingConsent'] as const,
   sessions: {
     all: ['sessions'] as const,
     detail: (id: string) => ['sessions', 'detail', id] as const,

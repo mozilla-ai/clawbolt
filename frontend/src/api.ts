@@ -5,6 +5,8 @@ import type {
   ChatResponse,
   UserProfileResponse,
   UserProfileUpdate,
+  DataSharingConsentRequest,
+  DataSharingConsentResponse,
   MemoryResponse,
   MemoryUpdate,
   PermissionsResponse,
@@ -84,6 +86,22 @@ const api = {
     });
     if (error) _throwApiError(error, 'Failed to update profile');
     return data as UserProfileResponse;
+  },
+
+  // Data sharing consent (kept off the generic profile PUT so every
+  // toggle stamps data_sharing_consent_at server-side, preserving an
+  // audit trail of opt-in/opt-out moments).
+  getDataSharingConsent: async () => {
+    const { data, error } = await client.GET('/api/user/data-sharing-consent');
+    if (error) _throwApiError(error, 'Failed to get data sharing consent');
+    return data as DataSharingConsentResponse;
+  },
+  updateDataSharingConsent: async (body: DataSharingConsentRequest) => {
+    const { data, error } = await client.PUT('/api/user/data-sharing-consent', {
+      body: body as never,
+    });
+    if (error) _throwApiError(error, 'Failed to update data sharing consent');
+    return data as DataSharingConsentResponse;
   },
 
   // Sessions

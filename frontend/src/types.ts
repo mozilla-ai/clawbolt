@@ -4,6 +4,8 @@ import type { components } from '@/generated/api';
 
 export type UserProfileResponse = components['schemas']['UserProfileResponse'];
 export type UserProfileUpdate = components['schemas']['UserProfileUpdate'];
+export type DataSharingConsentRequest = components['schemas']['DataSharingConsentRequest'];
+export type DataSharingConsentResponse = components['schemas']['DataSharingConsentResponse'];
 export type SessionDetailResponse = components['schemas']['SessionDetailResponse'];
 export type SessionListResponse = components['schemas']['SessionListResponse'];
 export type SessionSystemPromptResponse = components['schemas']['SessionSystemPromptResponse'];

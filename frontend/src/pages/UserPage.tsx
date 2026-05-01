@@ -4,6 +4,8 @@ import { Spinner } from '@heroui/spinner';
 import { toast } from '@/lib/toast';
 import { useUpdateProfile } from '@/hooks/queries';
 import MarkdownEditor from '@/components/ui/MarkdownEditor';
+import Card from '@/components/ui/card';
+import DataSharingConsentSection from '@/components/DataSharingConsentSection';
 import type { AppShellContext } from '@/layouts/AppShell';
 
 export default function UserPage() {
@@ -36,20 +38,34 @@ export default function UserPage() {
   }
 
   return (
-    <div>
-      <div className="mb-4">
-        <h2 className="text-xl font-semibold font-display">About You</h2>
-        <p className="text-sm text-muted-foreground mt-1">
-          Updated over time as your assistant learns about you.
-        </p>
+    <div className="grid gap-6">
+      <div>
+        <div className="mb-4">
+          <h2 className="text-xl font-semibold font-display">About You</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Updated over time as your assistant learns about you.
+          </p>
+        </div>
+        <MarkdownEditor
+          value={profile.user_text}
+          onSave={handleSave}
+          isSaving={updateProfile.isPending}
+          placeholder="Tell your assistant about yourself: your name, phone, timezone, preferences, what projects you're working on..."
+          emptyMessage="No user info yet. Click Edit to tell your assistant about yourself."
+        />
       </div>
-      <MarkdownEditor
-        value={profile.user_text}
-        onSave={handleSave}
-        isSaving={updateProfile.isPending}
-        placeholder="Tell your assistant about yourself: your name, phone, timezone, preferences, what projects you're working on..."
-        emptyMessage="No user info yet. Click Edit to tell your assistant about yourself."
-      />
+
+      <div>
+        <div className="mb-4">
+          <h2 className="text-xl font-semibold font-display">Privacy</h2>
+          <p className="text-sm text-muted-foreground mt-1">
+            Control whether the Clawbolt team can read your conversations.
+          </p>
+        </div>
+        <Card>
+          <DataSharingConsentSection />
+        </Card>
+      </div>
     </div>
   );
 }

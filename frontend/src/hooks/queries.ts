@@ -9,6 +9,7 @@ import type {
   StorageConfigUpdate,
   ToolConfigUpdateEntry,
   ChannelConfigUpdate,
+  DataSharingConsentRequest,
 } from '@/types';
 
 // --- Profile ---
@@ -40,6 +41,27 @@ export function useUpdateProfile() {
   return useMutation({
     mutationFn: api.updateProfile,
     onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.profile });
+    },
+  });
+}
+
+// --- Data sharing consent ---
+
+export function useDataSharingConsent(opts: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: queryKeys.dataSharingConsent,
+    queryFn: () => api.getDataSharingConsent(),
+    enabled: opts.enabled ?? true,
+  });
+}
+
+export function useUpdateDataSharingConsent() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (body: DataSharingConsentRequest) => api.updateDataSharingConsent(body),
+    onSuccess: (data) => {
+      queryClient.setQueryData(queryKeys.dataSharingConsent, data);
       void queryClient.invalidateQueries({ queryKey: queryKeys.profile });
     },
   });
