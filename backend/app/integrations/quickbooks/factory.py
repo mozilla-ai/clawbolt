@@ -82,9 +82,84 @@ class QBQueryParams(BaseModel):
 
     query: str = Field(
         description=(
-            "A QBO query string (SELECT only). Example: SELECT * FROM Invoice MAXRESULTS 20"
+            "A QBO query string (SELECT only). Example: SELECT * FROM Invoice MAXRESULTS 20.\n"
+            "Common string-enum values that the model often gets wrong:\n"
+            "  Estimate.TxnStatus = 'Pending' | 'Accepted' | 'Closed' | 'Rejected'\n"
+            "  Invoice.EmailStatus = 'NotSet' | 'NeedToSend' | 'EmailSent'\n"
+            "  Bill / Invoice / Estimate balance filtering uses Balance numeric, "
+            "  not a status enum."
         )
     )
+
+
+_TXNSTATUS_VALID_BY_ENTITY: dict[str, tuple[str, ...]] = {
+    "Estimate": ("Pending", "Accepted", "Closed", "Rejected"),
+}
+"""Known string-enum value sets per entity. Used to enrich 400 errors so a
+hallucinated value like ``TxnStatus='In Progress'`` comes back with the
+right list instead of the model retrying the same wrong guess."""
+
+
+def _format_intuit_fault(exc: httpx.HTTPStatusError, *, entity: str | None = None) -> str:
+    """Convert a QBO HTTPStatusError into a model-readable error message.
+
+    Intuit returns a structured ``Fault.Error[]`` payload that the LLM
+    has trouble parsing reliably. We pull out ``Message`` + ``Detail``
+    + ``code`` and concatenate them. When ``Detail`` mentions a value
+    that maps to a known enum (``TxnStatus`` on Estimate so far), we
+    append the valid set so the next turn does not retry the same bad
+    guess.
+
+    Falls back to the raw JSON (then the raw exception string) when the
+    response is not JSON or is shaped differently than expected.
+    """
+    raw_body: Any
+    try:
+        raw_body = exc.response.json()
+    except Exception:
+        return f"HTTP {exc.response.status_code} from QuickBooks: {exc.response.text or exc!s}"
+
+    fault = (raw_body or {}).get("Fault") if isinstance(raw_body, dict) else None
+    errors = (fault or {}).get("Error") if isinstance(fault, dict) else None
+    if not isinstance(errors, list) or not errors:
+        return f"HTTP {exc.response.status_code} from QuickBooks: {json.dumps(raw_body)[:500]}"
+
+    parts: list[str] = []
+    for err in errors:
+        if not isinstance(err, dict):
+            continue
+        code = err.get("code", "")
+        message = (err.get("Message") or "").strip()
+        detail = (err.get("Detail") or "").strip()
+        # Most-specific first: Detail usually contains the bad value;
+        # Message is the category.
+        line = " | ".join(p for p in (f"code={code}" if code else "", message, detail) if p)
+        if line:
+            parts.append(line)
+
+    body = "; ".join(parts) or json.dumps(raw_body)[:500]
+
+    # Enrich when the failure looks like a hallucinated enum value. The
+    # set is small and curated so the false-positive rate stays low.
+    hint = _enum_hint(body, entity)
+    if hint:
+        body = f"{body}\nHint: {hint}"
+    return body
+
+
+def _enum_hint(error_body: str, entity: str | None) -> str:
+    """Map a QBO error blob to a one-line hint when it looks enum-shaped.
+
+    Intentionally conservative: matches on substrings the LLM is likely
+    to also see. Returns empty string when no hint applies.
+    """
+    if not entity:
+        return ""
+    lowered = error_body.lower()
+    if "txnstatus" in lowered and entity in _TXNSTATUS_VALID_BY_ENTITY:
+        valid = ", ".join(_TXNSTATUS_VALID_BY_ENTITY[entity])
+        return f"Valid TxnStatus for {entity}: {valid}"
+    return ""
 
 
 def _coerce_data_to_dict(value: Any) -> Any:
@@ -310,19 +385,21 @@ def create_quickbooks_tools(
                 error_kind=ToolErrorKind.VALIDATION,
             )
 
+        # Resolve the entity name from the SELECT clause once so the
+        # error formatter can attach the right enum-hint set when QBO
+        # returns a 400.
+        entity_name = entity_match.group(1).capitalize()
+
         try:
             rows = await qb_service.query(normalized)
         except Exception as exc:
             logger.exception("QuickBooks query failed")
-            error_str = str(exc)
             if isinstance(exc, httpx.HTTPStatusError):
-                try:
-                    error_body = exc.response.json()
-                    error_str = json.dumps(error_body, indent=2)
-                except Exception:
-                    pass
+                error_str = _format_intuit_fault(exc, entity=entity_name)
+            else:
+                error_str = str(exc)
             return ToolResult(
-                content=f"QuickBooks query error:\n{error_str}",
+                content=f"QuickBooks query error: {error_str}",
                 is_error=True,
                 error_kind=ToolErrorKind.SERVICE,
             )
@@ -343,13 +420,10 @@ def create_quickbooks_tools(
             result = await qb_service.create_entity(entity_type, data)
         except Exception as exc:
             logger.exception("QB create %s failed", entity_type)
-            error_str = str(exc)
             if isinstance(exc, httpx.HTTPStatusError):
-                try:
-                    error_body = exc.response.json()
-                    error_str = json.dumps(error_body, indent=2)
-                except Exception:
-                    pass
+                error_str = _format_intuit_fault(exc, entity=entity_type)
+            else:
+                error_str = str(exc)
             return ToolResult(
                 content=f"Failed to create {entity_type}: {error_str}",
                 is_error=True,
@@ -392,13 +466,10 @@ def create_quickbooks_tools(
             result = await qb_service.update_entity(entity_type, data)
         except Exception as exc:
             logger.exception("QB update %s failed", entity_type)
-            error_str = str(exc)
             if isinstance(exc, httpx.HTTPStatusError):
-                try:
-                    error_body = exc.response.json()
-                    error_str = json.dumps(error_body, indent=2)
-                except Exception:
-                    pass
+                error_str = _format_intuit_fault(exc, entity=entity_type)
+            else:
+                error_str = str(exc)
             return ToolResult(
                 content=f"Failed to update {entity_type}: {error_str}",
                 is_error=True,
@@ -441,13 +512,10 @@ def create_quickbooks_tools(
             await qb_service.send_entity_email(entity_type, entity_id, email)
         except Exception as exc:
             logger.exception("QB send %s email failed", entity_type)
-            error_str = str(exc)
             if isinstance(exc, httpx.HTTPStatusError):
-                try:
-                    error_body = exc.response.json()
-                    error_str = json.dumps(error_body, indent=2)
-                except Exception:
-                    pass
+                error_str = _format_intuit_fault(exc, entity=entity_type)
+            else:
+                error_str = str(exc)
             return ToolResult(
                 content=f"Failed to send {entity_type.lower()}: {error_str}",
                 is_error=True,
