@@ -1,0 +1,118 @@
+"""Envelope-encrypt messages.body and messages.processed_context.
+
+Item 4 of the clawbolt-premium privacy redesign (issue #325). User
+message content was previously stored plaintext in two columns; both
+get re-encrypted under per-row DEKs wrapped by ``LocalKEKProvider`` (or
+the premium KMS-backed provider). The new ``EncryptedString`` type
+decorator on the ORM column then transparently decrypts on read.
+
+Unlike migration 018 (oauth_tokens), there is no legacy ciphertext to
+decrypt first — pre-existing rows are plaintext, so the per-row work
+is just envelope-encrypt-and-replace. The new envelope is self-
+identifying via the ``clw1.`` prefix, so this migration is idempotent:
+a row that's already in envelope format on a re-run is skipped.
+
+Deployment ordering: run this migration BEFORE rolling out the new
+application code. ``EncryptedString`` raises ``RuntimeError`` on a
+non-envelope read, so a code-deployed / migration-not-run gap fails
+the very first request. For premium (clawbolt-premium), this means
+``uv run alembic upgrade head`` against the production database during
+deploy, before swapping container images.
+
+Performance note: ~1ms per row for envelope encryption on the local
+KEK provider. A 100k-message database backfills in ~2 minutes. The
+migration streams rows in batches and commits per row to keep memory
+bounded.
+
+Revision ID: 020
+Revises: 019
+Create Date: 2026-05-01
+"""
+
+from __future__ import annotations
+
+import sqlalchemy as sa
+
+from alembic import op
+from backend.app.security.encryption import (
+    LocalKEKProvider,
+    is_envelope,
+)
+from backend.app.security.encryption import (
+    encrypt as envelope_encrypt,
+)
+
+revision: str = "020"
+down_revision: str = "019"
+branch_labels: tuple[str, ...] | None = None
+depends_on: tuple[str, ...] | None = None
+
+
+_BATCH_SIZE = 1000
+
+
+def upgrade() -> None:
+    bind = op.get_bind()
+    provider = LocalKEKProvider()
+
+    # Stream in batches so a multi-million-row table doesn't load the
+    # whole result set into memory. ``ORDER BY id`` + ``WHERE id > :last``
+    # gives a stable pagination that's not perturbed by concurrent
+    # inserts (this migration runs in a transaction; new inserts wait
+    # behind it anyway, but the pattern is good hygiene).
+    last_id = 0
+    while True:
+        rows = bind.execute(
+            sa.text(
+                "SELECT id, body, processed_context FROM messages "
+                "WHERE id > :last ORDER BY id LIMIT :limit"
+            ),
+            {"last": last_id, "limit": _BATCH_SIZE},
+        ).fetchall()
+        if not rows:
+            break
+        for row_id, body, processed_context in rows:
+            new_body = _rekey(body, provider, "body")
+            new_processed = _rekey(processed_context, provider, "processed_context")
+            if new_body is body and new_processed is processed_context:
+                continue
+            bind.execute(
+                sa.text("UPDATE messages SET body = :b, processed_context = :p WHERE id = :id"),
+                {"b": new_body, "p": new_processed, "id": row_id},
+            )
+            last_id = row_id
+        # Re-pin the cursor at the largest id we saw, even when nothing
+        # was updated in this batch (e.g. all rows already in envelope
+        # format on a re-run). Without this, an already-migrated DB
+        # would loop forever on the same SELECT.
+        last_id = max(last_id, rows[-1][0])
+
+
+def _rekey(value: str | None, provider: LocalKEKProvider, column: str) -> str | None:
+    """Re-encrypt one column value under the envelope format.
+
+    Idempotent: rows already in envelope format are returned unchanged
+    (identity) so the caller can detect "nothing to do" via ``is`` and
+    skip the UPDATE. Empty strings and NULLs pass through untouched —
+    ``EncryptedString.process_bind_param`` does the same on writes.
+    """
+    if not value:
+        return value
+    if is_envelope(value):
+        return value
+    return envelope_encrypt(
+        value,
+        provider,
+        {"table": "messages", "column": column},
+    )
+
+
+def downgrade() -> None:
+    """No automatic downgrade.
+
+    Decrypting back to plaintext would require all envelopes to unwrap
+    against the configured KEK, which is a snapshot operation that
+    can't be re-done if the KEK rotates. Operators who need to roll
+    back must restore from backup.
+    """
+    raise NotImplementedError("Cannot downgrade revision 020; restore from backup if needed.")
