@@ -11,6 +11,7 @@ import api from '@/api';
 import { toast } from '@/lib/toast';
 import { useModelConfig, useUpdateModelConfig, useStorageConfig, useUpdateStorageConfig, useUpdateProfile, useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
 import DataSharingConsentSection from '@/components/DataSharingConsentSection';
+import PermissionsPage from '@/pages/PermissionsPage';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
   getExtraSettingsTabs,
@@ -41,6 +42,7 @@ export default function SettingsPage() {
     { key: 'storage', label: 'Storage' },
     { key: 'heartbeat', label: 'Heartbeat' },
     { key: 'telegram', label: 'Telegram' },
+    { key: 'approvals', label: 'Approvals' },
     { key: 'privacy', label: 'Privacy' },
   ].filter((t) => visibleOssKeys.includes(t.key));
   const allTabs = [...ossTabs, ...extraTabs.map((t) => ({ key: t.key, label: t.label }))];
@@ -57,6 +59,7 @@ export default function SettingsPage() {
       case 'storage': return <StorageTab />;
       case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
       case 'telegram': return <TelegramTab />;
+      case 'approvals': return <PermissionsPage />;
       case 'privacy': return <PrivacyTab />;
       default: return null;
     }

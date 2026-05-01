@@ -34,12 +34,11 @@ const NAV_MAIN = [
   { to: '/app/settings', label: 'Settings', icon: SettingsIcon, end: false },
 ] as const;
 
-const NAV_ADVANCED = [
+const NAV_PERSONALIZE = [
   { to: '/app/memory', label: 'Knowledge', icon: MemoryIcon, end: false },
   { to: '/app/heartbeat', label: 'Priorities', icon: HeartbeatIcon, end: false },
   { to: '/app/soul', label: 'Personality', icon: SoulIcon, end: false },
   { to: '/app/user', label: 'About You', icon: UserIcon, end: false },
-  { to: '/app/permissions', label: 'Approvals', icon: PermissionsIcon, end: false },
 ] as const;
 
 const NAV_BOTTOM = [
@@ -60,7 +59,7 @@ export default function AppShell() {
     refetch: refetchProfile,
   } = useProfile({ enabled: authState === 'ready' });
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [personalizeOpen, setPersonalizeOpen] = useState(false);
 
   const openSidebar = useCallback(() => setSidebarOpen(true), []);
   const closeSidebar = useCallback(() => setSidebarOpen(false), []);
@@ -196,15 +195,15 @@ export default function AppShell() {
           ))}
           <button
             type="button"
-            onClick={() => setAdvancedOpen((v) => !v)}
-            aria-expanded={advancedOpen}
+            onClick={() => setPersonalizeOpen((v) => !v)}
+            aria-expanded={personalizeOpen}
             className="flex items-center gap-3 px-3 py-2 rounded-md text-sm text-muted-foreground can-hover:hover:bg-secondary-hover can-hover:hover:text-foreground transition-all duration-150 w-full"
           >
-            <ChevronIcon open={advancedOpen} />
-            Advanced
+            <ChevronIcon open={personalizeOpen} />
+            Personalize
           </button>
-          {advancedOpen &&
-            NAV_ADVANCED.map(({ to, label, icon: Icon, end }) => (
+          {personalizeOpen &&
+            NAV_PERSONALIZE.map(({ to, label, icon: Icon, end }) => (
               <NavLink
                 key={to}
                 to={to}
@@ -403,14 +402,6 @@ function ChannelsIcon() {
   return (
     <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 10V3L4 14h7v7l9-11h-7z" />
-    </svg>
-  );
-}
-
-function PermissionsIcon() {
-  return (
-    <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.75 5.25a3 3 0 013 3m3 0a6 6 0 01-7.029 5.912c-.563-.097-1.159.026-1.563.43L10.5 17.25H8.25v2.25H6v2.25H2.25v-2.818c0-.597.237-1.17.659-1.591l6.499-6.499c.404-.404.527-1 .43-1.563A6 6 0 1121.75 8.25z" />
     </svg>
   );
 }
