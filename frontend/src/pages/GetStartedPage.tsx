@@ -5,6 +5,7 @@ import Button from '@/components/ui/button';
 import Input from '@/components/ui/input';
 import Field from '@/components/ui/field';
 import TextAssistantCard from '@/components/TextAssistantCard';
+import DataSharingConsentSection from '@/components/DataSharingConsentSection';
 import { toast } from '@/lib/toast';
 import {
   useChannelConfig,
@@ -354,6 +355,21 @@ export default function GetStartedPage() {
                   You can always fine-tune settings later from the sidebar.
                 </p>
               )}
+            </div>
+          </div>
+        </Card>
+
+        {/* Privacy: optional opt-in. Not numbered, not blocking — first-run is the natural
+            moment to ask, but the same toggle lives on the User page so people can change
+            their mind any time. Default off; the API stamps a timestamp on every flip so
+            consent history is reconstructable from data_sharing_consent_at. */}
+        <Card>
+          <div className="flex items-start gap-4">
+            <div className="flex items-center justify-center w-10 h-10 rounded-full bg-primary-light text-primary shrink-0">
+              <ShieldIcon />
+            </div>
+            <div className="flex-1 min-w-0">
+              <DataSharingConsentSection variant="compact" />
             </div>
           </div>
         </Card>
@@ -848,6 +864,14 @@ function RocketIcon() {
   return (
     <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15.59 14.37a6 6 0 01-5.84 7.38v-4.8m5.84-2.58a14.98 14.98 0 006.16-12.12A14.98 14.98 0 009.63 8.41m5.96 5.96a14.926 14.926 0 01-5.841 2.58m-.119-8.54a6 6 0 00-7.381 5.84h4.8m2.581-5.84a14.927 14.927 0 00-2.58 5.841M3.75 21h.008v.008H3.75V21z" />
+    </svg>
+  );
+}
+
+function ShieldIcon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden>
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12.75 11.25 15 15 9.75M21 12c0 4.97-3.582 9-8 9s-8-4.03-8-9c0-1.07.166-2.097.473-3.06A11.95 11.95 0 0 0 12 5.25a11.95 11.95 0 0 0 7.527-1.31A9.954 9.954 0 0 1 21 12Z" />
     </svg>
   );
 }

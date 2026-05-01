@@ -75,6 +75,14 @@ vi.mock('@/api', () => ({
     getLinqLink: vi.fn().mockResolvedValue({ phone_number: null, connected: false }),
     setLinqLink: vi.fn().mockResolvedValue({ phone_number: '+15551234567', connected: true }),
     setTelegramLink: vi.fn().mockResolvedValue({ telegram_user_id: '12345', connected: true }),
+    getDataSharingConsent: vi.fn().mockResolvedValue({
+      data_sharing_consent: false,
+      data_sharing_consent_at: null,
+    }),
+    updateDataSharingConsent: vi.fn().mockResolvedValue({
+      data_sharing_consent: true,
+      data_sharing_consent_at: '2026-05-01T00:00:00+00:00',
+    }),
   },
 }));
 
