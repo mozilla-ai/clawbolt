@@ -1345,3 +1345,91 @@ async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
         db.close()
 
     assert active_count == 1, f"expected 1 active session, got {active_count}"
+
+
+# --- CompactionEvent persistence ---
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_writes_event_row(test_user: UserData) -> None:
+    """Every successful compaction must leave one CompactionEvent row.
+
+    Pins the regression we just fixed: pre-this-PR the metrics were
+    INFO-logged only, so admins debugging "when did this user last
+    compact" had to grep Railway. Now they can query.
+    """
+    from backend.app.models import CompactionEvent
+
+    llm_response_content = json.dumps(
+        {
+            "memory_update": "## Notes\n- prefers terse replies",
+            "user_profile_update": "Likes pizza.",
+            "summary": "[TIMESTAMP] talked about lunch",
+        }
+    )
+    mock_response = make_text_response(llm_response_content)
+
+    messages: list[AgentMessage] = [
+        UserMessage(content="i like pizza"),
+        AssistantMessage(content="noted"),
+    ]
+
+    db = _db_module.SessionLocal()
+    try:
+        before = db.query(CompactionEvent).filter_by(user_id=test_user.id).count()
+    finally:
+        db.close()
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, messages, max_message_seq=2)
+
+    db = _db_module.SessionLocal()
+    try:
+        rows = (
+            db.query(CompactionEvent)
+            .filter_by(user_id=test_user.id)
+            .order_by(CompactionEvent.id.desc())
+            .all()
+        )
+    finally:
+        db.close()
+
+    assert len(rows) == before + 1
+    row = rows[0]
+    assert row.trimmed_count == 2
+    assert row.trimmed_chars > 0
+    assert row.duration_ms >= 0
+    assert row.max_message_seq == 2
+    assert row.memory_updated is True
+    assert row.user_profile_updated is True
+    assert row.soul_updated is False
+    assert row.summary_len > 0
+    assert row.triggered_at is not None
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_db_failure_does_not_fail_compaction(
+    test_user: UserData,
+) -> None:
+    """If the event-row write throws, compaction must still succeed.
+
+    The memory write happened upstream of the persistence call; we must
+    not fail the whole compaction (and lose the memory_update return
+    value the caller is about to act on) just because audit-style
+    persistence broke.
+    """
+    llm_response_content = json.dumps({"memory_update": "## A\n- b", "summary": "[TIMESTAMP] x"})
+    mock_response = make_text_response(llm_response_content)
+    messages: list[AgentMessage] = [UserMessage(content="hi")]
+
+    with (
+        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch(
+            "backend.app.agent.compaction._persist_compaction_event",
+            side_effect=RuntimeError("db down"),
+        ),
+    ):
+        memory_update, max_seq = await compact_session(test_user.id, messages, max_message_seq=1)
+
+    assert "## A" in memory_update
+    assert max_seq == 1
