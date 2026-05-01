@@ -9,7 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import backend.app.agent.tools.registry as _reg
-from backend.app.agent.tools.base import Tool
+from backend.app.agent.tools.base import Tool, ToolTags
 from backend.app.agent.tools.registry import (
     ToolContext,
     default_registry,
@@ -237,4 +237,54 @@ async def test_ask_sub_tools_have_approval_policy() -> None:
     assert not missing, (
         "Tools with default_permission='ask' must have an ApprovalPolicy "
         "on the Tool object so the runtime enforces permissions:\n" + "\n".join(missing)
+    )
+
+
+@pytest.mark.asyncio()
+async def test_state_mutating_tools_have_concurrency_group() -> None:
+    """Tools that mutate shared state must declare a concurrency_group.
+
+    The agent runs tool calls concurrently within a single LLM turn. Tools
+    flagged with ``MODIFIES_PROFILE`` (workspace document writes) or
+    ``SENDS_REPLY`` (user-facing message stream) touch resources that other
+    tools could touch in the same turn, so they must serialize via a
+    concurrency group rather than risking lost updates or out-of-order
+    output. This test enforces that invariant across every registered
+    factory so a new mutating tool cannot ship without declaring a group.
+    """
+    ensure_tool_modules_imported()
+
+    ctx = MagicMock(spec=ToolContext)
+    ctx.user = MagicMock()
+    ctx.user.id = "test-user"
+    ctx.storage = MagicMock()
+    ctx.publish_outbound = AsyncMock()
+    ctx.channel = "test"
+    ctx.to_address = ""
+    ctx.downloaded_media = []
+    ctx.turn_text = ""
+
+    requires_group = {ToolTags.MODIFIES_PROFILE, ToolTags.SENDS_REPLY}
+    missing: list[str] = []
+
+    for factory_name, factory in default_registry._factories.items():
+        try:
+            import inspect
+
+            result = factory.create(ctx)
+            tools: list[Tool] = await result if inspect.isawaitable(result) else result  # type: ignore[assignment]
+        except Exception:
+            continue
+
+        for tool in tools:
+            if tool.tags & requires_group and tool.concurrency_group is None:
+                tags = ", ".join(sorted(t.value for t in tool.tags & requires_group))
+                missing.append(
+                    f"{factory_name}/{tool.name}: tagged [{tags}] but concurrency_group is None"
+                )
+
+    assert not missing, (
+        "Tools tagged MODIFIES_PROFILE or SENDS_REPLY must set a "
+        "concurrency_group so concurrent tool calls in a single turn do "
+        "not race on shared state:\n" + "\n".join(missing)
     )

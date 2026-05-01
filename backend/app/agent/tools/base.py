@@ -58,6 +58,9 @@ class ToolResult:
     receipt: ToolReceipt | None = None
 
 
+ConcurrencyGroupResolver = Callable[[dict[str, Any]], str | None]
+
+
 @dataclass
 class Tool:
     """A tool that the agent can call."""
@@ -69,6 +72,28 @@ class Tool:
     tags: set[ToolTags] = field(default_factory=set)
     usage_hint: str = ""
     approval_policy: ApprovalPolicy | None = None
+    concurrency_group: str | ConcurrencyGroupResolver | None = None
+    """Serialization key for parallel tool execution.
+
+    The agent runs approved tool calls from a single model turn concurrently.
+    Tools that share a non-None ``concurrency_group`` value run sequentially
+    in submission order; tools with different keys (or ``None``) may run in
+    parallel.
+
+    Accepts either a static string or a callable that takes the tool's
+    validated arguments and returns a key. Use the callable form when the
+    same tool can target distinct shared resources by argument, for
+    example a workspace ``write_file`` whose ``path`` decides which file
+    is mutated. Use a string when the tool always touches the same
+    resource (e.g. a single user-facing message stream).
+
+    Set this for tools that mutate shared state another tool could touch in
+    the same turn (a shared DB row, a workspace document, a disk file, the
+    user-facing message stream). Read-only and stateless tools should leave
+    it ``None``. Common keys in this codebase: ``"workspace_path:<path>"``
+    for workspace document mutations (resolved per call), ``"user_outbound"``
+    for reply senders, ``"user_integrations"`` for integration toggles.
+    """
 
 
 def _inline_refs(schema: dict[str, Any]) -> dict[str, Any]:

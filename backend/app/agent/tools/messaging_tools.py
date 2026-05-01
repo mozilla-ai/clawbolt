@@ -68,6 +68,9 @@ def create_messaging_tools(
                 default_level=PermissionLevel.ALWAYS,
                 description_builder=lambda args: "Send a file attachment",
             ),
+            # Preserve send order if the model batches multiple replies in one
+            # turn. The user's channel is the shared resource here.
+            concurrency_group="user_outbound",
         ),
     ]
 

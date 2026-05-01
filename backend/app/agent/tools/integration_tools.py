@@ -123,6 +123,10 @@ def create_integration_tools(ctx: ToolContext) -> list[Tool]:
                 "to generate an OAuth link the user can tap to connect. "
                 "Call with action='enable'/'disable' and target=group_name to toggle tools."
             ),
+            # Enable/disable and connect/disconnect mutate the per-user
+            # ``tool_configs`` row and the OAuth token store. Two of these
+            # in the same turn must serialize to avoid lost updates.
+            concurrency_group="user_integrations",
         ),
     ]
 

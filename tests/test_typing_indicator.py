@@ -173,11 +173,16 @@ async def test_agent_no_typing_indicator_without_chat_id(
 
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
-async def test_agent_sends_typing_indicator_per_tool_in_round(
+async def test_agent_sends_one_typing_indicator_per_tool_round(
     mock_amessages: object,
     test_user: User,
 ) -> None:
-    """Multiple tools in one round should each get a typing indicator."""
+    """A round with multiple tools sends a single typing indicator.
+
+    Tools in a round run concurrently, so emitting one indicator per tool
+    just produces a burst of identical signals. One per round before the
+    fan-out is the right granularity for the user.
+    """
 
     async def mock_tool_fn(**kwargs: object) -> ToolResult:
         return ToolResult(content="ok")
@@ -224,8 +229,8 @@ async def test_agent_sends_typing_indicator_per_tool_in_round(
         for c in mock_publish.call_args_list
         if isinstance(c.args[0], OutboundMessage) and c.args[0].is_typing_indicator
     ]
-    # 1 before initial LLM + 2 before each tool execution + 1 before second LLM = 4
-    assert len(typing_calls) == 4
+    # 1 before initial LLM + 1 before the tool round + 1 before second LLM = 3
+    assert len(typing_calls) == 3
 
 
 # ---------------------------------------------------------------------------
