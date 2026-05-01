@@ -128,7 +128,7 @@ class User(Base):
     soul_text: Mapped[str] = mapped_column(Text, default="")
     user_text: Mapped[str] = mapped_column(Text, default="")
     heartbeat_text: Mapped[str] = mapped_column(Text, default="")
-    # User research / data sharing consent. Defaults to False — admins
+    # User research / data sharing consent. Defaults to False so admins
     # only see message bodies, memory, and other user content for users
     # who explicitly opted in here. ``data_sharing_consent_at`` is set
     # on every change (opt-in AND opt-out) so consent history can be

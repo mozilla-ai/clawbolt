@@ -1,7 +1,9 @@
 """Tests for user profile endpoints."""
 
+import datetime as _dt
 from unittest.mock import AsyncMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from backend.app.config import settings
@@ -110,7 +112,7 @@ def test_update_profile_heartbeat_max_daily(client: TestClient) -> None:
 
 
 def test_get_profile_includes_data_sharing_consent_defaults(client: TestClient) -> None:
-    """GET /api/user/profile exposes the consent state — default is opt-out."""
+    """GET /api/user/profile exposes the consent state. Default is opt-out."""
     resp = client.get("/api/user/profile")
     assert resp.status_code == 200
     data = resp.json()
@@ -140,7 +142,7 @@ def test_opt_in_stamps_consent_timestamp(client: TestClient) -> None:
 def test_opt_out_also_stamps_consent_timestamp(client: TestClient) -> None:
     """Opting OUT also bumps the timestamp.
 
-    The column tracks "last toggled" not "first opted in" — without this,
+    The column tracks "last toggled" not "first opted in"; without this,
     a user who opts in and later opts out would still appear (by
     timestamp) as having an active recent consent.
     """
@@ -150,7 +152,7 @@ def test_opt_out_also_stamps_consent_timestamp(client: TestClient) -> None:
     t1 = r1.json()["data_sharing_consent_at"]
     assert t1 is not None
 
-    # Then opt out — timestamp must update to a >= value (allow equality
+    # Then opt out: timestamp must update to a >= value (allow equality
     # because the test runs faster than datetime resolution).
     r2 = client.put("/api/user/data-sharing-consent", json={"consent": False})
     assert r2.status_code == 200
@@ -178,6 +180,25 @@ def test_data_sharing_consent_not_writable_via_generic_profile_put(client: TestC
     assert data["phone"] == "+15552222222"
     assert data["data_sharing_consent"] is False
     assert data["data_sharing_consent_at"] is None
+
+
+def test_consent_timestamp_uses_overridable_clock(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The consent setter pulls "now" from a single helper so tests can
+    pin the clock to a known instant. Without this seam, asserting that
+    a specific PUT produced a specific timestamp depends on real
+    wall-clock time, which is flaky inside a millisecond.
+    """
+    fixed = _dt.datetime(2026, 5, 1, 12, 0, 0, tzinfo=_dt.UTC)
+    monkeypatch.setattr(
+        "backend.app.routers.user_profile._data_sharing_consent_now",
+        lambda: fixed,
+    )
+
+    resp = client.put("/api/user/data-sharing-consent", json={"consent": True})
+    assert resp.status_code == 200
+    assert resp.json()["data_sharing_consent_at"] == fixed.isoformat()
 
 
 def test_get_model_config(client: TestClient) -> None:

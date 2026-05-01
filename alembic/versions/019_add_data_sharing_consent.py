@@ -1,7 +1,7 @@
 """Add data_sharing_consent + data_sharing_consent_at to users.
 
 Privacy gate for content surfaced to admins (item 3 of clawbolt-premium
-issue #325). Defaults to False so existing users are opted out — admins
+issue #325). Defaults to False so existing users are opted out: admins
 only see a user's message bodies / memory / soul prompt for users who
 have explicitly toggled this on. ``data_sharing_consent_at`` is set on
 every change (opt-in AND opt-out) so consent history can be

@@ -1977,7 +1977,7 @@
           "data_sharing_consent_at"
         ],
         "title": "DataSharingConsentResponse",
-        "description": "Returned by the consent setter and getter.\n\n``data_sharing_consent_at`` is the timestamp of the last toggle \u2014\nnot \"first opted in.\" If a user opts in, then opts out, this column\nholds the opt-out time."
+        "description": "Returned by the consent setter and getter.\n\n``data_sharing_consent_at`` is the timestamp of the last toggle,\nnot \"first opted in.\" If a user opts in, then opts out, this column\nholds the opt-out time."
       },
       "DeleteHeartbeatLogsResponse": {
         "properties": {
@@ -3131,7 +3131,7 @@
         },
         "type": "object",
         "title": "UserProfileUpdate",
-        "description": "Fields the client is allowed to update on the current user.\n\n``onboarding_complete`` is deliberately not writable here. It is owned by\nthe backend (set by ``OnboardingSubscriber`` when the LLM deletes\nBOOTSTRAP.md or heuristic evidence appears) so the conversational\nonboarding can't be short-circuited by the UI.\n\n``data_sharing_consent`` is deliberately not writable here either \u2014\nit has its own dedicated endpoint (``PUT /api/user/data-sharing-consent``)\nthat always stamps ``data_sharing_consent_at``. Routing it through\nthis generic patch endpoint would lose the timestamp guarantee."
+        "description": "Fields the client is allowed to update on the current user.\n\n``onboarding_complete`` is deliberately not writable here. It is owned by\nthe backend (set by ``OnboardingSubscriber`` when the LLM deletes\nBOOTSTRAP.md or heuristic evidence appears) so the conversational\nonboarding can't be short-circuited by the UI.\n\n``data_sharing_consent`` is deliberately not writable here either:\nit has its own dedicated endpoint (``PUT /api/user/data-sharing-consent``)\nthat always stamps ``data_sharing_consent_at``. Routing it through\nthis generic patch endpoint would lose the timestamp guarantee.\n\n``model_config`` pins ``extra=\"ignore\"`` so unknown fields (including\n``data_sharing_consent`` if a client tries to slip it through here)\nare silently dropped. This is the contract the dedicated-endpoint\ntest relies on. If pydantic ever flips the global default to\n``\"forbid\"``, this declaration keeps the contract stable."
       },
       "ValidationError": {
         "properties": {

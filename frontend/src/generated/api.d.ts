@@ -1043,7 +1043,7 @@ export interface components {
          * DataSharingConsentResponse
          * @description Returned by the consent setter and getter.
          *
-         *     ``data_sharing_consent_at`` is the timestamp of the last toggle —
+         *     ``data_sharing_consent_at`` is the timestamp of the last toggle,
          *     not "first opted in." If a user opts in, then opts out, this column
          *     holds the opt-out time.
          */
@@ -1496,10 +1496,16 @@ export interface components {
          *     BOOTSTRAP.md or heuristic evidence appears) so the conversational
          *     onboarding can't be short-circuited by the UI.
          *
-         *     ``data_sharing_consent`` is deliberately not writable here either —
+         *     ``data_sharing_consent`` is deliberately not writable here either:
          *     it has its own dedicated endpoint (``PUT /api/user/data-sharing-consent``)
          *     that always stamps ``data_sharing_consent_at``. Routing it through
          *     this generic patch endpoint would lose the timestamp guarantee.
+         *
+         *     ``model_config`` pins ``extra="ignore"`` so unknown fields (including
+         *     ``data_sharing_consent`` if a client tries to slip it through here)
+         *     are silently dropped. This is the contract the dedicated-endpoint
+         *     test relies on. If pydantic ever flips the global default to
+         *     ``"forbid"``, this declaration keeps the contract stable.
          */
         UserProfileUpdate: {
             /** Phone */

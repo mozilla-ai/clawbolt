@@ -104,10 +104,22 @@ async def update_profile(
 # ---------------------------------------------------------------------------
 #
 # Separate endpoint (not folded into ``PUT /user/profile``) because the
-# timestamp must be stamped on every change — opt-in AND opt-out — so
+# timestamp must be stamped on every change (opt-in AND opt-out) so
 # consent history is reconstructable. Routing through the generic patch
 # endpoint would require a special case for this column; cleaner to give
 # it its own URL with the invariant in the route signature.
+
+
+def _data_sharing_consent_now() -> datetime.datetime:
+    """Return ``datetime.datetime.now(datetime.UTC)``.
+
+    Pulled out as a helper so tests can monkeypatch the clock when they
+    need to verify the timestamp updated to a specific instant. Without
+    this seam, asserting "the second PUT bumped the timestamp" can only
+    rely on ``>= t1`` ordering, which is non-trivial when both calls
+    happen inside one millisecond of test runtime.
+    """
+    return datetime.datetime.now(datetime.UTC)
 
 
 @router.get("/user/data-sharing-consent", response_model=DataSharingConsentResponse)
@@ -141,7 +153,7 @@ async def update_data_sharing_consent(
     """
     user = get_or_404(db, User, detail="User not found", id=current_user.id)
     user.data_sharing_consent = body.consent
-    user.data_sharing_consent_at = datetime.datetime.now(datetime.UTC)
+    user.data_sharing_consent_at = _data_sharing_consent_now()
     db.commit()
     db.refresh(user)
     return DataSharingConsentResponse(
