@@ -112,8 +112,24 @@ class MessageBus:
         return fut
 
     def resolve_response(self, request_id: str, msg: OutboundMessage) -> bool:
-        """Resolve a pending response future. Returns True if found."""
-        fut = self._response_futures.pop(request_id, None)
+        """Resolve a pending response future. Returns True if found.
+
+        Does NOT remove the future from the registry. The webchat SSE
+        endpoint calls ``get_response_future(request_id)`` to fetch the
+        future after the request was already submitted (the chat router
+        registers the future first, then the bus consumer / dispatcher
+        run, then the client opens the SSE stream). If the dispatcher
+        finishes before the SSE opens (which can happen for fast
+        short-circuit replies like the ``/report`` ack or approval
+        responses), popping here leaves the SSE side looking up a
+        missing entry, which then registers a fresh future that nobody
+        will ever resolve and the spinner hangs until the SSE timeout.
+
+        Memory bounded by the TTL cleanup task scheduled in
+        ``register_response_future``: 300s after registration, the entry
+        is evicted regardless of whether it was resolved.
+        """
+        fut = self._response_futures.get(request_id)
         if fut is not None and not fut.done():
             fut.set_result(msg)
             return True
