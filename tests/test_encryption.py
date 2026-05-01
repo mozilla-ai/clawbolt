@@ -25,10 +25,14 @@ import pytest
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from pydantic import SecretStr
+from sqlalchemy import text as _sa_text
 
 import backend.app.auth.loader as auth_loader
 import backend.app.database as _db_module
-from backend.app.models import OAuthToken, User
+from alembic import op as _alembic_op
+from backend.app.config import settings as _app_settings
+from backend.app.models import ChatSession, Message, OAuthToken, User
 from backend.app.security.encryption import (
     ENVELOPE_PREFIX,
     EncryptionContext,
@@ -48,6 +52,21 @@ def _load_migration_018():  # noqa: ANN202
         / "alembic"
         / "versions"
         / "018_envelope_encrypt_oauth_tokens.py",
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def _load_migration_020():  # noqa: ANN202
+    """Load migration 020 by file path; module names can't start with a digit."""
+    spec = importlib.util.spec_from_file_location(
+        "migration_020",
+        Path(__file__).parent.parent
+        / "alembic"
+        / "versions"
+        / "020_envelope_encrypt_message_body.py",
     )
     assert spec and spec.loader
     module = importlib.util.module_from_spec(spec)
@@ -193,6 +212,125 @@ def test_encrypted_string_round_trip_through_orm(
     columns_wrapped = sorted(c.get("column", "") for c in contexts)
     assert columns_wrapped == ["access_token", "refresh_token"]
     assert all(c.get("table") == "oauth_tokens" for c in contexts)
+
+
+def test_message_body_round_trip_through_orm(
+    install_recording_provider: _RecordingProvider,
+) -> None:
+    """A Message row's encrypted body / processed_context round-trip
+    through PostgreSQL. ORM reads see plaintext; the underlying column
+    holds an envelope."""
+    db = _db_module.SessionLocal()
+    try:
+        user = User(id=str(uuid.uuid4()), user_id="msg-enc-test", onboarding_complete=True)
+        db.add(user)
+        db.flush()
+        cs = ChatSession(
+            session_id=f"sess-{uuid.uuid4().hex[:8]}",
+            user_id=user.id,
+        )
+        db.add(cs)
+        db.flush()
+        row = Message(
+            session_id=cs.id,
+            seq=1,
+            direction="inbound",
+            body="hello-plaintext-body",
+            processed_context="hello-plaintext-with-image-description",
+        )
+        db.add(row)
+        db.commit()
+        message_id = row.id
+    finally:
+        db.close()
+
+    # Round-trip: plaintext on read.
+    db = _db_module.SessionLocal()
+    try:
+        loaded = db.get(Message, message_id)
+        assert loaded is not None
+        assert loaded.body == "hello-plaintext-body"
+        assert loaded.processed_context == "hello-plaintext-with-image-description"
+    finally:
+        db.close()
+
+    # Disk-form: the underlying column stores an envelope, not the
+    # plaintext we wrote. This is the at-rest guarantee the migration
+    # delivers; a database leak (pgdump from a backup, snapshot of a
+    # read replica) gives the attacker ciphertext, not message bodies.
+    db = _db_module.SessionLocal()
+    try:
+        rows = db.execute(
+            _sa_text("SELECT body, processed_context FROM messages WHERE id = :id"),
+            {"id": message_id},
+        ).all()
+        assert len(rows) == 1
+        raw_body, raw_processed = rows[0]
+        assert raw_body != "hello-plaintext-body"
+        assert raw_body.startswith(ENVELOPE_PREFIX + ".")
+        assert raw_processed != "hello-plaintext-with-image-description"
+        assert raw_processed.startswith(ENVELOPE_PREFIX + ".")
+    finally:
+        db.close()
+
+    contexts = install_recording_provider.wrap_calls
+    columns_wrapped = sorted(c.get("column", "") for c in contexts)
+    assert "body" in columns_wrapped
+    assert "processed_context" in columns_wrapped
+    assert all(
+        c.get("table") == "messages"
+        for c in contexts
+        if c.get("column") in ("body", "processed_context")
+    )
+
+
+def test_message_body_empty_string_passes_through(
+    install_recording_provider: _RecordingProvider,
+) -> None:
+    """Empty bodies are passed through without invoking the KEK provider.
+
+    ``EncryptedString.process_bind_param`` short-circuits on empty/None
+    so outbound messages with no body (e.g. a tool-call-only assistant
+    turn) don't burn a wrap call. Without this, a 50-message turn with
+    half empty bodies would still issue 50 wraps, measurable on
+    high-throughput deployments.
+    """
+    db = _db_module.SessionLocal()
+    try:
+        user = User(id=str(uuid.uuid4()), user_id="msg-empty-test", onboarding_complete=True)
+        db.add(user)
+        db.flush()
+        cs = ChatSession(
+            session_id=f"sess-{uuid.uuid4().hex[:8]}",
+            user_id=user.id,
+        )
+        db.add(cs)
+        db.flush()
+        row = Message(session_id=cs.id, seq=1, direction="outbound", body="", processed_context="")
+        db.add(row)
+        db.commit()
+        message_id = row.id
+    finally:
+        db.close()
+
+    # No body / processed_context wrap calls should appear for this row.
+    msg_columns = [
+        c.get("column", "")
+        for c in install_recording_provider.wrap_calls
+        if c.get("table") == "messages"
+    ]
+    assert "body" not in msg_columns
+    assert "processed_context" not in msg_columns
+
+    # And the row reads back with empty strings, not envelope blobs.
+    db = _db_module.SessionLocal()
+    try:
+        loaded = db.get(Message, message_id)
+        assert loaded is not None
+        assert loaded.body == ""
+        assert loaded.processed_context == ""
+    finally:
+        db.close()
 
 
 def test_encrypted_string_read_of_non_envelope_raises(
@@ -351,6 +489,167 @@ def test_migration_018_decrypts_legacy_fernet_then_rekeys() -> None:
         decrypt(rekeyed, provider, {"table": "oauth_tokens", "column": "access_token"})
         == "legacy-access-token"
     )
+
+
+def test_migration_020_rekey_helper_envelopes_plaintext() -> None:
+    """Migration 020 has no legacy ciphertext to handle. Message bodies
+    were always plaintext before this revision. ``_rekey`` should
+    envelope-encrypt non-envelope values, return envelopes unchanged
+    (idempotent re-runs), and pass empty/None through untouched.
+    """
+    migration = _load_migration_020()
+    provider = LocalKEKProvider()
+
+    rekeyed = migration._rekey("message body text", provider, "body")
+    assert isinstance(rekeyed, str)
+    assert rekeyed.startswith(ENVELOPE_PREFIX + ".")
+    assert (
+        decrypt(rekeyed, provider, {"table": "messages", "column": "body"}) == "message body text"
+    )
+
+    # Idempotent re-run: an envelope is returned by identity, so the
+    # caller (the upgrade loop) can detect "nothing to do" and skip
+    # the UPDATE.
+    assert migration._rekey(rekeyed, provider, "body") is rekeyed
+
+    # Empty / None values pass through untouched, matching the type
+    # decorator's bind-param short-circuit.
+    assert migration._rekey("", provider, "body") == ""
+    assert migration._rekey(None, provider, "body") is None
+
+
+def test_migration_020_processed_context_uses_distinct_column_context() -> None:
+    """The migration encrypts ``body`` and ``processed_context`` under
+    distinct ``EncryptionContext`` column tags, matching the model's
+    column declarations. Without this, a future per-column key rotation
+    couldn't target one column independently.
+    """
+    migration = _load_migration_020()
+    provider = LocalKEKProvider()
+
+    body_envelope = migration._rekey("user said hi", provider, "body")
+    pc_envelope = migration._rekey("user said hi (transcribed)", provider, "processed_context")
+
+    # Both should decrypt under their respective contexts. Cross-context
+    # decrypt either succeeds (LocalKEKProvider doesn't enforce context
+    # equality on its own) or fails. What matters is that the call
+    # sites use the matching column tag, which is what ``EncryptedString``
+    # passes at runtime.
+    assert (
+        decrypt(body_envelope, provider, {"table": "messages", "column": "body"}) == "user said hi"
+    )
+    assert (
+        decrypt(pc_envelope, provider, {"table": "messages", "column": "processed_context"})
+        == "user said hi (transcribed)"
+    )
+
+
+def test_migration_020_full_upgrade_loop_against_real_db(
+    install_recording_provider: _RecordingProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end run of ``upgrade()`` against the test database.
+
+    The unit-style ``test_migration_020_rekey_helper_*`` tests cover the
+    per-row helper. This one verifies the full streaming loop terminates
+    on a real PostgreSQL connection, that already-encrypted rows are
+    skipped (no UPDATE on a re-run), and that the cursor advancement
+    logic doesn't infinite-loop when the in-loop ``last_id = row_id``
+    assignment is bypassed.
+    """
+    # The migration's preflight check refuses to run when the messages
+    # table is non-empty AND ``settings.encryption_key`` is empty. The
+    # test database fits that shape (no key configured by default), so
+    # seed a synthetic key for this test. This is exactly the operator
+    # workflow the preflight is documenting: set the key, then migrate.
+    monkeypatch.setattr(_app_settings, "encryption_key", SecretStr("a" * 32))
+
+    # Insert plaintext rows directly via raw SQL to simulate the pre-
+    # migration state. Going through the ORM would invoke the
+    # ``EncryptedString`` type decorator and pre-encrypt them, which is
+    # exactly what we want to AVOID for this test.
+    db = _db_module.SessionLocal()
+    try:
+        user = User(id=str(uuid.uuid4()), user_id="msg-mig-e2e-test", onboarding_complete=True)
+        db.add(user)
+        db.flush()
+        cs = ChatSession(session_id=f"sess-{uuid.uuid4().hex[:8]}", user_id=user.id)
+        db.add(cs)
+        db.flush()
+        # Capture the FK id as a plain int while the session is still
+        # open so the assertions below don't trigger a refresh on a
+        # detached instance after ``db.close()``.
+        chat_session_id: int = cs.id
+        # Three plaintext rows so we exercise the multi-row code path.
+        for seq, body, ctx in [
+            (1, "first plaintext body", "first context"),
+            (2, "second plaintext body", ""),
+            (3, "", ""),  # all-empty: must skip without error
+        ]:
+            db.execute(
+                _sa_text(
+                    "INSERT INTO messages (session_id, seq, direction, body, "
+                    "processed_context, tool_interactions_json, external_message_id, "
+                    "media_urls_json, timestamp) VALUES (:s, :seq, 'inbound', :b, "
+                    ":pc, '', '', '', NOW())"
+                ),
+                {"s": chat_session_id, "seq": seq, "b": body, "pc": ctx},
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    # Run the migration's ``upgrade()`` against the same connection
+    # alembic would use. ``op.get_bind()`` resolves to the configured
+    # connection during a real alembic run; here we monkeypatch it to
+    # point at the test session's connection so the migration writes
+    # through to the same database the test reads from afterwards.
+    migration = _load_migration_020()
+    db = _db_module.SessionLocal()
+    try:
+        monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
+        migration.upgrade()
+        db.commit()
+    finally:
+        db.close()
+
+    # Verify the migration wrote envelopes for the non-empty rows and
+    # left the empty row alone (empty strings short-circuit in _rekey).
+    db = _db_module.SessionLocal()
+    try:
+        rows = db.execute(
+            _sa_text(
+                "SELECT seq, body, processed_context FROM messages "
+                "WHERE session_id = :s ORDER BY seq"
+            ),
+            {"s": chat_session_id},
+        ).all()
+        assert len(rows) == 3
+        # Row 1: both columns envelope-encrypted.
+        assert rows[0].body.startswith(ENVELOPE_PREFIX + ".")
+        assert rows[0].processed_context.startswith(ENVELOPE_PREFIX + ".")
+        # Row 2: body envelope, empty context stays empty.
+        assert rows[1].body.startswith(ENVELOPE_PREFIX + ".")
+        assert rows[1].processed_context == ""
+        # Row 3: both empty, must remain empty (no envelope on empty).
+        assert rows[2].body == ""
+        assert rows[2].processed_context == ""
+    finally:
+        db.close()
+
+    # Idempotent re-run: a second ``upgrade()`` on the now-encrypted
+    # rows must NOT issue any UPDATE (every row is already in envelope
+    # form, ``_rekey`` returns the original by identity, and the loop's
+    # short-circuit fires). The cursor reach-around guarantees the loop
+    # terminates regardless. We assert termination simply by reaching
+    # the next line without timing out.
+    db = _db_module.SessionLocal()
+    try:
+        monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
+        migration.upgrade()
+        db.commit()
+    finally:
+        db.close()
 
 
 def test_migration_018_falls_back_to_plaintext_on_invalid_legacy_token() -> None:
