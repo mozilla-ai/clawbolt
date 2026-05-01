@@ -89,6 +89,10 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
                 default_level=PermissionLevel.ALWAYS,
                 description_builder=lambda args: "Update heartbeat notes",
             ),
+            # Match the per-path key used by workspace_tools for HEARTBEAT.md
+            # so a heartbeat update and a workspace write to the same file
+            # serialize against each other.
+            concurrency_group="workspace_path:HEARTBEAT.md",
         ),
     ]
 
