@@ -7,10 +7,19 @@ the premium KMS-backed provider). The new ``EncryptedString`` type
 decorator on the ORM column then transparently decrypts on read.
 
 Unlike migration 018 (oauth_tokens), there is no legacy ciphertext to
-decrypt first — pre-existing rows are plaintext, so the per-row work
+decrypt first. Pre-existing rows are plaintext, so the per-row work
 is just envelope-encrypt-and-replace. The new envelope is self-
 identifying via the ``clw1.`` prefix, so this migration is idempotent:
 a row that's already in envelope format on a re-run is skipped.
+
+Operator preflight: this migration refuses to run when ``messages``
+is non-empty AND ``ENCRYPTION_KEY`` is unset. Without a stable key,
+``LocalKEKProvider`` falls back to an ephemeral process-local KEK,
+which would re-encrypt every message body under a key that vanishes
+on the next process restart, leaving message content unrecoverable.
+The ``oauth_tokens`` precedent (migration 018) didn't bother with this
+check because OAuth tokens are rare and trivially re-issuable; message
+bodies are not.
 
 Deployment ordering: run this migration BEFORE rolling out the new
 application code. ``EncryptedString`` raises ``RuntimeError`` on a
@@ -22,7 +31,10 @@ deploy, before swapping container images.
 Performance note: ~1ms per row for envelope encryption on the local
 KEK provider. A 100k-message database backfills in ~2 minutes. The
 migration streams rows in batches and commits per row to keep memory
-bounded.
+bounded. NOTE: alembic wraps ``upgrade()`` in a single transaction, so
+the table is locked for the duration of the backfill. Operators on
+million-row deployments should plan a maintenance window or run
+``op.execute("SET LOCAL statement_timeout = 0")`` first.
 
 Revision ID: 020
 Revises: 018
@@ -43,6 +55,7 @@ from __future__ import annotations
 import sqlalchemy as sa
 
 from alembic import op
+from backend.app.config import settings
 from backend.app.security.encryption import (
     LocalKEKProvider,
     is_envelope,
@@ -62,6 +75,23 @@ _BATCH_SIZE = 1000
 
 def upgrade() -> None:
     bind = op.get_bind()
+
+    # Refuse to run on a non-empty messages table when ENCRYPTION_KEY is
+    # unset. LocalKEKProvider() with no configured key falls back to an
+    # ephemeral process-local KEK; encrypting every message body under
+    # that key would leave them unrecoverable after the next restart.
+    # An empty messages table is fine: there's nothing to lose.
+    if not settings.encryption_key.get_secret_value():
+        first_row = bind.execute(sa.text("SELECT 1 FROM messages LIMIT 1")).first()
+        if first_row is not None:
+            raise RuntimeError(
+                "Migration 020 requires ENCRYPTION_KEY to be set when the "
+                "messages table is non-empty. Without a stable key, message "
+                "bodies would become unrecoverable after the next process "
+                "restart. Set ENCRYPTION_KEY (any random 32-byte value) and "
+                "re-run the migration."
+            )
+
     provider = LocalKEKProvider()
 
     # Stream in batches so a multi-million-row table doesn't load the
@@ -92,8 +122,10 @@ def upgrade() -> None:
             last_id = row_id
         # Re-pin the cursor at the largest id we saw, even when nothing
         # was updated in this batch (e.g. all rows already in envelope
-        # format on a re-run). Without this, an already-migrated DB
-        # would loop forever on the same SELECT.
+        # format on a re-run, so the in-loop ``last_id = row_id``
+        # assignment never fires). Without this end-of-batch reach-
+        # around, an already-migrated DB would loop forever on the
+        # same SELECT.
         last_id = max(last_id, rows[-1][0])
 
 
@@ -102,8 +134,8 @@ def _rekey(value: str | None, provider: LocalKEKProvider, column: str) -> str | 
 
     Idempotent: rows already in envelope format are returned unchanged
     (identity) so the caller can detect "nothing to do" via ``is`` and
-    skip the UPDATE. Empty strings and NULLs pass through untouched —
-    ``EncryptedString.process_bind_param`` does the same on writes.
+    skip the UPDATE. Empty strings and NULLs pass through untouched
+    (``EncryptedString.process_bind_param`` does the same on writes).
     """
     if not value:
         return value
