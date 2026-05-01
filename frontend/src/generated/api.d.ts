@@ -336,6 +336,36 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/user/data-sharing-consent": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Get Data Sharing Consent
+         * @description Return the current user's data sharing consent state.
+         */
+        get: operations["get_data_sharing_consent_api_user_data_sharing_consent_get"];
+        /**
+         * Update Data Sharing Consent
+         * @description Toggle the current user's data sharing consent.
+         *
+         *     Stamps ``data_sharing_consent_at`` with the current UTC time on every
+         *     call, regardless of whether the value changed. This makes the column
+         *     a "last toggled at" timestamp rather than a "first opted in at" one,
+         *     which is the cheaper guarantee to keep correct: a one-shot accidental
+         *     double-PUT can't drift the timestamp.
+         */
+        put: operations["update_data_sharing_consent_api_user_data_sharing_consent_put"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/user/channels/config": {
         parameters: {
             query?: never;
@@ -996,6 +1026,33 @@ export interface components {
             /** Enabled */
             enabled: boolean;
         };
+        /**
+         * DataSharingConsentRequest
+         * @description Body for ``PUT /api/user/data-sharing-consent``.
+         *
+         *     Single boolean. The endpoint always stamps ``data_sharing_consent_at``
+         *     with ``now()`` regardless of whether ``consent`` is ``True`` or
+         *     ``False``, so consent toggle history can be reconstructed even when
+         *     no separate audit table exists.
+         */
+        DataSharingConsentRequest: {
+            /** Consent */
+            consent: boolean;
+        };
+        /**
+         * DataSharingConsentResponse
+         * @description Returned by the consent setter and getter.
+         *
+         *     ``data_sharing_consent_at`` is the timestamp of the last toggle,
+         *     not "first opted in." If a user opts in, then opts out, this column
+         *     holds the opt-out time.
+         */
+        DataSharingConsentResponse: {
+            /** Data Sharing Consent */
+            data_sharing_consent: boolean;
+            /** Data Sharing Consent At */
+            data_sharing_consent_at: string | null;
+        };
         /** DeleteHeartbeatLogsResponse */
         DeleteHeartbeatLogsResponse: {
             /** Status */
@@ -1418,6 +1475,13 @@ export interface components {
             onboarding_complete: boolean;
             /** Is Active */
             is_active: boolean;
+            /**
+             * Data Sharing Consent
+             * @default false
+             */
+            data_sharing_consent: boolean;
+            /** Data Sharing Consent At */
+            data_sharing_consent_at?: string | null;
             /** Created At */
             created_at: string;
             /** Updated At */
@@ -1431,6 +1495,17 @@ export interface components {
          *     the backend (set by ``OnboardingSubscriber`` when the LLM deletes
          *     BOOTSTRAP.md or heuristic evidence appears) so the conversational
          *     onboarding can't be short-circuited by the UI.
+         *
+         *     ``data_sharing_consent`` is deliberately not writable here either:
+         *     it has its own dedicated endpoint (``PUT /api/user/data-sharing-consent``)
+         *     that always stamps ``data_sharing_consent_at``. Routing it through
+         *     this generic patch endpoint would lose the timestamp guarantee.
+         *
+         *     ``model_config`` pins ``extra="ignore"`` so unknown fields (including
+         *     ``data_sharing_consent`` if a client tries to slip it through here)
+         *     are silently dropped. This is the contract the dedicated-endpoint
+         *     test relies on. If pydantic ever flips the global default to
+         *     ``"forbid"``, this declaration keeps the contract stable.
          */
         UserProfileUpdate: {
             /** Phone */
@@ -1875,6 +1950,59 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["UserProfileResponse"];
+                };
+            };
+            /** @description Validation Error */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HTTPValidationError"];
+                };
+            };
+        };
+    };
+    get_data_sharing_consent_api_user_data_sharing_consent_get: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataSharingConsentResponse"];
+                };
+            };
+        };
+    };
+    update_data_sharing_consent_api_user_data_sharing_consent_put: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["DataSharingConsentRequest"];
+            };
+        };
+        responses: {
+            /** @description Successful Response */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DataSharingConsentResponse"];
                 };
             };
             /** @description Validation Error */
