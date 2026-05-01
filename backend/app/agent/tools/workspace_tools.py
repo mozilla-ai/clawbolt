@@ -98,6 +98,19 @@ def _extract_path(args: dict[str, object]) -> str | None:
     return str(args["path"]) if args.get("path") else None
 
 
+def _workspace_path_concurrency_key(args: dict[str, object]) -> str | None:
+    """Serialize concurrent writes to the same workspace path.
+
+    Two writes to the same file in one model turn race on
+    read-modify-write; two writes to different files do not, so we key
+    by path rather than collapsing all workspace mutations into one
+    bucket. Returns ``None`` when no path is present so calls with
+    malformed args cannot block siblings.
+    """
+    path = _extract_path(args)
+    return f"workspace_path:{path}" if path else None
+
+
 def _resolve_path(user_id: str, relative_path: str) -> tuple[Path, str | None]:
     """Resolve a relative path to an absolute path within the user directory.
 
@@ -550,7 +563,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 resource_extractor=_extract_path,
                 description_builder=lambda args: f"Write to {args.get('path', 'file')}",
             ),
-            concurrency_group="workspace_writes",
+            concurrency_group=_workspace_path_concurrency_key,
         ),
         Tool(
             name=ToolName.EDIT_FILE,
@@ -567,7 +580,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 resource_extractor=_extract_path,
                 description_builder=lambda args: f"Edit {args.get('path', 'file')}",
             ),
-            concurrency_group="workspace_writes",
+            concurrency_group=_workspace_path_concurrency_key,
         ),
         Tool(
             name=ToolName.DELETE_FILE,
@@ -583,7 +596,7 @@ def create_workspace_tools(user_id: str) -> list[Tool]:
                 resource_extractor=_extract_path,
                 description_builder=lambda args: f"Delete {args.get('path', 'file')}",
             ),
-            concurrency_group="workspace_writes",
+            concurrency_group=_workspace_path_concurrency_key,
         ),
     ]
 

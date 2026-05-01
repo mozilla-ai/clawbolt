@@ -89,9 +89,10 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
                 default_level=PermissionLevel.ALWAYS,
                 description_builder=lambda args: "Update heartbeat notes",
             ),
-            # Heartbeat updates target the same User row as USER.md / SOUL.md
-            # writes via the workspace tools, so they share the same group.
-            concurrency_group="workspace_writes",
+            # Match the per-path key used by workspace_tools for HEARTBEAT.md
+            # so a heartbeat update and a workspace write to the same file
+            # serialize against each other.
+            concurrency_group="workspace_path:HEARTBEAT.md",
         ),
     ]
 

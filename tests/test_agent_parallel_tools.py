@@ -22,7 +22,11 @@ import pytest
 from pydantic import BaseModel
 
 from backend.app.agent.context import StoredToolInteraction
-from backend.app.agent.core import ClawboltAgent
+from backend.app.agent.core import (
+    ClawboltAgent,
+    _bucket_by_concurrency_group,
+    _resolve_concurrency_group,
+)
 from backend.app.agent.llm_parsing import ParsedToolCall
 from backend.app.agent.messages import ToolCallRequest
 from backend.app.agent.tools.base import Tool, ToolResult
@@ -258,3 +262,178 @@ async def test_results_preserve_submission_order(test_user: User) -> None:
     # slow (50ms) would still be ~50ms total. The point of this test is
     # ordering, not timing, but bound the ceiling generously.
     assert elapsed < 0.5
+
+
+@pytest.mark.asyncio()
+async def test_callable_concurrency_group_keys_by_args(test_user: User) -> None:
+    """A callable ``concurrency_group`` lets one Tool route distinct calls
+    to distinct buckets based on validated arguments.
+
+    Workspace writers use this so two writes to *different* paths run in
+    parallel while two writes to the *same* path serialize. The test runs
+    three calls of the same Tool: A->"x", B->"x", C->"y". A and B must
+    serialize (shared key); C must overlap with at least one of them.
+    """
+
+    class _PathParams(BaseModel):
+        path: str
+
+    log: list[str] = []
+    c_started = asyncio.Event()
+
+    async def writer(path: str) -> ToolResult:
+        log.append(f"enter:{path}")
+        if path == "y":
+            c_started.set()
+            # Hold y until both x calls have entered or finished, then exit.
+            await asyncio.sleep(0.05)
+        else:
+            # x calls just sleep briefly to give the scheduler a chance
+            # to interleave with y if it would.
+            await asyncio.sleep(0.02)
+        log.append(f"exit:{path}")
+        return ToolResult(content=path)
+
+    tool = Tool(
+        name="write",
+        description="W",
+        function=writer,
+        params_model=_PathParams,
+        concurrency_group=lambda args: f"workspace_path:{args.get('path')}",
+    )
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+
+    parsed_calls = [
+        ToolCallRequest(id="c0", name="write", arguments={"path": "x"}),
+        ToolCallRequest(id="c1", name="write", arguments={"path": "x"}),
+        ToolCallRequest(id="c2", name="write", arguments={"path": "y"}),
+    ]
+    parsed_raw = [ParsedToolCall(id=c.id, name=c.name, arguments=c.arguments) for c in parsed_calls]
+
+    results = await agent._execute_tool_round(
+        parsed_calls=parsed_calls,
+        parsed_raw=parsed_raw,
+        actions_taken=[],
+        memories_saved=[],
+        tool_call_records=[],
+    )
+
+    assert [r.tool_call_id for r in results] == ["c0", "c1", "c2"]
+
+    # Same-key calls (the two x writes) must not overlap. Locate their
+    # entry/exit positions in the interleaved log and assert ordering.
+    x_entries = [i for i, ev in enumerate(log) if ev == "enter:x"]
+    x_exits = [i for i, ev in enumerate(log) if ev == "exit:x"]
+    # Two x calls means two entries and two exits.
+    assert len(x_entries) == 2 and len(x_exits) == 2
+    # First x must fully complete before second x starts.
+    assert x_exits[0] < x_entries[1], (
+        f"same-key writes overlapped: {log!r} (first exit at {x_exits[0]}, "
+        f"second enter at {x_entries[1]})"
+    )
+
+    # Different-key call (y) must run in parallel with at least one x call.
+    # If the scheduler had collapsed everything into a single bucket, y
+    # would only run after both x calls finished, putting "enter:y" after
+    # both "exit:x" entries. Assert the opposite.
+    y_entry = log.index("enter:y")
+    assert y_entry < x_exits[1], (
+        f"different-key call did not run in parallel: {log!r} "
+        f"(y entered at {y_entry}, second x exited at {x_exits[1]})"
+    )
+
+
+def test_resolve_concurrency_group_handles_string_callable_and_none() -> None:
+    """The resolver passes through strings, calls callables, and forwards None.
+
+    Pure-function unit test so the contract is locked in without
+    requiring an agent or any tool that already uses the field.
+    """
+
+    class _P(BaseModel):
+        path: str
+
+    async def noop(**_: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    static_tool = Tool(
+        name="static",
+        description="",
+        function=noop,
+        params_model=_P,
+        concurrency_group="fixed",
+    )
+    callable_tool = Tool(
+        name="callable",
+        description="",
+        function=noop,
+        params_model=_P,
+        concurrency_group=lambda args: f"path:{args['path']}",
+    )
+    none_tool = Tool(name="none", description="", function=noop, params_model=_P)
+
+    assert _resolve_concurrency_group(static_tool, {"path": "ignored"}) == "fixed"
+    assert _resolve_concurrency_group(callable_tool, {"path": "USER.md"}) == "path:USER.md"
+    assert _resolve_concurrency_group(none_tool, {"path": "anything"}) is None
+
+
+def test_bucket_by_concurrency_group_pure_function() -> None:
+    """The bucketing helper produces the right schedule units.
+
+    Cases exercised:
+    - None-group entries each become their own (parallel) unit.
+    - Entries sharing a non-None group form one (sequential) unit.
+    - A callable concurrency_group that resolves to the same key for
+      different entries collapses them into one bucket.
+    - Order within a non-None bucket follows ``approved_entries`` order.
+    """
+
+    class _P(BaseModel):
+        path: str
+
+    async def noop(**_: object) -> ToolResult:
+        return ToolResult(content="ok")
+
+    free = Tool(name="free", description="", function=noop, params_model=_P)
+    serial = Tool(
+        name="serial",
+        description="",
+        function=noop,
+        params_model=_P,
+        concurrency_group="g1",
+    )
+    by_path = Tool(
+        name="by_path",
+        description="",
+        function=noop,
+        params_model=_P,
+        concurrency_group=lambda args: f"path:{args['path']}",
+    )
+
+    approved: list[tuple[int, Tool, dict[str, object]]] = [
+        (0, free, {"path": "a"}),
+        (1, serial, {"path": "a"}),
+        (2, by_path, {"path": "x"}),
+        (3, serial, {"path": "b"}),
+        (4, by_path, {"path": "x"}),
+        (5, by_path, {"path": "y"}),
+    ]
+
+    units = _bucket_by_concurrency_group(approved)
+
+    keys_by_pos = [tuple(pos for pos, _entry in unit) for unit in units]
+
+    # Free entry (pos 0) is its own unit.
+    assert (0,) in keys_by_pos
+    # Serial entries (pos 1, 3) share group "g1" -> single sequential unit
+    # in submission order.
+    assert (1, 3) in keys_by_pos
+    # Two by_path entries with path="x" (pos 2, 4) collapse via the
+    # callable into one unit. pos 5 (path="y") is on its own.
+    assert (2, 4) in keys_by_pos
+    assert (5,) in keys_by_pos
+    # Total: 4 units, covering all 6 entries exactly once.
+    flat = sorted(p for unit_keys in keys_by_pos for p in unit_keys)
+    assert flat == [0, 1, 2, 3, 4, 5]
+    assert len(units) == 4
