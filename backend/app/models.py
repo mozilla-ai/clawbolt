@@ -204,6 +204,19 @@ class User(Base):
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(
         "OAuthToken", back_populates="user", cascade="all, delete-orphan"
     )
+    # Reports this user filed via ``/report``. ``ReportedConversation``
+    # has two FKs to ``users.id`` (``user_id`` for the reporter,
+    # ``reviewed_admin_user_id`` for the admin who closed it); the
+    # explicit ``foreign_keys=`` disambiguates that this relationship
+    # is the reporter side. We don't expose the admin-side relationship
+    # because the audit log already lets ops query "what did this admin
+    # do" without an ORM round-trip.
+    reported_conversations: Mapped[list["ReportedConversation"]] = relationship(
+        "ReportedConversation",
+        back_populates="user",
+        cascade="all, delete-orphan",
+        foreign_keys="ReportedConversation.user_id",
+    )
 
 
 class ChannelRoute(Base):
@@ -403,6 +416,14 @@ class ReportedConversation(Base):
     dismissed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     reviewed_admin_user_id: Mapped[str | None] = mapped_column(
         String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Reverse side of ``User.reported_conversations``. Disambiguated by
+    # ``foreign_keys`` because this table has two FKs to ``users.id``.
+    user: Mapped["User"] = relationship(
+        "User",
+        back_populates="reported_conversations",
+        foreign_keys=[user_id],
     )
 
 

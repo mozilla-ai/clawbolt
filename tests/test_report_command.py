@@ -67,6 +67,18 @@ class TestParseReportCommand:
         assert _parse_report_command("hello there") is None
         assert _parse_report_command("/help") is None
 
+    def test_reason_is_truncated_at_4kb(self) -> None:
+        """A pasted-transcript-sized reason is silently truncated rather
+        than rejected, so the report still files. Bounds row size for
+        the admin UI's list view and the JSON envelope."""
+        from backend.app.agent.ingestion import _REPORT_REASON_MAX_LEN
+
+        huge = "a" * (_REPORT_REASON_MAX_LEN * 4)
+        result = _parse_report_command(f"/report {huge}")
+        assert result is not None
+        assert len(result) == _REPORT_REASON_MAX_LEN
+        assert result == "a" * _REPORT_REASON_MAX_LEN
+
 
 class TestReportInterception:
     """End-to-end behavior: /report short-circuits the agent pipeline."""
