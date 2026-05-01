@@ -492,6 +492,62 @@
         }
       }
     },
+    "/api/user/data-sharing-consent": {
+      "get": {
+        "summary": "Get Data Sharing Consent",
+        "description": "Return the current user's data sharing consent state.",
+        "operationId": "get_data_sharing_consent_api_user_data_sharing_consent_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSharingConsentResponse"
+                }
+              }
+            }
+          }
+        }
+      },
+      "put": {
+        "summary": "Update Data Sharing Consent",
+        "description": "Toggle the current user's data sharing consent.\n\nStamps ``data_sharing_consent_at`` with the current UTC time on every\ncall, regardless of whether the value changed. This makes the column\na \"last toggled at\" timestamp rather than a \"first opted in at\" one,\nwhich is the cheaper guarantee to keep correct: a one-shot accidental\ndouble-PUT can't drift the timestamp.",
+        "operationId": "update_data_sharing_consent_api_user_data_sharing_consent_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/DataSharingConsentRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DataSharingConsentResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/user/channels/config": {
       "get": {
         "summary": "Get Channel Config",
@@ -1883,6 +1939,46 @@
         ],
         "title": "ChannelRouteUpdate"
       },
+      "DataSharingConsentRequest": {
+        "properties": {
+          "consent": {
+            "type": "boolean",
+            "title": "Consent"
+          }
+        },
+        "type": "object",
+        "required": [
+          "consent"
+        ],
+        "title": "DataSharingConsentRequest",
+        "description": "Body for ``PUT /api/user/data-sharing-consent``.\n\nSingle boolean. The endpoint always stamps ``data_sharing_consent_at``\nwith ``now()`` regardless of whether ``consent`` is ``True`` or\n``False``, so consent toggle history can be reconstructed even when\nno separate audit table exists."
+      },
+      "DataSharingConsentResponse": {
+        "properties": {
+          "data_sharing_consent": {
+            "type": "boolean",
+            "title": "Data Sharing Consent"
+          },
+          "data_sharing_consent_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Sharing Consent At"
+          }
+        },
+        "type": "object",
+        "required": [
+          "data_sharing_consent",
+          "data_sharing_consent_at"
+        ],
+        "title": "DataSharingConsentResponse",
+        "description": "Returned by the consent setter and getter.\n\n``data_sharing_consent_at`` is the timestamp of the last toggle,\nnot \"first opted in.\" If a user opts in, then opts out, this column\nholds the opt-out time."
+      },
       "DeleteHeartbeatLogsResponse": {
         "properties": {
           "status": {
@@ -2896,6 +2992,22 @@
             "type": "boolean",
             "title": "Is Active"
           },
+          "data_sharing_consent": {
+            "type": "boolean",
+            "title": "Data Sharing Consent",
+            "default": false
+          },
+          "data_sharing_consent_at": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data Sharing Consent At"
+          },
           "created_at": {
             "type": "string",
             "title": "Created At"
@@ -3019,7 +3131,7 @@
         },
         "type": "object",
         "title": "UserProfileUpdate",
-        "description": "Fields the client is allowed to update on the current user.\n\n``onboarding_complete`` is deliberately not writable here. It is owned by\nthe backend (set by ``OnboardingSubscriber`` when the LLM deletes\nBOOTSTRAP.md or heuristic evidence appears) so the conversational\nonboarding can't be short-circuited by the UI."
+        "description": "Fields the client is allowed to update on the current user.\n\n``onboarding_complete`` is deliberately not writable here. It is owned by\nthe backend (set by ``OnboardingSubscriber`` when the LLM deletes\nBOOTSTRAP.md or heuristic evidence appears) so the conversational\nonboarding can't be short-circuited by the UI.\n\n``data_sharing_consent`` is deliberately not writable here either:\nit has its own dedicated endpoint (``PUT /api/user/data-sharing-consent``)\nthat always stamps ``data_sharing_consent_at``. Routing it through\nthis generic patch endpoint would lose the timestamp guarantee.\n\n``model_config`` pins ``extra=\"ignore\"`` so unknown fields (including\n``data_sharing_consent`` if a client tries to slip it through here)\nare silently dropped. This is the contract the dedicated-endpoint\ntest relies on. If pydantic ever flips the global default to\n``\"forbid\"``, this declaration keeps the contract stable."
       },
       "ValidationError": {
         "properties": {

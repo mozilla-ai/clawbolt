@@ -128,6 +128,15 @@ class User(Base):
     soul_text: Mapped[str] = mapped_column(Text, default="")
     user_text: Mapped[str] = mapped_column(Text, default="")
     heartbeat_text: Mapped[str] = mapped_column(Text, default="")
+    # User research / data sharing consent. Defaults to False so admins
+    # only see message bodies, memory, and other user content for users
+    # who explicitly opted in here. ``data_sharing_consent_at`` is set
+    # on every change (opt-in AND opt-out) so consent history can be
+    # reconstructed by joining against an audit log if needed.
+    data_sharing_consent: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    data_sharing_consent_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True, default=None
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -153,6 +162,7 @@ class User(Base):
             "soul_text": "",
             "user_text": "",
             "heartbeat_text": "",
+            "data_sharing_consent": False,
         }
         _factory_defaults: dict[str, Callable[[], object]] = {
             "id": lambda: str(_uuid.uuid4()),

@@ -24,6 +24,8 @@ from backend.app.schemas import (
     ChannelRouteListResponse,
     ChannelRouteResponse,
     ChannelRouteUpdate,
+    DataSharingConsentRequest,
+    DataSharingConsentResponse,
     DeleteHeartbeatLogsResponse,
     HeartbeatLogItemResponse,
     HeartbeatLogListResponse,
@@ -59,6 +61,10 @@ def _profile_response(c: User) -> UserProfileResponse:
         heartbeat_max_daily=c.heartbeat_max_daily,
         onboarding_complete=c.onboarding_complete,
         is_active=c.is_active,
+        data_sharing_consent=c.data_sharing_consent,
+        data_sharing_consent_at=(
+            c.data_sharing_consent_at.isoformat() if c.data_sharing_consent_at else None
+        ),
         created_at=c.created_at.isoformat(),
         updated_at=c.updated_at.isoformat(),
     )
@@ -91,6 +97,71 @@ async def update_profile(
     db.commit()
     db.refresh(user)
     return _profile_response(user)
+
+
+# ---------------------------------------------------------------------------
+# Data sharing consent
+# ---------------------------------------------------------------------------
+#
+# Separate endpoint (not folded into ``PUT /user/profile``) because the
+# timestamp must be stamped on every change (opt-in AND opt-out) so
+# consent history is reconstructable. Routing through the generic patch
+# endpoint would require a special case for this column; cleaner to give
+# it its own URL with the invariant in the route signature.
+
+
+def _data_sharing_consent_now() -> datetime.datetime:
+    """Return ``datetime.datetime.now(datetime.UTC)``.
+
+    Pulled out as a helper so tests can monkeypatch the clock when they
+    need to verify the timestamp updated to a specific instant. Without
+    this seam, asserting "the second PUT bumped the timestamp" can only
+    rely on ``>= t1`` ordering, which is non-trivial when both calls
+    happen inside one millisecond of test runtime.
+    """
+    return datetime.datetime.now(datetime.UTC)
+
+
+@router.get("/user/data-sharing-consent", response_model=DataSharingConsentResponse)
+async def get_data_sharing_consent(
+    current_user: User = Depends(get_current_user),
+) -> DataSharingConsentResponse:
+    """Return the current user's data sharing consent state."""
+    return DataSharingConsentResponse(
+        data_sharing_consent=current_user.data_sharing_consent,
+        data_sharing_consent_at=(
+            current_user.data_sharing_consent_at.isoformat()
+            if current_user.data_sharing_consent_at
+            else None
+        ),
+    )
+
+
+@router.put("/user/data-sharing-consent", response_model=DataSharingConsentResponse)
+async def update_data_sharing_consent(
+    body: DataSharingConsentRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> DataSharingConsentResponse:
+    """Toggle the current user's data sharing consent.
+
+    Stamps ``data_sharing_consent_at`` with the current UTC time on every
+    call, regardless of whether the value changed. This makes the column
+    a "last toggled at" timestamp rather than a "first opted in at" one,
+    which is the cheaper guarantee to keep correct: a one-shot accidental
+    double-PUT can't drift the timestamp.
+    """
+    user = get_or_404(db, User, detail="User not found", id=current_user.id)
+    user.data_sharing_consent = body.consent
+    user.data_sharing_consent_at = _data_sharing_consent_now()
+    db.commit()
+    db.refresh(user)
+    return DataSharingConsentResponse(
+        data_sharing_consent=user.data_sharing_consent,
+        data_sharing_consent_at=(
+            user.data_sharing_consent_at.isoformat() if user.data_sharing_consent_at else None
+        ),
+    )
 
 
 # ---------------------------------------------------------------------------
