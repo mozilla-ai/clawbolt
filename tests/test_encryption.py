@@ -576,6 +576,10 @@ def test_migration_020_full_upgrade_loop_against_real_db(
         cs = ChatSession(session_id=f"sess-{uuid.uuid4().hex[:8]}", user_id=user.id)
         db.add(cs)
         db.flush()
+        # Capture the FK id as a plain int while the session is still
+        # open so the assertions below don't trigger a refresh on a
+        # detached instance after ``db.close()``.
+        chat_session_id: int = cs.id
         # Three plaintext rows so we exercise the multi-row code path.
         for seq, body, ctx in [
             (1, "first plaintext body", "first context"),
@@ -589,7 +593,7 @@ def test_migration_020_full_upgrade_loop_against_real_db(
                     "media_urls_json, timestamp) VALUES (:s, :seq, 'inbound', :b, "
                     ":pc, '', '', '', NOW())"
                 ),
-                {"s": cs.id, "seq": seq, "b": body, "pc": ctx},
+                {"s": chat_session_id, "seq": seq, "b": body, "pc": ctx},
             )
         db.commit()
     finally:
@@ -618,7 +622,7 @@ def test_migration_020_full_upgrade_loop_against_real_db(
                 "SELECT seq, body, processed_context FROM messages "
                 "WHERE session_id = :s ORDER BY seq"
             ),
-            {"s": cs.id},
+            {"s": chat_session_id},
         ).all()
         assert len(rows) == 3
         # Row 1: both columns envelope-encrypted.
