@@ -335,14 +335,31 @@ class MediaFile(Base):
 
 
 class MemoryDocument(Base):
+    """Per-user memory document and compaction history.
+
+    ``memory_text`` and ``history_text`` are envelope-encrypted at rest
+    via ``EncryptedString`` (same pattern as ``Message.body`` from
+    migration 020). This is the user's working memory file (notes,
+    reminders, recent context) plus the compacted history of older
+    sessions; both contain everything the agent has been told and is
+    among the most sensitive content in the database.
+
+    ORM reads decrypt transparently. Direct SQL reads return the
+    envelope blob and require ``decrypt()`` to recover plaintext.
+    """
+
     __tablename__ = "memory_documents"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), unique=True, nullable=False
     )
-    memory_text: Mapped[str] = mapped_column(Text, default="")
-    history_text: Mapped[str] = mapped_column(Text, default="")
+    memory_text: Mapped[str] = mapped_column(
+        EncryptedString(table="memory_documents", column="memory_text"), default=""
+    )
+    history_text: Mapped[str] = mapped_column(
+        EncryptedString(table="memory_documents", column="history_text"), default=""
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
@@ -356,6 +373,23 @@ class MemoryDocument(Base):
 
 
 class HeartbeatLog(Base):
+    """A single heartbeat scheduler run.
+
+    Three text columns carry user-facing content and are envelope-
+    encrypted at rest via ``EncryptedString`` (same pattern as
+    ``Message.body``):
+
+    - ``message_text``: the actual proactive message we sent (or would
+      have sent, on a skip).
+    - ``reasoning``: the LLM's free-text rationale for sending /
+      skipping. Often includes user content paraphrased back.
+    - ``tasks``: serialized task state the heartbeat was deciding from.
+      Contains user-authored task descriptions.
+
+    ``action_type`` and ``channel`` stay plaintext: short enums needed
+    for filtering / aggregation, no PII.
+    """
+
     __tablename__ = "heartbeat_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
@@ -363,10 +397,16 @@ class HeartbeatLog(Base):
         String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
     action_type: Mapped[str] = mapped_column(String, default="send")
-    message_text: Mapped[str] = mapped_column(Text, default="")
+    message_text: Mapped[str] = mapped_column(
+        EncryptedString(table="heartbeat_logs", column="message_text"), default=""
+    )
     channel: Mapped[str] = mapped_column(String, default="")
-    reasoning: Mapped[str] = mapped_column(Text, default="")
-    tasks: Mapped[str] = mapped_column(Text, default="")
+    reasoning: Mapped[str] = mapped_column(
+        EncryptedString(table="heartbeat_logs", column="reasoning"), default=""
+    )
+    tasks: Mapped[str] = mapped_column(
+        EncryptedString(table="heartbeat_logs", column="tasks"), default=""
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
