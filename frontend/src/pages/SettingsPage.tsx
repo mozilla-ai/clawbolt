@@ -10,6 +10,7 @@ import Field from '@/components/ui/field';
 import api from '@/api';
 import { toast } from '@/lib/toast';
 import { useModelConfig, useUpdateModelConfig, useStorageConfig, useUpdateStorageConfig, useUpdateProfile, useChannelConfig, useUpdateChannelConfig } from '@/hooks/queries';
+import DataSharingConsentSection from '@/components/DataSharingConsentSection';
 import type { AppShellContext } from '@/layouts/AppShell';
 import {
   getExtraSettingsTabs,
@@ -40,6 +41,7 @@ export default function SettingsPage() {
     { key: 'storage', label: 'Storage' },
     { key: 'heartbeat', label: 'Heartbeat' },
     { key: 'telegram', label: 'Telegram' },
+    { key: 'privacy', label: 'Privacy' },
   ].filter((t) => visibleOssKeys.includes(t.key));
   const allTabs = [...ossTabs, ...extraTabs.map((t) => ({ key: t.key, label: t.label }))];
   const activeTab = (tab && allTabs.some((t) => t.key === tab)) ? tab : allTabs[0]?.key || 'model';
@@ -55,6 +57,7 @@ export default function SettingsPage() {
       case 'storage': return <StorageTab />;
       case 'heartbeat': return profile ? <HeartbeatTab profile={profile} /> : null;
       case 'telegram': return <TelegramTab />;
+      case 'privacy': return <PrivacyTab />;
       default: return null;
     }
   };
@@ -677,5 +680,15 @@ function TelegramTab() {
         </Button>
       </div>
     </div>
+  );
+}
+
+// --- Privacy Tab ---
+
+function PrivacyTab() {
+  return (
+    <Card>
+      <DataSharingConsentSection />
+    </Card>
   );
 }
