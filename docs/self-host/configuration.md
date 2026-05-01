@@ -108,6 +108,7 @@ See [Storage Providers](./storage.md) for setup instructions.
 | `MAX_INPUT_TOKENS` | `120000` | Max input token budget before context trimming |
 | `CONTEXT_TRIM_TARGET_TOKENS` | `80000` | Target token count after trimming |
 | `LLM_MAX_RETRIES` | `3` | Maximum number of retry attempts on rate limit errors |
+| `LLM_CACHE_EXTENDED_TTL` | `true` | Use Anthropic's 1-hour extended cache TTL instead of the default 5 minutes. Reduces cold-start cache misses for users with multi-hour gaps between messages. Set to `false` on non-Anthropic providers that reject the `ttl` field |
 
 ## Conversation and memory
 
