@@ -149,9 +149,7 @@ async def test_sse_handler_can_read_already_resolved_future() -> None:
     bus = MessageBus()
     request_id = "req-race"
     fut = bus.register_response_future(request_id)
-    msg = OutboundMessage(
-        channel="webchat", chat_id="user-1", content="ack", request_id=request_id
-    )
+    msg = OutboundMessage(channel="webchat", chat_id="user-1", content="ack", request_id=request_id)
 
     # Dispatcher path: resolve the response.
     assert bus.resolve_response(request_id, msg) is True
