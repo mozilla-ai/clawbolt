@@ -625,6 +625,48 @@ class PendingApprovalRow(Base):
     )
 
 
+class CompactionEvent(Base):
+    """One row per session-compaction run.
+
+    Compaction is the agent's mechanism for trimming a long session and
+    extracting durable facts into ``MemoryDocument``. Per-event timing,
+    sizes, and outcome flags used to live only in ``logger.info(
+    "compaction.summary user=...")`` lines, which made cross-event
+    queries ("how often does this user compact? how big are the
+    inputs?") impossible without grepping logs.
+
+    All columns are metadata; the actual extracted content (the
+    summary appended to ``MemoryDocument.history_text``) stays
+    envelope-encrypted at rest under that column. Surfacing this
+    table to admins still goes through the consent gate on the
+    premium ``/admin/shared-data/users/{id}/compaction-events``
+    endpoint; we keep the writes unconditional since the columns
+    carry no user-authored content.
+
+    See ``backend/app/agent/compaction.py`` for the call site.
+    """
+
+    __tablename__ = "compaction_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    triggered_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+    duration_ms: Mapped[int] = mapped_column(Integer, default=0)
+    trimmed_count: Mapped[int] = mapped_column(Integer, default=0)
+    trimmed_chars: Mapped[int] = mapped_column(Integer, default=0)
+    input_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    max_message_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    memory_updated: Mapped[bool] = mapped_column(Boolean, default=False)
+    user_profile_updated: Mapped[bool] = mapped_column(Boolean, default=False)
+    soul_updated: Mapped[bool] = mapped_column(Boolean, default=False)
+    summary_len: Mapped[int] = mapped_column(Integer, default=0)
+
+
 class UserPermissionSet(Base):
     """Per-user tool/resource permission overrides (formerly PERMISSIONS.json).
 

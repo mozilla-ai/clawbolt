@@ -263,4 +263,67 @@ async def compact_session(
         len(result.summary or ""),
     )
 
+    # Persist the same metrics so admins can query "when did this user
+    # last compact / how big was the input / what got updated" without
+    # grepping Railway logs. Best-effort: a DB hiccup must not lose the
+    # compacted memory we just wrote upstream.
+    try:
+        _persist_compaction_event(
+            user_id=user_id,
+            trimmed_count=_trimmed_count,
+            trimmed_chars=_input_chars,
+            input_tokens=_input_tokens,
+            output_tokens=_output_tokens,
+            duration_ms=_duration_ms,
+            max_message_seq=max_message_seq,
+            memory_updated=bool(result.memory_update),
+            user_profile_updated=bool(result.user_profile_update),
+            soul_updated=bool(result.soul_update),
+            summary_len=len(result.summary or ""),
+        )
+    except Exception:
+        logger.exception("Failed to persist compaction event for user %s", user_id)
+
     return result.memory_update, max_message_seq
+
+
+def _persist_compaction_event(
+    *,
+    user_id: str,
+    trimmed_count: int,
+    trimmed_chars: int,
+    input_tokens: int,
+    output_tokens: int,
+    duration_ms: int,
+    max_message_seq: int | None,
+    memory_updated: bool,
+    user_profile_updated: bool,
+    soul_updated: bool,
+    summary_len: int,
+) -> None:
+    """Write one ``CompactionEvent`` row.
+
+    Imports the model + SessionLocal lazily so the agent module does
+    not pull SQLAlchemy at import time on every test that exercises
+    pure compaction logic with mocked LLM calls.
+    """
+    from backend.app.database import SessionLocal
+    from backend.app.models import CompactionEvent
+
+    with SessionLocal() as db:
+        db.add(
+            CompactionEvent(
+                user_id=user_id,
+                trimmed_count=trimmed_count,
+                trimmed_chars=trimmed_chars,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                duration_ms=duration_ms,
+                max_message_seq=max_message_seq,
+                memory_updated=memory_updated,
+                user_profile_updated=user_profile_updated,
+                soul_updated=soul_updated,
+                summary_len=summary_len,
+            )
+        )
+        db.commit()
