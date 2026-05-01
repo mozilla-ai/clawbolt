@@ -46,6 +46,8 @@ class UserProfileResponse(BaseModel):
     heartbeat_max_daily: int = 0
     onboarding_complete: bool
     is_active: bool
+    data_sharing_consent: bool = False
+    data_sharing_consent_at: str | None = None
     created_at: str
     updated_at: str
 
@@ -57,6 +59,11 @@ class UserProfileUpdate(BaseModel):
     the backend (set by ``OnboardingSubscriber`` when the LLM deletes
     BOOTSTRAP.md or heuristic evidence appears) so the conversational
     onboarding can't be short-circuited by the UI.
+
+    ``data_sharing_consent`` is deliberately not writable here either —
+    it has its own dedicated endpoint (``PUT /api/user/data-sharing-consent``)
+    that always stamps ``data_sharing_consent_at``. Routing it through
+    this generic patch endpoint would lose the timestamp guarantee.
     """
 
     phone: str | None = None
@@ -67,6 +74,30 @@ class UserProfileUpdate(BaseModel):
     heartbeat_opt_in: bool | None = None
     heartbeat_frequency: str | None = None
     heartbeat_max_daily: int | None = Field(default=None, ge=0)
+
+
+class DataSharingConsentRequest(BaseModel):
+    """Body for ``PUT /api/user/data-sharing-consent``.
+
+    Single boolean. The endpoint always stamps ``data_sharing_consent_at``
+    with ``now()`` regardless of whether ``consent`` is ``True`` or
+    ``False``, so consent toggle history can be reconstructed even when
+    no separate audit table exists.
+    """
+
+    consent: bool
+
+
+class DataSharingConsentResponse(BaseModel):
+    """Returned by the consent setter and getter.
+
+    ``data_sharing_consent_at`` is the timestamp of the last toggle —
+    not "first opted in." If a user opts in, then opts out, this column
+    holds the opt-out time.
+    """
+
+    data_sharing_consent: bool
+    data_sharing_consent_at: str | None
 
 
 # ---------------------------------------------------------------------------

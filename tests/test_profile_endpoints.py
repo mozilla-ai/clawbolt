@@ -104,6 +104,82 @@ def test_update_profile_heartbeat_max_daily(client: TestClient) -> None:
     assert data["heartbeat_max_daily"] == 10
 
 
+# ---------------------------------------------------------------------------
+# Data sharing consent
+# ---------------------------------------------------------------------------
+
+
+def test_get_profile_includes_data_sharing_consent_defaults(client: TestClient) -> None:
+    """GET /api/user/profile exposes the consent state — default is opt-out."""
+    resp = client.get("/api/user/profile")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["data_sharing_consent"] is False
+    assert data["data_sharing_consent_at"] is None
+
+
+def test_get_data_sharing_consent_default(client: TestClient) -> None:
+    """Dedicated GET endpoint returns the same state as the profile blob."""
+    resp = client.get("/api/user/data-sharing-consent")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data == {"data_sharing_consent": False, "data_sharing_consent_at": None}
+
+
+def test_opt_in_stamps_consent_timestamp(client: TestClient) -> None:
+    """Opting in flips the bool AND records when it happened."""
+    resp = client.put("/api/user/data-sharing-consent", json={"consent": True})
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["data_sharing_consent"] is True
+    assert data["data_sharing_consent_at"] is not None
+    # ISO-8601 with timezone (datetime.isoformat() on a tz-aware datetime).
+    assert "T" in data["data_sharing_consent_at"]
+
+
+def test_opt_out_also_stamps_consent_timestamp(client: TestClient) -> None:
+    """Opting OUT also bumps the timestamp.
+
+    The column tracks "last toggled" not "first opted in" — without this,
+    a user who opts in and later opts out would still appear (by
+    timestamp) as having an active recent consent.
+    """
+    # First opt in.
+    r1 = client.put("/api/user/data-sharing-consent", json={"consent": True})
+    assert r1.status_code == 200
+    t1 = r1.json()["data_sharing_consent_at"]
+    assert t1 is not None
+
+    # Then opt out — timestamp must update to a >= value (allow equality
+    # because the test runs faster than datetime resolution).
+    r2 = client.put("/api/user/data-sharing-consent", json={"consent": False})
+    assert r2.status_code == 200
+    data = r2.json()
+    assert data["data_sharing_consent"] is False
+    assert data["data_sharing_consent_at"] is not None
+    assert data["data_sharing_consent_at"] >= t1
+
+
+def test_data_sharing_consent_not_writable_via_generic_profile_put(client: TestClient) -> None:
+    """``data_sharing_consent`` must not be settable via PUT /user/profile.
+
+    The dedicated endpoint always stamps the timestamp; the generic
+    patch endpoint doesn't, so accepting it there would silently bypass
+    the timestamp guarantee.
+    """
+    resp = client.put(
+        "/api/user/profile",
+        json={"data_sharing_consent": True, "phone": "+15552222222"},
+    )
+    # Other field still applies; the consent field is silently dropped
+    # because Pydantic with extra='ignore' (default) strips unknowns.
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["phone"] == "+15552222222"
+    assert data["data_sharing_consent"] is False
+    assert data["data_sharing_consent_at"] is None
+
+
 def test_get_model_config(client: TestClient) -> None:
     """GET /user/model/config returns current server-level LLM settings."""
     resp = client.get("/api/user/model/config")
