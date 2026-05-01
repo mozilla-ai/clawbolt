@@ -46,9 +46,9 @@ test.describe('OSS Smoke Tests', () => {
     await expect(page.getByRole('link', { name: /integrations/i })).toBeVisible();
     await expect(page.getByRole('link', { name: /settings/i })).toBeVisible();
 
-    // Knowledge (formerly Memory) sits under the collapsed "Advanced" fold.
+    // Knowledge (formerly Memory) sits under the collapsed "Personalize" fold.
     await expect(page.getByRole('link', { name: /knowledge/i })).not.toBeVisible();
-    await page.getByRole('button', { name: /advanced/i }).click();
+    await page.getByRole('button', { name: /personalize/i }).click();
     await expect(page.getByRole('link', { name: /knowledge/i })).toBeVisible();
   });
 });
