@@ -36,7 +36,7 @@ from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia
-from backend.app.models import ChannelRoute, User
+from backend.app.models import ChannelRoute, ChatSession, Message, ReportedConversation, User
 
 logger = logging.getLogger(__name__)
 
@@ -547,6 +547,156 @@ message_batcher = MessageBatcher(window_ms=settings.message_batch_window_ms)
 
 
 # ---------------------------------------------------------------------------
+# /report inline command
+# ---------------------------------------------------------------------------
+#
+# Users on iMessage / Telegram / SMS can flag a conversation for admin
+# review by texting ``/report`` (optionally followed by a free-text
+# reason). The literal text is intercepted before it reaches the LLM
+# and never persisted as a normal user message; instead a row goes
+# into ``reported_conversations`` and the user gets a fixed
+# acknowledgement reply. The premium ``/admin/reported-conversations``
+# router consumes the rows.
+
+_REPORT_PREFIX = "/report"
+_REPORT_ACK = (
+    "Got it. I've flagged this conversation for our team to review. "
+    "They'll only look at messages you've already sent through this chat."
+)
+# Cap on the reason text persisted into ``reported_conversations.reason``.
+# Defends against accidentally storing a 100KB message in the row when a
+# user pastes a long transcript or rant after ``/report``. 4KB is more
+# than enough for "the bot said X and I disagreed because Y," and it
+# bounds row size for the admin UI's list view.
+_REPORT_REASON_MAX_LEN = 4096
+
+
+def _parse_report_command(text: str) -> str | None:
+    """Return the optional reason if *text* is a ``/report`` invocation.
+
+    Recognized shapes (case-insensitive on the command word):
+
+    - ``/report`` → returns ``""`` (empty reason)
+    - ``/report bot was rude`` → returns ``"bot was rude"``
+    - ``/reportbot ...`` → returns ``None`` (not a command, just a
+      message that happens to start with the same letters)
+    - ``please /report this`` → returns ``None`` (command must be at
+      the start so users typing ``/report`` mid-sentence aren't
+      surprised by a flag)
+
+    Leading/trailing whitespace is allowed and stripped. The returned
+    reason is also capped at ``_REPORT_REASON_MAX_LEN`` chars; longer
+    text is truncated rather than rejected so the report still files.
+    """
+    if not text:
+        return None
+    stripped = text.strip()
+    lowered = stripped.lower()
+    if not lowered.startswith(_REPORT_PREFIX):
+        return None
+    # Must be ``/report`` exactly or ``/report `` followed by content.
+    rest = stripped[len(_REPORT_PREFIX) :]
+    if rest and not rest[0].isspace():
+        return None
+    return rest.strip()[:_REPORT_REASON_MAX_LEN]
+
+
+async def _handle_report_command(
+    inbound: "InboundMessage",
+    user: User,
+    reason: str,
+) -> None:
+    """Persist the report and send an acknowledgement to the user.
+
+    Resolves (or creates) the user's session so the report row has a
+    stable ``session_id`` FK. Best-effort about ``anchor_seq``: looks
+    up the latest message in the session at report time, but if
+    something fails we still write the row with ``anchor_seq=NULL``
+    rather than fail the user-visible ack.
+
+    The ack is sent in a ``try/finally`` so there is exactly one call
+    site regardless of which failure path the persistence takes. The
+    user should never see silence for ``/report``.
+    """
+    # ``backend.app.bus`` is imported lazily here because the bus
+    # module imports ingestion (via the channel manager) and the two
+    # would form a circular dependency at module-load time. The other
+    # functions in this file do the same.
+    from backend.app.bus import OutboundMessage, message_bus
+
+    try:
+        try:
+            session, _is_new = await get_or_create_conversation(
+                user.id, external_session_id=inbound.session_id
+            )
+        except Exception:
+            logger.exception(
+                "/report: failed to resolve session for user %s; skipping persistence",
+                user.id,
+            )
+            return
+
+        # Look up the most recent message seq in this session as the
+        # anchor. Best-effort: NULL is acceptable if the session is
+        # empty or the query fails. The DTO carries
+        # ``session.session_id`` (the UUID string); we resolve to the
+        # integer ``ChatSession.id`` here for the FK on
+        # ``reported_conversations``.
+        db = SessionLocal()
+        try:
+            cs_row = (
+                db.query(ChatSession).filter(ChatSession.session_id == session.session_id).first()
+            )
+            if cs_row is None:
+                logger.error(
+                    "/report: session %s not in DB; skipping persistence",
+                    session.session_id,
+                )
+            else:
+                latest_seq = (
+                    db.query(Message.seq)
+                    .filter(Message.session_id == cs_row.id)
+                    .order_by(Message.seq.desc())
+                    .limit(1)
+                    .scalar()
+                )
+                anchor_seq = int(latest_seq) if latest_seq is not None else None
+                row = ReportedConversation(
+                    user_id=user.id,
+                    session_id=cs_row.id,
+                    anchor_seq=anchor_seq,
+                    reason=reason,
+                )
+                db.add(row)
+                db.commit()
+                logger.info(
+                    "/report filed by user %s for session %s (anchor_seq=%s, reason_len=%d)",
+                    user.id,
+                    session.session_id,
+                    anchor_seq,
+                    len(reason),
+                )
+        except Exception:
+            logger.exception(
+                "/report: failed to persist row for user %s session %s",
+                user.id,
+                session.session_id,
+            )
+            db.rollback()
+        finally:
+            db.close()
+    finally:
+        await message_bus.publish_outbound(
+            OutboundMessage(
+                channel=inbound.channel,
+                chat_id=inbound.sender_id,
+                content=_REPORT_ACK,
+                request_id=inbound.request_id,
+            )
+        )
+
+
+# ---------------------------------------------------------------------------
 # Bus consumer entry point
 # ---------------------------------------------------------------------------
 
@@ -589,6 +739,17 @@ async def process_inbound_from_bus(
             inbound.channel,
             inbound.sender_id,
         )
+        return
+
+    # -- Intercept /report command before approval / agent dispatch --
+    # Runs ahead of the approval check on purpose: a user mid-approval
+    # who decides to file a report should still be able to. We send the
+    # ack and bail without resolving the approval, which leaves any
+    # blocked agent loop pending. The user can subsequently reply to
+    # the approval prompt as usual.
+    report_reason = _parse_report_command(inbound.text)
+    if report_reason is not None:
+        await _handle_report_command(inbound, user, report_reason)
         return
 
     # -- Intercept approval responses before normal processing --
