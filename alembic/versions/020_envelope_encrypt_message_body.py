@@ -37,17 +37,8 @@ million-row deployments should plan a maintenance window or run
 ``op.execute("SET LOCAL statement_timeout = 0")`` first.
 
 Revision ID: 020
-Revises: 018
+Revises: 019
 Create Date: 2026-05-01
-
-Stacking note: this migration depends on ``018``, NOT on ``019``.
-``019`` (data_sharing_consent on users, in flight at clawbolt#1100)
-touches a different table (``users``) so the chain order between the
-two doesn't matter functionally. Whichever PR merges second will see
-a two-heads conflict from alembic and needs a one-line down_revision
-bump. We chose ``018`` here so this branch's e2e-playwright CI (which
-runs ``alembic upgrade head`` to bring up a real app instance) can
-pass standalone.
 """
 
 from __future__ import annotations
@@ -65,7 +56,7 @@ from backend.app.security.encryption import (
 )
 
 revision: str = "020"
-down_revision: str = "018"
+down_revision: str = "019"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 
