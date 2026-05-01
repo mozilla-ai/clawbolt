@@ -25,11 +25,13 @@ import pytest
 from cryptography.fernet import Fernet
 from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.hkdf import HKDF
+from pydantic import SecretStr
 from sqlalchemy import text as _sa_text
 
 import backend.app.auth.loader as auth_loader
 import backend.app.database as _db_module
 from alembic import op as _alembic_op
+from backend.app.config import settings as _app_settings
 from backend.app.models import ChatSession, Message, OAuthToken, User
 from backend.app.security.encryption import (
     ENVELOPE_PREFIX,
@@ -555,6 +557,13 @@ def test_migration_020_full_upgrade_loop_against_real_db(
     logic doesn't infinite-loop when the in-loop ``last_id = row_id``
     assignment is bypassed.
     """
+    # The migration's preflight check refuses to run when the messages
+    # table is non-empty AND ``settings.encryption_key`` is empty. The
+    # test database fits that shape (no key configured by default), so
+    # seed a synthetic key for this test. This is exactly the operator
+    # workflow the preflight is documenting: set the key, then migrate.
+    monkeypatch.setattr(_app_settings, "encryption_key", SecretStr("a" * 32))
+
     # Insert plaintext rows directly via raw SQL to simulate the pre-
     # migration state. Going through the ORM would invoke the
     # ``EncryptedString`` type decorator and pre-encrypt them, which is
