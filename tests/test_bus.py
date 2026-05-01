@@ -130,6 +130,41 @@ async def test_resolve_cleans_up_future() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sse_handler_can_read_already_resolved_future() -> None:
+    """Race: dispatcher resolves the response BEFORE the SSE client opens
+    the event stream. The SSE handler then calls
+    ``get_response_future(request_id)`` and must find the resolved
+    future so it can yield ``{'reply': ...}`` and close the stream.
+
+    Pre-fix, ``resolve_response`` popped the future from the registry,
+    so ``get_response_future`` returned None, the SSE handler then
+    registered a fresh future, and the spinner hung until the
+    server-side approval timeout. Reproduced when the ``/report``
+    short-circuit reply hit the bus before the client's SSE GET
+    landed.
+
+    The fix: ``resolve_response`` now leaves the future in the
+    registry; the TTL cleanup evicts it after the SSE handler is done.
+    """
+    bus = MessageBus()
+    request_id = "req-race"
+    fut = bus.register_response_future(request_id)
+    msg = OutboundMessage(
+        channel="webchat", chat_id="user-1", content="ack", request_id=request_id
+    )
+
+    # Dispatcher path: resolve the response.
+    assert bus.resolve_response(request_id, msg) is True
+    assert fut.done()
+
+    # SSE handler path (running AFTER resolve): must find the same
+    # future and read its result.
+    fetched = bus.get_response_future(request_id)
+    assert fetched is fut
+    assert fetched.result().content == "ack"
+
+
+@pytest.mark.asyncio
 async def test_ttl_cleanup_removes_event_queue() -> None:
     """TTL cleanup should remove orphaned event queues when SSE is never opened."""
     bus = MessageBus()
