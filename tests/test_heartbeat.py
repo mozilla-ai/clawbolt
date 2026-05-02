@@ -1055,6 +1055,104 @@ class TestRunHeartbeatForUser:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_cleanup_only_logs_with_tasks_for_dedup(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """Cleanup-only Phase 2 must write a heartbeat log entry whose
+        tasks string is the same one Phase 1 issued.
+
+        The Phase 1 24-hour dedup rule keys on the per-tick history
+        emitted by ``_format_heartbeat_history``; that history shows
+        non-skip log entries with their tasks. If a cleanup-only run
+        (no user-facing reply) writes nothing, the next tick's history
+        is empty for that turn and the LLM has no signal to dedup
+        against, so it re-issues the same removal task on every tick
+        until the item ages out some other way.
+        """
+        from backend.app.agent.context import StoredToolInteraction
+        from backend.app.agent.core import AgentResponse
+
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run",
+            tasks="Remove the stale 'follow up on Smith estimate' entry",
+            reasoning="The dated item is past due and was already handled",
+        )
+        # Phase 2 ran update_heartbeat (no SENDS_REPLY tag) and produced
+        # no user-facing reply text. This is the cleanup-only shape.
+        mock_execute.return_value = AgentResponse(
+            reply_text="",
+            tool_calls=[
+                StoredToolInteraction(
+                    tool_call_id="call_1",
+                    name="update_heartbeat",
+                    args={"new_text": "..."},
+                    result="HEARTBEAT.md updated",
+                    is_error=False,
+                ),
+            ],
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- (something)"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        assert result is not None
+        assert result.action_type == "no_action"
+
+        # The cleanup log entry was written with the right shape so the
+        # next tick's _format_heartbeat_history can show it with tasks.
+        mock_hb_store.log_heartbeat.assert_awaited_once()
+        await_args = mock_hb_store.log_heartbeat.await_args
+        assert await_args is not None
+        kwargs = await_args.kwargs
+        assert kwargs["action_type"] == "cleanup"
+        assert kwargs["tasks"] == ("Remove the stale 'follow up on Smith estimate' entry")
+        assert kwargs["reasoning"]  # reasoning is propagated for audit
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_crash_does_not_log_cleanup(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """A Phase 2 crash (response is None) must not log a cleanup entry.
+
+        Cleanup is "Phase 2 ran successfully but produced no user-facing
+        message"; a None response is the crash path and should not
+        pollute the dedup history with an entry pretending the work was
+        done.
+        """
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(action="run", tasks="Do a thing", reasoning="r")
+        mock_execute.return_value = None
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- thing"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        # No log entry was written for the crashed run.
+        mock_hb_store.log_heartbeat.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.OutboundMessage")
     @patch("backend.app.agent.heartbeat.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
@@ -1604,6 +1702,24 @@ class TestGetDailyHeartbeatCount:
 
         # Only the 2 sends should count
         assert await get_daily_heartbeat_count(user.id) == 2
+
+    @pytest.mark.asyncio
+    async def test_excludes_cleanup(self, user: User) -> None:
+        """Cleanup logs (Phase 2 ran without sending) must not count.
+
+        These are dedup-history audit entries, not user-facing nudges.
+        Counting them would burn the daily nudge budget on internal
+        housekeeping (e.g. pruning a stale HEARTBEAT.md item).
+        """
+        from backend.app.agent.stores import HeartbeatStore
+
+        store = HeartbeatStore(user.id)
+        await store.log_heartbeat(action_type="send", message_text="Hello")
+        await store.log_heartbeat(
+            action_type="cleanup", tasks="Remove stale entry", reasoning="dated"
+        )
+        # Only the send counts.
+        assert await get_daily_heartbeat_count(user.id) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -3254,6 +3370,112 @@ class TestHeartbeatRulesGuardHistoryPatterns:
         rules = load_prompt("heartbeat_rules")
         assert "infer" in rules.lower() or "pattern" in rules.lower()
         assert "removed" in rules.lower() or "no longer" in rules.lower()
+
+
+class TestHeartbeatRulesGuardConversationContext:
+    """The rules must forbid the LLM from running heartbeat tasks just because
+    it sees a pending user request in recent conversation context.
+
+    Real failure mode this guards against: a deploy-induced container restart
+    fired Phase 1 within seconds of boot. Phase 1 saw the user's recent
+    'please send the estimate' message in context and chose action=run. The
+    Phase 2 agent then re-executed work the previous container was already
+    handling. With idempotent reads this is harmless; with side-effecting
+    tools (qb_send, qb_create), it risks double execution. The rules now
+    explicitly tell Phase 1 that pending user requests belong to the
+    user-driven path, not to heartbeat.
+    """
+
+    def test_rules_forbid_running_for_recent_user_request(self) -> None:
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Heartbeat must NOT volunteer to "complete" pending user requests.
+        # We anchor on the semantics (recent conversation + skip/don't run),
+        # not the exact phrasing, so the wording can evolve without breaking
+        # this regression test.
+        assert "recent conversation" in rules or "recent messages" in rules
+        assert any(forbid in rules for forbid in ("do not 'run'", "don't 'run'", "choose 'skip'"))
+        # The user-driven agent path is named so the LLM understands the
+        # division of labor.
+        assert "user-driven" in rules or "user driven" in rules
+        # 'run' decision must be tied to the heartbeat section, not to
+        # arbitrary "looks interesting" data.
+        assert "heartbeat list" in rules or "heartbeat section" in rules
+
+
+class TestHeartbeatRulesPruneStaleOneTimeItems:
+    """The rules must tell Phase 1 that a one-time dated item whose date has
+    clearly passed is stale and should be routed to cleanup, not skipped
+    silently nor acted on as if still due.
+
+    Real failure mode this guards against: the user's HEARTBEAT.md contained
+    a line like "follow up on the Smith estimate by April 29". When the
+    current date became May, the item kept sitting in HEARTBEAT.md because
+    nothing cleaned it up. Phase 1 either re-acted on it (double work) or
+    quietly skipped it forever (item never aged out). The rules now route
+    stale one-time items into a 'run' with a cleanup task description so
+    the executor calls update_heartbeat to delete them.
+    """
+
+    def test_rules_route_stale_dated_items_to_cleanup(self) -> None:
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # The rules must mention staleness and one-time items.
+        assert "stale" in rules
+        assert "one-time" in rules
+        # The cleanup path must be named: rules tell the LLM to use 'run'
+        # with a removal-style task description so Phase 2 can prune the
+        # entry via update_heartbeat.
+        assert "remove" in rules
+        assert "update_heartbeat" in rules
+        # Recurring patterns must be explicitly carved out so the LLM
+        # does not delete things like "every morning" or "Mondays".
+        assert "recurring" in rules
+
+    def test_rules_require_strict_staleness_threshold(self) -> None:
+        """The stale-item rule must require an explicit calendar date AND
+        more than one day past, to avoid pruning items the user is still
+        within their window for handling.
+
+        Without this guard, items dated for today or yesterday could be
+        auto-removed before the user has had a chance to act on them.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # The threshold language: explicit calendar date + a "more than 1 day"
+        # / "1 full day" gate.
+        assert "explicit calendar date" in rules
+        assert "1 full day" in rules or "1 day in the past" in rules
+
+    def test_rules_skip_on_ambiguity(self) -> None:
+        """When the date is ambiguous (no year, day-of-week only) or the
+        item carries an unverified condition ('if not done'), the LLM must
+        choose 'skip' rather than guessing it is stale.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Ambiguity → skip
+        assert "ambiguous" in rules
+        # Conditions are explicitly carved out
+        assert "if not done" in rules or "unverified condition" in rules
+
+    def test_rules_dedup_recent_removal_runs(self) -> None:
+        """Without dedup, a Phase 2 failure (network glitch) plus a sub-30m
+        tick interval would have Phase 1 issue the same removal task every
+        tick, burning tokens until the executor lands.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Dedup window must be named explicitly so a careless rewrite cannot
+        # silently drop it.
+        assert "24 hours" in rules
+        # The dedup path must say 'skip' so the LLM understands the action.
+        assert "in flight" in rules or "still in flight" in rules
 
 
 # ---------------------------------------------------------------------------
