@@ -98,6 +98,18 @@ class TestFormatPlanMessage:
         assert "yes" in msg
         assert "always" in msg
 
+    def test_reply_options_render_as_menu(self) -> None:
+        """The four reply options each appear on their own line.
+
+        Regression on the 'yes always' confusion: the old single-line
+        wording was read as a 2-axis answer.
+        """
+        ask = [PlanStep("writer", "Write USER.md", PermissionLevel.ASK)]
+        msg = format_plan_message("Plan:", [], ask)
+        for option in ("  yes", "  no", "  always", "  never"):
+            assert option in msg, f"missing menu line: {option!r}"
+        assert "(always/never to remember" not in msg
+
     def test_single_ask_with_auto(self) -> None:
         """Single ask step with auto steps: natural language format."""
         auto = [PlanStep("reader", "Read config", PermissionLevel.ALWAYS)]
@@ -219,7 +231,7 @@ class TestBatchApproval:
         prompt_sent = False
         for call in mock_publish.call_args_list:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
-            if isinstance(msg, OutboundMessage) and "reply yes or no" in msg.content.lower():
+            if isinstance(msg, OutboundMessage) and "reply with one of" in msg.content.lower():
                 prompt_sent = True
         assert prompt_sent
 
@@ -562,7 +574,7 @@ class TestBatchApproval:
         for call in mock_publish.call_args_list:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
             if isinstance(msg, OutboundMessage):
-                assert "reply yes or no" not in msg.content.lower()
+                assert "reply with one of" not in msg.content.lower()
 
     @pytest.mark.asyncio()
     @patch("backend.app.agent.core.amessages")
@@ -600,12 +612,12 @@ class TestBatchApproval:
         approval_msgs = []
         for call in mock_publish.call_args_list:
             msg = call.args[0] if call.args else call.kwargs.get("msg")
-            if isinstance(msg, OutboundMessage) and "Reply yes or no" in msg.content:
+            if isinstance(msg, OutboundMessage) and "Reply with one of" in msg.content:
                 approval_msgs.append(msg.content)
 
         assert len(approval_msgs) == 1
-        # "Reply yes or no" should appear exactly once (not double-wrapped)
-        assert approval_msgs[0].count("Reply yes or no") == 1
+        # "Reply with one of" should appear exactly once (not double-wrapped)
+        assert approval_msgs[0].count("Reply with one of") == 1
         # Should not contain the format_approval_message wrapper
         assert "wants to use the tool" not in approval_msgs[0]
 
@@ -720,7 +732,7 @@ class TestBatchApproval:
         session = store.load_session(session_id)
         assert session is not None
         outbound_msgs = [m for m in session.messages if m.direction == "outbound"]
-        assert not any("reply yes or no" in m.body.lower() for m in outbound_msgs), (
+        assert not any("reply with one of" in m.body.lower() for m in outbound_msgs), (
             "Approval prompt was persisted to session history; this trains the "
             "LLM to mimic the format. See issue #1049."
         )

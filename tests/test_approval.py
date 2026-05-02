@@ -229,6 +229,44 @@ class TestParseApprovalResponse:
     def test_valid_responses(self, text: str, expected: ApprovalDecision) -> None:
         assert _parse_approval_response(text) == expected
 
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            # Compound replies users naturally type when they read
+            # "yes or no (always/never to remember)" as a 2-axis answer.
+            # All map to the unambiguous remember-this-decision result.
+            ("yes always", ApprovalDecision.ALWAYS_ALLOW),
+            ("Yes always", ApprovalDecision.ALWAYS_ALLOW),
+            ("always yes", ApprovalDecision.ALWAYS_ALLOW),
+            ("always allow", ApprovalDecision.ALWAYS_ALLOW),
+            ("allow always", ApprovalDecision.ALWAYS_ALLOW),
+            ("yes  always", ApprovalDecision.ALWAYS_ALLOW),  # collapse whitespace
+            ("no never", ApprovalDecision.ALWAYS_DENY),
+            ("Never no", ApprovalDecision.ALWAYS_DENY),
+            ("never allow", ApprovalDecision.ALWAYS_DENY),
+            ("deny always", ApprovalDecision.ALWAYS_DENY),
+        ],
+    )
+    def test_compound_responses(self, text: str, expected: ApprovalDecision) -> None:
+        """Two-word natural replies that match the prompt's option list
+        should resolve at the fast path, not the LLM classifier."""
+        assert _parse_approval_response(text) == expected
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # Mixed-axis pairs (one allow, one deny) are intentionally
+            # NOT in the fast-path mapping; they go to the LLM classifier
+            # so we don't silently pick the wrong direction.
+            "yes never",
+            "no always",
+        ],
+    )
+    def test_mixed_axis_pairs_fall_through(self, text: str) -> None:
+        """Conflicting compound pairs return None so they hit the LLM
+        classifier rather than getting silently misclassified."""
+        assert _parse_approval_response(text) is None
+
     @pytest.mark.parametrize("text", ["maybe", "sure", "ok", "hello", ""])
     def test_unrecognized_returns_none(self, text: str) -> None:
         assert _parse_approval_response(text) is None
@@ -247,6 +285,22 @@ class TestFormatApprovalMessage:
         assert "no" in msg
         assert "always" in msg
         assert "never" in msg
+
+    def test_options_are_a_menu_not_a_two_axis_answer(self) -> None:
+        """Regression on the 'yes always' / 'no never' confusion.
+
+        The previous wording ``"Reply yes or no (always/never to
+        remember your choice)"`` got read as a two-axis question (pick
+        an allow/deny axis AND a once/remember axis), so users typed
+        ``yes always``. The new wording lists four distinct options on
+        their own lines so the menu shape is obvious.
+        """
+        msg = format_approval_message("any_tool", "do the thing")
+        # Each option appears on its own line.
+        for option in ("  yes", "  no", "  always", "  never"):
+            assert option in msg, f"missing menu line: {option!r}"
+        # Old confusing wording is gone.
+        assert "(always/never to remember" not in msg
         # Tool name should NOT appear in the user-facing message
         assert "web_fetch" not in msg
 

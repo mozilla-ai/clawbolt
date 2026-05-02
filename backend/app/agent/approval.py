@@ -152,7 +152,13 @@ def format_plan_message(
     if not ask_steps:
         return ""
 
-    _reply_line = "Reply yes or no (always/never to remember your choice)"
+    _reply_line = (
+        "Reply with one of:\n"
+        "  yes — allow this once\n"
+        "  no — deny this once\n"
+        "  always — allow and remember\n"
+        "  never — deny and remember"
+    )
 
     # Single ask, no auto: simple prompt
     if len(ask_steps) == 1 and not auto_steps:
@@ -671,19 +677,35 @@ async def cleanup_orphaned_approvals(
 def _parse_approval_response(text: str) -> ApprovalDecision | None:
     """Parse a user's text reply into an approval decision (fast path).
 
-    Handles exact single-word matches only. For natural-language responses
-    like "Yes to both" or "go ahead", use ``classify_approval_response()``.
+    Handles single-word matches and the natural compound replies users
+    actually type when they want to lock in a permanent choice
+    ("yes always", "always allow", "no never", "never allow", etc.).
+    Anything ambiguous falls through to the LLM classifier in
+    ``classify_approval_response()``.
 
-    Returns None if the text is not a recognized approval response.
+    The compound forms are deliberately conservative: only word pairs
+    where both halves agree on the same axis (allow vs deny) match.
+    Mixed pairs like "yes never" go to the LLM so we do not silently
+    pick the wrong intent.
     """
-    normalized = text.strip().lower()
+    normalized = " ".join(text.strip().lower().split())
     mapping: dict[str, ApprovalDecision] = {
+        # Single-word.
         "yes": ApprovalDecision.APPROVED,
         "y": ApprovalDecision.APPROVED,
         "always": ApprovalDecision.ALWAYS_ALLOW,
         "no": ApprovalDecision.DENIED,
         "n": ApprovalDecision.DENIED,
         "never": ApprovalDecision.ALWAYS_DENY,
+        # Compound (always/never with an explicit allow/deny anchor).
+        "yes always": ApprovalDecision.ALWAYS_ALLOW,
+        "always yes": ApprovalDecision.ALWAYS_ALLOW,
+        "always allow": ApprovalDecision.ALWAYS_ALLOW,
+        "allow always": ApprovalDecision.ALWAYS_ALLOW,
+        "no never": ApprovalDecision.ALWAYS_DENY,
+        "never no": ApprovalDecision.ALWAYS_DENY,
+        "never allow": ApprovalDecision.ALWAYS_DENY,
+        "deny always": ApprovalDecision.ALWAYS_DENY,
     }
     return mapping.get(normalized)
 
@@ -763,8 +785,24 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
 
 
 def format_approval_message(tool_name: str, description: str) -> str:
-    """Build a plain-text approval prompt for the user."""
-    return f"I'd like to: {description}\n\nReply yes or no (always/never to remember your choice)"
+    """Build a plain-text approval prompt for the user.
+
+    The four reply options are listed as a vertical menu so each choice
+    is unambiguous. A previous wording, ``"Reply yes or no
+    (always/never to remember your choice)"``, was misread by users as
+    a two-axis answer ("yes always" or "no never"); the menu form makes
+    it clear that exactly one of {yes, no, always, never} is the
+    expected response. The parser still accepts the compound forms in
+    case a user types one anyway.
+    """
+    return (
+        f"I'd like to: {description}\n\n"
+        "Reply with one of:\n"
+        "  yes — allow this once\n"
+        "  no — deny this once\n"
+        "  always — allow and remember\n"
+        "  never — deny and remember"
+    )
 
 
 # ---------------------------------------------------------------------------
