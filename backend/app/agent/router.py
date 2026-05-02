@@ -404,10 +404,13 @@ async def persist_outbound(
         return
 
     # Serialize tool interactions for conversation history reconstruction.
-    # model_dump() automatically excludes 'tags' (Field(exclude=True)).
+    # model_dump(mode="json") automatically excludes 'tags' (Field(exclude=True))
+    # and coerces non-JSON-native values (datetime, set, UUID, etc.) inside
+    # ``args`` to their JSON forms so ``json.dumps`` cannot trip on a
+    # richly typed argument value.
     tool_interactions = ""
     if response.tool_calls:
-        tool_interactions = json.dumps([tc.model_dump() for tc in response.tool_calls])
+        tool_interactions = json.dumps([tc.model_dump(mode="json") for tc in response.tool_calls])
 
     # Store the body that was actually dispatched to the user (LLM prose +
     # any receipt block) so the DB matches what the user saw. Falls back to

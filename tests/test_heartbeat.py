@@ -1056,6 +1056,81 @@ class TestRunHeartbeatForUser:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.get_or_create_conversation")
+    @patch("backend.app.agent.heartbeat.OutboundMessage")
+    @patch("backend.app.agent.heartbeat.message_bus")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_persists_tool_interactions_with_non_json_native_args(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_bus: MagicMock,
+        mock_outbound_msg: MagicMock,
+        mock_get_conv: AsyncMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """A tool whose args carry a non-JSON-native value (datetime,
+        set, etc.) must still serialize cleanly. Regression: with a bare
+        model_dump(), a single datetime in args raises TypeError inside
+        json.dumps and the whole outbound persist is lost. Switching to
+        model_dump(mode="json") coerces those values to JSON forms."""
+        from backend.app.agent.context import StoredToolInteraction
+        from backend.app.agent.core import AgentResponse
+
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run", tasks="Add a calendar event", reasoning="Pending request"
+        )
+        mock_execute.return_value = AgentResponse(
+            reply_text="Booked.",
+            tool_calls=[
+                StoredToolInteraction(
+                    tool_call_id="call_1",
+                    name="calendar_create_event",
+                    # Both a tz-aware datetime and a set, neither of which
+                    # json.dumps natively handles.
+                    args={
+                        "starts_at": datetime.datetime(2026, 5, 2, 14, 0, tzinfo=datetime.UTC),
+                        "attendees": {"alice@example.com", "bob@example.com"},
+                    },
+                    result="Event created",
+                    is_error=False,
+                ),
+            ],
+        )
+        mock_bus.publish_outbound = AsyncMock()
+        mock_session = MagicMock()
+        mock_get_conv.return_value = (mock_session, True)
+        mock_session_store = MagicMock()
+        mock_session_store.add_message = AsyncMock()
+        mock_get_session_store.return_value = mock_session_store
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+
+        mock_session_store.add_message.assert_awaited_once()
+        await_args = mock_session_store.add_message.await_args
+        assert await_args is not None
+        raw = await_args.kwargs["tool_interactions_json"]
+        # Round-trip must succeed: the datetime serialized to a string
+        # and the set serialized to a list.
+        parsed = json.loads(raw)
+        assert parsed[0]["args"]["starts_at"] == "2026-05-02T14:00:00Z"
+        assert sorted(parsed[0]["args"]["attendees"]) == [
+            "alice@example.com",
+            "bob@example.com",
+        ]
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")

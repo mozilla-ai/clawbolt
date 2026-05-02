@@ -850,10 +850,18 @@ async def run_heartbeat_for_user(
         # user-driven turns; without this, a heartbeat that ran
         # qb_send / qb_update / etc. shows up as a "Done, ..." outbound
         # with zero tool calls and is indistinguishable from a
-        # hallucinated success. Mirrors ``router.py:persist_outbound_step``.
+        # hallucinated success. Mirrors ``router.py:persist_outbound``.
+        #
+        # ``mode="json"`` coerces non-JSON-native values inside ``args``
+        # (datetime, set, UUID, etc.) to their JSON forms so
+        # ``json.dumps`` cannot trip on a tool that puts a richly typed
+        # value in its arguments. Without it, one bad arg would raise
+        # ``TypeError`` and lose the entire outbound persist.
         tool_interactions = ""
         if response and response.tool_calls:
-            tool_interactions = json.dumps([tc.model_dump() for tc in response.tool_calls])
+            tool_interactions = json.dumps(
+                [tc.model_dump(mode="json") for tc in response.tool_calls]
+            )
 
         session, _ = await get_or_create_conversation(user.id)
         session_store = get_session_store(user.id)
