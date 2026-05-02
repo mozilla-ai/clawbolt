@@ -870,12 +870,14 @@ class TestRunHeartbeatForUser:
         assert result is None
 
     @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat._user_messaged_within")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
     async def test_skip_when_user_recently_messaged(
         self,
         mock_count: AsyncMock,
         mock_recent: MagicMock,
+        mock_eval: AsyncMock,
         user: User,
     ) -> None:
         """Quiet-period gate: skip the LLM call when the user is in an
@@ -885,8 +887,10 @@ class TestRunHeartbeatForUser:
         result = await run_heartbeat_for_user(user, "telegram", "+15550000000", 5)
         assert result is None
         mock_recent.assert_called_once()
-        # Quiet-period must run BEFORE any LLM evaluation, so the
-        # mock for evaluate_heartbeat_need is never called here.
+        # Quiet-period must run BEFORE any LLM evaluation. Asserting the
+        # evaluator was never awaited makes the gate's ordering explicit
+        # and would catch a regression that re-arranged the gates.
+        mock_eval.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
