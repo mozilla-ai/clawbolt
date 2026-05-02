@@ -145,6 +145,7 @@ See [Storage Providers](./storage.md) for setup instructions.
 | `HEARTBEAT_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for heartbeat messages |
 | `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent user evaluations per tick |
 | `HEARTBEAT_RECENT_MESSAGES_COUNT` | `5` | Number of recent messages included in heartbeat context |
+| `HEARTBEAT_USER_QUIET_PERIOD_MINUTES` | `5` | Minutes since the user's last message during which the heartbeat LLM call is skipped, to avoid burning tokens on "skip" decisions during an active conversation. Set to `0` to disable. |
 | `HEARTBEAT_STARTUP_WARMUP_SECONDS` | `60` | Seconds the scheduler sleeps before its first tick after process start, so post-deploy in-flight work and queued inbound messages can drain. Set to `0` to disable. |
 
 ## Observability

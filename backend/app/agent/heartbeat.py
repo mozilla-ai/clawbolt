@@ -711,6 +711,40 @@ def _dispatch_heartbeat_usage(
             logger.exception("heartbeat usage hook failed for user %s", user_id)
 
 
+def _user_messaged_within(user_id: str, minutes: int) -> bool:
+    """Return True if the user sent an inbound message in the last *minutes*.
+
+    Backs the heartbeat quiet-period gate. Used to skip the heartbeat
+    LLM call for users in an active conversation, where the scheduler
+    would otherwise tick → LLM call → "skip" decision once per interval
+    until the user goes quiet. Cheap point lookup against the indexed
+    ``messages`` table (filtered to the user's sessions).
+
+    Returns False on any DB hiccup so a transient failure does not
+    silently wedge the heartbeat path; the caller will fall through to
+    the normal LLM evaluation, which is the safer failure mode.
+    """
+    from backend.app.models import ChatSession, Message
+
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=minutes)
+    db = SessionLocal()
+    try:
+        latest = (
+            db.query(Message.timestamp)
+            .join(ChatSession, ChatSession.id == Message.session_id)
+            .filter(ChatSession.user_id == user_id, Message.direction == "inbound")
+            .order_by(Message.timestamp.desc())
+            .limit(1)
+            .scalar()
+        )
+    except Exception:
+        logger.exception("Failed to check recent-message gate for user %s", user_id)
+        return False
+    finally:
+        db.close()
+    return latest is not None and latest >= cutoff
+
+
 # ---------------------------------------------------------------------------
 # Per-user runner (orchestrates Phase 1 + Phase 2)
 # ---------------------------------------------------------------------------
@@ -747,6 +781,19 @@ async def run_heartbeat_for_user(
             user.id,
             daily_count,
             max_daily,
+        )
+        return None
+
+    # Gate: user is in an active conversation. The scheduler ticks on a
+    # fixed interval; without this check, a chatty user produces a "skip"
+    # LLM call every tick that adds nothing the user will see. Cheap DB
+    # lookup, runs after the in-memory gates and before the LLM call.
+    quiet_minutes = settings.heartbeat_user_quiet_period_minutes
+    if quiet_minutes > 0 and _user_messaged_within(user.id, quiet_minutes):
+        logger.debug(
+            "Heartbeat skip user %s: messaged within last %d min",
+            user.id,
+            quiet_minutes,
         )
         return None
 
