@@ -3156,12 +3156,23 @@ async def test_execute_heartbeat_task_context_includes_cleanup_instruction(
     await_args = mock_agent.process_message.await_args
     assert await_args is not None
     message_context = await_args.kwargs["message_context"]
+    lowered = message_context.lower()
+
+    # Original task body must be preserved.
     assert "Follow up on the Smith estimate" in message_context
     # Cleanup directive must name update_heartbeat so the agent knows the tool
     assert "update_heartbeat" in message_context
-    # One-time dated items get removed; recurring patterns stay
-    assert "one-time" in message_context
-    assert "recurring" in message_context.lower()
+    # One-time dated items get removed; recurring patterns stay.
+    assert "one-time" in lowered
+    assert "recurring" in lowered
+    # The two task shapes must be distinguished so a Phase 1 cleanup task does
+    # not also trigger the underlying real-world action (e.g. "Remove the
+    # stale Smith follow-up" should NOT cause Phase 2 to actually follow up).
+    assert "real-world action" in lowered
+    assert "cleanup task" in lowered or "heartbeat.md cleanup" in lowered
+    # Cleanup-only runs should not chain a redundant second update_heartbeat
+    # call after the first succeeds.
+    assert "second update_heartbeat" in lowered or "do not issue a second" in lowered
 
 
 @pytest.mark.asyncio()
