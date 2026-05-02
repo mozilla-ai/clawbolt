@@ -241,8 +241,13 @@ class TestParseApprovalResponse:
             ("always allow", ApprovalDecision.ALWAYS_ALLOW),
             ("allow always", ApprovalDecision.ALWAYS_ALLOW),
             ("yes  always", ApprovalDecision.ALWAYS_ALLOW),  # collapse whitespace
+            # The y/n shortcuts also pair with always/never.
+            ("y always", ApprovalDecision.ALWAYS_ALLOW),
+            ("always y", ApprovalDecision.ALWAYS_ALLOW),
             ("no never", ApprovalDecision.ALWAYS_DENY),
             ("Never no", ApprovalDecision.ALWAYS_DENY),
+            ("n never", ApprovalDecision.ALWAYS_DENY),
+            ("never n", ApprovalDecision.ALWAYS_DENY),
             ("never allow", ApprovalDecision.ALWAYS_DENY),
             ("deny always", ApprovalDecision.ALWAYS_DENY),
         ],
@@ -250,6 +255,32 @@ class TestParseApprovalResponse:
     def test_compound_responses(self, text: str, expected: ApprovalDecision) -> None:
         """Two-word natural replies that match the prompt's option list
         should resolve at the fast path, not the LLM classifier."""
+        assert _parse_approval_response(text) == expected
+
+    @pytest.mark.parametrize(
+        ("text", "expected"),
+        [
+            # Trailing punctuation users type out of habit. All these
+            # should route through the fast path, not the LLM classifier.
+            ("Yes.", ApprovalDecision.APPROVED),
+            ("yes!", ApprovalDecision.APPROVED),
+            ("yes?", ApprovalDecision.APPROVED),
+            ("No.", ApprovalDecision.DENIED),
+            ("Always.", ApprovalDecision.ALWAYS_ALLOW),
+            ("Never!", ApprovalDecision.ALWAYS_DENY),
+            # The literal user phrasing from the original report.
+            ("yes, always", ApprovalDecision.ALWAYS_ALLOW),
+            ("Yes, always.", ApprovalDecision.ALWAYS_ALLOW),
+            ("no, never", ApprovalDecision.ALWAYS_DENY),
+            # Multiple punctuation chars also strip cleanly.
+            ("yes!?", ApprovalDecision.APPROVED),
+            ("Yes; always.", ApprovalDecision.ALWAYS_ALLOW),
+        ],
+    )
+    def test_responses_with_punctuation(self, text: str, expected: ApprovalDecision) -> None:
+        """Punctuation must be stripped before fast-path lookup; the user's
+        natural phrasing ("yes, always" — the exact wording from the
+        original report) must not fall through to the LLM classifier."""
         assert _parse_approval_response(text) == expected
 
     @pytest.mark.parametrize(

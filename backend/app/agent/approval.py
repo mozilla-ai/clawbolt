@@ -674,40 +674,59 @@ async def cleanup_orphaned_approvals(
 # ---------------------------------------------------------------------------
 
 
+_APPROVAL_RESPONSE_FAST_PATH: dict[str, ApprovalDecision] = {
+    # Single-word forms (with the y/n shortcuts).
+    "yes": ApprovalDecision.APPROVED,
+    "y": ApprovalDecision.APPROVED,
+    "always": ApprovalDecision.ALWAYS_ALLOW,
+    "no": ApprovalDecision.DENIED,
+    "n": ApprovalDecision.DENIED,
+    "never": ApprovalDecision.ALWAYS_DENY,
+    # Compound forms (always/never anchored with an explicit allow/deny
+    # word). Mixed-axis pairs like ``yes never`` are intentionally
+    # absent so they fall through to the LLM classifier rather than
+    # being silently misclassified.
+    "yes always": ApprovalDecision.ALWAYS_ALLOW,
+    "always yes": ApprovalDecision.ALWAYS_ALLOW,
+    "y always": ApprovalDecision.ALWAYS_ALLOW,
+    "always y": ApprovalDecision.ALWAYS_ALLOW,
+    "always allow": ApprovalDecision.ALWAYS_ALLOW,
+    "allow always": ApprovalDecision.ALWAYS_ALLOW,
+    "no never": ApprovalDecision.ALWAYS_DENY,
+    "never no": ApprovalDecision.ALWAYS_DENY,
+    "n never": ApprovalDecision.ALWAYS_DENY,
+    "never n": ApprovalDecision.ALWAYS_DENY,
+    "never allow": ApprovalDecision.ALWAYS_DENY,
+    "deny always": ApprovalDecision.ALWAYS_DENY,
+}
+
+
+# Punctuation we strip before fast-path lookup. Users naturally type
+# ``"Yes."`` / ``"yes, always"`` / ``"yes!"`` and the parser should treat
+# those identically to the bare keyword.
+_APPROVAL_RESPONSE_PUNCTUATION = ".,!?;:"
+
+
 def _parse_approval_response(text: str) -> ApprovalDecision | None:
     """Parse a user's text reply into an approval decision (fast path).
 
     Handles single-word matches and the natural compound replies users
     actually type when they want to lock in a permanent choice
     ("yes always", "always allow", "no never", "never allow", etc.).
-    Anything ambiguous falls through to the LLM classifier in
-    ``classify_approval_response()``.
+    Punctuation (``.,!?;:``) is stripped before lookup so ``"Yes."`` and
+    ``"yes, always"`` route through the fast path instead of the LLM
+    classifier. Anything still ambiguous after normalization falls
+    through to ``classify_approval_response``.
 
     The compound forms are deliberately conservative: only word pairs
     where both halves agree on the same axis (allow vs deny) match.
     Mixed pairs like "yes never" go to the LLM so we do not silently
     pick the wrong intent.
     """
-    normalized = " ".join(text.strip().lower().split())
-    mapping: dict[str, ApprovalDecision] = {
-        # Single-word.
-        "yes": ApprovalDecision.APPROVED,
-        "y": ApprovalDecision.APPROVED,
-        "always": ApprovalDecision.ALWAYS_ALLOW,
-        "no": ApprovalDecision.DENIED,
-        "n": ApprovalDecision.DENIED,
-        "never": ApprovalDecision.ALWAYS_DENY,
-        # Compound (always/never with an explicit allow/deny anchor).
-        "yes always": ApprovalDecision.ALWAYS_ALLOW,
-        "always yes": ApprovalDecision.ALWAYS_ALLOW,
-        "always allow": ApprovalDecision.ALWAYS_ALLOW,
-        "allow always": ApprovalDecision.ALWAYS_ALLOW,
-        "no never": ApprovalDecision.ALWAYS_DENY,
-        "never no": ApprovalDecision.ALWAYS_DENY,
-        "never allow": ApprovalDecision.ALWAYS_DENY,
-        "deny always": ApprovalDecision.ALWAYS_DENY,
-    }
-    return mapping.get(normalized)
+    cleaned = text.strip().lower()
+    cleaned = cleaned.translate(str.maketrans("", "", _APPROVAL_RESPONSE_PUNCTUATION))
+    normalized = " ".join(cleaned.split())
+    return _APPROVAL_RESPONSE_FAST_PATH.get(normalized)
 
 
 async def classify_approval_response(text: str) -> ApprovalDecision | None:
@@ -749,9 +768,11 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
                         "role": "system",
                         "content": (
                             "The user was asked to approve or deny a tool action. "
-                            "They were told: "
-                            "'Reply yes or no (always/never to remember your choice)'. "
-                            "Classify their response."
+                            "They were shown a four-option menu: "
+                            "yes (allow this once), no (deny this once), "
+                            "always (allow and remember), never (deny and remember). "
+                            "Classify their response into one of: approved, denied, "
+                            "always_allow, always_deny, unrelated."
                         ),
                     },
                     {"role": "user", "content": text},
