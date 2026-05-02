@@ -49,6 +49,7 @@ from backend.app.enums import MessageDirection
 from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
 from backend.app.models import ChannelRoute, User
+from backend.app.services.llm_service import resolve_user_llm_override
 from backend.app.services.storage_service import StorageBackend, get_storage_service
 
 logger = logging.getLogger(__name__)
@@ -236,6 +237,8 @@ async def run_agent(
     event_subscribers: list[Callable[[AgentEvent], Awaitable[None]]] | None = None,
     session_id: str = "",
     request_id: str = "",
+    llm_provider_override: str = "",
+    llm_model_override: str = "",
 ) -> AgentResponse:
     """Initialize agent with tools and process the message.
 
@@ -284,6 +287,8 @@ async def run_agent(
         excluded_tool_names=disabled_sub_tools or None,
         request_id=request_id,
         activated_specialists=activated_specialists,
+        llm_provider_override=llm_provider_override,
+        llm_model_override=llm_model_override,
     )
 
     # Core tools (always-on). Exclude user-disabled groups and sub-tools.
@@ -479,6 +484,19 @@ async def load_history_step(ctx: PipelineContext) -> PipelineContext:
 
 async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
     """Initialize agent with tools and process the message."""
+    # Premium can register a per-user LLM resolver (see
+    # ``set_user_llm_resolver``) so individual users can be pinned to a
+    # different model than the global default. Resolver failures fall
+    # through to the global setting rather than wedging the message path.
+    provider_override, model_override = "", ""
+    try:
+        override = await resolve_user_llm_override(ctx.user.id)
+    except Exception:
+        logger.exception("user LLM resolver failed for user %s", ctx.user.id)
+        override = None
+    if override is not None:
+        provider_override, model_override = override
+
     ctx.response = await run_agent(
         user=ctx.user,
         message=ctx.message,
@@ -493,6 +511,8 @@ async def run_agent_step(ctx: PipelineContext) -> PipelineContext:
         event_subscribers=ctx.event_subscribers,
         session_id=ctx.session.session_id,
         request_id=ctx.request_id,
+        llm_provider_override=provider_override,
+        llm_model_override=model_override,
     )
     return ctx
 

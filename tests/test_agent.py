@@ -2450,3 +2450,62 @@ async def test_agent_response_rolls_up_cache_tokens_across_rounds(
     assert response.total_output_tokens == 70
     assert response.total_cache_creation_input_tokens == 800
     assert response.total_cache_read_input_tokens == 800
+
+
+# ---------------------------------------------------------------------------
+# Per-user LLM override (issue: admin LLM control)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_uses_provider_and_model_override(
+    mock_amessages: object, test_user: User
+) -> None:
+    """Both override fields, when set, take precedence over the global settings.llm_*."""
+    mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+
+    agent = ClawboltAgent(
+        user=test_user,
+        llm_provider_override="anthropic",
+        llm_model_override="claude-haiku-4-5",
+    )
+    await agent.process_message("hi")
+
+    call_args = mock_amessages.call_args  # type: ignore[union-attr]
+    assert call_args.kwargs["provider"] == "anthropic"
+    assert call_args.kwargs["model"] == "claude-haiku-4-5"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_override_falls_back_to_settings_when_field_empty(
+    mock_amessages: object, test_user: User
+) -> None:
+    """Empty override fields fall through to settings.llm_*.
+
+    This is the "use the global provider but pin a specific model"
+    case: provider_override="" + model_override="<id>" keeps the
+    deployment provider but switches the model for one user.
+    """
+    from backend.app.config import settings
+
+    mock_amessages.return_value = make_text_response("Ok!")  # type: ignore[union-attr]
+
+    original_provider = settings.llm_provider
+    original_model = settings.llm_model
+    settings.llm_provider = "anthropic"
+    settings.llm_model = "claude-opus-4-5"
+    try:
+        agent = ClawboltAgent(
+            user=test_user,
+            llm_provider_override="",
+            llm_model_override="claude-haiku-4-5",
+        )
+        await agent.process_message("hi")
+        call_args = mock_amessages.call_args  # type: ignore[union-attr]
+        assert call_args.kwargs["provider"] == "anthropic"  # global default
+        assert call_args.kwargs["model"] == "claude-haiku-4-5"  # override wins
+    finally:
+        settings.llm_provider = original_provider
+        settings.llm_model = original_model
