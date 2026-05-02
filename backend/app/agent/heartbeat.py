@@ -1018,10 +1018,7 @@ class HeartbeatScheduler:
         warmup = settings.heartbeat_startup_warmup_seconds
         if warmup > 0:
             logger.info("Heartbeat warmup: sleeping %ds before first tick", warmup)
-            try:
-                await asyncio.sleep(warmup)
-            except asyncio.CancelledError:
-                raise
+            await asyncio.sleep(warmup)
 
         while True:
             try:
