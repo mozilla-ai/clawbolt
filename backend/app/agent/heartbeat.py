@@ -75,6 +75,15 @@ _TICK_RESOLUTION_MINUTES = 1
 # How far back to look when building heartbeat history context for the LLM.
 _HISTORY_LOOKBACK_DAYS = 7
 
+# Literal prefix that identifies the heartbeat-driven (scheduled) message
+# path to the agent. Phase 2's ``task_context`` starts with this string.
+# ``backend/app/agent/tools/heartbeat_tools.py`` matches on the same
+# constant in ``update_heartbeat``'s ``usage_hint`` to scope proactive
+# pruning to the heartbeat path; without that gate, the user-driven
+# agent could start removing HEARTBEAT.md lines mid-conversation. Both
+# sides import this constant so the strings cannot drift.
+SCHEDULED_TASK_PREFIX = "Execute this scheduled task now"
+
 
 def parse_frequency_to_minutes(freq: str) -> int | None:
     """Convert a frequency string like ``15m``, ``2h``, ``1d`` to minutes.
@@ -667,7 +676,7 @@ async def execute_heartbeat_tasks(
     # for cleanup-only runs, since the heartbeat line being pruned is an
     # internal-state change the user did not ask about.
     task_context = (
-        "Execute this scheduled task now and write the result to the user.\n\n"
+        f"{SCHEDULED_TASK_PREFIX} and write the result to the user.\n\n"
         "Two task shapes are possible. Read the task carefully before acting:\n"
         "1. Real-world action (send a message, follow up with a customer, "
         "query an account, create a record): perform the action. Then, if "

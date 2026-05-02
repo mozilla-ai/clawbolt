@@ -3173,27 +3173,31 @@ async def test_execute_heartbeat_task_context_includes_cleanup_instruction(
     # Cleanup-only runs should not chain a redundant second update_heartbeat
     # call after the first succeeds.
     assert "second update_heartbeat" in lowered or "do not issue a second" in lowered
-    # The heartbeat path is identified by this literal prefix. The
-    # update_heartbeat tool's usage_hint also matches on this string to
-    # decide when proactive pruning is allowed; if either side renames it
-    # without updating the other, the hint silently stops gating correctly.
-    assert "Execute this scheduled task now" in message_context
+    # The heartbeat path is identified by the SCHEDULED_TASK_PREFIX
+    # constant. The update_heartbeat tool's usage_hint also matches on
+    # the same constant to decide when proactive pruning is allowed.
+    # Asserting against the constant (rather than the literal) means a
+    # rename of the prefix in one place breaks the test if the other
+    # side wasn't updated, instead of silently passing.
+    from backend.app.agent.heartbeat import SCHEDULED_TASK_PREFIX
+
+    assert SCHEDULED_TASK_PREFIX in message_context
 
 
 def test_update_heartbeat_usage_hint_anchors_on_scheduled_task_prefix() -> None:
     """The update_heartbeat usage_hint scopes proactive pruning to the
-    heartbeat path by matching on a literal prefix. If that prefix is
-    renamed in heartbeat.py without updating the hint, the user-driven
-    agent could start pruning items mid-conversation. This test pins the
-    two strings together.
+    heartbeat path by matching on the SCHEDULED_TASK_PREFIX constant
+    exported from heartbeat.py. Both sides import the same constant
+    so a rename in one place cannot drift the other.
     """
+    from backend.app.agent.heartbeat import SCHEDULED_TASK_PREFIX
     from backend.app.agent.tools.heartbeat_tools import create_heartbeat_tools
     from backend.app.agent.tools.names import ToolName
 
     tools = create_heartbeat_tools(user_id="test-user")
     update_tool = next(t for t in tools if t.name == ToolName.UPDATE_HEARTBEAT)
     assert update_tool.usage_hint is not None
-    assert "Execute this scheduled task now" in update_tool.usage_hint
+    assert SCHEDULED_TASK_PREFIX in update_tool.usage_hint
 
 
 @pytest.mark.asyncio()

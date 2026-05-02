@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+from backend.app.agent.heartbeat import SCHEDULED_TASK_PREFIX
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
@@ -85,10 +86,10 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
                 "In normal user conversation, only add, remove, or change what "
                 "the user explicitly asked for. Do NOT proactively prune items "
                 "that look stale; the user may still want them. The only "
-                "exception is when the current message starts with 'Execute "
-                "this scheduled task now' (the heartbeat-driven path) AND you "
-                "have just finished handling a one-time dated item: in that "
-                "case, removing that specific line is correct. Recurring "
+                f"exception is when the current message starts with "
+                f"'{SCHEDULED_TASK_PREFIX}' (the heartbeat-driven path) AND "
+                "you have just finished handling a one-time dated item: in "
+                "that case, removing that specific line is correct. Recurring "
                 "patterns ('every morning', 'Mondays', 'weekly') must stay. "
                 "Do not restore items that were previously deleted."
             ),
