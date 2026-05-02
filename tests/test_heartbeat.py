@@ -3058,6 +3058,49 @@ class TestHeartbeatRulesPruneStaleOneTimeItems:
         # does not delete things like "every morning" or "Mondays".
         assert "recurring" in rules
 
+    def test_rules_require_strict_staleness_threshold(self) -> None:
+        """The stale-item rule must require an explicit calendar date AND
+        more than one day past, to avoid pruning items the user is still
+        within their window for handling.
+
+        Without this guard, items dated for today or yesterday could be
+        auto-removed before the user has had a chance to act on them.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # The threshold language: explicit calendar date + a "more than 1 day"
+        # / "1 full day" gate.
+        assert "explicit calendar date" in rules
+        assert "1 full day" in rules or "1 day in the past" in rules
+
+    def test_rules_skip_on_ambiguity(self) -> None:
+        """When the date is ambiguous (no year, day-of-week only) or the
+        item carries an unverified condition ('if not done'), the LLM must
+        choose 'skip' rather than guessing it is stale.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Ambiguity → skip
+        assert "ambiguous" in rules
+        # Conditions are explicitly carved out
+        assert "if not done" in rules or "unverified condition" in rules
+
+    def test_rules_dedup_recent_removal_runs(self) -> None:
+        """Without dedup, a Phase 2 failure (network glitch) plus a sub-30m
+        tick interval would have Phase 1 issue the same removal task every
+        tick, burning tokens until the executor lands.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Dedup window must be named explicitly so a careless rewrite cannot
+        # silently drop it.
+        assert "24 hours" in rules
+        # The dedup path must say 'skip' so the LLM understands the action.
+        assert "in flight" in rules or "still in flight" in rules
+
 
 # ---------------------------------------------------------------------------
 # Phase 2: tool wiring (regression for #874)
