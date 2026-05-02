@@ -649,48 +649,34 @@ async def execute_heartbeat_tasks(
     heartbeat_max_tokens = max(settings.llm_max_tokens_agent, 1024)
 
     # Prefix the task so the agent knows to execute it rather than
-    # treating it as a user conversation message. Write the result as
-    # plain text; the system delivers it as the outbound message.
+    # treating it as a user conversation message. Two task shapes are
+    # possible. Real-world action followed by post-cleanup (shape 1) is
+    # the durable counterpart to the Phase 1 stale-item rule; cleanup-
+    # only (shape 2) is what Phase 1 routes when the dated item is
+    # already past its window. Distinguishing them in the prompt
+    # prevents the agent from "doubling up" by performing the action
+    # AND issuing the cleanup, which would re-fire side effects on a
+    # date the user no longer cares about.
     #
-    # The cleanup line is the durable counterpart to the Phase 1 stale-item
-    # rule. We distinguish two task shapes so the agent does not "double up":
-    #
-    #   1. Real-world action ("send the Smith estimate", "ping the customer"):
-    #      perform the action, then if it corresponded to a one-time, dated
-    #      item in HEARTBEAT.md, call update_heartbeat to remove that line.
-    #
-    #   2. HEARTBEAT.md cleanup task (Phase 1 routed it because the dated
-    #      item is already past its window): just perform the cleanup. Do
-    #      NOT also perform the underlying real-world action — the date has
-    #      passed and the user did not ask for it again. Do NOT then issue
-    #      a second update_heartbeat call (the line is already gone).
-    #
-    # On failure, partial state is acceptable: if the agent finished the
-    # real-world action but errored before update_heartbeat lands, the line
-    # remains in HEARTBEAT.md and the next tick will re-evaluate it via the
-    # Phase 1 stale-item rule (with its 24-hour dedup against repeated
-    # removal runs). This is intentional — better a stale line for a few
-    # ticks than skipping the user-visible action.
-    #
-    # Cleanup edits should be silent: do not produce a user-facing reply
-    # for cleanup-only runs, since the heartbeat line being pruned is an
-    # internal-state change the user did not ask about.
+    # Partial-state failures are acceptable: if the agent finishes the
+    # real-world action but errors before update_heartbeat lands, the
+    # line stays in HEARTBEAT.md and the next tick re-evaluates it via
+    # the Phase 1 stale-item rule (with its 24-hour dedup). Better a
+    # stale line for a few ticks than skipping the user-visible action.
     task_context = (
         f"{SCHEDULED_TASK_PREFIX} and write the result to the user.\n\n"
-        "Two task shapes are possible. Read the task carefully before acting:\n"
-        "1. Real-world action (send a message, follow up with a customer, "
-        "query an account, create a record): perform the action. Then, if "
-        "the action corresponded to a one-time, dated item in HEARTBEAT.md "
-        '(e.g. "follow up on the Smith estimate by April 29"), call '
-        "update_heartbeat to remove that specific line so it does not fire "
-        "again. Do NOT remove recurring patterns "
-        '("every morning", "Mondays", "weekly"); they must stay.\n'
-        "2. HEARTBEAT.md cleanup task (the task explicitly asks to remove "
-        "or prune a stale item): call update_heartbeat to remove the named "
-        "line and stop. Do NOT also perform the underlying real-world action "
-        "— the date has passed and the user did not ask for it again. Do "
-        "NOT issue a second update_heartbeat call after the first succeeds. "
-        "Produce no user-facing reply; the cleanup is internal housekeeping.\n\n"
+        "Two task shapes:\n\n"
+        '1. Real-world action ("Send the Smith estimate", '
+        '"Follow up with the customer"): perform the action. If it '
+        "corresponded to a one-time dated HEARTBEAT.md item, call "
+        "update_heartbeat to delete that line. Recurring patterns "
+        '("every morning", "Mondays", "weekly") must stay.\n\n'
+        '2. HEARTBEAT.md cleanup task ("Remove the stale Smith '
+        'follow-up"): call update_heartbeat to delete the named line '
+        "and stop. Do not perform any underlying real-world action; "
+        "the date has passed and the user did not ask for it again. "
+        "Do not issue a second update_heartbeat call. Produce no "
+        "user-facing reply; the cleanup is internal housekeeping.\n\n"
         "Task:\n" + tasks
     )
 

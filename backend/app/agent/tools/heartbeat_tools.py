@@ -83,15 +83,13 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
             params_model=UpdateHeartbeatParams,
             usage_hint=(
                 "Always call get_heartbeat first to see the current content. "
-                "In normal user conversation, only add, remove, or change what "
-                "the user explicitly asked for. Do NOT proactively prune items "
-                "that look stale; the user may still want them. The only "
-                f"exception is when the current message starts with "
-                f"'{SCHEDULED_TASK_PREFIX}' (the heartbeat-driven path) AND "
-                "you have just finished handling a one-time dated item: in "
-                "that case, removing that specific line is correct. Recurring "
-                "patterns ('every morning', 'Mondays', 'weekly') must stay. "
-                "Do not restore items that were previously deleted."
+                "Only add, remove, or change what the user explicitly asked for; "
+                "do not proactively prune items that look stale. "
+                f"Exception: when the current message starts with "
+                f"'{SCHEDULED_TASK_PREFIX}', removing the one-time dated line "
+                "you just handled is correct. Recurring patterns "
+                "('every morning', 'Mondays', 'weekly') always stay. "
+                "Do not restore deleted items."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ALWAYS,
