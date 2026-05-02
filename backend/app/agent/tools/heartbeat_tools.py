@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from pydantic import BaseModel, Field
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
+from backend.app.agent.heartbeat import SCHEDULED_TASK_PREFIX
 from backend.app.agent.stores import HeartbeatStore
 from backend.app.agent.tools.base import Tool, ToolResult
 from backend.app.agent.tools.names import ToolName
@@ -82,8 +83,13 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
             params_model=UpdateHeartbeatParams,
             usage_hint=(
                 "Always call get_heartbeat first to see the current content. "
-                "Only add, remove, or change what the user explicitly asked for. "
-                "Do not restore items that were previously deleted."
+                "Only add, remove, or change what the user explicitly asked for; "
+                "do not proactively prune items that look stale. "
+                f"Exception: when the current message starts with "
+                f"'{SCHEDULED_TASK_PREFIX}', removing the one-time dated line "
+                "you just handled is correct. Recurring patterns "
+                "('every morning', 'Mondays', 'weekly') always stay. "
+                "Do not restore deleted items."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ALWAYS,

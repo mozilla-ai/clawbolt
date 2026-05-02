@@ -75,6 +75,15 @@ _TICK_RESOLUTION_MINUTES = 1
 # How far back to look when building heartbeat history context for the LLM.
 _HISTORY_LOOKBACK_DAYS = 7
 
+# Literal prefix that identifies the heartbeat-driven (scheduled) message
+# path to the agent. Phase 2's ``task_context`` starts with this string.
+# ``backend/app/agent/tools/heartbeat_tools.py`` matches on the same
+# constant in ``update_heartbeat``'s ``usage_hint`` to scope proactive
+# pruning to the heartbeat path; without that gate, the user-driven
+# agent could start removing HEARTBEAT.md lines mid-conversation. Both
+# sides import this constant so the strings cannot drift.
+SCHEDULED_TASK_PREFIX = "Execute this scheduled task now"
+
 
 def parse_frequency_to_minutes(freq: str) -> int | None:
     """Convert a frequency string like ``15m``, ``2h``, ``1d`` to minutes.
@@ -640,9 +649,36 @@ async def execute_heartbeat_tasks(
     heartbeat_max_tokens = max(settings.llm_max_tokens_agent, 1024)
 
     # Prefix the task so the agent knows to execute it rather than
-    # treating it as a user conversation message. Write the result as
-    # plain text; the system delivers it as the outbound message.
-    task_context = "Execute this scheduled task now and write the result to the user.\n\n" + tasks
+    # treating it as a user conversation message. Two task shapes are
+    # possible. Real-world action followed by post-cleanup (shape 1) is
+    # the durable counterpart to the Phase 1 stale-item rule; cleanup-
+    # only (shape 2) is what Phase 1 routes when the dated item is
+    # already past its window. Distinguishing them in the prompt
+    # prevents the agent from "doubling up" by performing the action
+    # AND issuing the cleanup, which would re-fire side effects on a
+    # date the user no longer cares about.
+    #
+    # Partial-state failures are acceptable: if the agent finishes the
+    # real-world action but errors before update_heartbeat lands, the
+    # line stays in HEARTBEAT.md and the next tick re-evaluates it via
+    # the Phase 1 stale-item rule (with its 24-hour dedup). Better a
+    # stale line for a few ticks than skipping the user-visible action.
+    task_context = (
+        f"{SCHEDULED_TASK_PREFIX} and write the result to the user.\n\n"
+        "Two task shapes:\n\n"
+        '1. Real-world action ("Send the Smith estimate", '
+        '"Follow up with the customer"): perform the action. If it '
+        "corresponded to a one-time dated HEARTBEAT.md item, call "
+        "update_heartbeat to delete that line. Recurring patterns "
+        '("every morning", "Mondays", "weekly") must stay.\n\n'
+        '2. HEARTBEAT.md cleanup task ("Remove the stale Smith '
+        'follow-up"): call update_heartbeat to delete the named line '
+        "and stop. Do not perform any underlying real-world action; "
+        "the date has passed and the user did not ask for it again. "
+        "Do not issue a second update_heartbeat call. Produce no "
+        "user-facing reply; the cleanup is internal housekeeping.\n\n"
+        "Task:\n" + tasks
+    )
 
     try:
         response: AgentResponse = await agent.process_message(
