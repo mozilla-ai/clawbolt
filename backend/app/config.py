@@ -53,7 +53,14 @@ class Settings(BaseSettings):
     vision_model: str = ""  # empty = fall back to llm_model
     vision_provider: str = ""  # empty = fall back to llm_provider
     reasoning_effort: str = "auto"  # none, minimal, low, medium, high, xhigh, auto
-    llm_max_tokens_agent: int = Field(default=1024, ge=1)
+    # 2048 is sized to fit a typical multi-tool turn (one ~200-token reply
+    # plus a tool call whose JSON args can run 500-1500 tokens for nested
+    # entity payloads in the QuickBooks / CompanyCam tools). The previous
+    # 1024 default truncated mid-tool-call on real workloads, leaving the
+    # validator to catch the malformed args; auto-recovery in
+    # ``core.py:_call_llm_with_retry`` doubles ``max_tokens`` on the next
+    # round, but a higher floor avoids the wasted round entirely.
+    llm_max_tokens_agent: int = Field(default=2048, ge=1)
     llm_max_tokens_heartbeat: int = Field(default=12000, ge=1)
     llm_max_tokens_vision: int = Field(default=1000, ge=1)
 
