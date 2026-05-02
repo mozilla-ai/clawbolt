@@ -3028,6 +3028,37 @@ class TestHeartbeatRulesGuardConversationContext:
         assert "heartbeat list" in rules or "heartbeat section" in rules
 
 
+class TestHeartbeatRulesPruneStaleOneTimeItems:
+    """The rules must tell Phase 1 that a one-time dated item whose date has
+    clearly passed is stale and should be routed to cleanup, not skipped
+    silently nor acted on as if still due.
+
+    Real failure mode this guards against: the user's HEARTBEAT.md contained
+    a line like "follow up on the Smith estimate by April 29". When the
+    current date became May, the item kept sitting in HEARTBEAT.md because
+    nothing cleaned it up. Phase 1 either re-acted on it (double work) or
+    quietly skipped it forever (item never aged out). The rules now route
+    stale one-time items into a 'run' with a cleanup task description so
+    the executor calls update_heartbeat to delete them.
+    """
+
+    def test_rules_route_stale_dated_items_to_cleanup(self) -> None:
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # The rules must mention staleness and one-time items.
+        assert "stale" in rules
+        assert "one-time" in rules
+        # The cleanup path must be named: rules tell the LLM to use 'run'
+        # with a removal-style task description so Phase 2 can prune the
+        # entry via update_heartbeat.
+        assert "remove" in rules
+        assert "update_heartbeat" in rules
+        # Recurring patterns must be explicitly carved out so the LLM
+        # does not delete things like "every morning" or "Mondays".
+        assert "recurring" in rules
+
+
 # ---------------------------------------------------------------------------
 # Phase 2: tool wiring (regression for #874)
 # ---------------------------------------------------------------------------
