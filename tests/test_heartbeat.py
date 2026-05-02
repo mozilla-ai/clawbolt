@@ -2996,6 +2996,34 @@ class TestHeartbeatRulesGuardHistoryPatterns:
         assert "removed" in rules.lower() or "no longer" in rules.lower()
 
 
+class TestHeartbeatRulesGuardConversationContext:
+    """The rules must forbid the LLM from running heartbeat tasks just because
+    it sees a pending user request in recent conversation context.
+
+    Real failure mode this guards against: a deploy-induced container restart
+    fired Phase 1 within seconds of boot. Phase 1 saw the user's recent
+    'please send the estimate' message in context and chose action=run. The
+    Phase 2 agent then re-executed work the previous container was already
+    handling. With idempotent reads this is harmless; with side-effecting
+    tools (qb_send, qb_create), it risks double execution. The rules now
+    explicitly tell Phase 1 that pending user requests belong to the
+    user-driven path, not to heartbeat.
+    """
+
+    def test_rules_forbid_running_for_recent_user_request(self) -> None:
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Heartbeat must NOT volunteer to "complete" pending user requests.
+        assert "do not 'run' to complete tasks you see in recent conversation" in rules
+        # The user-driven agent path is named so the LLM understands the
+        # division of labor.
+        assert "user-driven" in rules or "user driven" in rules
+        # 'run' decision must be tied to the heartbeat section, not to
+        # arbitrary "looks interesting" data.
+        assert "do not 'run' just because" in rules
+
+
 # ---------------------------------------------------------------------------
 # Phase 2: tool wiring (regression for #874)
 # ---------------------------------------------------------------------------
