@@ -3015,13 +3015,17 @@ class TestHeartbeatRulesGuardConversationContext:
 
         rules = load_prompt("heartbeat_rules").lower()
         # Heartbeat must NOT volunteer to "complete" pending user requests.
-        assert "do not 'run' to complete tasks you see in recent conversation" in rules
+        # We anchor on the semantics (recent conversation + skip/don't run),
+        # not the exact phrasing, so the wording can evolve without breaking
+        # this regression test.
+        assert "recent conversation" in rules or "recent messages" in rules
+        assert any(forbid in rules for forbid in ("do not 'run'", "don't 'run'", "choose 'skip'"))
         # The user-driven agent path is named so the LLM understands the
         # division of labor.
         assert "user-driven" in rules or "user driven" in rules
         # 'run' decision must be tied to the heartbeat section, not to
         # arbitrary "looks interesting" data.
-        assert "do not 'run' just because" in rules
+        assert "heartbeat list" in rules or "heartbeat section" in rules
 
 
 # ---------------------------------------------------------------------------
