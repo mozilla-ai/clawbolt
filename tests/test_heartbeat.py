@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import datetime
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -1592,6 +1593,65 @@ class TestHeartbeatScheduler:
         scheduler = HeartbeatScheduler()
         scheduler.stop()  # Should not raise
         assert scheduler._task is None
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_run_sleeps_warmup_before_first_tick(self, mock_settings: MagicMock) -> None:
+        """The scheduler must wait heartbeat_startup_warmup_seconds before
+        the first tick. Regression: a fresh container racing the previous
+        one's in-flight work was the root of the recent double-execution
+        risk on deploys."""
+        mock_settings.heartbeat_enabled = True
+        mock_settings.heartbeat_startup_warmup_seconds = 60
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        scheduler = HeartbeatScheduler()
+        # Stub tick so we can assert it is NOT called before the warmup
+        # sleeps, and use a sleep stub that records its arguments.
+        scheduler.tick = AsyncMock()  # type: ignore[method-assign]
+
+        sleep_calls: list[float] = []
+
+        async def fake_sleep(secs: float) -> None:
+            sleep_calls.append(secs)
+            # After we observe the warmup sleep, raise CancelledError to
+            # break out of the infinite loop without racing real timers.
+            if len(sleep_calls) == 1:
+                raise asyncio.CancelledError
+
+        with (
+            patch("backend.app.agent.heartbeat.asyncio.sleep", side_effect=fake_sleep),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await scheduler._run()
+
+        # First sleep must be the warmup, not the per-tick interval. tick()
+        # must not have been called yet.
+        assert sleep_calls[0] == 60
+        scheduler.tick.assert_not_called()  # type: ignore[attr-defined]
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.settings")
+    async def test_run_skips_warmup_when_disabled(self, mock_settings: MagicMock) -> None:
+        """heartbeat_startup_warmup_seconds=0 disables the warmup so we
+        keep an escape hatch for environments that don't need it."""
+        mock_settings.heartbeat_enabled = True
+        mock_settings.heartbeat_startup_warmup_seconds = 0
+        mock_settings.heartbeat_max_daily_messages = 5
+
+        scheduler = HeartbeatScheduler()
+
+        async def stub_tick() -> None:
+            # Cancel the loop after the first tick so the test terminates.
+            raise asyncio.CancelledError
+
+        scheduler.tick = stub_tick  # type: ignore[method-assign]
+
+        with (
+            patch("backend.app.agent.heartbeat.asyncio.sleep", new=AsyncMock()),
+            pytest.raises(asyncio.CancelledError),
+        ):
+            await scheduler._run()
 
     @pytest.mark.asyncio
     async def test_tick_queries_onboarded(self) -> None:
