@@ -190,6 +190,8 @@ class ClawboltAgent:
         excluded_tool_names: set[str] | None = None,
         request_id: str = "",
         activated_specialists: set[str] | None = None,
+        llm_provider_override: str = "",
+        llm_model_override: str = "",
     ) -> None:
         self.user = user
         self._channel = channel
@@ -207,6 +209,8 @@ class ClawboltAgent:
         self._session_id = session_id
         self._excluded_tool_names = excluded_tool_names
         self._request_id = request_id
+        self._llm_provider_override = llm_provider_override
+        self._llm_model_override = llm_model_override
         # Previous round's tool-name sequence, used to detect when a newly
         # built tool list fails to preserve the prefix (which busts the
         # Anthropic tools prompt cache). The list is append-only by design;
@@ -455,10 +459,12 @@ class ClawboltAgent:
             tool_schemas = apply_tool_caching(tool_schemas)
         tool_count = len(tool_schemas) if tool_schemas else 0
         thinking = reasoning_effort_to_thinking(settings.reasoning_effort)
+        effective_model = self._llm_model_override or settings.llm_model
+        effective_provider = self._llm_provider_override or settings.llm_provider
         logger.debug(
             "Calling LLM: model=%s provider=%s messages=%d tools=%d max_tokens=%d",
-            settings.llm_model,
-            settings.llm_provider,
+            effective_model,
+            effective_provider,
             len(msg_dicts),
             tool_count,
             effective_max_tokens,
@@ -468,8 +474,8 @@ class ClawboltAgent:
                 return cast(
                     MessageResponse,
                     await amessages(
-                        model=settings.llm_model,
-                        provider=settings.llm_provider,
+                        model=effective_model,
+                        provider=effective_provider,
                         api_base=settings.llm_api_base,
                         system=system,
                         messages=msg_dicts,
@@ -510,8 +516,8 @@ class ClawboltAgent:
                 return cast(
                     MessageResponse,
                     await amessages(
-                        model=settings.llm_model,
-                        provider=settings.llm_provider,
+                        model=effective_model,
+                        provider=effective_provider,
                         api_base=settings.llm_api_base,
                         system=system,
                         messages=trimmed_dicts,
@@ -1036,7 +1042,12 @@ class ClawboltAgent:
                 messages, tool_schemas, llm_kwargs, max_tokens=max_tokens
             )
             purpose = "agent_main" if _round == 0 else "agent_followup"
-            log_llm_usage(self.user.id, settings.llm_model, response, purpose)
+            log_llm_usage(
+                self.user.id,
+                self._llm_model_override or settings.llm_model,
+                response,
+                purpose,
+            )
             if response.usage and response.usage.input_tokens:
                 self._last_input_tokens = response.usage.input_tokens
                 _total_input_tokens += response.usage.input_tokens
@@ -1186,10 +1197,13 @@ class ClawboltAgent:
 
             # If the response was truncated and produced validation errors,
             # auto-increase max_tokens for the next round so the LLM has
-            # enough room to generate the full tool call payload.
+            # enough room to generate the full tool call payload. The
+            # 8192 cap leaves one further recovery step beyond the
+            # current 2048 default (2048 -> 4096 -> 8192) before we
+            # give up and surface the truncation to the user.
             if response_truncated and any(r.is_error for r in tool_results):
                 effective = max_tokens or settings.llm_max_tokens_agent
-                max_tokens = min(effective * 2, 4096)
+                max_tokens = min(effective * 2, 8192)
                 logger.info(
                     "Response truncated with errors, increasing max_tokens to %d",
                     max_tokens,

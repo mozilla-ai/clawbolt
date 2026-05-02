@@ -1051,7 +1051,22 @@ class HeartbeatScheduler:
     # -- internals --
 
     async def _run(self) -> None:
-        """Loop forever, running one tick per resolution interval."""
+        """Loop forever, running one tick per resolution interval.
+
+        Sleeps for ``heartbeat_startup_warmup_seconds`` BEFORE the first
+        tick so a fresh process (e.g. just after a deploy) has time to
+        let any in-flight work from the previous container settle and
+        for queued inbound messages to drain through normal processing.
+        Without this gate, a Phase 1 LLM that fires within seconds of
+        boot can decide to "complete" a request the previous container
+        was already partway through — risking double execution of
+        side-effecting tools (qb_send, qb_create, etc.).
+        """
+        warmup = settings.heartbeat_startup_warmup_seconds
+        if warmup > 0:
+            logger.info("Heartbeat warmup: sleeping %ds before first tick", warmup)
+            await asyncio.sleep(warmup)
+
         while True:
             try:
                 await self.tick()

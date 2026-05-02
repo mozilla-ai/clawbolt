@@ -53,7 +53,14 @@ class Settings(BaseSettings):
     vision_model: str = ""  # empty = fall back to llm_model
     vision_provider: str = ""  # empty = fall back to llm_provider
     reasoning_effort: str = "auto"  # none, minimal, low, medium, high, xhigh, auto
-    llm_max_tokens_agent: int = Field(default=1024, ge=1)
+    # 2048 is sized to fit a typical multi-tool turn (one ~200-token reply
+    # plus a tool call whose JSON args can run 500-1500 tokens for nested
+    # entity payloads in the QuickBooks / CompanyCam tools). The previous
+    # 1024 default truncated mid-tool-call on real workloads, leaving the
+    # validator to catch the malformed args; auto-recovery in
+    # ``core.py:_call_llm_with_retry`` doubles ``max_tokens`` on the next
+    # round, but a higher floor avoids the wasted round entirely.
+    llm_max_tokens_agent: int = Field(default=2048, ge=1)
     llm_max_tokens_heartbeat: int = Field(default=12000, ge=1)
     llm_max_tokens_vision: int = Field(default=1000, ge=1)
 
@@ -169,6 +176,18 @@ class Settings(BaseSettings):
     # to delay genuinely overdue nudges and long enough to absorb a
     # multi-turn back-and-forth. Set to 0 to disable the throttle.
     heartbeat_user_quiet_period_minutes: int = Field(default=5, ge=0)
+    # Delay the first scheduler tick after process start. Without this,
+    # a deploy mid-conversation produces a tick on the new container
+    # within ~2 seconds of boot, before any in-flight work on the old
+    # container has had a chance to settle, and before any queued
+    # inbound messages have drained from the bus into normal processing.
+    # The Phase 1 LLM then sees the user's pending request in recent
+    # context and decides to act, racing the agent path that would have
+    # handled it normally. 60 seconds is short enough not to delay
+    # genuine proactive nudges in long-running deployments and long
+    # enough to absorb the post-restart settle window. Set to 0 to
+    # disable the warmup (the previous behavior).
+    heartbeat_startup_warmup_seconds: int = Field(default=60, ge=0)
 
     # Observability
     log_request_timing: bool = False  # Set True (or LOG_REQUEST_TIMING=1) to log per-request timing
