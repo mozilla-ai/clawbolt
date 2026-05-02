@@ -2116,7 +2116,6 @@ class TestGetChannelIdentifier:
     """ChannelRoute DB lookup for channel identifiers."""
 
     def test_returns_matching_identifier(self) -> None:
-
         db = _db_module.SessionLocal()
         try:
             user = User(user_id="ch-id-test-1")
@@ -2133,7 +2132,6 @@ class TestGetChannelIdentifier:
             db.close()
 
     def test_returns_none_when_no_match(self) -> None:
-
         db = _db_module.SessionLocal()
         try:
             user = User(user_id="ch-id-test-2")
@@ -2148,7 +2146,6 @@ class TestGetChannelIdentifier:
             db.close()
 
     def test_does_not_return_other_users_identifier(self) -> None:
-
         db = _db_module.SessionLocal()
         try:
             user_a = User(user_id="ch-id-test-a")
@@ -3108,6 +3105,63 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
         "excluded_tool_names"
     )
     assert "qb_query" in excluded_tools
+
+
+@pytest.mark.asyncio()
+async def test_execute_heartbeat_task_context_includes_cleanup_instruction(
+    user: User,
+) -> None:
+    """Phase 2's task_context must instruct the agent to remove one-time
+    dated HEARTBEAT.md items after handling them, while preserving recurring
+    patterns. This is the durable counterpart to the Phase 1 stale-item
+    rule: once handled, the item should leave HEARTBEAT.md so it cannot
+    fire again on a future tick.
+    """
+    mock_agent_cls = MagicMock()
+    mock_agent = MagicMock()
+    mock_agent_cls.return_value = mock_agent
+    mock_agent.register_tools = MagicMock()
+    mock_agent.process_message = AsyncMock(
+        return_value=MagicMock(is_error_fallback=False, reply_text="done", actions_taken="")
+    )
+
+    mock_registry = MagicMock()
+    mock_registry.create_core_tools = AsyncMock(return_value=[])
+    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+    mock_registry.get_available_specialist_summaries.return_value = {}
+    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_disabled_specialist_sub_tools.return_value = {}
+
+    mock_tool_config = MagicMock()
+    mock_tool_config.get_disabled_tool_names = AsyncMock(return_value=set())
+    mock_tool_config.get_disabled_sub_tool_names = AsyncMock(return_value=set())
+
+    with (
+        patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
+        patch("backend.app.agent.tools.registry.default_registry", mock_registry),
+        patch(
+            "backend.app.agent.stores.ToolConfigStore",
+            return_value=mock_tool_config,
+        ),
+        patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+        patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        patch("backend.app.agent.heartbeat.message_bus"),
+    ):
+        from backend.app.agent.heartbeat import execute_heartbeat_tasks
+
+        await execute_heartbeat_tasks(user, "Follow up on the Smith estimate")
+
+    # The agent should have been called with a message_context that contains
+    # the cleanup directive and the original task body.
+    await_args = mock_agent.process_message.await_args
+    assert await_args is not None
+    message_context = await_args.kwargs["message_context"]
+    assert "Follow up on the Smith estimate" in message_context
+    # Cleanup directive must name update_heartbeat so the agent knows the tool
+    assert "update_heartbeat" in message_context
+    # One-time dated items get removed; recurring patterns stay
+    assert "one-time" in message_context
+    assert "recurring" in message_context.lower()
 
 
 @pytest.mark.asyncio()

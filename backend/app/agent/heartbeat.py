@@ -642,7 +642,20 @@ async def execute_heartbeat_tasks(
     # Prefix the task so the agent knows to execute it rather than
     # treating it as a user conversation message. Write the result as
     # plain text; the system delivers it as the outbound message.
-    task_context = "Execute this scheduled task now and write the result to the user.\n\n" + tasks
+    #
+    # The cleanup line is the durable counterpart to the Phase 1 stale-item
+    # rule: once a one-time, dated item has been handled, the line should
+    # leave HEARTBEAT.md so it cannot fire again on a future tick. Recurring
+    # patterns ("every morning", "Mondays", "weekly") must stay; only
+    # one-time, dated items are removed.
+    task_context = (
+        "Execute this scheduled task now and write the result to the user. "
+        "After completing the task, if it corresponded to a one-time, dated "
+        'item in HEARTBEAT.md (e.g. "follow up on the Smith estimate by '
+        'April 29"), call update_heartbeat to remove that specific line so '
+        "it does not fire again. Do NOT remove recurring patterns "
+        '("every morning", "Mondays", "weekly"); they must stay.\n\n' + tasks
+    )
 
     try:
         response: AgentResponse = await agent.process_message(

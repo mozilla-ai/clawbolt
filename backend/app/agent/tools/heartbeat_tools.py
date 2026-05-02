@@ -82,8 +82,11 @@ def create_heartbeat_tools(user_id: str) -> list[Tool]:
             params_model=UpdateHeartbeatParams,
             usage_hint=(
                 "Always call get_heartbeat first to see the current content. "
-                "Only add, remove, or change what the user explicitly asked for. "
-                "Do not restore items that were previously deleted."
+                "Only add, remove, or change what the user explicitly asked for, "
+                "or remove a one-time dated item that you have just finished "
+                "handling on a heartbeat-driven task (so it doesn't fire again). "
+                "Recurring patterns ('every morning', 'Mondays', 'weekly') must "
+                "stay. Do not restore items that were previously deleted."
             ),
             approval_policy=ApprovalPolicy(
                 default_level=PermissionLevel.ALWAYS,
