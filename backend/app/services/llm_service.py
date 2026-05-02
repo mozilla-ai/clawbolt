@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from any_llm import LLMProvider, alist_models
@@ -62,6 +63,44 @@ async def get_models(
     """Fetch available models for a provider."""
     raw = await alist_models(provider=provider, api_key=api_key, api_base=api_base)
     return [m.id if hasattr(m, "id") else str(m) for m in raw]
+
+
+# ---------------------------------------------------------------------------
+# Per-user LLM override resolver
+# ---------------------------------------------------------------------------
+
+# Premium (or another plugin) registers a resolver that returns a per-user
+# (provider, model) override, or ``None`` when the user has no override
+# configured. Either field of the returned tuple may be empty, in which case
+# the agent falls back to the global ``settings.llm_provider`` /
+# ``settings.llm_model`` value for that field.
+UserLLMResolver = Callable[[str], Awaitable[tuple[str, str] | None]]
+
+_user_llm_resolver: UserLLMResolver | None = None
+
+
+def set_user_llm_resolver(fn: UserLLMResolver | None) -> None:
+    """Register an async resolver that returns a per-user (provider, model) override.
+
+    Premium calls this at startup with a function that queries its
+    subscription DB. OSS leaves it unset, in which case all users use the
+    global ``settings.llm_*`` values.
+    """
+    global _user_llm_resolver
+    _user_llm_resolver = fn
+
+
+async def resolve_user_llm_override(user_id: str) -> tuple[str, str] | None:
+    """Look up a per-user LLM override via the registered resolver, if any.
+
+    Returns ``None`` when no resolver is registered or the resolver
+    returns ``None`` for this user. Resolver exceptions are not caught
+    here; callers can choose to log-and-fall-through if they want
+    defensive behavior.
+    """
+    if _user_llm_resolver is None:
+        return None
+    return await _user_llm_resolver(user_id)
 
 
 # ---------------------------------------------------------------------------
