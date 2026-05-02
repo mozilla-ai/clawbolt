@@ -1002,6 +1002,104 @@ class TestRunHeartbeatForUser:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_cleanup_only_logs_with_tasks_for_dedup(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """Cleanup-only Phase 2 must write a heartbeat log entry whose
+        tasks string is the same one Phase 1 issued.
+
+        The Phase 1 24-hour dedup rule keys on the per-tick history
+        emitted by ``_format_heartbeat_history``; that history shows
+        non-skip log entries with their tasks. If a cleanup-only run
+        (no user-facing reply) writes nothing, the next tick's history
+        is empty for that turn and the LLM has no signal to dedup
+        against, so it re-issues the same removal task on every tick
+        until the item ages out some other way.
+        """
+        from backend.app.agent.context import StoredToolInteraction
+        from backend.app.agent.core import AgentResponse
+
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run",
+            tasks="Remove the stale 'follow up on Smith estimate' entry",
+            reasoning="The dated item is past due and was already handled",
+        )
+        # Phase 2 ran update_heartbeat (no SENDS_REPLY tag) and produced
+        # no user-facing reply text. This is the cleanup-only shape.
+        mock_execute.return_value = AgentResponse(
+            reply_text="",
+            tool_calls=[
+                StoredToolInteraction(
+                    tool_call_id="call_1",
+                    name="update_heartbeat",
+                    args={"new_text": "..."},
+                    result="HEARTBEAT.md updated",
+                    is_error=False,
+                ),
+            ],
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- (something)"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        assert result is not None
+        assert result.action_type == "no_action"
+
+        # The cleanup log entry was written with the right shape so the
+        # next tick's _format_heartbeat_history can show it with tasks.
+        mock_hb_store.log_heartbeat.assert_awaited_once()
+        await_args = mock_hb_store.log_heartbeat.await_args
+        assert await_args is not None
+        kwargs = await_args.kwargs
+        assert kwargs["action_type"] == "cleanup"
+        assert kwargs["tasks"] == ("Remove the stale 'follow up on Smith estimate' entry")
+        assert kwargs["reasoning"]  # reasoning is propagated for audit
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_crash_does_not_log_cleanup(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """A Phase 2 crash (response is None) must not log a cleanup entry.
+
+        Cleanup is "Phase 2 ran successfully but produced no user-facing
+        message"; a None response is the crash path and should not
+        pollute the dedup history with an entry pretending the work was
+        done.
+        """
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(action="run", tasks="Do a thing", reasoning="r")
+        mock_execute.return_value = None
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- thing"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        # No log entry was written for the crashed run.
+        mock_hb_store.log_heartbeat.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.OutboundMessage")
     @patch("backend.app.agent.heartbeat.message_bus")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
@@ -1420,6 +1518,24 @@ class TestGetDailyHeartbeatCount:
 
         # Only the 2 sends should count
         assert await get_daily_heartbeat_count(user.id) == 2
+
+    @pytest.mark.asyncio
+    async def test_excludes_cleanup(self, user: User) -> None:
+        """Cleanup logs (Phase 2 ran without sending) must not count.
+
+        These are dedup-history audit entries, not user-facing nudges.
+        Counting them would burn the daily nudge budget on internal
+        housekeeping (e.g. pruning a stale HEARTBEAT.md item).
+        """
+        from backend.app.agent.stores import HeartbeatStore
+
+        store = HeartbeatStore(user.id)
+        await store.log_heartbeat(action_type="send", message_text="Hello")
+        await store.log_heartbeat(
+            action_type="cleanup", tasks="Remove stale entry", reasoning="dated"
+        )
+        # Only the send counts.
+        assert await get_daily_heartbeat_count(user.id) == 1
 
 
 # ---------------------------------------------------------------------------

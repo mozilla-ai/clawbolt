@@ -809,6 +809,27 @@ async def run_heartbeat_for_user(
         )
 
         if not response or (not response.reply_text and not sent_reply):
+            # Phase 2 ran but produced no user-facing message: this is the
+            # cleanup-only path (e.g. heartbeat fired purely to prune a
+            # stale one-time item from HEARTBEAT.md, see #1116). We still
+            # need to record it so the next tick's heartbeat history
+            # shows the removal attempt; without that line, the Phase 1
+            # 24-hour dedup rule has no signal to dedup against and the
+            # LLM keeps re-issuing the same cleanup task.
+            #
+            # ``action_type="cleanup"`` is distinct from "skip" (which
+            # means Phase 1 took no action) and from "send" (which would
+            # count toward the daily nudge budget). ``get_daily_count``
+            # excludes both "skip" and "cleanup" so this log entry is
+            # purely an audit + dedup signal, not a budget consumer.
+            if response is not None:
+                heartbeat_store = HeartbeatStore(user.id)
+                await heartbeat_store.log_heartbeat(
+                    action_type="cleanup",
+                    channel=channel,
+                    reasoning=decision.reasoning,
+                    tasks=decision.tasks,
+                )
             logger.debug("Heartbeat Phase 2 produced no output for user %s", user.id)
             return HeartbeatAction(
                 action_type="no_action",

@@ -155,7 +155,14 @@ class HeartbeatStore:
             db.commit()
 
     async def get_daily_count(self) -> int:
-        """Count HeartbeatLog entries for today (UTC), excluding skips."""
+        """Count HeartbeatLog entries for today (UTC) that consumed the nudge budget.
+
+        Excludes ``"skip"`` (Phase 1 chose no action) and ``"cleanup"``
+        (Phase 2 ran but produced no user-facing message, e.g. pruning
+        a stale HEARTBEAT.md entry). Both are audit/dedup signals, not
+        nudges to the user, so they do not count toward
+        ``heartbeat_max_daily_messages``.
+        """
         db = SessionLocal()
         try:
             today = datetime.datetime.now(datetime.UTC).date()
@@ -167,7 +174,7 @@ class HeartbeatStore:
                     HeartbeatLog.user_id == self.user_id,
                     HeartbeatLog.created_at >= today_start,
                     HeartbeatLog.created_at < tomorrow_start,
-                    HeartbeatLog.action_type != "skip",
+                    HeartbeatLog.action_type.notin_(("skip", "cleanup")),
                 )
                 .scalar()
             ) or 0
