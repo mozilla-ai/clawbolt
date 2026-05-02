@@ -109,6 +109,10 @@ class TestFormatPlanMessage:
         for option in ("  yes", "  no", "  always", "  never"):
             assert option in msg, f"missing menu line: {option!r}"
         assert "(always/never to remember" not in msg
+        # Same em-dash ban as the single-tool prompt: see
+        # ``test_menu_uses_no_em_dashes`` in test_approval.py for the rationale.
+        assert "—" not in msg
+        assert " -- " not in msg
 
     def test_single_ask_with_auto(self) -> None:
         """Single ask step with auto steps: natural language format."""

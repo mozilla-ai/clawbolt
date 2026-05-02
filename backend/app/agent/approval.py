@@ -154,10 +154,10 @@ def format_plan_message(
 
     _reply_line = (
         "Reply with one of:\n"
-        "  yes — allow this once\n"
-        "  no — deny this once\n"
-        "  always — allow and remember\n"
-        "  never — deny and remember"
+        "  yes: allow this once\n"
+        "  no: deny this once\n"
+        "  always: allow and remember\n"
+        "  never: deny and remember"
     )
 
     # Single ask, no auto: simple prompt
@@ -819,10 +819,10 @@ def format_approval_message(tool_name: str, description: str) -> str:
     return (
         f"I'd like to: {description}\n\n"
         "Reply with one of:\n"
-        "  yes — allow this once\n"
-        "  no — deny this once\n"
-        "  always — allow and remember\n"
-        "  never — deny and remember"
+        "  yes: allow this once\n"
+        "  no: deny this once\n"
+        "  always: allow and remember\n"
+        "  never: deny and remember"
     )
 
 

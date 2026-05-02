@@ -335,6 +335,19 @@ class TestFormatApprovalMessage:
         # Tool name should NOT appear in the user-facing message
         assert "web_fetch" not in msg
 
+    def test_menu_uses_no_em_dashes(self) -> None:
+        """The four-line menu must not contain em dashes.
+
+        Per the project style rule on user-facing copy, separators in
+        prose are colons, periods, or commas, not em dashes (which
+        users on some clients render as a literal box). This test pins
+        the punctuation so a future edit cannot quietly reintroduce
+        them.
+        """
+        msg = format_approval_message("any_tool", "do the thing")
+        assert "—" not in msg  # em dash
+        assert " -- " not in msg  # double-hyphen approximation
+
 
 # ---------------------------------------------------------------------------
 # ApprovalGate

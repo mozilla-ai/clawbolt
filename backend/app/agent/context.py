@@ -35,7 +35,11 @@ logger = logging.getLogger(__name__)
 # matching after the new wording ships, otherwise the issue #1049 fix
 # silently regresses on already-poisoned sessions.
 _APPROVAL_PROMPT_TRAILERS: tuple[str, ...] = (
-    # Current wording — the last line of the four-option menu.
+    # Current wording: last line of the four-option menu.
+    "never: deny and remember",
+    # Pre-em-dash-fix wording (briefly used between the prompt rewrite
+    # and the punctuation-policy fix). Kept so rows persisted in that
+    # window still match the trailer filter.
     "never — deny and remember",
     # Pre-rewording wording, kept for backward compatibility with
     # already-persisted rows in the DB.
