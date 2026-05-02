@@ -161,6 +161,14 @@ class Settings(BaseSettings):
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
     heartbeat_concurrency: int = Field(default=5, ge=1)
     heartbeat_recent_messages_count: int = Field(default=5, ge=1)
+    # Skip the heartbeat LLM call for a user who messaged recently. The
+    # scheduler ticks every ``heartbeat_interval_minutes`` regardless of
+    # user activity; without this gate, an active conversation produces
+    # a tick → LLM call → "skip" decision every interval, burning tokens
+    # for no user value. The default 5-minute window is short enough not
+    # to delay genuinely overdue nudges and long enough to absorb a
+    # multi-turn back-and-forth. Set to 0 to disable the throttle.
+    heartbeat_user_quiet_period_minutes: int = Field(default=5, ge=0)
 
     # Observability
     log_request_timing: bool = False  # Set True (or LOG_REQUEST_TIMING=1) to log per-request timing

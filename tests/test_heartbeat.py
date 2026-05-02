@@ -870,6 +870,52 @@ class TestRunHeartbeatForUser:
         assert result is None
 
     @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat._user_messaged_within")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_skip_when_user_recently_messaged(
+        self,
+        mock_count: AsyncMock,
+        mock_recent: MagicMock,
+        user: User,
+    ) -> None:
+        """Quiet-period gate: skip the LLM call when the user is in an
+        active conversation. Pre-LLM, runs after the daily-rate gate."""
+        mock_count.return_value = 0
+        mock_recent.return_value = True
+        result = await run_heartbeat_for_user(user, "telegram", "+15550000000", 5)
+        assert result is None
+        mock_recent.assert_called_once()
+        # Quiet-period must run BEFORE any LLM evaluation, so the
+        # mock for evaluate_heartbeat_need is never called here.
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat._user_messaged_within")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_quiet_period_does_not_block_when_user_silent(
+        self,
+        mock_count: AsyncMock,
+        mock_recent: MagicMock,
+        mock_eval: AsyncMock,
+        mock_hb_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """If the user has not messaged recently, the heartbeat runs
+        normally — the gate does not gum up legitimate proactive sends."""
+        mock_count.return_value = 0
+        mock_recent.return_value = False
+        mock_eval.return_value = HeartbeatDecision(
+            action="skip", tasks="", reasoning="Nothing actionable"
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_hb_store_cls.return_value = mock_hb_store
+
+        await run_heartbeat_for_user(user, "telegram", "+15550000000", 5)
+        mock_eval.assert_awaited_once()
+
+    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
