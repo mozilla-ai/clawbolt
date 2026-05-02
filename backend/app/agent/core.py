@@ -1186,10 +1186,13 @@ class ClawboltAgent:
 
             # If the response was truncated and produced validation errors,
             # auto-increase max_tokens for the next round so the LLM has
-            # enough room to generate the full tool call payload.
+            # enough room to generate the full tool call payload. The
+            # 8192 cap leaves one further recovery step beyond the
+            # current 2048 default (2048 -> 4096 -> 8192) before we
+            # give up and surface the truncation to the user.
             if response_truncated and any(r.is_error for r in tool_results):
                 effective = max_tokens or settings.llm_max_tokens_agent
-                max_tokens = min(effective * 2, 4096)
+                max_tokens = min(effective * 2, 8192)
                 logger.info(
                     "Response truncated with errors, increasing max_tokens to %d",
                     max_tokens,
