@@ -76,6 +76,15 @@ _TICK_RESOLUTION_MINUTES = 1
 # How far back to look when building heartbeat history context for the LLM.
 _HISTORY_LOOKBACK_DAYS = 7
 
+# Literal prefix that identifies the heartbeat-driven (scheduled) message
+# path to the agent. Phase 2's ``task_context`` starts with this string.
+# ``backend/app/agent/tools/heartbeat_tools.py`` matches on the same
+# constant in ``update_heartbeat``'s ``usage_hint`` to scope proactive
+# pruning to the heartbeat path; without that gate, the user-driven
+# agent could start removing HEARTBEAT.md lines mid-conversation. Both
+# sides import this constant so the strings cannot drift.
+SCHEDULED_TASK_PREFIX = "Execute this scheduled task now"
+
 
 def parse_frequency_to_minutes(freq: str) -> int | None:
     """Convert a frequency string like ``15m``, ``2h``, ``1d`` to minutes.
@@ -641,9 +650,36 @@ async def execute_heartbeat_tasks(
     heartbeat_max_tokens = max(settings.llm_max_tokens_agent, 1024)
 
     # Prefix the task so the agent knows to execute it rather than
-    # treating it as a user conversation message. Write the result as
-    # plain text; the system delivers it as the outbound message.
-    task_context = "Execute this scheduled task now and write the result to the user.\n\n" + tasks
+    # treating it as a user conversation message. Two task shapes are
+    # possible. Real-world action followed by post-cleanup (shape 1) is
+    # the durable counterpart to the Phase 1 stale-item rule; cleanup-
+    # only (shape 2) is what Phase 1 routes when the dated item is
+    # already past its window. Distinguishing them in the prompt
+    # prevents the agent from "doubling up" by performing the action
+    # AND issuing the cleanup, which would re-fire side effects on a
+    # date the user no longer cares about.
+    #
+    # Partial-state failures are acceptable: if the agent finishes the
+    # real-world action but errors before update_heartbeat lands, the
+    # line stays in HEARTBEAT.md and the next tick re-evaluates it via
+    # the Phase 1 stale-item rule (with its 24-hour dedup). Better a
+    # stale line for a few ticks than skipping the user-visible action.
+    task_context = (
+        f"{SCHEDULED_TASK_PREFIX} and write the result to the user.\n\n"
+        "Two task shapes:\n\n"
+        '1. Real-world action ("Send the Smith estimate", '
+        '"Follow up with the customer"): perform the action. If it '
+        "corresponded to a one-time dated HEARTBEAT.md item, call "
+        "update_heartbeat to delete that line. Recurring patterns "
+        '("every morning", "Mondays", "weekly") must stay.\n\n'
+        '2. HEARTBEAT.md cleanup task ("Remove the stale Smith '
+        'follow-up"): call update_heartbeat to delete the named line '
+        "and stop. Do not perform any underlying real-world action; "
+        "the date has passed and the user did not ask for it again. "
+        "Do not issue a second update_heartbeat call. Produce no "
+        "user-facing reply; the cleanup is internal housekeeping.\n\n"
+        "Task:\n" + tasks
+    )
 
     try:
         response: AgentResponse = await agent.process_message(
@@ -712,6 +748,40 @@ def _dispatch_heartbeat_usage(
             logger.exception("heartbeat usage hook failed for user %s", user_id)
 
 
+def _user_messaged_within(user_id: str, minutes: int) -> bool:
+    """Return True if the user sent an inbound message in the last *minutes*.
+
+    Backs the heartbeat quiet-period gate. Used to skip the heartbeat
+    LLM call for users in an active conversation, where the scheduler
+    would otherwise tick → LLM call → "skip" decision once per interval
+    until the user goes quiet. Cheap point lookup against the indexed
+    ``messages`` table (filtered to the user's sessions).
+
+    Returns False on any DB hiccup so a transient failure does not
+    silently wedge the heartbeat path; the caller will fall through to
+    the normal LLM evaluation, which is the safer failure mode.
+    """
+    from backend.app.models import ChatSession, Message
+
+    cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=minutes)
+    db = SessionLocal()
+    try:
+        latest = (
+            db.query(Message.timestamp)
+            .join(ChatSession, ChatSession.id == Message.session_id)
+            .filter(ChatSession.user_id == user_id, Message.direction == "inbound")
+            .order_by(Message.timestamp.desc())
+            .limit(1)
+            .scalar()
+        )
+    except Exception:
+        logger.exception("Failed to check recent-message gate for user %s", user_id)
+        return False
+    finally:
+        db.close()
+    return latest is not None and latest >= cutoff
+
+
 # ---------------------------------------------------------------------------
 # Per-user runner (orchestrates Phase 1 + Phase 2)
 # ---------------------------------------------------------------------------
@@ -748,6 +818,19 @@ async def run_heartbeat_for_user(
             user.id,
             daily_count,
             max_daily,
+        )
+        return None
+
+    # Gate: user is in an active conversation. The scheduler ticks on a
+    # fixed interval; without this check, a chatty user produces a "skip"
+    # LLM call every tick that adds nothing the user will see. Cheap DB
+    # lookup, runs after the in-memory gates and before the LLM call.
+    quiet_minutes = settings.heartbeat_user_quiet_period_minutes
+    if quiet_minutes > 0 and _user_messaged_within(user.id, quiet_minutes):
+        logger.debug(
+            "Heartbeat skip user %s: messaged within last %d min",
+            user.id,
+            quiet_minutes,
         )
         return None
 
@@ -810,6 +893,27 @@ async def run_heartbeat_for_user(
         )
 
         if not response or (not response.reply_text and not sent_reply):
+            # Phase 2 ran but produced no user-facing message: this is the
+            # cleanup-only path (e.g. heartbeat fired purely to prune a
+            # stale one-time item from HEARTBEAT.md, see #1116). We still
+            # need to record it so the next tick's heartbeat history
+            # shows the removal attempt; without that line, the Phase 1
+            # 24-hour dedup rule has no signal to dedup against and the
+            # LLM keeps re-issuing the same cleanup task.
+            #
+            # ``action_type="cleanup"`` is distinct from "skip" (which
+            # means Phase 1 took no action) and from "send" (which would
+            # count toward the daily nudge budget). ``get_daily_count``
+            # excludes both "skip" and "cleanup" so this log entry is
+            # purely an audit + dedup signal, not a budget consumer.
+            if response is not None:
+                heartbeat_store = HeartbeatStore(user.id)
+                await heartbeat_store.log_heartbeat(
+                    action_type="cleanup",
+                    channel=channel,
+                    reasoning=decision.reasoning,
+                    tasks=decision.tasks,
+                )
             logger.debug("Heartbeat Phase 2 produced no output for user %s", user.id)
             return HeartbeatAction(
                 action_type="no_action",

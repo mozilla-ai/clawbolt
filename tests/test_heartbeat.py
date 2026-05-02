@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import datetime
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -27,6 +28,7 @@ from backend.app.agent.heartbeat import (
     _heartbeat_usage_hooks,
     _parse_decision_response,
     _parse_tool_call_response,
+    _user_messaged_within,
     evaluate_heartbeat_need,
     execute_heartbeat_tasks,
     get_daily_heartbeat_count,
@@ -36,7 +38,7 @@ from backend.app.agent.heartbeat import (
     run_heartbeat_for_user,
 )
 from backend.app.agent.system_prompt import to_local_time
-from backend.app.models import ChannelRoute, User
+from backend.app.models import ChannelRoute, ChatSession, Message, User
 from tests.mocks.llm import (
     make_text_response,
     make_tool_call_response,
@@ -871,6 +873,56 @@ class TestRunHeartbeatForUser:
         assert result is None
 
     @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat._user_messaged_within")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_skip_when_user_recently_messaged(
+        self,
+        mock_count: AsyncMock,
+        mock_recent: MagicMock,
+        mock_eval: AsyncMock,
+        user: User,
+    ) -> None:
+        """Quiet-period gate: skip the LLM call when the user is in an
+        active conversation. Pre-LLM, runs after the daily-rate gate."""
+        mock_count.return_value = 0
+        mock_recent.return_value = True
+        result = await run_heartbeat_for_user(user, "telegram", "+15550000000", 5)
+        assert result is None
+        mock_recent.assert_called_once()
+        # Quiet-period must run BEFORE any LLM evaluation. Asserting the
+        # evaluator was never awaited makes the gate's ordering explicit
+        # and would catch a regression that re-arranged the gates.
+        mock_eval.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat._user_messaged_within")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_quiet_period_does_not_block_when_user_silent(
+        self,
+        mock_count: AsyncMock,
+        mock_recent: MagicMock,
+        mock_eval: AsyncMock,
+        mock_hb_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """If the user has not messaged recently, the heartbeat runs
+        normally — the gate does not gum up legitimate proactive sends."""
+        mock_count.return_value = 0
+        mock_recent.return_value = False
+        mock_eval.return_value = HeartbeatDecision(
+            action="skip", tasks="", reasoning="Nothing actionable"
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_hb_store_cls.return_value = mock_hb_store
+
+        await run_heartbeat_for_user(user, "telegram", "+15550000000", 5)
+        mock_eval.assert_awaited_once()
+
+    @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
@@ -1155,6 +1207,104 @@ class TestRunHeartbeatForUser:
         result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
         assert result is not None
         assert result.action_type == "no_action"
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_cleanup_only_logs_with_tasks_for_dedup(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """Cleanup-only Phase 2 must write a heartbeat log entry whose
+        tasks string is the same one Phase 1 issued.
+
+        The Phase 1 24-hour dedup rule keys on the per-tick history
+        emitted by ``_format_heartbeat_history``; that history shows
+        non-skip log entries with their tasks. If a cleanup-only run
+        (no user-facing reply) writes nothing, the next tick's history
+        is empty for that turn and the LLM has no signal to dedup
+        against, so it re-issues the same removal task on every tick
+        until the item ages out some other way.
+        """
+        from backend.app.agent.context import StoredToolInteraction
+        from backend.app.agent.core import AgentResponse
+
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run",
+            tasks="Remove the stale 'follow up on Smith estimate' entry",
+            reasoning="The dated item is past due and was already handled",
+        )
+        # Phase 2 ran update_heartbeat (no SENDS_REPLY tag) and produced
+        # no user-facing reply text. This is the cleanup-only shape.
+        mock_execute.return_value = AgentResponse(
+            reply_text="",
+            tool_calls=[
+                StoredToolInteraction(
+                    tool_call_id="call_1",
+                    name="update_heartbeat",
+                    args={"new_text": "..."},
+                    result="HEARTBEAT.md updated",
+                    is_error=False,
+                ),
+            ],
+        )
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- (something)"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        result = await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        assert result is not None
+        assert result.action_type == "no_action"
+
+        # The cleanup log entry was written with the right shape so the
+        # next tick's _format_heartbeat_history can show it with tasks.
+        mock_hb_store.log_heartbeat.assert_awaited_once()
+        await_args = mock_hb_store.log_heartbeat.await_args
+        assert await_args is not None
+        kwargs = await_args.kwargs
+        assert kwargs["action_type"] == "cleanup"
+        assert kwargs["tasks"] == ("Remove the stale 'follow up on Smith estimate' entry")
+        assert kwargs["reasoning"]  # reasoning is propagated for audit
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_crash_does_not_log_cleanup(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """A Phase 2 crash (response is None) must not log a cleanup entry.
+
+        Cleanup is "Phase 2 ran successfully but produced no user-facing
+        message"; a None response is the crash path and should not
+        pollute the dedup history with an entry pretending the work was
+        done.
+        """
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(action="run", tasks="Do a thing", reasoning="r")
+        mock_execute.return_value = None
+        mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- thing"
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        await run_heartbeat_for_user(user, "telegram", "+15559990000", 5)
+        # No log entry was written for the crashed run.
+        mock_hb_store.log_heartbeat.assert_not_awaited()
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
@@ -1498,6 +1648,137 @@ class TestHeartbeatUsageHooks:
 
 
 # ---------------------------------------------------------------------------
+# _user_messaged_within (quiet-period gate, integration with real DB rows)
+#
+# The unit tests above mock _user_messaged_within directly. This class
+# exercises the actual SQL query against a real Postgres test DB so we
+# catch a class of regressions the unit tests cannot:
+#
+# - Message.timestamp is currently DateTime(timezone=True) with a
+#   datetime.now(UTC) default, so the comparison against a tz-aware
+#   cutoff works. If anyone migrated this column to a naive type, the
+#   gate's ">=" comparison would raise TypeError, get swallowed by the
+#   broad except in _user_messaged_within, and the gate would silently
+#   never fire. The unit tests would still pass; this one would not.
+# - Confirms the join filters to the user's own sessions and ignores
+#   outbound messages.
+# ---------------------------------------------------------------------------
+
+
+def _seed_message(
+    db: Any,
+    *,
+    user_id: str,
+    direction: str,
+    timestamp: datetime.datetime,
+    seq: int = 1,
+    session_external_id: str | None = None,
+) -> int:
+    """Insert one ChatSession + one Message and return the message id."""
+    cs = ChatSession(
+        session_id=session_external_id or f"sess-{user_id[:8]}-{seq}",
+        user_id=user_id,
+        channel="telegram",
+    )
+    db.add(cs)
+    db.flush()
+    msg = Message(
+        session_id=cs.id,
+        seq=seq,
+        direction=direction,
+        body="hi",
+        timestamp=timestamp,
+    )
+    db.add(msg)
+    db.commit()
+    return msg.id
+
+
+class TestUserMessagedWithinIntegration:
+    def test_returns_false_when_no_messages(self, user: User) -> None:
+        assert _user_messaged_within(user.id, minutes=5) is False
+
+    def test_returns_true_for_recent_inbound(self, user: User) -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        db = _db_module.SessionLocal()
+        try:
+            _seed_message(
+                db,
+                user_id=user.id,
+                direction="inbound",
+                timestamp=now - datetime.timedelta(minutes=1),
+            )
+        finally:
+            db.close()
+        assert _user_messaged_within(user.id, minutes=5) is True
+
+    def test_returns_false_for_old_inbound(self, user: User) -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        db = _db_module.SessionLocal()
+        try:
+            _seed_message(
+                db,
+                user_id=user.id,
+                direction="inbound",
+                timestamp=now - datetime.timedelta(minutes=30),
+            )
+        finally:
+            db.close()
+        assert _user_messaged_within(user.id, minutes=5) is False
+
+    def test_ignores_outbound_messages(self, user: User) -> None:
+        """Outbound (assistant-authored) messages must not satisfy the gate.
+
+        The gate exists to detect that the *user* is mid-conversation,
+        not that the *assistant* recently replied. An outbound-only
+        session should leave the gate False so a heartbeat can still
+        fire if the user has gone quiet.
+        """
+        now = datetime.datetime.now(datetime.UTC)
+        db = _db_module.SessionLocal()
+        try:
+            _seed_message(
+                db,
+                user_id=user.id,
+                direction="outbound",
+                timestamp=now - datetime.timedelta(minutes=1),
+            )
+        finally:
+            db.close()
+        assert _user_messaged_within(user.id, minutes=5) is False
+
+    def test_other_users_messages_do_not_leak(self, user: User) -> None:
+        """A different user's recent inbound must not trigger this user's gate."""
+        other_db = _db_module.SessionLocal()
+        try:
+            other = User(
+                user_id="hb-quiet-other",
+                phone="+15559998888",
+                onboarding_complete=True,
+            )
+            other_db.add(other)
+            other_db.commit()
+            other_db.refresh(other)
+            other_id = other.id
+        finally:
+            other_db.close()
+
+        now = datetime.datetime.now(datetime.UTC)
+        db = _db_module.SessionLocal()
+        try:
+            _seed_message(
+                db,
+                user_id=other_id,
+                direction="inbound",
+                timestamp=now - datetime.timedelta(minutes=1),
+                session_external_id="sess-other-1",
+            )
+        finally:
+            db.close()
+        assert _user_messaged_within(user.id, minutes=5) is False
+
+
+# ---------------------------------------------------------------------------
 # get_daily_heartbeat_count (persistent rate limiting)
 # ---------------------------------------------------------------------------
 
@@ -1576,6 +1857,24 @@ class TestGetDailyHeartbeatCount:
 
         # Only the 2 sends should count
         assert await get_daily_heartbeat_count(user.id) == 2
+
+    @pytest.mark.asyncio
+    async def test_excludes_cleanup(self, user: User) -> None:
+        """Cleanup logs (Phase 2 ran without sending) must not count.
+
+        These are dedup-history audit entries, not user-facing nudges.
+        Counting them would burn the daily nudge budget on internal
+        housekeeping (e.g. pruning a stale HEARTBEAT.md item).
+        """
+        from backend.app.agent.stores import HeartbeatStore
+
+        store = HeartbeatStore(user.id)
+        await store.log_heartbeat(action_type="send", message_text="Hello")
+        await store.log_heartbeat(
+            action_type="cleanup", tasks="Remove stale entry", reasoning="dated"
+        )
+        # Only the send counts.
+        assert await get_daily_heartbeat_count(user.id) == 1
 
 
 # ---------------------------------------------------------------------------
@@ -2351,7 +2650,6 @@ class TestGetChannelIdentifier:
     """ChannelRoute DB lookup for channel identifiers."""
 
     def test_returns_matching_identifier(self) -> None:
-
         db = _db_module.SessionLocal()
         try:
             user = User(user_id="ch-id-test-1")
@@ -2368,7 +2666,6 @@ class TestGetChannelIdentifier:
             db.close()
 
     def test_returns_none_when_no_match(self) -> None:
-
         db = _db_module.SessionLocal()
         try:
             user = User(user_id="ch-id-test-2")
@@ -2383,7 +2680,6 @@ class TestGetChannelIdentifier:
             db.close()
 
     def test_does_not_return_other_users_identifier(self) -> None:
-
         db = _db_module.SessionLocal()
         try:
             user_a = User(user_id="ch-id-test-a")
@@ -3231,6 +3527,112 @@ class TestHeartbeatRulesGuardHistoryPatterns:
         assert "removed" in rules.lower() or "no longer" in rules.lower()
 
 
+class TestHeartbeatRulesGuardConversationContext:
+    """The rules must forbid the LLM from running heartbeat tasks just because
+    it sees a pending user request in recent conversation context.
+
+    Real failure mode this guards against: a deploy-induced container restart
+    fired Phase 1 within seconds of boot. Phase 1 saw the user's recent
+    'please send the estimate' message in context and chose action=run. The
+    Phase 2 agent then re-executed work the previous container was already
+    handling. With idempotent reads this is harmless; with side-effecting
+    tools (qb_send, qb_create), it risks double execution. The rules now
+    explicitly tell Phase 1 that pending user requests belong to the
+    user-driven path, not to heartbeat.
+    """
+
+    def test_rules_forbid_running_for_recent_user_request(self) -> None:
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Heartbeat must NOT volunteer to "complete" pending user requests.
+        # We anchor on the semantics (recent conversation + skip/don't run),
+        # not the exact phrasing, so the wording can evolve without breaking
+        # this regression test.
+        assert "recent conversation" in rules or "recent messages" in rules
+        assert any(forbid in rules for forbid in ("do not 'run'", "don't 'run'", "choose 'skip'"))
+        # The user-driven agent path is named so the LLM understands the
+        # division of labor.
+        assert "user-driven" in rules or "user driven" in rules
+        # 'run' decision must be tied to the heartbeat section, not to
+        # arbitrary "looks interesting" data.
+        assert "heartbeat list" in rules or "heartbeat section" in rules
+
+
+class TestHeartbeatRulesPruneStaleOneTimeItems:
+    """The rules must tell Phase 1 that a one-time dated item whose date has
+    clearly passed is stale and should be routed to cleanup, not skipped
+    silently nor acted on as if still due.
+
+    Real failure mode this guards against: the user's HEARTBEAT.md contained
+    a line like "follow up on the Smith estimate by April 29". When the
+    current date became May, the item kept sitting in HEARTBEAT.md because
+    nothing cleaned it up. Phase 1 either re-acted on it (double work) or
+    quietly skipped it forever (item never aged out). The rules now route
+    stale one-time items into a 'run' with a cleanup task description so
+    the executor calls update_heartbeat to delete them.
+    """
+
+    def test_rules_route_stale_dated_items_to_cleanup(self) -> None:
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # The rules must mention staleness and one-time items.
+        assert "stale" in rules
+        assert "one-time" in rules
+        # The cleanup path must be named: rules tell the LLM to use 'run'
+        # with a removal-style task description so Phase 2 can prune the
+        # entry via update_heartbeat.
+        assert "remove" in rules
+        assert "update_heartbeat" in rules
+        # Recurring patterns must be explicitly carved out so the LLM
+        # does not delete things like "every morning" or "Mondays".
+        assert "recurring" in rules
+
+    def test_rules_require_strict_staleness_threshold(self) -> None:
+        """The stale-item rule must require an explicit calendar date AND
+        more than one day past, to avoid pruning items the user is still
+        within their window for handling.
+
+        Without this guard, items dated for today or yesterday could be
+        auto-removed before the user has had a chance to act on them.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # The threshold language: explicit calendar date + a "more than 1 day"
+        # / "1 full day" gate.
+        assert "explicit calendar date" in rules
+        assert "1 full day" in rules or "1 day in the past" in rules
+
+    def test_rules_skip_on_ambiguity(self) -> None:
+        """When the date is ambiguous (no year, day-of-week only) or the
+        item carries an unverified condition ('if not done'), the LLM must
+        choose 'skip' rather than guessing it is stale.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Ambiguity → skip
+        assert "ambiguous" in rules
+        # Conditions are explicitly carved out
+        assert "if not done" in rules or "unverified condition" in rules
+
+    def test_rules_dedup_recent_removal_runs(self) -> None:
+        """Without dedup, a Phase 2 failure (network glitch) plus a sub-30m
+        tick interval would have Phase 1 issue the same removal task every
+        tick, burning tokens until the executor lands.
+        """
+        from backend.app.agent.system_prompt import load_prompt
+
+        rules = load_prompt("heartbeat_rules").lower()
+        # Dedup window must be named explicitly so a careless rewrite cannot
+        # silently drop it.
+        assert "24 hours" in rules
+        # The dedup path must say 'skip' so the LLM understands the action.
+        assert "in flight" in rules or "still in flight" in rules
+
+
 # ---------------------------------------------------------------------------
 # Phase 2: tool wiring (regression for #874)
 # ---------------------------------------------------------------------------
@@ -3343,6 +3745,99 @@ async def test_execute_heartbeat_respects_disabled_tools(user: User) -> None:
         "excluded_tool_names"
     )
     assert "qb_query" in excluded_tools
+
+
+@pytest.mark.asyncio()
+async def test_execute_heartbeat_task_context_includes_cleanup_instruction(
+    user: User,
+) -> None:
+    """Phase 2's task_context must instruct the agent to remove one-time
+    dated HEARTBEAT.md items after handling them, while preserving recurring
+    patterns. This is the durable counterpart to the Phase 1 stale-item
+    rule: once handled, the item should leave HEARTBEAT.md so it cannot
+    fire again on a future tick.
+    """
+    mock_agent_cls = MagicMock()
+    mock_agent = MagicMock()
+    mock_agent_cls.return_value = mock_agent
+    mock_agent.register_tools = MagicMock()
+    mock_agent.process_message = AsyncMock(
+        return_value=MagicMock(is_error_fallback=False, reply_text="done", actions_taken="")
+    )
+
+    mock_registry = MagicMock()
+    mock_registry.create_core_tools = AsyncMock(return_value=[])
+    mock_registry.create_ready_specialist_tools = AsyncMock(return_value=([], set()))
+    mock_registry.get_available_specialist_summaries.return_value = {}
+    mock_registry.get_unauthenticated_specialists.return_value = {}
+    mock_registry.get_disabled_specialist_sub_tools.return_value = {}
+
+    mock_tool_config = MagicMock()
+    mock_tool_config.get_disabled_tool_names = AsyncMock(return_value=set())
+    mock_tool_config.get_disabled_sub_tool_names = AsyncMock(return_value=set())
+
+    with (
+        patch("backend.app.agent.core.ClawboltAgent", mock_agent_cls),
+        patch("backend.app.agent.tools.registry.default_registry", mock_registry),
+        patch(
+            "backend.app.agent.stores.ToolConfigStore",
+            return_value=mock_tool_config,
+        ),
+        patch("backend.app.agent.tools.registry.create_list_capabilities_tool"),
+        patch("backend.app.agent.tools.registry.ensure_tool_modules_imported"),
+        patch("backend.app.agent.heartbeat.message_bus"),
+    ):
+        from backend.app.agent.heartbeat import execute_heartbeat_tasks
+
+        await execute_heartbeat_tasks(user, "Follow up on the Smith estimate")
+
+    # The agent should have been called with a message_context that contains
+    # the cleanup directive and the original task body.
+    await_args = mock_agent.process_message.await_args
+    assert await_args is not None
+    message_context = await_args.kwargs["message_context"]
+    lowered = message_context.lower()
+
+    # Original task body must be preserved.
+    assert "Follow up on the Smith estimate" in message_context
+    # Cleanup directive must name update_heartbeat so the agent knows the tool
+    assert "update_heartbeat" in message_context
+    # One-time dated items get removed; recurring patterns stay.
+    assert "one-time" in lowered
+    assert "recurring" in lowered
+    # The two task shapes must be distinguished so a Phase 1 cleanup task does
+    # not also trigger the underlying real-world action (e.g. "Remove the
+    # stale Smith follow-up" should NOT cause Phase 2 to actually follow up).
+    assert "real-world action" in lowered
+    assert "cleanup task" in lowered or "heartbeat.md cleanup" in lowered
+    # Cleanup-only runs should not chain a redundant second update_heartbeat
+    # call after the first succeeds.
+    assert "second update_heartbeat" in lowered or "do not issue a second" in lowered
+    # The heartbeat path is identified by the SCHEDULED_TASK_PREFIX
+    # constant. The update_heartbeat tool's usage_hint also matches on
+    # the same constant to decide when proactive pruning is allowed.
+    # Asserting against the constant (rather than the literal) means a
+    # rename of the prefix in one place breaks the test if the other
+    # side wasn't updated, instead of silently passing.
+    from backend.app.agent.heartbeat import SCHEDULED_TASK_PREFIX
+
+    assert SCHEDULED_TASK_PREFIX in message_context
+
+
+def test_update_heartbeat_usage_hint_anchors_on_scheduled_task_prefix() -> None:
+    """The update_heartbeat usage_hint scopes proactive pruning to the
+    heartbeat path by matching on the SCHEDULED_TASK_PREFIX constant
+    exported from heartbeat.py. Both sides import the same constant
+    so a rename in one place cannot drift the other.
+    """
+    from backend.app.agent.heartbeat import SCHEDULED_TASK_PREFIX
+    from backend.app.agent.tools.heartbeat_tools import create_heartbeat_tools
+    from backend.app.agent.tools.names import ToolName
+
+    tools = create_heartbeat_tools(user_id="test-user")
+    update_tool = next(t for t in tools if t.name == ToolName.UPDATE_HEARTBEAT)
+    assert update_tool.usage_hint is not None
+    assert SCHEDULED_TASK_PREFIX in update_tool.usage_hint
 
 
 @pytest.mark.asyncio()

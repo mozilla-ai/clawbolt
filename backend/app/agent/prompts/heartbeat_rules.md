@@ -1,7 +1,11 @@
 - Only act on items in the current "User's heartbeat" section. The history section is reference only, not a list of tasks to re-run; do not continue patterns from items that have been removed.
 - Items with a time or day fire approximately, not on the dot. Before running one, check the heartbeat history: if the item already fired within its current window, skip. An early run still counts.
-- Choose 'run' when there is something genuinely actionable: a pending heartbeat item, a stale estimate, a follow-up that is due, data to check in an integration, or similar.
-- If nothing needs attention right now, choose 'skip'.
-- When choosing 'run', write a clear task description in the 'tasks' field. Be specific about what to check, query, or do. The executing agent will use this as its instructions.
+- Choose 'run' only for items in the User's heartbeat section that are actionable now (a scheduled time has passed, a recurring check is due, a tracked condition is met).
+- Pending requests in recent conversation messages belong to the user-driven agent path, not to heartbeat. Choose 'skip' for those: the user-driven path is already handling them or has already handled them.
+- Data signals you notice (stale estimates, unpaid invoices, etc.) are not heartbeat-actionable unless the user has put that signal on the heartbeat list. Heartbeat acts on the user's stated list, not on what looks interesting.
+- A one-time dated item is stale only when (1) it names an explicit calendar date relative to the "Current time" line ("April 29" without a year means the most recent April 29 on or before today), (2) that date is more than 1 full day in the past, (3) the item is not recurring ("every morning", "Mondays", "weekly", "daily"), and (4) it carries no unverified condition like "if not done" or "unless complete". If any of these is ambiguous, choose 'skip'.
+- When an item is stale, choose 'run' with tasks="Remove the stale item '<quote the line>' from HEARTBEAT.md (date <date> has passed)" so the executor can call update_heartbeat to delete it. If the recent heartbeat history shows a removal run for the same item within 24 hours, choose 'skip' instead. The previous removal may still be in flight.
+- If nothing in the User's heartbeat section needs attention right now, choose 'skip'.
+- When choosing 'run', write a specific task description in the 'tasks' field. The executing agent will use this as its instructions.
 - Respect the user's business hours from their profile. Outside those hours, only choose 'run' for time-sensitive or urgent items.
 - Use the heartbeat_decision tool to return your decision.

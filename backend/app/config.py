@@ -168,9 +168,17 @@ class Settings(BaseSettings):
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
     heartbeat_concurrency: int = Field(default=5, ge=1)
     heartbeat_recent_messages_count: int = Field(default=5, ge=1)
+    # Skip the heartbeat LLM call for a user who messaged recently. The
+    # scheduler ticks every ``heartbeat_interval_minutes`` regardless of
+    # user activity; without this gate, an active conversation produces
+    # a tick → LLM call → "skip" decision every interval, burning tokens
+    # for no user value. The default 5-minute window is short enough not
+    # to delay genuinely overdue nudges and long enough to absorb a
+    # multi-turn back-and-forth. Set to 0 to disable the throttle.
+    heartbeat_user_quiet_period_minutes: int = Field(default=5, ge=0)
     # Delay the first scheduler tick after process start. Without this,
     # a deploy mid-conversation produces a tick on the new container
-    # within ~2 seconds of boot — before any in-flight work on the old
+    # within ~2 seconds of boot, before any in-flight work on the old
     # container has had a chance to settle, and before any queued
     # inbound messages have drained from the bus into normal processing.
     # The Phase 1 LLM then sees the user's pending request in recent
