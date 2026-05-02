@@ -2,9 +2,17 @@
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from unittest.mock import patch
 
-from backend.app.services.llm_service import apply_tool_caching, prepare_system_with_caching
+import pytest
+
+from backend.app.services.llm_service import (
+    apply_tool_caching,
+    prepare_system_with_caching,
+    resolve_user_llm_override,
+    set_user_llm_resolver,
+)
 
 
 def test_prepare_system_with_caching_returns_content_block() -> None:
@@ -124,3 +132,48 @@ def test_prepare_system_with_cache_boundary_marks_only_stable_prefix() -> None:
     assert result[0]["cache_control"] == {"type": "ephemeral", "ttl": "1h"}
     assert result[1]["text"] == "dynamic suffix"
     assert "cache_control" not in result[1]
+
+
+# ---------------------------------------------------------------------------
+# Per-user LLM override resolver hook (premium plug-point)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture(autouse=True)
+def _clear_user_llm_resolver() -> Generator[None]:
+    """Each test starts with no resolver installed and resets afterwards.
+
+    OSS code under test must not leak resolver state across tests.
+    """
+    set_user_llm_resolver(None)
+    yield
+    set_user_llm_resolver(None)
+
+
+async def test_resolve_user_llm_override_returns_none_when_no_resolver() -> None:
+    """With no resolver installed, every user falls through to global settings."""
+    assert await resolve_user_llm_override("user-123") is None
+
+
+async def test_resolve_user_llm_override_calls_registered_resolver() -> None:
+    """Installed resolver is invoked with the user_id and its result is returned."""
+    received: list[str] = []
+
+    async def fake_resolver(user_id: str) -> tuple[str, str] | None:
+        received.append(user_id)
+        return ("anthropic", "claude-haiku-4-5")
+
+    set_user_llm_resolver(fake_resolver)
+    result = await resolve_user_llm_override("user-abc")
+    assert result == ("anthropic", "claude-haiku-4-5")
+    assert received == ["user-abc"]
+
+
+async def test_resolve_user_llm_override_passes_through_none() -> None:
+    """Resolver may return None to indicate "no override for this user"."""
+
+    async def fake_resolver(_: str) -> tuple[str, str] | None:
+        return None
+
+    set_user_llm_resolver(fake_resolver)
+    assert await resolve_user_llm_override("user-xyz") is None

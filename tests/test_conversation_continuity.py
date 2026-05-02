@@ -373,7 +373,20 @@ async def test_load_history_malformed_tool_json_falls_back_to_flat(
 # ---------------------------------------------------------------------------
 
 
+# Current four-option menu form, what ``format_approval_message`` emits.
 _APPROVAL_PROMPT = (
+    "I'd like to: Create Estimate in QuickBooks\n\n"
+    "Reply with one of:\n"
+    "  yes — allow this once\n"
+    "  no — deny this once\n"
+    "  always — allow and remember\n"
+    "  never — deny and remember"
+)
+
+# Pre-rewording wording. Persisted rows from before the prompt change
+# still need to be filtered, otherwise the issue #1049 fix silently
+# regresses on already-poisoned sessions.
+_LEGACY_APPROVAL_PROMPT = (
     "I'd like to: Create Estimate in QuickBooks\n\n"
     "Reply yes or no (always/never to remember your choice)"
 )
@@ -398,10 +411,32 @@ async def test_load_history_filters_persisted_approval_prompts(
     assert isinstance(history[0], UserMessage)
     assert history[0].content == "Create that estimate"
     assert all(
-        "Reply yes or no" not in (m.content or "")
+        "deny and remember" not in (m.content or "")
         for m in history
         if isinstance(m, AssistantMessage)
     )
+
+
+@pytest.mark.asyncio()
+async def test_load_history_filters_legacy_approval_prompt_wording(
+    conversation: SessionState,
+) -> None:
+    """Approval prompts persisted before the wording rewording must
+    still be filtered. Backward compatibility on already-poisoned
+    sessions: rows in the DB still carry the old trailer, and dropping
+    the legacy match would silently regress the issue #1049 fix."""
+    conversation.messages.append(
+        StoredMessage(direction="inbound", body="Create that estimate", seq=1)
+    )
+    conversation.messages.append(
+        StoredMessage(direction="outbound", body=_LEGACY_APPROVAL_PROMPT, seq=2)
+    )
+    conversation.messages.append(StoredMessage(direction="inbound", body="Current", seq=3))
+
+    history = await load_conversation_history(conversation)
+    assert len(history) == 1
+    assert isinstance(history[0], UserMessage)
+    assert history[0].content == "Create that estimate"
 
 
 @pytest.mark.asyncio()
@@ -479,10 +514,10 @@ async def test_load_history_filters_llm_generated_fake_approval_prompt(
     (the bug from #1049), it gets persisted as outbound with no
     tool_interactions. The load-time filter must catch these too so
     the cycle stops on subsequent turns."""
-    fake_prompt = (
-        "I'd like to: Create Estimate in QuickBooks\n\n"
-        "Reply yes or no (always/never to remember your choice)"
-    )
+    # LLM-generated mimicry of the legacy wording, persisted in a session
+    # that has not been compacted yet. The filter must still catch this
+    # form so the prose-mimicry loop stops on subsequent turns.
+    fake_prompt = _LEGACY_APPROVAL_PROMPT
     conversation.messages.append(StoredMessage(direction="inbound", body="estimate?", seq=1))
     conversation.messages.append(
         StoredMessage(
