@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime
 import json
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -26,6 +27,7 @@ from backend.app.agent.heartbeat import (
     _heartbeat_usage_hooks,
     _parse_decision_response,
     _parse_tool_call_response,
+    _user_messaged_within,
     evaluate_heartbeat_need,
     execute_heartbeat_tasks,
     get_daily_heartbeat_count,
@@ -35,7 +37,7 @@ from backend.app.agent.heartbeat import (
     run_heartbeat_for_user,
 )
 from backend.app.agent.system_prompt import to_local_time
-from backend.app.models import ChannelRoute, User
+from backend.app.models import ChannelRoute, ChatSession, Message, User
 from tests.mocks.llm import (
     make_text_response,
     make_tool_call_response,
@@ -1389,6 +1391,137 @@ class TestHeartbeatUsageHooks:
         await run_heartbeat_for_user(u, "telegram", u.phone, 5)
 
         assert calls == []
+
+
+# ---------------------------------------------------------------------------
+# _user_messaged_within (quiet-period gate, integration with real DB rows)
+#
+# The unit tests above mock _user_messaged_within directly. This class
+# exercises the actual SQL query against a real Postgres test DB so we
+# catch a class of regressions the unit tests cannot:
+#
+# - Message.timestamp is currently DateTime(timezone=True) with a
+#   datetime.now(UTC) default, so the comparison against a tz-aware
+#   cutoff works. If anyone migrated this column to a naive type, the
+#   gate's ">=" comparison would raise TypeError, get swallowed by the
+#   broad except in _user_messaged_within, and the gate would silently
+#   never fire. The unit tests would still pass; this one would not.
+# - Confirms the join filters to the user's own sessions and ignores
+#   outbound messages.
+# ---------------------------------------------------------------------------
+
+
+def _seed_message(
+    db: Any,
+    *,
+    user_id: str,
+    direction: str,
+    timestamp: datetime.datetime,
+    seq: int = 1,
+    session_external_id: str | None = None,
+) -> int:
+    """Insert one ChatSession + one Message and return the message id."""
+    cs = ChatSession(
+        session_id=session_external_id or f"sess-{user_id[:8]}-{seq}",
+        user_id=user_id,
+        channel="telegram",
+    )
+    db.add(cs)
+    db.flush()
+    msg = Message(
+        session_id=cs.id,
+        seq=seq,
+        direction=direction,
+        body="hi",
+        timestamp=timestamp,
+    )
+    db.add(msg)
+    db.commit()
+    return msg.id
+
+
+class TestUserMessagedWithinIntegration:
+    def test_returns_false_when_no_messages(self, user: User) -> None:
+        assert _user_messaged_within(user.id, minutes=5) is False
+
+    def test_returns_true_for_recent_inbound(self, user: User) -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        db = _db_module.SessionLocal()
+        try:
+            _seed_message(
+                db,
+                user_id=user.id,
+                direction="inbound",
+                timestamp=now - datetime.timedelta(minutes=1),
+            )
+        finally:
+            db.close()
+        assert _user_messaged_within(user.id, minutes=5) is True
+
+    def test_returns_false_for_old_inbound(self, user: User) -> None:
+        now = datetime.datetime.now(datetime.UTC)
+        db = _db_module.SessionLocal()
+        try:
+            _seed_message(
+                db,
+                user_id=user.id,
+                direction="inbound",
+                timestamp=now - datetime.timedelta(minutes=30),
+            )
+        finally:
+            db.close()
+        assert _user_messaged_within(user.id, minutes=5) is False
+
+    def test_ignores_outbound_messages(self, user: User) -> None:
+        """Outbound (assistant-authored) messages must not satisfy the gate.
+
+        The gate exists to detect that the *user* is mid-conversation,
+        not that the *assistant* recently replied. An outbound-only
+        session should leave the gate False so a heartbeat can still
+        fire if the user has gone quiet.
+        """
+        now = datetime.datetime.now(datetime.UTC)
+        db = _db_module.SessionLocal()
+        try:
+            _seed_message(
+                db,
+                user_id=user.id,
+                direction="outbound",
+                timestamp=now - datetime.timedelta(minutes=1),
+            )
+        finally:
+            db.close()
+        assert _user_messaged_within(user.id, minutes=5) is False
+
+    def test_other_users_messages_do_not_leak(self, user: User) -> None:
+        """A different user's recent inbound must not trigger this user's gate."""
+        other_db = _db_module.SessionLocal()
+        try:
+            other = User(
+                user_id="hb-quiet-other",
+                phone="+15559998888",
+                onboarding_complete=True,
+            )
+            other_db.add(other)
+            other_db.commit()
+            other_db.refresh(other)
+            other_id = other.id
+        finally:
+            other_db.close()
+
+        now = datetime.datetime.now(datetime.UTC)
+        db = _db_module.SessionLocal()
+        try:
+            _seed_message(
+                db,
+                user_id=other_id,
+                direction="inbound",
+                timestamp=now - datetime.timedelta(minutes=1),
+                session_external_id="sess-other-1",
+            )
+        finally:
+            db.close()
+        assert _user_messaged_within(user.id, minutes=5) is False
 
 
 # ---------------------------------------------------------------------------
