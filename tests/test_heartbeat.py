@@ -976,6 +976,86 @@ class TestRunHeartbeatForUser:
 
     @pytest.mark.asyncio
     @patch("backend.app.agent.heartbeat.HeartbeatStore")
+    @patch("backend.app.agent.heartbeat.get_session_store")
+    @patch("backend.app.agent.heartbeat.get_or_create_conversation")
+    @patch("backend.app.agent.heartbeat.OutboundMessage")
+    @patch("backend.app.agent.heartbeat.message_bus")
+    @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
+    @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
+    @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")
+    async def test_phase2_persists_tool_interactions_on_outbound(
+        self,
+        mock_count: AsyncMock,
+        mock_eval: AsyncMock,
+        mock_execute: AsyncMock,
+        mock_bus: MagicMock,
+        mock_outbound_msg: MagicMock,
+        mock_get_conv: AsyncMock,
+        mock_get_session_store: MagicMock,
+        mock_heartbeat_store_cls: MagicMock,
+        user: User,
+    ) -> None:
+        """Heartbeat-driven outbounds must record tool_interactions_json so
+        the admin conversation view can render them with the same fidelity
+        as user-driven turns. Regression: a heartbeat that ran qb_send /
+        qb_update used to persist an empty tool_interactions_json, making
+        it look (in the admin Activity panel) like the agent claimed
+        success without calling any tools — indistinguishable from a
+        hallucinated reply."""
+        from backend.app.agent.context import StoredToolInteraction
+        from backend.app.agent.core import AgentResponse
+
+        mock_count.return_value = 0
+        mock_eval.return_value = HeartbeatDecision(
+            action="run",
+            tasks="Send the Surman estimate",
+            reasoning="Pending request",
+        )
+        mock_execute.return_value = AgentResponse(
+            reply_text="Done. Estimate sent to client.",
+            tool_calls=[
+                StoredToolInteraction(
+                    tool_call_id="call_1",
+                    name="qb_update",
+                    args={"entity_type": "Customer", "data": {"Id": "60"}},
+                    result="Customer updated",
+                    is_error=False,
+                ),
+                StoredToolInteraction(
+                    tool_call_id="call_2",
+                    name="qb_send",
+                    args={"entity_type": "Estimate", "entity_id": "544", "email": "x@y.z"},
+                    result="Estimate sent",
+                    is_error=False,
+                ),
+            ],
+        )
+        mock_bus.publish_outbound = AsyncMock()
+        mock_session = MagicMock()
+        mock_get_conv.return_value = (mock_session, True)
+        mock_session_store = MagicMock()
+        mock_session_store.add_message = AsyncMock()
+        mock_get_session_store.return_value = mock_session_store
+        mock_hb_store = MagicMock()
+        mock_hb_store.log_heartbeat = AsyncMock()
+        mock_heartbeat_store_cls.return_value = mock_hb_store
+
+        await run_heartbeat_for_user(user, "bluebubbles", "+15559990000", 5)
+
+        # The outbound was persisted exactly once.
+        mock_session_store.add_message.assert_awaited_once()
+        await_args = mock_session_store.add_message.await_args
+        assert await_args is not None
+        # tool_interactions_json was populated and parses to the two tools we ran.
+        raw = await_args.kwargs["tool_interactions_json"]
+        assert raw, "tool_interactions_json must be populated, not empty"
+        parsed = json.loads(raw)
+        assert [tc["name"] for tc in parsed] == ["qb_update", "qb_send"]
+        assert parsed[1]["args"]["entity_id"] == "544"
+        assert parsed[1]["is_error"] is False
+
+    @pytest.mark.asyncio
+    @patch("backend.app.agent.heartbeat.HeartbeatStore")
     @patch("backend.app.agent.heartbeat.execute_heartbeat_tasks")
     @patch("backend.app.agent.heartbeat.evaluate_heartbeat_need")
     @patch("backend.app.agent.heartbeat.get_daily_heartbeat_count")

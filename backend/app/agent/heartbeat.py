@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import datetime
+import json
 import logging
 import random
 import re
@@ -843,13 +844,24 @@ async def run_heartbeat_for_user(
                     priority=3,
                 )
 
-        # Record outbound message in session history
+        # Record outbound message in session history. Serialize the
+        # full tool-call list so the admin conversation view can
+        # render heartbeat-driven turns with the same fidelity as
+        # user-driven turns; without this, a heartbeat that ran
+        # qb_send / qb_update / etc. shows up as a "Done, ..." outbound
+        # with zero tool calls and is indistinguishable from a
+        # hallucinated success. Mirrors ``router.py:persist_outbound_step``.
+        tool_interactions = ""
+        if response and response.tool_calls:
+            tool_interactions = json.dumps([tc.model_dump() for tc in response.tool_calls])
+
         session, _ = await get_or_create_conversation(user.id)
         session_store = get_session_store(user.id)
         await session_store.add_message(
             session=session,
             direction=MessageDirection.OUTBOUND,
             body=reply_text,
+            tool_interactions_json=tool_interactions,
         )
 
         # Record heartbeat log for persistent rate limiting
