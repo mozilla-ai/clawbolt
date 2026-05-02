@@ -25,11 +25,39 @@ from backend.app.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
 
-# Canonical trailer that ``format_approval_message`` appends to every
-# system-issued approval prompt. Used to identify approval-prompt rows
-# in stored history so they can be filtered out before the LLM sees
-# them. See the comment in ``load_history`` for why.
-_APPROVAL_PROMPT_TRAILER = "Reply yes or no (always/never to remember your choice)"
+# Canonical trailers that ``format_approval_message`` /
+# ``format_plan_message`` append to every system-issued approval prompt.
+# Used to identify approval-prompt rows in stored history so they can be
+# filtered out before the LLM sees them (see ``load_history`` for the
+# rationale — persisted prompts trained the LLM to produce them as
+# prose, creating an infinite-loop UX bug). The list is "old + current"
+# on purpose: rows persisted before the prompt rewording need to keep
+# matching after the new wording ships, otherwise the issue #1049 fix
+# silently regresses on already-poisoned sessions.
+_APPROVAL_PROMPT_TRAILERS: tuple[str, ...] = (
+    # Current wording: last line of the four-option menu.
+    "never: deny and remember",
+    # Pre-em-dash-fix wording (briefly used between the prompt rewrite
+    # and the punctuation-policy fix). Kept so rows persisted in that
+    # window still match the trailer filter.
+    "never — deny and remember",
+    # Pre-rewording wording, kept for backward compatibility with
+    # already-persisted rows in the DB.
+    "Reply yes or no (always/never to remember your choice)",
+)
+
+
+def _is_approval_prompt(content: str) -> bool:
+    """Return True if *content* ends with any known approval-prompt trailer.
+
+    Helper so the load-history filter can detect rows persisted before
+    AND after the prompt-text rewording. Matching is by trailing
+    substring, not exact prefix, so receipts or prose appended after
+    the menu would not be (incorrectly) flagged.
+    """
+    rstripped = content.rstrip()
+    return any(rstripped.endswith(trailer) for trailer in _APPROVAL_PROMPT_TRAILERS)
+
 
 DEFAULT_HISTORY_LIMIT = settings.conversation_history_limit
 
@@ -327,7 +355,7 @@ async def load_conversation_history(
                 tool_interaction_count += len(tool_interactions)
                 history.extend(_expand_outbound_with_tools(tool_interactions, content))
                 last_was_approval_prompt = False
-            elif content.rstrip().endswith(_APPROVAL_PROMPT_TRAILER):
+            elif _is_approval_prompt(content):
                 # Skip approval prompts (real ones persisted by older code,
                 # plus any LLM-generated fake prompts that mimic the format).
                 # Persisted prompts in past turns trained the LLM to produce
