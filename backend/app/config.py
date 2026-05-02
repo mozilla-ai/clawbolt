@@ -168,6 +168,18 @@ class Settings(BaseSettings):
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
     heartbeat_concurrency: int = Field(default=5, ge=1)
     heartbeat_recent_messages_count: int = Field(default=5, ge=1)
+    # Delay the first scheduler tick after process start. Without this,
+    # a deploy mid-conversation produces a tick on the new container
+    # within ~2 seconds of boot — before any in-flight work on the old
+    # container has had a chance to settle, and before any queued
+    # inbound messages have drained from the bus into normal processing.
+    # The Phase 1 LLM then sees the user's pending request in recent
+    # context and decides to act, racing the agent path that would have
+    # handled it normally. 60 seconds is short enough not to delay
+    # genuine proactive nudges in long-running deployments and long
+    # enough to absorb the post-restart settle window. Set to 0 to
+    # disable the warmup (the previous behavior).
+    heartbeat_startup_warmup_seconds: int = Field(default=60, ge=0)
 
     # Observability
     log_request_timing: bool = False  # Set True (or LOG_REQUEST_TIMING=1) to log per-request timing
