@@ -6,7 +6,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from pydantic import ValidationError
 
+from backend.app.integrations.companycam.params import (
+    CompanyCamTagPhotoParams,
+    CompanyCamUploadPhotoParams,
+)
 from backend.app.integrations.companycam.service import CompanyCamService, get_photo_url
 
 # ---------------------------------------------------------------------------
@@ -227,14 +232,10 @@ class TestTagsJsonStringCoercion:
     """
 
     def test_upload_photo_accepts_real_list(self) -> None:
-        from backend.app.integrations.companycam.params import CompanyCamUploadPhotoParams
-
         p = CompanyCamUploadPhotoParams(project_id="p1", tags=["kitchen", "demo"])
         assert p.tags == ["kitchen", "demo"]
 
     def test_upload_photo_accepts_json_string_array(self) -> None:
-        from backend.app.integrations.companycam.params import CompanyCamUploadPhotoParams
-
         p = CompanyCamUploadPhotoParams(
             project_id="p1",
             tags='["kitchen", "demo"]',  # type: ignore[arg-type]
@@ -242,8 +243,6 @@ class TestTagsJsonStringCoercion:
         assert p.tags == ["kitchen", "demo"]
 
     def test_upload_photo_accepts_empty_json_string_array(self) -> None:
-        from backend.app.integrations.companycam.params import CompanyCamUploadPhotoParams
-
         p = CompanyCamUploadPhotoParams(
             project_id="p1",
             tags="[]",  # type: ignore[arg-type]
@@ -251,10 +250,6 @@ class TestTagsJsonStringCoercion:
         assert p.tags == []
 
     def test_upload_photo_rejects_unparseable_string(self) -> None:
-        from pydantic import ValidationError
-
-        from backend.app.integrations.companycam.params import CompanyCamUploadPhotoParams
-
         with pytest.raises(ValidationError, match="could not parse string as JSON"):
             CompanyCamUploadPhotoParams(
                 project_id="p1",
@@ -262,10 +257,6 @@ class TestTagsJsonStringCoercion:
             )
 
     def test_upload_photo_rejects_json_string_that_decodes_to_non_list(self) -> None:
-        from pydantic import ValidationError
-
-        from backend.app.integrations.companycam.params import CompanyCamUploadPhotoParams
-
         with pytest.raises(ValidationError, match="must be a JSON array"):
             CompanyCamUploadPhotoParams(
                 project_id="p1",
@@ -273,8 +264,6 @@ class TestTagsJsonStringCoercion:
             )
 
     def test_tag_photo_accepts_json_string_array(self) -> None:
-        from backend.app.integrations.companycam.params import CompanyCamTagPhotoParams
-
         p = CompanyCamTagPhotoParams(
             photo_id="42",
             tags='["before", "kitchen"]',  # type: ignore[arg-type]
