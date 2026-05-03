@@ -304,7 +304,14 @@ class Message(Base):
     processed_context: Mapped[str] = mapped_column(
         EncryptedString(table="messages", column="processed_context"), default=""
     )
-    tool_interactions_json: Mapped[str] = mapped_column(Text, default="")
+    # tool_interactions_json holds per-turn tool call name+args+result
+    # blobs that frequently include customer names / phone numbers /
+    # addresses passed to and returned from QuickBooks, CompanyCam,
+    # calendar, etc. Encrypted at rest in migration 024 to match the
+    # treatment of message bodies and processed_context above.
+    tool_interactions_json: Mapped[str] = mapped_column(
+        EncryptedString(table="messages", column="tool_interactions_json"), default=""
+    )
     external_message_id: Mapped[str] = mapped_column(String, default="")
     media_urls_json: Mapped[str] = mapped_column(Text, default="")
     timestamp: Mapped[datetime] = mapped_column(
