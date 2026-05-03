@@ -171,6 +171,24 @@ class TestHasActionableHeartbeatContent:
         # treats it as a header. The gate matches that.
         assert _has_actionable_heartbeat_content("   # Reminders\n") is False
 
+    def test_hashtag_line_is_actionable(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
+
+        # Markdown's ATX-heading rule requires "#" followed by space or
+        # end-of-line; "#urgent" is a hashtag, not a heading. The gate
+        # treats hashtag-style lines as actionable so a future style
+        # drift doesn't silently lose work.
+        assert _has_actionable_heartbeat_content("#urgent: ping the customer\n") is True
+
+    def test_bare_hash_is_a_heading(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
+
+        # A single "#" or "##" with no body is a degenerate heading.
+        # Matches the markdown rule (one or more "#" + EOL counts as a
+        # heading) and matches the empty-content intent of the gate.
+        assert _has_actionable_heartbeat_content("#\n") is False
+        assert _has_actionable_heartbeat_content("##\n") is False
+
 
 class TestToLocalTime:
     """Tests for the to_local_time helper."""
@@ -880,7 +898,7 @@ class TestRunHeartbeatForUser:
             action="skip", tasks="", reasoning="Nothing actionable"
         )
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_hb_store_cls.return_value = mock_hb_store
 
@@ -904,7 +922,7 @@ class TestRunHeartbeatForUser:
             action="skip", tasks="", reasoning="Nothing actionable right now"
         )
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -962,7 +980,7 @@ class TestRunHeartbeatForUser:
         mock_get_session_store.return_value = mock_session_store
 
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1057,7 +1075,7 @@ class TestRunHeartbeatForUser:
         mock_session_store.add_message = AsyncMock()
         mock_get_session_store.return_value = mock_session_store
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1132,7 +1150,7 @@ class TestRunHeartbeatForUser:
         mock_session_store.add_message = AsyncMock()
         mock_get_session_store.return_value = mock_session_store
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1326,7 +1344,7 @@ class TestRunHeartbeatForUser:
             action="skip", tasks="", reasoning="nothing to do"
         )
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1361,7 +1379,7 @@ class TestRunHeartbeatForUser:
             action="run", tasks="", reasoning="empty tasks for some reason"
         )
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1504,7 +1522,7 @@ class TestHeartbeatUsageHooks:
             output_tokens=30,
         )
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1563,7 +1581,7 @@ class TestHeartbeatUsageHooks:
         mock_session_store.add_message = AsyncMock()
         mock_get_session_store.return_value = mock_session_store
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1596,7 +1614,7 @@ class TestHeartbeatUsageHooks:
             output_tokens=5,
         )
         mock_hb_store = MagicMock()
-        mock_hb_store.read_heartbeat_md.return_value = "- task"
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -3862,7 +3880,7 @@ async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User)
         mock_get_ss.return_value = mock_ss
 
         mock_hb = MagicMock()
-        mock_hb.read_heartbeat_md.return_value = "- task"
+        mock_hb.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb.log_heartbeat = AsyncMock()
         mock_hb_cls.return_value = mock_hb
 
@@ -3923,7 +3941,7 @@ async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -
         mock_get_ss.return_value = mock_ss
 
         mock_hb = MagicMock()
-        mock_hb.read_heartbeat_md.return_value = "- task"
+        mock_hb.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb.log_heartbeat = AsyncMock()
         mock_hb_cls.return_value = mock_hb
 

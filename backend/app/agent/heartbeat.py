@@ -733,10 +733,13 @@ def _has_actionable_heartbeat_content(text: str) -> bool:
     is nothing for the evaluator to act on, so calling the LLM only
     burns tokens to return skip.
 
-    A "header line" here is any line whose first non-whitespace
-    character is "#". Blank lines and whitespace-only lines also do
-    not count as actionable. Anything else (a list item starting with
-    "-", "*", "1.", or a free-text paragraph) does count.
+    "Header line" follows markdown's ATX-heading rule: one or more
+    "#" followed by either end-of-line OR a whitespace character.
+    Hashtag-style lines like "#urgent task" don't count as headers
+    and remain actionable, while "# Reminders" or "##" do.
+    Blank and whitespace-only lines are also not actionable.
+    Anything else (list items "- task", "* task", "1. task", or a
+    free-text paragraph) is actionable.
     """
     if not text:
         return False
@@ -744,10 +747,29 @@ def _has_actionable_heartbeat_content(text: str) -> bool:
         stripped = line.strip()
         if not stripped:
             continue
-        if stripped.startswith("#"):
+        if _is_atx_heading(stripped):
             continue
         return True
     return False
+
+
+def _is_atx_heading(stripped_line: str) -> bool:
+    """Return True if *stripped_line* is a markdown ATX heading.
+
+    A heading is one or more "#" characters followed by either end of
+    line or whitespace. This rejects "#hashtag" / "#urgent" patterns
+    that the spec also rejects, while still accepting "#", "##",
+    "# Title", "### Title".
+    """
+    if not stripped_line.startswith("#"):
+        return False
+    # Strip the run of leading "#"s.
+    i = 0
+    while i < len(stripped_line) and stripped_line[i] == "#":
+        i += 1
+    # Either we consumed the entire line ("#" or "##"), or the next
+    # char is whitespace ("# Title"). Anything else is non-heading.
+    return i == len(stripped_line) or stripped_line[i] in (" ", "\t")
 
 
 def _user_messaged_within(user_id: str, minutes: int) -> bool:
