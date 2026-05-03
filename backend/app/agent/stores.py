@@ -33,6 +33,7 @@ from backend.app.models import (
     ToolConfig,
     User,
 )
+from backend.app.services.llm_pricing import compute_cost, is_known_model
 
 logger = logging.getLogger(__name__)
 
@@ -437,12 +438,29 @@ class LLMUsageStore:
         cache_creation_input_tokens: int | None = None,
         cache_read_input_tokens: int | None = None,
     ) -> None:
-        """Insert a LLMUsageLog row.
+        """Insert a LLMUsageLog row with computed cost.
 
         Maps prompt_tokens -> input_tokens, completion_tokens -> output_tokens
-        as the ORM model uses input_tokens/output_tokens naming.  Sets
-        provider="" and cost=0.0 since the file store did not track those.
+        as the ORM model uses input_tokens/output_tokens naming. Cost is
+        computed from the per-model pricing table in
+        ``services.llm_pricing``; unknown models fall through with
+        ``cost=0.000000`` and a warning log so we notice when a new
+        provider lands without a pricing entry.
         """
+        cost = compute_cost(
+            model,
+            input_tokens=prompt_tokens,
+            output_tokens=completion_tokens,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+        )
+        if not is_known_model(model) and (prompt_tokens or completion_tokens):
+            logger.warning(
+                "No pricing entry for model %r; logging usage with cost=0. "
+                "Add it to backend/app/services/llm_pricing.py.",
+                model,
+            )
+
         with db_session() as db:
             entry = LLMUsageLog(
                 user_id=self.user_id,
@@ -451,7 +469,7 @@ class LLMUsageStore:
                 input_tokens=prompt_tokens,
                 output_tokens=completion_tokens,
                 total_tokens=prompt_tokens + completion_tokens,
-                cost=0.0,
+                cost=cost,
                 purpose=purpose,
                 cache_creation_input_tokens=cache_creation_input_tokens,
                 cache_read_input_tokens=cache_read_input_tokens,
