@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import datetime
 import uuid
-from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -96,7 +95,7 @@ def _add_message(
 # ---------------------------------------------------------------------------
 
 
-def test_inbound_with_no_outbound_is_orphan(tmp_path: Path) -> None:
+def test_inbound_with_no_outbound_is_orphan() -> None:
     db = SessionLocal()
     try:
         user = _make_user(db)
@@ -104,7 +103,7 @@ def test_inbound_with_no_outbound_is_orphan(tmp_path: Path) -> None:
         _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="hello?", minutes_ago=2)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
-        rows = _find_orphaned_inbounds(db, cutoff)
+        rows = _find_orphaned_inbounds(db, cutoff, datetime.datetime.now(datetime.UTC))
     finally:
         db.close()
 
@@ -114,7 +113,7 @@ def test_inbound_with_no_outbound_is_orphan(tmp_path: Path) -> None:
     assert found_cs.session_id == cs.session_id
 
 
-def test_inbound_followed_by_outbound_is_not_orphan(tmp_path: Path) -> None:
+def test_inbound_followed_by_outbound_is_not_orphan() -> None:
     db = SessionLocal()
     try:
         user = _make_user(db)
@@ -123,14 +122,14 @@ def test_inbound_followed_by_outbound_is_not_orphan(tmp_path: Path) -> None:
         _add_message(db, cs, MessageDirection.OUTBOUND, seq=2, body="hi back", minutes_ago=1)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
-        rows = _find_orphaned_inbounds(db, cutoff)
+        rows = _find_orphaned_inbounds(db, cutoff, datetime.datetime.now(datetime.UTC))
     finally:
         db.close()
 
     assert rows == []
 
 
-def test_inbound_outside_lookback_is_ignored(tmp_path: Path) -> None:
+def test_inbound_outside_lookback_is_ignored() -> None:
     """Messages older than the cutoff are excluded so we don't dispatch a
     stale reply for something the user has long since moved past."""
     db = SessionLocal()
@@ -140,14 +139,14 @@ def test_inbound_outside_lookback_is_ignored(tmp_path: Path) -> None:
         _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="long ago", minutes_ago=120)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
-        rows = _find_orphaned_inbounds(db, cutoff)
+        rows = _find_orphaned_inbounds(db, cutoff, datetime.datetime.now(datetime.UTC))
     finally:
         db.close()
 
     assert rows == []
 
 
-def test_orphan_detection_is_per_session(tmp_path: Path) -> None:
+def test_orphan_detection_is_per_session() -> None:
     """A second session's outbound must not satisfy the first session's
     inbound. Without the per-session join the EXISTS would let one user's
     activity declare another user's inbound 'processed'."""
@@ -162,7 +161,7 @@ def test_orphan_detection_is_per_session(tmp_path: Path) -> None:
         _add_message(db, cs_b, MessageDirection.OUTBOUND, seq=1, body="B reply", minutes_ago=1)
 
         cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
-        rows = _find_orphaned_inbounds(db, cutoff)
+        rows = _find_orphaned_inbounds(db, cutoff, datetime.datetime.now(datetime.UTC))
     finally:
         db.close()
 
@@ -178,7 +177,7 @@ def test_orphan_detection_is_per_session(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_build_dispatch_inputs_round_trips_message_fields(tmp_path: Path) -> None:
+def test_build_dispatch_inputs_round_trips_message_fields() -> None:
     db = SessionLocal()
     try:
         user = _make_user(db)
@@ -201,7 +200,7 @@ def test_build_dispatch_inputs_round_trips_message_fields(tmp_path: Path) -> Non
     assert stored.direction == MessageDirection.INBOUND
 
 
-def test_build_dispatch_inputs_returns_none_when_user_missing(tmp_path: Path) -> None:
+def test_build_dispatch_inputs_returns_none_when_user_missing() -> None:
     """Defense in depth: if the user row was deleted in the window between
     persist and recovery, log and skip rather than crash."""
     db = SessionLocal()
@@ -247,7 +246,7 @@ def test_parse_media_refs_handles_invalid_json() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_recover_dispatches_each_orphan(tmp_path: Path) -> None:
+async def test_recover_dispatches_each_orphan() -> None:
     """The recovery loop calls ``_dispatch_to_pipeline`` once per orphan
     and returns the count of successes."""
     db = SessionLocal()
@@ -271,7 +270,7 @@ async def test_recover_dispatches_each_orphan(tmp_path: Path) -> None:
         captured_bodies.append(kwargs["message"].body)  # type: ignore[attr-defined]
 
     with patch(
-        "backend.app.agent.ingestion._dispatch_to_pipeline",
+        "backend.app.agent.inbound_recovery._dispatch_to_pipeline",
         new=capture_dispatch,
     ):
         recovered = await recover_orphan_inbound_messages()
@@ -282,7 +281,7 @@ async def test_recover_dispatches_each_orphan(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio()
-async def test_recover_short_circuits_when_lookback_zero(tmp_path: Path) -> None:
+async def test_recover_short_circuits_when_lookback_zero() -> None:
     db = SessionLocal()
     try:
         user = _make_user(db)
@@ -294,7 +293,7 @@ async def test_recover_short_circuits_when_lookback_zero(tmp_path: Path) -> None
     with (
         patch.object(settings, "inbound_recovery_lookback_minutes", 0),
         patch(
-            "backend.app.agent.ingestion._dispatch_to_pipeline",
+            "backend.app.agent.inbound_recovery._dispatch_to_pipeline",
             new=AsyncMock(),
         ) as mock_dispatch,
     ):
@@ -305,9 +304,7 @@ async def test_recover_short_circuits_when_lookback_zero(tmp_path: Path) -> None
 
 
 @pytest.mark.asyncio()
-async def test_recover_continues_past_individual_dispatch_failure(
-    tmp_path: Path,
-) -> None:
+async def test_recover_continues_past_individual_dispatch_failure() -> None:
     """One failing dispatch must not abort the whole sweep; the other
     orphan should still be recovered. Caller wraps the whole thing in a
     try/except too, but per-row resilience is what lets us deploy this
@@ -329,7 +326,7 @@ async def test_recover_continues_past_individual_dispatch_failure(
             raise RuntimeError("simulated dispatch failure")
 
     with patch(
-        "backend.app.agent.ingestion._dispatch_to_pipeline",
+        "backend.app.agent.inbound_recovery._dispatch_to_pipeline",
         new=flaky_dispatch,
     ):
         recovered = await recover_orphan_inbound_messages()
@@ -337,3 +334,113 @@ async def test_recover_continues_past_individual_dispatch_failure(
     # Two attempts, one succeeded.
     assert call_count["n"] == 2
     assert recovered == 1
+
+
+# ---------------------------------------------------------------------------
+# Freshness floor (race with concurrent normal ingestion)
+# ---------------------------------------------------------------------------
+
+
+def test_freshness_floor_excludes_brand_new_inbounds() -> None:
+    """A message that landed milliseconds ago is the normal ingestion
+    path's responsibility, not recovery. Without this floor a worker
+    could race the in-flight MessageBatcher and double-dispatch a message
+    that was about to be processed normally."""
+    db = SessionLocal()
+    try:
+        user = _make_user(db)
+        cs = _make_session(db, user)
+        _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="just now", minutes_ago=0)
+
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
+        # Floor at -30s: anything newer is excluded as too-fresh.
+        floor = datetime.datetime.now(datetime.UTC) - datetime.timedelta(seconds=30)
+        rows = _find_orphaned_inbounds(db, cutoff, floor)
+    finally:
+        db.close()
+
+    assert rows == []
+
+
+def test_freshness_floor_includes_messages_older_than_floor() -> None:
+    """Sanity: floor at +0s (now) includes messages from the past."""
+    db = SessionLocal()
+    try:
+        user = _make_user(db)
+        cs = _make_session(db, user)
+        _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="2m ago", minutes_ago=2)
+
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
+        floor = datetime.datetime.now(datetime.UTC)
+        rows = _find_orphaned_inbounds(db, cutoff, floor)
+    finally:
+        db.close()
+
+    assert len(rows) == 1
+
+
+# ---------------------------------------------------------------------------
+# Idempotency (a successful dispatch should produce an outbound that
+# masks the orphan on a subsequent sweep)
+# ---------------------------------------------------------------------------
+
+
+def test_orphan_is_no_longer_detected_after_outbound_lands() -> None:
+    """The whole design rests on this invariant: once the agent loop runs
+    and persists an outbound, the next sweep doesn't see the inbound as
+    an orphan anymore. Simulate that by adding the outbound by hand and
+    re-running the query."""
+    db = SessionLocal()
+    try:
+        user = _make_user(db)
+        cs = _make_session(db, user)
+        _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="hi", minutes_ago=2)
+
+        cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=30)
+        floor = datetime.datetime.now(datetime.UTC)
+        before = _find_orphaned_inbounds(db, cutoff, floor)
+        assert len(before) == 1
+
+        # Simulate the agent loop running and persisting its reply.
+        _add_message(db, cs, MessageDirection.OUTBOUND, seq=2, body="ok", minutes_ago=1)
+
+        after = _find_orphaned_inbounds(db, cutoff, floor)
+    finally:
+        db.close()
+
+    assert after == []
+
+
+# ---------------------------------------------------------------------------
+# Multi-worker advisory lock
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_recovery_skips_when_another_worker_holds_the_lock() -> None:
+    """``pg_try_advisory_lock`` returns False to a second caller when
+    another connection already holds the lock. The sweep must short-circuit
+    in that case, otherwise N workers in a rolling restart would each
+    re-dispatch the same orphans N times."""
+    db = SessionLocal()
+    try:
+        user = _make_user(db)
+        cs = _make_session(db, user)
+        _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="one", minutes_ago=2)
+    finally:
+        db.close()
+
+    with (
+        patch(
+            "backend.app.agent.inbound_recovery._try_acquire_lock",
+            return_value=False,
+        ),
+        patch(
+            "backend.app.agent.inbound_recovery._dispatch_to_pipeline",
+            new=AsyncMock(),
+        ) as mock_dispatch,
+    ):
+        recovered = await recover_orphan_inbound_messages()
+
+    assert recovered == 0
+    mock_dispatch.assert_not_awaited()

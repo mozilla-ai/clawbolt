@@ -13,6 +13,7 @@ from sqlalchemy import text
 
 from backend.app.agent.approval import cleanup_orphaned_approvals
 from backend.app.agent.heartbeat import heartbeat_scheduler
+from backend.app.agent.inbound_recovery import recover_orphan_inbound_messages
 from backend.app.channels import get_manager, register_channel
 from backend.app.channels.bluebubbles import BlueBubblesChannel
 from backend.app.channels.linq import LinqChannel
@@ -275,8 +276,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # the agent loop (worker died during the MessageBatcher window).
     # Same shape as the approval cleanup above, runs after channels start.
     try:
-        from backend.app.agent.inbound_recovery import recover_orphan_inbound_messages
-
         recovered_inbounds = await recover_orphan_inbound_messages()
         if recovered_inbounds:
             logger.info("Re-dispatched %d orphan inbound message(s) on startup", recovered_inbounds)

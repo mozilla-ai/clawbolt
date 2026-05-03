@@ -18,6 +18,10 @@ narrowly scoped:
 - Only inbound messages from the last ``inbound_recovery_lookback_minutes``
   (default 30) are considered. Older orphans are unlikely to still be
   relevant to the user and re-dispatching would produce a stale reply.
+- Only inbounds at least ``_FRESHNESS_FLOOR_SECONDS`` old are considered,
+  so a NEW inbound arriving on a freshly-started worker (concurrent with
+  this sweep) doesn't get racing dispatched once by the normal ingestion
+  path and again by recovery.
 - A message is "orphaned" when there is no outbound ``message`` in the
   same session with a higher seq. Outbound is the only structural
   signal that the agent loop ran for that inbound.
@@ -25,6 +29,18 @@ narrowly scoped:
   so ``add_message`` does not duplicate the persisted row. The agent
   loop sees the same session state it would have seen at the original
   dispatch.
+- A Postgres advisory lock (``inbound_recovery:cleanup``) ensures
+  exactly one worker runs the sweep on a rolling restart, mirroring the
+  pattern in ``cleanup_orphaned_approvals``.
+
+Known limitation: a heartbeat or compaction outbound that landed AFTER
+the orphan inbound but BEFORE the worker recovered will mask the orphan
+(the EXISTS subquery sees that outbound and treats the inbound as
+processed). This is structural to using "any later outbound" as the
+signal. Fixing it would require either a column distinguishing
+heartbeat-origin outbounds from agent-loop replies, or a
+``responding_to_seq`` foreign key on outbound rows; both are larger
+changes deferred until the heuristic produces a real false negative.
 
 The mechanism is structurally similar to ``cleanup_orphaned_approvals``:
 both run in ``lifespan`` after channels start, both are best-effort, and
@@ -39,10 +55,11 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, exists
+from sqlalchemy import and_, exists, text
 
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.dto import SessionState, StoredMessage
+from backend.app.agent.ingestion import _dispatch_to_pipeline
 from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
@@ -54,17 +71,34 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# Postgres advisory lock key. ``hashtext`` reduces the string to an int
+# the lock function accepts. Same shape as ``approval._CLEANUP_LOCK_KEY``.
+_RECOVERY_LOCK_KEY = "inbound_recovery:cleanup"
+
+# Don't try to recover messages younger than this. The normal ingestion
+# path is dispatching them right now (via the in-memory MessageBatcher
+# timer), and a parallel recovery would race it. 5 s comfortably covers
+# the 1.5 s batcher window plus pipeline acquisition latency.
+_FRESHNESS_FLOOR_SECONDS = 5
+
+
 def _find_orphaned_inbounds(
     db: Session,
     cutoff_utc: datetime.datetime,
+    freshness_floor_utc: datetime.datetime,
 ) -> list[tuple[Message, ChatSession]]:
     """Return (message, session) pairs for inbound rows with no outbound after.
 
     "Outbound after" means a Message in the same session with strictly
     higher seq and direction='outbound'. The seq comparison handles the
     case where a heartbeat or compaction event might have raced past
-    the inbound and flushed a follow-on message: any outbound at all
-    after the inbound is enough to declare it processed.
+    the inbound: any outbound at all after the inbound is enough to
+    declare it processed (with the documented heartbeat-masking
+    limitation).
+
+    *freshness_floor_utc* excludes messages newer than this timestamp so
+    the sweep doesn't race the normal ingestion path on a brand-new
+    inbound that arrived during the sweep itself.
     """
     OutboundAfter = Message.__table__.alias("ob")
     has_outbound_after = exists().where(
@@ -80,6 +114,7 @@ def _find_orphaned_inbounds(
         .filter(
             Message.direction == MessageDirection.INBOUND,
             Message.timestamp >= cutoff_utc,
+            Message.timestamp <= freshness_floor_utc,
             ~has_outbound_after,
         )
         .order_by(Message.timestamp.asc())
@@ -96,8 +131,19 @@ def _build_dispatch_inputs(
     chat_session: ChatSession,
 ) -> tuple[User, SessionState, StoredMessage] | None:
     """Reconstruct the (user, session_state, stored_message) tuple needed by
-    ``_dispatch_to_pipeline``. Returns None when the user row is missing
-    (extremely unlikely outside of a manual delete during the window)."""
+    ``_dispatch_to_pipeline``.
+
+    The returned ``SessionState`` carries only the orphan message in its
+    ``messages`` list. That is intentional: ``_dispatch_to_pipeline``
+    re-loads the full session from the DB before invoking the agent loop
+    (see ``ingestion.py:_dispatch_to_pipeline`` -> ``handle_inbound_message``
+    -> ``router._build_message_context``). The single-message state here
+    just carries the ``session_id`` so the dispatcher knows which session
+    to load.
+
+    Returns None when the user row is missing (extremely unlikely outside
+    of a manual delete during the recovery window).
+    """
     user = db.query(User).filter_by(id=chat_session.user_id).first()
     if user is None:
         logger.warning(
@@ -153,6 +199,38 @@ def _parse_media_refs(media_urls_json: str) -> list[tuple[str, str]]:
     return [(str(fid), "") for fid in ids]
 
 
+def _try_acquire_lock(db: Session) -> bool:
+    """Acquire the per-process recovery lock, mirroring approval cleanup.
+
+    ``pg_try_advisory_lock`` returns True on first acquisition, False if
+    another connection (i.e. another worker on a rolling restart) holds
+    the lock. We commit immediately to release the implicit read
+    transaction; the advisory lock itself is session-scoped and survives.
+    """
+    try:
+        got_lock = db.execute(
+            text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+            {"k": _RECOVERY_LOCK_KEY},
+        ).scalar()
+        db.commit()
+    except Exception:
+        logger.exception("Failed to acquire inbound-recovery advisory lock")
+        return False
+    return bool(got_lock)
+
+
+def _release_lock(db: Session) -> None:
+    """Best-effort release of the recovery lock."""
+    try:
+        db.execute(
+            text("SELECT pg_advisory_unlock(hashtext(:k))"),
+            {"k": _RECOVERY_LOCK_KEY},
+        )
+        db.commit()
+    except Exception:
+        logger.exception("Failed to release inbound-recovery advisory lock")
+
+
 async def recover_orphan_inbound_messages() -> int:
     """Re-dispatch any inbound messages that look like they never ran.
 
@@ -161,28 +239,32 @@ async def recover_orphan_inbound_messages() -> int:
     the sweep itself is wrapped in try/except by the caller so a recovery
     bug never blocks app startup.
     """
-    # Imported here to avoid a circular import: ingestion imports from this
-    # module's siblings, and we only need the dispatch function at call time.
-    from backend.app.agent.ingestion import _dispatch_to_pipeline
-
     lookback_minutes = settings.inbound_recovery_lookback_minutes
     if lookback_minutes == 0:
         logger.debug("Inbound recovery disabled (inbound_recovery_lookback_minutes=0)")
         return 0
 
-    lookback = datetime.timedelta(minutes=lookback_minutes)
-    cutoff = datetime.datetime.now(datetime.UTC) - lookback
+    now = datetime.datetime.now(datetime.UTC)
+    cutoff = now - datetime.timedelta(minutes=lookback_minutes)
+    freshness_floor = now - datetime.timedelta(seconds=_FRESHNESS_FLOOR_SECONDS)
 
     db = SessionLocal()
+    lock_acquired = False
     try:
-        rows = _find_orphaned_inbounds(db, cutoff)
+        if not _try_acquire_lock(db):
+            logger.info("Another worker is running inbound recovery; skipping on this boot")
+            return 0
+        lock_acquired = True
+
+        rows = _find_orphaned_inbounds(db, cutoff, freshness_floor)
         if not rows:
             return 0
 
         logger.info(
-            "Inbound recovery: found %d orphan(s) since %s",
+            "Inbound recovery: found %d orphan(s) between %s and %s",
             len(rows),
             cutoff.isoformat(),
+            freshness_floor.isoformat(),
         )
 
         dispatched = 0
@@ -236,6 +318,8 @@ async def recover_orphan_inbound_messages() -> int:
 
         return dispatched
     finally:
+        if lock_acquired:
+            _release_lock(db)
         db.close()
 
 
