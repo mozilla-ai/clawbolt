@@ -269,22 +269,19 @@ class ChatSession(Base):
 class Message(Base):
     """A single message in a conversation, inbound or outbound.
 
-    User-authored content (``body`` and ``processed_context``) is
-    envelope-encrypted at rest via ``EncryptedString``. ``body`` is the
-    raw text the user / channel sent; ``processed_context`` is the same
-    content after media transcription / OCR / preprocessing. Both are
-    equally sensitive and both are encrypted. The decrypt path runs
-    transparently on every ORM read, so application code keeps reading
-    ``msg.body`` and gets plaintext.
+    User-authored content (``body``, ``processed_context``,
+    ``tool_interactions_json``) is envelope-encrypted at rest via
+    ``EncryptedString``. ``body`` is the raw text the user / channel
+    sent; ``processed_context`` is the same content after media
+    transcription / OCR / preprocessing; ``tool_interactions_json``
+    holds tool call args / results that frequently embed customer
+    names, phone numbers, and addresses passed to QuickBooks /
+    CompanyCam / calendar tools. The decrypt path runs transparently
+    on every ORM read, so application code keeps reading
+    ``msg.tool_interactions_json`` and gets plaintext JSON.
 
     Other text columns intentionally left plaintext:
 
-    - ``tool_interactions_json``: structured tool call args/results.
-      Often contains user content (e.g. calendar event titles) but
-      encrypting it complicates future tool-replay debugging and the
-      premium audit log already redacts it before surfacing to admins.
-      Tracked for a follow-up if the tool-args leak surface ever
-      becomes load-bearing.
     - ``external_message_id``: channel-side ID (Telegram message_id,
       Linq message_id). Not sensitive content; needed in cleartext for
       idempotency-key indexing on inbound webhook retries.
@@ -304,11 +301,6 @@ class Message(Base):
     processed_context: Mapped[str] = mapped_column(
         EncryptedString(table="messages", column="processed_context"), default=""
     )
-    # tool_interactions_json holds per-turn tool call name+args+result
-    # blobs that frequently include customer names / phone numbers /
-    # addresses passed to and returned from QuickBooks, CompanyCam,
-    # calendar, etc. Encrypted at rest in migration 024 to match the
-    # treatment of message bodies and processed_context above.
     tool_interactions_json: Mapped[str] = mapped_column(
         EncryptedString(table="messages", column="tool_interactions_json"), default=""
     )
