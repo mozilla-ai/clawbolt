@@ -64,19 +64,6 @@ class TestFieldConstraints:
         with pytest.raises(ValidationError):
             Settings(http_timeout_seconds=0)
 
-    def test_heartbeat_quiet_hours_start_rejects_24(self) -> None:
-        with pytest.raises(ValidationError):
-            Settings(heartbeat_quiet_hours_start=24)
-
-    def test_heartbeat_quiet_hours_end_rejects_negative(self) -> None:
-        with pytest.raises(ValidationError):
-            Settings(heartbeat_quiet_hours_end=-1)
-
-    def test_heartbeat_quiet_hours_accepts_bounds(self) -> None:
-        s = Settings(heartbeat_quiet_hours_start=0, heartbeat_quiet_hours_end=23)
-        assert s.heartbeat_quiet_hours_start == 0
-        assert s.heartbeat_quiet_hours_end == 23
-
     def test_defaults_are_valid(self) -> None:
         """The default Settings() should construct without errors."""
         s = Settings()

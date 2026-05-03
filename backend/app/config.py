@@ -162,8 +162,6 @@ class Settings(BaseSettings):
     heartbeat_default_frequency: str = "30m"
     heartbeat_interval_minutes: int = Field(default=30, ge=1)
     heartbeat_max_daily_messages: int = Field(default=5, ge=1)
-    heartbeat_quiet_hours_start: int = Field(default=20, ge=0, le=23)  # 8 PM
-    heartbeat_quiet_hours_end: int = Field(default=7, ge=0, le=23)  # 7 AM
     heartbeat_model: str = ""  # empty = fall back to llm_model
     heartbeat_provider: str = ""  # empty = fall back to llm_provider
     heartbeat_concurrency: int = Field(default=5, ge=1)
