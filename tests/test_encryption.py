@@ -89,6 +89,21 @@ def _load_migration_022():  # noqa: ANN202
     return module
 
 
+def _load_migration_024():  # noqa: ANN202
+    """Load migration 024 by file path; module names can't start with a digit."""
+    spec = importlib.util.spec_from_file_location(
+        "migration_024",
+        Path(__file__).parent.parent
+        / "alembic"
+        / "versions"
+        / "024_envelope_encrypt_tool_interactions_json.py",
+    )
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
 def _legacy_fernet_for(key_material: bytes) -> Fernet:
     """Reproduce the pre-envelope HKDF/Fernet derivation for tests."""
     hkdf = HKDF(
@@ -299,6 +314,68 @@ def test_message_body_round_trip_through_orm(
     )
 
 
+def test_tool_interactions_json_round_trip_through_orm(
+    install_recording_provider: _RecordingProvider,
+) -> None:
+    """A Message row's encrypted tool_interactions_json round-trips
+    through PostgreSQL. ORM reads see plaintext JSON; the underlying
+    column holds an envelope. Mirrors the body / processed_context
+    coverage above for the third encrypted column on this table."""
+    plaintext = (
+        '[{"tool_call_id":"t1","name":"qb_query",'
+        '"args":{"customer":"Acme Plumbing"},'
+        '"result":"ok","is_error":false,"receipt":null}]'
+    )
+    db = _db_module.SessionLocal()
+    try:
+        user = User(id=str(uuid.uuid4()), user_id="msg-tool-enc-test", onboarding_complete=True)
+        db.add(user)
+        db.flush()
+        cs = ChatSession(
+            session_id=f"sess-{uuid.uuid4().hex[:8]}",
+            user_id=user.id,
+        )
+        db.add(cs)
+        db.flush()
+        row = Message(
+            session_id=cs.id,
+            seq=1,
+            direction="outbound",
+            tool_interactions_json=plaintext,
+        )
+        db.add(row)
+        db.commit()
+        message_id = row.id
+    finally:
+        db.close()
+
+    db = _db_module.SessionLocal()
+    try:
+        loaded = db.get(Message, message_id)
+        assert loaded is not None
+        assert loaded.tool_interactions_json == plaintext
+    finally:
+        db.close()
+
+    db = _db_module.SessionLocal()
+    try:
+        rows = db.execute(
+            _sa_text("SELECT tool_interactions_json FROM messages WHERE id = :id"),
+            {"id": message_id},
+        ).all()
+        assert len(rows) == 1
+        (raw_tool_json,) = rows[0]
+        assert raw_tool_json != plaintext
+        assert raw_tool_json.startswith(ENVELOPE_PREFIX + ".")
+    finally:
+        db.close()
+
+    contexts = install_recording_provider.wrap_calls
+    tool_contexts = [c for c in contexts if c.get("column") == "tool_interactions_json"]
+    assert len(tool_contexts) == 1
+    assert tool_contexts[0].get("table") == "messages"
+
+
 def test_message_body_empty_string_passes_through(
     install_recording_provider: _RecordingProvider,
 ) -> None:
@@ -321,14 +398,20 @@ def test_message_body_empty_string_passes_through(
         )
         db.add(cs)
         db.flush()
-        row = Message(session_id=cs.id, seq=1, direction="outbound", body="", processed_context="")
+        row = Message(
+            session_id=cs.id,
+            seq=1,
+            direction="outbound",
+            body="",
+            processed_context="",
+            tool_interactions_json="",
+        )
         db.add(row)
         db.commit()
         message_id = row.id
     finally:
         db.close()
 
-    # No body / processed_context wrap calls should appear for this row.
     msg_columns = [
         c.get("column", "")
         for c in install_recording_provider.wrap_calls
@@ -336,14 +419,15 @@ def test_message_body_empty_string_passes_through(
     ]
     assert "body" not in msg_columns
     assert "processed_context" not in msg_columns
+    assert "tool_interactions_json" not in msg_columns
 
-    # And the row reads back with empty strings, not envelope blobs.
     db = _db_module.SessionLocal()
     try:
         loaded = db.get(Message, message_id)
         assert loaded is not None
         assert loaded.body == ""
         assert loaded.processed_context == ""
+        assert loaded.tool_interactions_json == ""
     finally:
         db.close()
 
@@ -861,6 +945,144 @@ def test_migration_022_refuses_when_encryption_key_unset_and_data_exists(
         db.close()
 
     migration = _load_migration_022()
+    db = _db_module.SessionLocal()
+    try:
+        monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
+        with pytest.raises(RuntimeError, match="ENCRYPTION_KEY"):
+            migration.upgrade()
+    finally:
+        db.close()
+
+
+def test_migration_024_rekey_helper_envelopes_plaintext() -> None:
+    """The 024 helper envelopes plaintext under the
+    ``messages.tool_interactions_json`` context, leaves envelopes alone
+    by identity, and passes through empty / None untouched."""
+    migration = _load_migration_024()
+    provider = LocalKEKProvider()
+
+    plaintext = '[{"tool_call_id":"t1","name":"qb_query","args":{},"result":"ok"}]'
+    rekeyed = migration._rekey(plaintext, provider)
+    assert isinstance(rekeyed, str)
+    assert rekeyed.startswith(ENVELOPE_PREFIX + ".")
+    assert (
+        decrypt(
+            rekeyed,
+            provider,
+            {"table": "messages", "column": "tool_interactions_json"},
+        )
+        == plaintext
+    )
+    # Idempotent re-run.
+    assert migration._rekey(rekeyed, provider) is rekeyed
+    # Empty / None pass through.
+    assert migration._rekey("", provider) == ""
+    assert migration._rekey(None, provider) is None
+
+
+def test_migration_024_full_upgrade_loop_against_real_db(
+    install_recording_provider: _RecordingProvider,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """End-to-end: insert plaintext rows directly into messages, run
+    ``upgrade()``, assert envelopes on disk for non-empty rows and
+    empty-string passthrough for empty rows. Re-run confirms
+    idempotency."""
+    monkeypatch.setattr(_app_settings, "encryption_key", SecretStr("a" * 32))
+
+    db = _db_module.SessionLocal()
+    try:
+        user = User(id=str(uuid.uuid4()), user_id="msg-tool-mig-test", onboarding_complete=True)
+        db.add(user)
+        db.flush()
+        cs = ChatSession(session_id=f"sess-{uuid.uuid4().hex[:8]}", user_id=user.id)
+        db.add(cs)
+        db.flush()
+        chat_session_id: int = cs.id
+        for seq, tool_json in [
+            (1, '[{"tool_call_id":"t1","name":"qb_query","args":{},"result":"ok"}]'),
+            (2, '[{"tool_call_id":"t2","name":"send_reply","args":{"text":"ok"},"result":""}]'),
+            (3, ""),
+        ]:
+            db.execute(
+                _sa_text(
+                    "INSERT INTO messages (session_id, seq, direction, body, "
+                    "processed_context, tool_interactions_json, external_message_id, "
+                    "media_urls_json, timestamp) VALUES (:s, :seq, 'outbound', '', "
+                    "'', :t, '', '', NOW())"
+                ),
+                {"s": chat_session_id, "seq": seq, "t": tool_json},
+            )
+        db.commit()
+    finally:
+        db.close()
+
+    migration = _load_migration_024()
+    db = _db_module.SessionLocal()
+    try:
+        monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
+        migration.upgrade()
+        db.commit()
+    finally:
+        db.close()
+
+    db = _db_module.SessionLocal()
+    try:
+        rows = db.execute(
+            _sa_text(
+                "SELECT seq, tool_interactions_json FROM messages "
+                "WHERE session_id = :s ORDER BY seq"
+            ),
+            {"s": chat_session_id},
+        ).all()
+        assert len(rows) == 3
+        assert rows[0].tool_interactions_json.startswith(ENVELOPE_PREFIX + ".")
+        assert rows[1].tool_interactions_json.startswith(ENVELOPE_PREFIX + ".")
+        # Empty stays empty.
+        assert rows[2].tool_interactions_json == ""
+    finally:
+        db.close()
+
+    # Idempotent re-run terminates instead of looping forever.
+    db = _db_module.SessionLocal()
+    try:
+        monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
+        migration.upgrade()
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_migration_024_refuses_when_encryption_key_unset_and_data_exists(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Operator preflight: a non-empty messages table + unset
+    ``ENCRYPTION_KEY`` raises rather than encrypting under an ephemeral
+    key."""
+    monkeypatch.setattr(_app_settings, "encryption_key", SecretStr(""))
+
+    db = _db_module.SessionLocal()
+    try:
+        user = User(id=str(uuid.uuid4()), user_id="msg-tool-preflight", onboarding_complete=True)
+        db.add(user)
+        db.flush()
+        cs = ChatSession(session_id=f"sess-{uuid.uuid4().hex[:8]}", user_id=user.id)
+        db.add(cs)
+        db.flush()
+        db.execute(
+            _sa_text(
+                "INSERT INTO messages (session_id, seq, direction, body, "
+                "processed_context, tool_interactions_json, external_message_id, "
+                "media_urls_json, timestamp) VALUES (:s, 1, 'outbound', '', '', "
+                "'plaintext-tool-blob', '', '', NOW())"
+            ),
+            {"s": cs.id},
+        )
+        db.commit()
+    finally:
+        db.close()
+
+    migration = _load_migration_024()
     db = _db_module.SessionLocal()
     try:
         monkeypatch.setattr(_alembic_op, "get_bind", lambda: db.connection())
