@@ -271,6 +271,18 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     except Exception:
         logger.exception("Orphaned approval cleanup failed on startup")
 
+    # Re-dispatch any inbound messages that were persisted but never ran
+    # the agent loop (worker died during the MessageBatcher window).
+    # Same shape as the approval cleanup above, runs after channels start.
+    try:
+        from backend.app.agent.inbound_recovery import recover_orphan_inbound_messages
+
+        recovered_inbounds = await recover_orphan_inbound_messages()
+        if recovered_inbounds:
+            logger.info("Re-dispatched %d orphan inbound message(s) on startup", recovered_inbounds)
+    except Exception:
+        logger.exception("Orphan inbound recovery failed on startup")
+
     yield
 
     # Cancel any channel start tasks still running.
