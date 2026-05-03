@@ -32,7 +32,6 @@ from backend.app.agent.heartbeat import (
     evaluate_heartbeat_need,
     execute_heartbeat_tasks,
     get_daily_heartbeat_count,
-    is_within_business_hours,
     parse_frequency_to_minutes,
     register_heartbeat_usage_hook,
     run_heartbeat_for_user,
@@ -123,38 +122,72 @@ def _make_decision_tool_call(
     return make_tool_call_response([{"name": tool_name, "arguments": args, "id": "call_mock_002"}])
 
 
-# ---------------------------------------------------------------------------
-# is_within_business_hours
-# ---------------------------------------------------------------------------
+class TestHasActionableHeartbeatContent:
+    """Gate that decides whether HEARTBEAT.md is worth evaluating.
 
+    Lifted out of the inline `.strip()` check so a header-only file
+    short-circuits the Phase 1 LLM call. Production telemetry caught
+    one user burning ~48 LLM calls/day on a "# Reminders\\n" file
+    after Phase 2 cleaned up the only one-time item.
+    """
 
-class TestIsWithinBusinessHours:
-    @patch("backend.app.agent.heartbeat.settings")
-    def test_outside_quiet_hours(self, mock_settings: MagicMock, user: User) -> None:
-        mock_settings.heartbeat_quiet_hours_start = 20
-        mock_settings.heartbeat_quiet_hours_end = 7
+    def test_empty_string_is_not_actionable(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
 
-        # 10 AM -- outside quiet hours, should be True
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(user, now) is True
+        assert _has_actionable_heartbeat_content("") is False
 
-    @patch("backend.app.agent.heartbeat.settings")
-    def test_inside_quiet_hours_evening(self, mock_settings: MagicMock, user: User) -> None:
-        mock_settings.heartbeat_quiet_hours_start = 20
-        mock_settings.heartbeat_quiet_hours_end = 7
+    def test_whitespace_only_is_not_actionable(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
 
-        # 22:00 -- inside quiet hours, should be False
-        now = datetime.datetime(2025, 6, 15, 22, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(user, now) is False
+        assert _has_actionable_heartbeat_content("   \n\n  \t\n") is False
 
-    @patch("backend.app.agent.heartbeat.settings")
-    def test_inside_quiet_hours_early_morning(self, mock_settings: MagicMock, user: User) -> None:
-        mock_settings.heartbeat_quiet_hours_start = 20
-        mock_settings.heartbeat_quiet_hours_end = 7
+    def test_header_only_is_not_actionable(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
 
-        # 3 AM -- inside quiet hours, should be False
-        now = datetime.datetime(2025, 6, 15, 3, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(user, now) is False
+        # The exact pattern that motivated this gate: Phase 2 wrote
+        # back the file with only the header after pruning the last
+        # one-time item.
+        assert _has_actionable_heartbeat_content("# Reminders\n") is False
+        assert _has_actionable_heartbeat_content("# Reminders\n\n## Today\n\n") is False
+
+    def test_list_item_is_actionable(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
+
+        assert (
+            _has_actionable_heartbeat_content("# Reminders\n\n- At 3pm: check the queue\n") is True
+        )
+
+    def test_free_text_paragraph_is_actionable(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
+
+        assert (
+            _has_actionable_heartbeat_content("# Reminders\n\nFollow up on the estimate.\n") is True
+        )
+
+    def test_indented_header_is_still_a_header(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
+
+        # Markdown allows leading whitespace before "#" and still
+        # treats it as a header. The gate matches that.
+        assert _has_actionable_heartbeat_content("   # Reminders\n") is False
+
+    def test_hashtag_line_is_actionable(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
+
+        # Markdown's ATX-heading rule requires "#" followed by space or
+        # end-of-line; "#urgent" is a hashtag, not a heading. The gate
+        # treats hashtag-style lines as actionable so a future style
+        # drift doesn't silently lose work.
+        assert _has_actionable_heartbeat_content("#urgent: ping the customer\n") is True
+
+    def test_bare_hash_is_a_heading(self) -> None:
+        from backend.app.agent.heartbeat import _has_actionable_heartbeat_content
+
+        # A single "#" or "##" with no body is a degenerate heading.
+        # Matches the markdown rule (one or more "#" + EOL counts as a
+        # heading) and matches the empty-content intent of the gate.
+        assert _has_actionable_heartbeat_content("#\n") is False
+        assert _has_actionable_heartbeat_content("##\n") is False
 
 
 class TestToLocalTime:
@@ -181,57 +214,6 @@ class TestToLocalTime:
         utc_time = datetime.datetime(2025, 6, 15, 17, 0, tzinfo=datetime.UTC)
         result = to_local_time(utc_time, "Not/A_Real_Zone")
         assert result.hour == 17
-
-
-class TestIsWithinBusinessHoursTimezone:
-    """Tests for timezone-correct quiet hour checks."""
-
-    @patch("backend.app.agent.heartbeat.settings")
-    def test_timezone_converts_before_quiet_check(
-        self, mock_settings: MagicMock, user_with_timezone: User
-    ) -> None:
-        mock_settings.heartbeat_quiet_hours_start = 20
-        mock_settings.heartbeat_quiet_hours_end = 7
-
-        # 2 PM UTC -> 7 AM Pacific (PDT). Outside quiet hours.
-        now = datetime.datetime(2025, 6, 15, 14, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(user_with_timezone, now) is True
-
-    @patch("backend.app.agent.heartbeat.settings")
-    def test_utc_morning_is_night_in_pacific(
-        self, mock_settings: MagicMock, user_with_timezone: User
-    ) -> None:
-        mock_settings.heartbeat_quiet_hours_start = 20
-        mock_settings.heartbeat_quiet_hours_end = 7
-
-        # 5 AM UTC -> 10 PM Pacific (PDT, previous day). Inside quiet hours.
-        now = datetime.datetime(2025, 6, 15, 5, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(user_with_timezone, now) is False
-
-    @patch("backend.app.agent.heartbeat.settings")
-    def test_no_timezone_uses_utc(self, mock_settings: MagicMock, user: User) -> None:
-        mock_settings.heartbeat_quiet_hours_start = 20
-        mock_settings.heartbeat_quiet_hours_end = 7
-
-        # User without timezone uses UTC directly.
-        # 10 AM UTC, outside quiet hours.
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(user, now) is True
-
-    @patch("backend.app.agent.heartbeat.settings")
-    def test_invalid_timezone_falls_back_to_utc(self, mock_settings: MagicMock) -> None:
-        mock_settings.heartbeat_quiet_hours_start = 20
-        mock_settings.heartbeat_quiet_hours_end = 7
-
-        c = User(
-            id="99",
-            user_id="hb-user-bad-tz",
-            timezone="Invalid/Timezone",
-            onboarding_complete=True,
-        )
-        # 10 AM UTC -> falls back to UTC -> outside quiet hours
-        now = datetime.datetime(2025, 6, 15, 10, 0, tzinfo=datetime.UTC)
-        assert is_within_business_hours(c, now) is True
 
 
 # ---------------------------------------------------------------------------
@@ -916,6 +898,7 @@ class TestRunHeartbeatForUser:
             action="skip", tasks="", reasoning="Nothing actionable"
         )
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_hb_store_cls.return_value = mock_hb_store
 
@@ -939,6 +922,7 @@ class TestRunHeartbeatForUser:
             action="skip", tasks="", reasoning="Nothing actionable right now"
         )
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -996,6 +980,7 @@ class TestRunHeartbeatForUser:
         mock_get_session_store.return_value = mock_session_store
 
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1090,6 +1075,7 @@ class TestRunHeartbeatForUser:
         mock_session_store.add_message = AsyncMock()
         mock_get_session_store.return_value = mock_session_store
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1164,6 +1150,7 @@ class TestRunHeartbeatForUser:
         mock_session_store.add_message = AsyncMock()
         mock_get_session_store.return_value = mock_session_store
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1357,6 +1344,7 @@ class TestRunHeartbeatForUser:
             action="skip", tasks="", reasoning="nothing to do"
         )
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1391,6 +1379,7 @@ class TestRunHeartbeatForUser:
             action="run", tasks="", reasoning="empty tasks for some reason"
         )
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1533,6 +1522,7 @@ class TestHeartbeatUsageHooks:
             output_tokens=30,
         )
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1591,6 +1581,7 @@ class TestHeartbeatUsageHooks:
         mock_session_store.add_message = AsyncMock()
         mock_get_session_store.return_value = mock_session_store
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -1623,6 +1614,7 @@ class TestHeartbeatUsageHooks:
             output_tokens=5,
         )
         mock_hb_store = MagicMock()
+        mock_hb_store.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb_store.log_heartbeat = AsyncMock()
         mock_heartbeat_store_cls.return_value = mock_hb_store
 
@@ -3888,6 +3880,7 @@ async def test_heartbeat_skips_manual_delivery_when_agent_sent_reply(user: User)
         mock_get_ss.return_value = mock_ss
 
         mock_hb = MagicMock()
+        mock_hb.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb.log_heartbeat = AsyncMock()
         mock_hb_cls.return_value = mock_hb
 
@@ -3948,6 +3941,7 @@ async def test_heartbeat_logs_when_sent_reply_but_empty_reply_text(user: User) -
         mock_get_ss.return_value = mock_ss
 
         mock_hb = MagicMock()
+        mock_hb.read_heartbeat_md.return_value = "- At 3pm: check the queue"
         mock_hb.log_heartbeat = AsyncMock()
         mock_hb_cls.return_value = mock_hb
 
