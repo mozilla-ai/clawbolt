@@ -139,8 +139,6 @@ See [Storage Providers](./storage.md) for setup instructions.
 | `HEARTBEAT_DEFAULT_FREQUENCY` | `30m` | Default check-in frequency shown to new users (e.g. `15m`, `1h`, `daily`) |
 | `HEARTBEAT_INTERVAL_MINUTES` | `30` | Minutes between heartbeat evaluation ticks |
 | `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per user per day |
-| `HEARTBEAT_QUIET_HOURS_START` | `20` | Hour (24h) to stop sending heartbeats |
-| `HEARTBEAT_QUIET_HOURS_END` | `7` | Hour (24h) to resume sending heartbeats |
 | `HEARTBEAT_MODEL` | (same as `LLM_MODEL`) | Model used for heartbeat messages |
 | `HEARTBEAT_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for heartbeat messages |
 | `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent user evaluations per tick |
