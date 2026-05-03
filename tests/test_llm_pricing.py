@@ -107,11 +107,12 @@ def test_cache_tokens_charged_at_dedicated_rates() -> None:
     assert cost == Decimal("4.050000")
 
 
-def test_realistic_jesse_session_cost() -> None:
-    """Sanity check using actual numbers from a contractor session
-    (heartbeat_decision: ~362 input, ~92 output, ~2206 cache write).
-    The cost should be small but non-zero, and the result should
-    quantise to 6 decimal places for the Numeric(12, 6) column.
+def test_realistic_session_cost() -> None:
+    """Sanity check using a heartbeat_decision shape pulled from a real
+    contractor session: ~362 input tokens, ~92 output tokens, ~2206
+    cache-write tokens. The cost should be small but non-zero, and the
+    result should quantise to 6 decimal places for the Numeric(12, 6)
+    column.
     """
     cost = compute_cost(
         "claude-sonnet-4-6",

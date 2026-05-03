@@ -423,6 +423,13 @@ class IdempotencyStore:
 # ---------------------------------------------------------------------------
 
 
+# Models we have already warned about lacking a pricing entry. Bounded
+# in practice by the number of distinct model strings the deployment
+# emits, which is typically 1-3. Avoids 437 identical warnings per session
+# when a new provider lands without a pricing table update.
+_warned_unpriced_models: set[str] = set()
+
+
 class LLMUsageStore:
     """Database-backed LLM usage logging using LLMUsageLog ORM model."""
 
@@ -444,8 +451,8 @@ class LLMUsageStore:
         as the ORM model uses input_tokens/output_tokens naming. Cost is
         computed from the per-model pricing table in
         ``services.llm_pricing``; unknown models fall through with
-        ``cost=0.000000`` and a warning log so we notice when a new
-        provider lands without a pricing entry.
+        ``cost=0.000000`` and a once-per-process warning log so we notice
+        when a new provider lands without a pricing entry.
         """
         cost = compute_cost(
             model,
@@ -454,7 +461,12 @@ class LLMUsageStore:
             cache_creation_input_tokens=cache_creation_input_tokens,
             cache_read_input_tokens=cache_read_input_tokens,
         )
-        if not is_known_model(model) and (prompt_tokens or completion_tokens):
+        if (
+            not is_known_model(model)
+            and (prompt_tokens or completion_tokens)
+            and model not in _warned_unpriced_models
+        ):
+            _warned_unpriced_models.add(model)
             logger.warning(
                 "No pricing entry for model %r; logging usage with cost=0. "
                 "Add it to backend/app/services/llm_pricing.py.",
