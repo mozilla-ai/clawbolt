@@ -179,30 +179,6 @@ class HeartbeatAction:
     priority: int
 
 
-# ---------------------------------------------------------------------------
-# Business-hours gate
-# ---------------------------------------------------------------------------
-
-
-def is_within_business_hours(
-    user: User,
-    now: datetime.datetime | None = None,
-) -> bool:
-    """Return *True* if *now* falls outside the quiet-hours window."""
-    now = now or datetime.datetime.now(datetime.UTC)
-    local_now = to_local_time(now, user.timezone)
-    current_hour = local_now.hour
-
-    qstart = settings.heartbeat_quiet_hours_start
-    qend = settings.heartbeat_quiet_hours_end
-    if qstart > qend:
-        # Quiet hours span midnight (e.g. 20-7)
-        in_quiet = current_hour >= qstart or current_hour < qend
-    else:
-        in_quiet = qstart <= current_hour < qend
-    return not in_quiet
-
-
 async def _publish_heartbeat_typing(channel: str, chat_id: str, *, stop: bool) -> None:
     """Publish a typing indicator (or stop) via the bus, swallowing errors.
 
@@ -748,6 +724,32 @@ def _dispatch_heartbeat_usage(
             logger.exception("heartbeat usage hook failed for user %s", user_id)
 
 
+def _has_actionable_heartbeat_content(text: str) -> bool:
+    """Return True if HEARTBEAT.md has any non-header, non-blank line.
+
+    The Phase 1 LLM gate uses this to short-circuit the LLM call when
+    the file is effectively empty. A pure header document (just
+    "# Reminders\n" with nothing under it) is treated as empty: there
+    is nothing for the evaluator to act on, so calling the LLM only
+    burns tokens to return skip.
+
+    A "header line" here is any line whose first non-whitespace
+    character is "#". Blank lines and whitespace-only lines also do
+    not count as actionable. Anything else (a list item starting with
+    "-", "*", "1.", or a free-text paragraph) does count.
+    """
+    if not text:
+        return False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if stripped.startswith("#"):
+            continue
+        return True
+    return False
+
+
 def _user_messaged_within(user_id: str, minutes: int) -> bool:
     """Return True if the user sent an inbound message in the last *minutes*.
 
@@ -838,9 +840,19 @@ async def run_heartbeat_for_user(
     # HEARTBEAT.md, there is nothing for the evaluator to act on. Skip the
     # LLM call entirely to save tokens and avoid the LLM hallucinating tasks
     # from conversation history or past heartbeat activity.
+    #
+    # The check looks for any non-heading, non-blank line. The earlier
+    # ``.strip()`` test let header-only documents like "# Reminders\n"
+    # pass — Phase 2 would rewrite the file to that header after handling
+    # one-time items (#1116), and the next 30m tick would call the LLM
+    # to evaluate an empty list and return skip. Production telemetry
+    # showed one user burning ~48 LLM calls/day on a header-only file.
+    # Treating header-only as empty fixes that without changing
+    # ``read_heartbeat_md``, which is also called by compaction and the
+    # heartbeat tools where the raw text is the right return.
     heartbeat_store = HeartbeatStore(user.id)
     heartbeat_text = heartbeat_store.read_heartbeat_md()
-    if not heartbeat_text or not heartbeat_text.strip():
+    if not _has_actionable_heartbeat_content(heartbeat_text):
         logger.debug("Heartbeat skip user %s: no heartbeat items configured", user.id)
         return None
 
