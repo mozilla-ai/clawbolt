@@ -45,6 +45,7 @@ from backend.app.agent.messages import (
     messages_to_messages_api,
 )
 from backend.app.agent.system_prompt import build_agent_system_prompt, build_time_user_context
+from backend.app.agent.tool_cooldown import get_tool_cooldown_tracker
 from backend.app.agent.tool_errors import (
     _DEFAULT_ERROR_HINT,
     _ERROR_KIND_HINTS,
@@ -582,6 +583,50 @@ class ClawboltAgent:
         is_error = False
         action_label = ""
         record: StoredToolInteraction
+
+        # Cooldown check: if this exact (user, tool, args) tuple just
+        # failed transiently, short-circuit instead of slamming the
+        # downstream again. The LLM sees a tool error explaining the
+        # cooldown and can either wait or report back to the user.
+        cooldown = get_tool_cooldown_tracker()
+        cooldown_hit = cooldown.is_cooling_down(self.user.id, tool_name, validated_args)
+        if cooldown_hit is not None:
+            wait = max(1, round(cooldown_hit.seconds_remaining))
+            result_str = (
+                f"Skipped {tool_name}: same call failed {cooldown_hit.last_error_kind.value} "
+                f"a moment ago. Wait ~{wait}s before trying again with the same arguments, or "
+                f"adjust the call. Inform the user."
+            )
+            logger.info(
+                "Tool %s on cooldown for user %s (%.1fs remaining)",
+                tool_name,
+                self.user.id,
+                cooldown_hit.seconds_remaining,
+            )
+            record = StoredToolInteraction(
+                tool_call_id=tc_req.id,
+                name=tool_name,
+                args=validated_args,
+                result=result_str,
+                is_error=True,
+                tags=set(tool_tags),
+                receipt=None,
+            )
+            await self._emit(
+                ToolExecutionEndEvent(
+                    tool_name=tool_name,
+                    result=result_str,
+                    is_error=True,
+                    duration_ms=(time.monotonic() - tool_start) * 1000,
+                )
+            )
+            tool_message = ToolResultMessage(
+                tool_call_id=tc_req.id,
+                content=result_str,
+                is_error=True,
+            )
+            return record, tool_message, f"Skipped (cooldown): {tool_name}"
+
         try:
             result = await tool_obj.function(**validated_args)
             result_str = result.content
@@ -590,6 +635,9 @@ class ClawboltAgent:
                 hint = build_error_hint(result)
                 result_str += "\n\n" + hint
                 action_label = f"Failed: {tool_name}"
+                # Record transient failures so a retry within the
+                # cooldown window short-circuits instead of re-firing.
+                cooldown.record_failure(self.user.id, tool_name, validated_args, result.error_kind)
             else:
                 action_label = f"Called {tool_name}"
             stored_receipt = None
@@ -628,6 +676,7 @@ class ClawboltAgent:
             result_str = f"Error: tool {tool_name} raised {err_text}\n\n{hint}"[:1500]
             is_error = True
             action_label = f"Failed: {tool_name}"
+            cooldown.record_failure(self.user.id, tool_name, validated_args, ToolErrorKind.INTERNAL)
             record = StoredToolInteraction(
                 tool_call_id=tc_req.id,
                 name=tool_name,

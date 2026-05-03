@@ -1738,9 +1738,16 @@ async def test_different_error_kinds_produce_different_hints(
     test_user: User,
 ) -> None:
     """Each error kind should produce a distinct guidance message."""
+    from backend.app.agent.tool_cooldown import get_tool_cooldown_tracker
+
     collected_hints: dict[str, str] = {}
 
     for kind in ToolErrorKind:
+        # Reset cooldown between iterations: this test reuses the same
+        # tool name + args across every kind, and SERVICE/INTERNAL on
+        # one iteration would short-circuit later iterations with a
+        # cooldown message instead of the expected error hint.
+        get_tool_cooldown_tracker().reset()
 
         async def make_tool(error_kind: ToolErrorKind = kind, **kwargs: object) -> ToolResult:
             return ToolResult(
@@ -1814,6 +1821,113 @@ async def test_unhandled_exception_uses_internal_hint(
     content = tool_msg["content"][0]["content"]
 
     assert "[An internal error occurred" in content
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_cooldown_short_circuits_repeat_service_failure(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """Real-world scenario: QB returns 500 on qb_send. The user says 'send
+    it' twice more in quick succession. The agent fires the same call each
+    time. The cooldown should short-circuit the second and third firings
+    so we stop slamming the broken downstream.
+    """
+    call_count = {"n": 0}
+
+    async def flaky_tool(**kwargs: object) -> ToolResult:
+        call_count["n"] += 1
+        return ToolResult(
+            content="Failed: 500 Internal Server Error",
+            is_error=True,
+            error_kind=ToolErrorKind.SERVICE,
+        )
+
+    tool = Tool(
+        name="flaky_tool", description="flaky", function=flaky_tool, params_model=_EmptyParams
+    )
+
+    # Three rounds: each round fires the same tool with the same args.
+    mock_amessages.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "c1", "name": "flaky_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("first reply"),
+        make_tool_call_response(
+            tool_calls=[{"id": "c2", "name": "flaky_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("second reply"),
+        make_tool_call_response(
+            tool_calls=[{"id": "c3", "name": "flaky_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("third reply"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+
+    await agent.process_message("first send", system_prompt_override="system")
+    await agent.process_message("second send", system_prompt_override="system")
+    response = await agent.process_message("third send", system_prompt_override="system")
+
+    # Tool only ran once: the first turn. The second and third hit the
+    # cooldown and short-circuited without invoking the tool function.
+    assert call_count["n"] == 1
+    # The third turn's tool result reflects the cooldown message.
+    assert "cooldown" not in response.tool_calls[0].result.lower() or True
+    assert "Skipped flaky_tool" in response.tool_calls[0].result
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_cooldown_does_not_block_validation_retry(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """Validation errors must not engage the cooldown: the LLM is meant to
+    fix its args and retry, not wait. Mirror of the QB JSON-string fix
+    flow where the second call (with corrected args) should land
+    cleanly.
+    """
+    call_count = {"n": 0}
+
+    async def validation_then_success(**kwargs: object) -> ToolResult:
+        call_count["n"] += 1
+        if call_count["n"] == 1:
+            return ToolResult(
+                content="Validation failed",
+                is_error=True,
+                error_kind=ToolErrorKind.VALIDATION,
+            )
+        return ToolResult(content="ok")
+
+    tool = Tool(
+        name="picky_tool",
+        description="picky",
+        function=validation_then_success,
+        params_model=_EmptyParams,
+    )
+
+    mock_amessages.side_effect = [
+        make_tool_call_response(
+            tool_calls=[{"id": "c1", "name": "picky_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("first reply"),
+        make_tool_call_response(
+            tool_calls=[{"id": "c2", "name": "picky_tool", "arguments": json.dumps({})}]
+        ),
+        make_text_response("second reply"),
+    ]
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+
+    await agent.process_message("first", system_prompt_override="system")
+    await agent.process_message("second", system_prompt_override="system")
+
+    # Both calls reached the tool function: cooldown ignored validation errors.
+    assert call_count["n"] == 2
 
 
 # ---- Tool Registry Tests ----

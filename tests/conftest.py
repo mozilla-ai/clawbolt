@@ -13,6 +13,7 @@ from backend.app.agent.approval import reset_approval_gate
 from backend.app.agent.file_store import SessionState, StoredMessage, reset_stores
 from backend.app.agent.memory_db import reset_memory_stores
 from backend.app.agent.session_db import reset_session_stores
+from backend.app.agent.tool_cooldown import get_tool_cooldown_tracker
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
 from backend.app.channels import unknown_sender as unknown_sender_module
@@ -67,6 +68,7 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
         reset_session_stores()
         reset_memory_stores()
         reset_approval_gate()
+        get_tool_cooldown_tracker().reset()
         yield
 
     # Rollback undoes all data written during the test.
@@ -83,6 +85,7 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
     reset_session_stores()
     reset_memory_stores()
     reset_approval_gate()
+    get_tool_cooldown_tracker().reset()
 
 
 @pytest.fixture()
