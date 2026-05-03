@@ -18,13 +18,13 @@ Fast checks look for actionable items:
 
 If any checks return results, the LLM composes an appropriate message. It can decide to send the message or take no action, based on priority and context.
 
-## Business hours awareness
+## Quiet by default
 
-Clawbolt respects your schedule:
+Clawbolt avoids interrupting you when there is nothing useful to say:
 
-- Messages are only sent during your configured business hours (e.g., 7am-5pm)
-- Your timezone is respected (set in your profile)
-- Global quiet hours prevent late-night messages (default 8pm-7am)
+- The scheduler skips users with no items in their HEARTBEAT.md (no nag-without-purpose).
+- During an active conversation (a message in the last few minutes), the heartbeat LLM call is skipped so you do not get a proactive message on top of your back-and-forth.
+- A daily cap on proactive messages prevents pile-on if many items become eligible at once.
 
 ## Rate limiting
 
