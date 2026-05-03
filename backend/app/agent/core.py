@@ -588,6 +588,11 @@ class ClawboltAgent:
         # failed transiently, short-circuit instead of slamming the
         # downstream again. The LLM sees a tool error explaining the
         # cooldown and can either wait or report back to the user.
+        # Intentionally not race-safe across in-batch siblings: two
+        # parallel tool calls in the same LLM-emitted batch will both
+        # pass this check (neither has recorded a failure yet) and
+        # both fire. The design intent is to throttle re-fires across
+        # user turns, not within a single batch.
         cooldown = get_tool_cooldown_tracker()
         cooldown_hit = cooldown.is_cooling_down(self.user.id, tool_name, validated_args)
         if cooldown_hit is not None:

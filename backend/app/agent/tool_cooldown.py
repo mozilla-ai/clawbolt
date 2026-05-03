@@ -69,9 +69,12 @@ def _hash_args(args: dict[str, Any]) -> str:
     """Stable hash of validated tool args.
 
     Uses ``sort_keys=True`` so ``{"a": 1, "b": 2}`` and ``{"b": 2, "a": 1}``
-    produce the same key. Falls back to ``repr`` when args contain a
-    non-JSON-serializable value (rare; tools are validated against a
-    Pydantic model which only allows JSON-compatible types in practice).
+    produce the same key. Recurses into nested dicts. Non-JSON-serializable
+    values fall through ``default=str`` (rare in practice: tools validate
+    args via a Pydantic model and ``model_dump()`` produces JSON-shaped
+    dicts). The outer ``except`` is a belt-and-braces fallback in case
+    a value rejects ``str()`` itself; it serializes the sorted ``items``
+    via ``repr`` so the hash never raises and we degrade to a usable key.
     """
     try:
         canonical = json.dumps(args, sort_keys=True, default=str)

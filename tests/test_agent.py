@@ -22,6 +22,7 @@ from backend.app.agent.messages import (
     ToolResultMessage,
     UserMessage,
 )
+from backend.app.agent.tool_cooldown import get_tool_cooldown_tracker
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.trimming import trim_messages
 from backend.app.models import User
@@ -1738,8 +1739,6 @@ async def test_different_error_kinds_produce_different_hints(
     test_user: User,
 ) -> None:
     """Each error kind should produce a distinct guidance message."""
-    from backend.app.agent.tool_cooldown import get_tool_cooldown_tracker
-
     collected_hints: dict[str, str] = {}
 
     for kind in ToolErrorKind:
@@ -1875,7 +1874,6 @@ async def test_cooldown_short_circuits_repeat_service_failure(
     # cooldown and short-circuited without invoking the tool function.
     assert call_count["n"] == 1
     # The third turn's tool result reflects the cooldown message.
-    assert "cooldown" not in response.tool_calls[0].result.lower() or True
     assert "Skipped flaky_tool" in response.tool_calls[0].result
 
 
