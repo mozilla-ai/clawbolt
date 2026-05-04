@@ -97,7 +97,7 @@ async def test_system_prompt_not_overwritten(test_user: User) -> None:
 
 
 def test_api_includes_system_prompt(client: TestClient, test_user: User) -> None:
-    """GET /api/user/sessions/{id} includes initial_system_prompt."""
+    """GET /api/user/conversation includes initial_system_prompt."""
     _create_session_with_prompt(
         test_user,
         "debug-sess-1",
@@ -107,7 +107,7 @@ def test_api_includes_system_prompt(client: TestClient, test_user: User) -> None
         ],
     )
 
-    resp = client.get("/api/user/sessions/debug-sess-1")
+    resp = client.get("/api/user/conversation")
     assert resp.status_code == 200
     data = resp.json()
     assert data["initial_system_prompt"] == "You are a trades assistant."
@@ -123,7 +123,7 @@ def test_api_empty_prompt_for_new_session(client: TestClient, test_user: User) -
         ],
     )
 
-    resp = client.get("/api/user/sessions/debug-sess-2")
+    resp = client.get("/api/user/conversation")
     assert resp.status_code == 200
     data = resp.json()
     assert data["initial_system_prompt"] == ""

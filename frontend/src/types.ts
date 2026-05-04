@@ -7,7 +7,6 @@ export type UserProfileUpdate = components['schemas']['UserProfileUpdate'];
 export type DataSharingConsentRequest = components['schemas']['DataSharingConsentRequest'];
 export type DataSharingConsentResponse = components['schemas']['DataSharingConsentResponse'];
 export type SessionDetailResponse = components['schemas']['SessionDetailResponse'];
-export type SessionListResponse = components['schemas']['SessionListResponse'];
 export type SessionSystemPromptResponse = components['schemas']['SessionSystemPromptResponse'];
 export type MemoryResponse = components['schemas']['MemoryResponse'];
 export type MemoryUpdate = components['schemas']['MemoryUpdate'];
@@ -47,12 +46,10 @@ export interface AuthUser {
 
 export interface ChatResponse {
   reply: string;
-  session_id: string;
 }
 
 export interface ChatAccepted {
   request_id: string;
-  session_id: string;
 }
 
 export interface ToolInteraction {

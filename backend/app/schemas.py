@@ -331,24 +331,6 @@ class DeleteHeartbeatLogsResponse(BaseModel):
     deleted: int
 
 
-# ---------------------------------------------------------------------------
-# Session list (admin)
-# ---------------------------------------------------------------------------
-
-
-class SessionListItem(BaseModel):
-    session_id: str
-    channel: str = ""
-    message_count: int
-    created_at: str
-    last_message_at: str
-
-
-class SessionListResponse(BaseModel):
-    total: int
-    items: list[SessionListItem]
-
-
 class DeleteMessagesResponse(BaseModel):
     status: str
     messages_deleted: int

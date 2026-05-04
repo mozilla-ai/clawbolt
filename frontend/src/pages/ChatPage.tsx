@@ -1,14 +1,13 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
-import { useSearchParams } from 'react-router-dom';
 import { useQueryClient } from '@tanstack/react-query';
 import Button from '@/components/ui/button';
 import ConfirmModal from '@/components/ui/confirm-modal';
 import { Checkbox } from '@heroui/checkbox';
 import { Tooltip } from '@heroui/tooltip';
 import { Spinner } from '@heroui/spinner';
-import api, { ApiError } from '@/api';
+import api from '@/api';
 import { toast } from '@/lib/toast';
-import { useSession, useSessionSystemPrompt } from '@/hooks/queries';
+import { useConversation, useConversationSystemPrompt } from '@/hooks/queries';
 import { queryKeys } from '@/lib/query-keys';
 import { useChatActivity } from '@/contexts/ChatActivityContext';
 import type { ToolInteraction } from '@/types';
@@ -30,31 +29,14 @@ interface ChatMessage {
 }
 
 const ACCEPTED_FILE_TYPES = 'image/*,audio/*,application/pdf';
-const LAST_SESSION_KEY = 'clawbolt:lastChatSession';
-
-function saveLastSession(sessionId: string) {
-  try { localStorage.setItem(LAST_SESSION_KEY, sessionId); } catch { /* ignore */ }
-}
-
-function loadLastSession(): string | null {
-  try { return localStorage.getItem(LAST_SESSION_KEY); } catch { return null; }
-}
-
-function clearLastSession() {
-  try { localStorage.removeItem(LAST_SESSION_KEY); } catch { /* ignore */ }
-}
 
 export default function ChatPage() {
   const queryClient = useQueryClient();
-  const [searchParams, setSearchParams] = useSearchParams();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState('');
   const [pendingCount, setPendingCount] = useState(0);
   const pendingRef = useRef(0);
   const sending = pendingCount > 0;
-  const [activeSessionId, setActiveSessionId] = useState<string | null>(
-    searchParams.get('session'),
-  );
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [expandedTools, setExpandedTools] = useState<Set<string>>(new Set());
   const [currentTool, setCurrentTool] = useState<string | null>(null);
@@ -77,7 +59,6 @@ export default function ChatPage() {
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const nextId = useRef(1);
-  const autoAttachDone = useRef(false);
   const mountedRef = useRef(true);
 
   // Track mounted state to prevent state updates after unmount
@@ -86,7 +67,7 @@ export default function ChatPage() {
     return () => { mountedRef.current = false; };
   }, []);
 
-  // Refresh session data when the agent finishes, so replies produced while
+  // Refresh conversation data when the agent finishes, so replies produced while
   // we were mounted elsewhere (e.g. user switched tabs mid-send) show up on
   // return. Skip when webchat is actively waiting for its own SSE reply:
   // handleSubmit appends the reply and invalidates queries itself, and an
@@ -96,19 +77,16 @@ export default function ChatPage() {
   useEffect(() => {
     if (doneTick === 0) return;
     if (pendingRef.current > 0) return;
-    void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.conversation.all });
   }, [doneTick, queryClient]);
 
-  // Fetch session history via React Query.  The activity SSE stream
-  // already invalidates queries on the "done" event, so periodic
-  // polling is unnecessary and wasteful.
+  // Fetch the user's conversation. The activity SSE stream invalidates this
+  // query on the "done" event, so periodic polling is unnecessary.
   const {
     data: sessionDetail,
-    isPending: loadingHistoryPending,
-    isError: historyError,
-    error: sessionFetchError,
-  } = useSession(activeSessionId);
-  const loadingHistory = loadingHistoryPending && !!activeSessionId;
+    isPending: loadingHistory,
+  } = useConversation();
+  const hasConversation = !!sessionDetail && sessionDetail.session_id !== '';
 
   // Lazy-load the live system prompt. Only fetches once the user expands
   // the collapsible panel; refetches on every expand so the displayed
@@ -118,7 +96,7 @@ export default function ChatPage() {
     data: systemPromptData,
     isFetching: systemPromptFetching,
     isError: systemPromptError,
-  } = useSessionSystemPrompt(activeSessionId, { enabled: systemPromptOpen });
+  } = useConversationSystemPrompt({ enabled: systemPromptOpen && hasConversation });
 
   // Use scrollTop instead of scrollIntoView to avoid iOS Safari viewport zoom
   // bug that occurs when scrollIntoView fires during keyboard dismissal.
@@ -138,63 +116,7 @@ export default function ChatPage() {
     inputRef.current?.focus();
   }, []);
 
-  // Auto-attach to last active session from localStorage, or discover from API
-  useEffect(() => {
-    if (autoAttachDone.current || searchParams.get('session')) return;
-    autoAttachDone.current = true;
-    const saved = loadLastSession();
-    if (saved) {
-      setActiveSessionId(saved);
-      setSearchParams({ session: saved }, { replace: true });
-      return;
-    }
-    // No saved session: discover the most recent active session from the backend
-    api.listSessions({ is_active: true, limit: 1 }).then((res) => {
-      if (!mountedRef.current) return;
-      const latest = res.items[0];
-      if (latest) {
-        setActiveSessionId(latest.session_id);
-        setSearchParams({ session: latest.session_id }, { replace: true });
-        saveLastSession(latest.session_id);
-      }
-    }).catch(() => {
-      // Silently ignore: user may not have any sessions yet
-    });
-  }, [searchParams, setSearchParams]);
-
-  // Save active session to localStorage and reset expand/selection state
-  useEffect(() => {
-    if (activeSessionId) saveLastSession(activeSessionId);
-    setExpandedTools(new Set());
-    setSelectionMode(false);
-    setSelectedSeqs(new Set());
-    setConfirmModal(null);
-    // Collapse the system prompt panel so the previous session's prompt
-    // doesn't briefly render under the new session's header while the
-    // refetch is in flight (gcTime keeps the prior data around for 30s).
-    setSystemPromptOpen(false);
-  }, [activeSessionId]);
-
-  // If the persisted session id no longer exists (e.g. account was purged
-  // and re-created, or the session was deleted), clear it and fall back to
-  // fresh-start behavior instead of showing a broken chat view.
-  // Scope to 404 only so a transient 5xx or network blip doesn't permanently
-  // drop the user's session pointer.
-  useEffect(() => {
-    if (
-      historyError &&
-      activeSessionId &&
-      sessionFetchError instanceof ApiError &&
-      sessionFetchError.status === 404
-    ) {
-      clearLastSession();
-      setActiveSessionId(null);
-      setSearchParams({}, { replace: true });
-      autoAttachDone.current = false;
-    }
-  }, [historyError, sessionFetchError, activeSessionId, setSearchParams]);
-
-  // Populate messages from session history when it loads
+  // Populate messages from conversation history when it loads
   useEffect(() => {
     if (!sessionDetail) return;
     const loaded: ChatMessage[] = sessionDetail.messages.map((m) => ({
@@ -207,15 +129,6 @@ export default function ChatPage() {
     }));
     setMessages(loaded);
   }, [sessionDetail]);
-
-  // Handle history load errors (e.g. stale session in localStorage)
-  useEffect(() => {
-    if (historyError && activeSessionId) {
-      try { localStorage.removeItem(LAST_SESSION_KEY); } catch { /* ignore */ }
-      setActiveSessionId(null);
-      setSearchParams({}, { replace: true });
-    }
-  }, [historyError, activeSessionId, setSearchParams]);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
     const newFiles = Array.from(e.target.files || []);
@@ -252,8 +165,6 @@ export default function ChatPage() {
     setMessages((prev) => [...prev, userMsg]);
 
     const filesToSend = selectedFiles.length > 0 ? [...selectedFiles] : undefined;
-    // Capture session state at submit time so concurrent sends use correct values
-    const submitSessionId = activeSessionId;
     setInput('');
     setSelectedFiles([]);
     pendingRef.current++;
@@ -263,7 +174,6 @@ export default function ChatPage() {
       const toolNames: string[] = [];
       const res = await api.sendChatMessage(
         text,
-        submitSessionId ?? undefined,
         filesToSend,
         (event) => {
           if (!mountedRef.current) return;
@@ -286,15 +196,6 @@ export default function ChatPage() {
             setWaitingForApproval(true);
           }
         },
-        (accepted) => {
-          if (!mountedRef.current) return;
-          // Capture session ID immediately so follow-up messages use it
-          if (!submitSessionId && accepted.session_id) {
-            setActiveSessionId(accepted.session_id);
-            setSearchParams({ session: accepted.session_id }, { replace: true });
-            saveLastSession(accepted.session_id);
-          }
-        },
       );
       if (!mountedRef.current) return;
       // Skip adding an assistant message when the reply is empty
@@ -312,12 +213,9 @@ export default function ChatPage() {
         setMessages((prev) => [...prev, assistantMsg]);
       }
 
-      // Refresh session data so full tool interactions from the DB replace
+      // Refresh conversation data so full tool interactions from the DB replace
       // the partial names collected from SSE events
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.sessions.detail(res.session_id),
-      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversation.all });
     } catch (err: unknown) {
       if (!mountedRef.current) return;
       const msg = err instanceof Error ? err.message : 'Failed to send message';
@@ -344,18 +242,15 @@ export default function ChatPage() {
   };
 
   const handleDeleteMessage = async (msg: ChatMessage) => {
-    if (!activeSessionId || !msg.seq || deletingMsgId !== null) return;
+    if (!msg.seq || deletingMsgId !== null) return;
     try {
-      await api.deleteMessage(activeSessionId, msg.seq);
+      await api.deleteMessage(msg.seq);
       // API succeeded: play exit animation, then remove from state
       setDeletingMsgId(msg.id);
       await new Promise((r) => setTimeout(r, 250));
       setMessages((prev) => prev.filter((m) => m.id !== msg.id));
       setDeletingMsgId(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.sessions.detail(activeSessionId),
-      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversation.all });
     } catch (err: unknown) {
       const errMsg = err instanceof Error ? err.message : 'Failed to delete message';
       toast.error(errMsg);
@@ -379,7 +274,7 @@ export default function ChatPage() {
   const selectableMessages = messages.filter((m) => m.seq);
 
   const handleBatchDelete = async () => {
-    if (!activeSessionId || selectedSeqs.size === 0 || isBatchDeleting) return;
+    if (selectedSeqs.size === 0 || isBatchDeleting) return;
     // Filter to only seqs that still exist in messages
     const validSeqs = [...selectedSeqs].filter((seq) =>
       messages.some((m) => m.seq === seq),
@@ -388,7 +283,7 @@ export default function ChatPage() {
     setIsBatchDeleting(true);
     setConfirmModal(null);
     try {
-      await api.deleteMessages(activeSessionId, validSeqs);
+      await api.deleteMessages(validSeqs);
       // API succeeded: play exit animation, then remove from state
       setBatchExitingSeqs(new Set(validSeqs));
       await new Promise((r) => setTimeout(r, 250));
@@ -396,10 +291,7 @@ export default function ChatPage() {
         prev.filter((m) => !m.seq || !validSeqs.includes(m.seq)),
       );
       setBatchExitingSeqs(new Set());
-      void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
-      void queryClient.invalidateQueries({
-        queryKey: queryKeys.sessions.detail(activeSessionId),
-      });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.conversation.all });
       toast.success(`Deleted ${validSeqs.length} message${validSeqs.length > 1 ? 's' : ''}`);
       exitSelectionMode();
     } catch (err: unknown) {
@@ -422,7 +314,7 @@ export default function ChatPage() {
             Talk with your AI assistant directly from the dashboard.
           </p>
         </div>
-        {activeSessionId && messages.length > 0 && (
+        {hasConversation && messages.length > 0 && (
           <div className="flex items-center gap-1.5">
             <Tooltip content={selectionMode ? 'Exit selection' : 'Select messages'} delay={400} closeDelay={0}>
               <Button
@@ -444,7 +336,7 @@ export default function ChatPage() {
                   disabled={isDeleting || sending}
                   className="text-muted-foreground hover:text-danger shrink-0"
                   onClick={() => {
-                    if (!activeSessionId || isDeleting) return;
+                    if (isDeleting) return;
                     setConfirmModal({
                       title: 'Clear conversation history',
                       message: 'Delete all conversation messages? Your memory and personality will be kept.',
@@ -453,12 +345,9 @@ export default function ChatPage() {
                         setConfirmModal(null);
                         setIsDeleting(true);
                         try {
-                          await api.deleteConversationHistory(activeSessionId);
+                          await api.deleteConversationHistory();
                           setMessages([]);
-                          void queryClient.invalidateQueries({ queryKey: queryKeys.sessions.all });
-                          void queryClient.invalidateQueries({
-                            queryKey: queryKeys.sessions.detail(activeSessionId),
-                          });
+                          void queryClient.invalidateQueries({ queryKey: queryKeys.conversation.all });
                           toast.success('Conversation history deleted');
                         } catch (err: unknown) {
                           const msg = err instanceof Error ? err.message : 'Failed to delete history';
@@ -490,7 +379,7 @@ export default function ChatPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {activeSessionId && (
+            {hasConversation && (
               <div className="border border-border rounded-lg overflow-hidden">
                 <button
                   type="button"
@@ -520,14 +409,7 @@ export default function ChatPage() {
                 )}
               </div>
             )}
-            {messages.map((msg, idx) => {
-              const lastCompactedSeq = sessionDetail?.last_compacted_seq ?? 0;
-              const prevSeq = idx > 0 ? (messages[idx - 1]?.seq ?? 0) : 0;
-              const showCompactionMarker =
-                lastCompactedSeq > 0 &&
-                msg.seq !== undefined &&
-                msg.seq > lastCompactedSeq &&
-                (idx === 0 || prevSeq <= lastCompactedSeq);
+            {messages.map((msg) => {
               const isExiting = batchExitingSeqs.size > 0
                 ? (msg.seq !== undefined && batchExitingSeqs.has(msg.seq))
                 : deletingMsgId === msg.id;
@@ -536,7 +418,6 @@ export default function ChatPage() {
                   key={msg.id}
                   style={isExiting ? { animation: 'message-out 250ms ease-in forwards' } : undefined}
                 >
-                  {showCompactionMarker && <CompactionMarker />}
                   <div className={`group/msg flex items-center gap-1.5 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                     {selectionMode && msg.seq ? (
                       <Checkbox
@@ -1015,12 +896,3 @@ function TrashIcon() {
   );
 }
 
-function CompactionMarker() {
-  return (
-    <div className="flex items-center gap-2 py-1">
-      <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
-      <span className="text-[10px] text-muted-foreground">compacted above</span>
-      <div className="flex-1 border-t border-dashed border-muted-foreground/30" />
-    </div>
-  );
-}
