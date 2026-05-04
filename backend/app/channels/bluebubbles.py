@@ -1,6 +1,7 @@
 """BlueBubbles channel: inbound webhook + outbound messaging (iMessage via self-hosted Mac bridge)."""
 
 import asyncio
+import datetime
 import hashlib
 import hmac
 import logging
@@ -11,10 +12,13 @@ import httpx
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
+from sqlalchemy import text
+from sqlalchemy.orm import Session
 
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
+from backend.app.database import SessionLocal
 from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
@@ -23,6 +27,23 @@ from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
 logger = logging.getLogger(__name__)
 
 STARTUP_DELAY_SECONDS = 3
+
+# Postgres advisory lock key for the startup backfill, mirroring the
+# pattern in ``inbound_recovery._RECOVERY_LOCK_KEY``. ``hashtext`` reduces
+# the string to an int the lock function accepts.
+_BACKFILL_LOCK_KEY = "bluebubbles_backfill:cleanup"
+
+# Cap on messages returned from a single backfill query. The BlueBubbles
+# server itself caps at 1000; 200 is well above what a real outage produces
+# (a heavy iMessage user gets maybe 30 messages in 30 minutes) and bounds
+# the worst-case replay backlog.
+_BACKFILL_QUERY_LIMIT = 200
+
+# Per-attempt timeout for the backfill HTTP call. Generous enough for a
+# slow Mac to walk its message DB; bounded so a wedged server cannot
+# stretch startup indefinitely. Falls back to ``http_timeout_seconds`` if
+# that is shorter.
+_BACKFILL_TIMEOUT_SECONDS = 30.0
 
 # Typing indicators run as fire-and-forget tasks (see ChannelManager).
 # Bound them tightly so even if the BlueBubbles server is wedged the task
@@ -601,3 +622,171 @@ class BlueBubblesChannel(BaseChannel):
             original_url=file_id,
             filename=filename,
         )
+
+    # -- Startup backfill ------------------------------------------------------
+
+    async def run_startup_backfill(self) -> int:
+        """Replay BlueBubbles messages received during a Clawbolt outage.
+
+        The webhook from BlueBubbles to ``POST /api/webhooks/bluebubbles`` is
+        fire-and-forget. If Clawbolt was hung when the webhook fired, the
+        message never reached our DB. ``recover_orphan_inbound_messages``
+        only handles messages that landed in the DB and then crashed the
+        in-memory pipeline, so it cannot help here.
+
+        On startup we ask the BlueBubbles server for any messages dated in
+        the last ``settings.bluebubbles_backfill_lookback_minutes`` and run
+        each through ``handle_webhook_inbound``. The idempotency store
+        rejects anything we already processed via the live webhook, so this
+        is safe to run on every boot, including healthy ones, where it
+        becomes a no-op after dedup.
+
+        Returns the number of messages we attempted to replay (before
+        idempotency dedup), mostly for the startup log line. Best-effort:
+        swallows query failures so a wedged BlueBubbles server cannot
+        block startup.
+        """
+        if not settings.bluebubbles_server_url or not settings.bluebubbles_password:
+            return 0
+
+        lookback_minutes = settings.bluebubbles_backfill_lookback_minutes
+        if lookback_minutes == 0:
+            logger.debug("BlueBubbles backfill disabled (bluebubbles_backfill_lookback_minutes=0)")
+            return 0
+
+        db = SessionLocal()
+        lock_acquired = False
+        try:
+            if not _try_acquire_backfill_lock(db):
+                logger.info("Another worker is running BlueBubbles backfill; skipping on this boot")
+                return 0
+            lock_acquired = True
+
+            cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(
+                minutes=lookback_minutes
+            )
+            cutoff_ms = int(cutoff.timestamp() * 1000)
+
+            try:
+                resp = await self._http.post(
+                    "/api/v1/message/query",
+                    params={"password": settings.bluebubbles_password},
+                    json={
+                        "with": ["chat", "handle", "attachment"],
+                        "after": cutoff_ms,
+                        "sort": "ASC",
+                        "limit": _BACKFILL_QUERY_LIMIT,
+                    },
+                    timeout=_BACKFILL_TIMEOUT_SECONDS,
+                )
+            except httpx.HTTPError:
+                logger.warning(
+                    "BlueBubbles backfill query failed (server unreachable or slow)",
+                    exc_info=True,
+                )
+                return 0
+
+            if resp.status_code >= 400:
+                logger.warning(
+                    "BlueBubbles backfill query returned %d: %s",
+                    resp.status_code,
+                    resp.text[:200],
+                )
+                return 0
+
+            try:
+                body = resp.json()
+            except ValueError:
+                logger.warning("BlueBubbles backfill query returned non-JSON body")
+                return 0
+
+            raw_messages = body.get("data") or []
+            if not raw_messages:
+                return 0
+
+            attempted = 0
+            for raw in raw_messages:
+                try:
+                    data = BBMessageData.model_validate(raw)
+                except Exception:
+                    logger.debug("BlueBubbles backfill: skipping malformed message")
+                    continue
+
+                payload = BBWebhookPayload(type="new-message", data=data)
+                inbound = BlueBubblesChannel.parse_webhook(payload)
+                if inbound is None:
+                    continue
+
+                # Mirror the live webhook's chat-cache population so any
+                # outbound replies the agent produces can find the chat
+                # GUID without reconstructing it from sender_id.
+                def _cache_chat_guid(
+                    d: BBMessageData = data, sender: str = inbound.sender_id
+                ) -> None:
+                    if d.chats and d.chats[0].guid:
+                        self._chat_cache[sender] = d.chats[0].guid
+
+                try:
+                    await handle_webhook_inbound(self, inbound, on_accepted=_cache_chat_guid)
+                    attempted += 1
+                except Exception:
+                    logger.exception(
+                        "BlueBubbles backfill: handle_webhook_inbound failed for extId=%s",
+                        inbound.external_message_id,
+                    )
+
+            if attempted:
+                logger.info(
+                    "BlueBubbles backfill: replayed %d message(s) since %s "
+                    "(idempotency dedups already-seen)",
+                    attempted,
+                    cutoff.isoformat(),
+                )
+            return attempted
+        finally:
+            if lock_acquired:
+                _release_backfill_lock(db)
+            db.close()
+
+
+# ---------------------------------------------------------------------------
+# Startup backfill helpers
+# ---------------------------------------------------------------------------
+#
+# The backfill itself is a method on ``BlueBubblesChannel`` (see
+# ``run_startup_backfill``); these advisory-lock helpers live at module
+# level because they mirror the shape of ``inbound_recovery._try_acquire_lock``
+# and have no per-instance state.
+
+
+def _try_acquire_backfill_lock(db: Session) -> bool:
+    """Acquire the per-process backfill advisory lock.
+
+    Mirrors ``inbound_recovery._try_acquire_lock``. ``pg_try_advisory_lock``
+    returns True on first acquisition, False if another worker on a
+    rolling restart already holds the lock. We commit to release the
+    implicit read transaction; the advisory lock itself is session-scoped
+    and survives until ``_release_backfill_lock``.
+    """
+    try:
+        got = db.execute(
+            text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+            {"k": _BACKFILL_LOCK_KEY},
+        ).scalar()
+        db.commit()
+    except Exception:
+        logger.exception("Failed to acquire BlueBubbles backfill advisory lock")
+        return False
+    return bool(got)
+
+
+def _release_backfill_lock(db: Session) -> None:
+    """Best-effort release of the backfill lock."""
+    try:
+        db.execute(
+            text("SELECT pg_advisory_unlock(hashtext(:k))"),
+            {"k": _BACKFILL_LOCK_KEY},
+        )
+        db.commit()
+    except Exception:
+        logger.exception("Failed to release BlueBubbles backfill advisory lock")
