@@ -449,10 +449,10 @@ class LLMUsageStore:
 
         Maps prompt_tokens -> input_tokens, completion_tokens -> output_tokens
         as the ORM model uses input_tokens/output_tokens naming. Cost is
-        computed from the per-model pricing table in
-        ``services.llm_pricing``; unknown models fall through with
-        ``cost=0.000000`` and a once-per-process warning log so we notice
-        when a new provider lands without a pricing entry.
+        computed via ``services.llm_pricing`` (a thin wrapper around the
+        ``genai-prices`` library); unknown models fall through with
+        ``cost=0.000000`` and a once-per-process warning log so we
+        notice when our pricing data is stale.
         """
         cost = compute_cost(
             model,
@@ -468,8 +468,9 @@ class LLMUsageStore:
         ):
             _warned_unpriced_models.add(model)
             logger.warning(
-                "No pricing entry for model %r; logging usage with cost=0. "
-                "Add it to backend/app/services/llm_pricing.py.",
+                "genai-prices does not know model %r; logging usage with "
+                "cost=0. Bump the genai-prices dependency to pick up new "
+                "model pricing.",
                 model,
             )
 

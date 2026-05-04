@@ -1,94 +1,78 @@
-"""Per-model pricing for LLM usage cost computation.
+"""LLM cost computation backed by the ``genai-prices`` library.
+
+Replaces the hand-rolled per-model pricing table this module used to
+keep in code with a thin wrapper around `pydantic/genai-prices
+<https://github.com/pydantic/genai-prices>`_, the community-maintained
+source of truth for provider pricing. Adding a new model now means
+``uv lock --upgrade-package genai-prices``; we no longer carry the
+risk of stale rates drifting out of sync with what the providers
+actually charge.
+
+The library's price table is bundled at install time, so this module
+makes no network call. Pricing data refreshes when we bump the
+``genai-prices`` dependency.
 
 Used by ``LLMUsageStore.log`` to populate the ``cost`` column on every
-``llm_usage_logs`` row instead of leaving it hardcoded at 0. The table
-covers the models clawbolt actually invokes via any-llm. Adding a new
-provider is one line; unknown models fall back to ``UNKNOWN_PRICING``
-which charges nothing rather than guess.
-
-Prices are dollars per million tokens. Cache write surcharge and cache
-read discount follow Anthropic's published multipliers (1.25x and 0.1x
-of the input rate, respectively); they apply to the cache-specific
-token columns we already record on each row. Update the table here when
-Anthropic / OpenAI ship new SKUs or revise rates; the database column
-type (Numeric(12,6)) accommodates further precision if needed.
+``llm_usage_logs`` row instead of leaving it hardcoded at 0.
 """
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import logging
 from decimal import Decimal
 
+from genai_prices import Usage, calc_price
 
-@dataclass(frozen=True)
-class ModelPricing:
-    """Dollars per million tokens for a single model SKU.
-
-    ``cache_write`` and ``cache_read`` are the rates that apply to the
-    ``cache_creation_input_tokens`` and ``cache_read_input_tokens``
-    columns respectively. Anthropic charges a 25% premium on cache
-    writes and a 90% discount on cache reads relative to ``input``. We
-    store these explicitly rather than re-deriving them so providers
-    that price caching differently in future are easy to fit.
-    """
-
-    input: Decimal
-    output: Decimal
-    cache_write: Decimal
-    cache_read: Decimal
+logger = logging.getLogger(__name__)
 
 
-# Anthropic published rates as of 2026-05.
-_SONNET_4_6 = ModelPricing(
-    input=Decimal("3.00"),
-    output=Decimal("15.00"),
-    cache_write=Decimal("3.75"),
-    cache_read=Decimal("0.30"),
-)
-_OPUS_4_7 = ModelPricing(
-    input=Decimal("15.00"),
-    output=Decimal("75.00"),
-    cache_write=Decimal("18.75"),
-    cache_read=Decimal("1.50"),
-)
-_HAIKU_4_5 = ModelPricing(
-    input=Decimal("0.80"),
-    output=Decimal("4.00"),
-    cache_write=Decimal("1.00"),
-    cache_read=Decimal("0.08"),
+# Cost column on ``llm_usage_logs`` is ``Numeric(12, 6)``; quantise to
+# match so the DB never rejects an insert with too many fractional
+# digits.
+_QUANT = Decimal("0.000001")
+
+
+# Map our canonical model-name prefixes to ``genai-prices`` provider
+# ids. Supplying the provider id skips the library's auto-detection
+# scan and disambiguates models whose names appear under more than one
+# provider. Unmapped prefixes fall through with ``provider_id=None``;
+# the library then probes all providers.
+_PROVIDER_ID_BY_PREFIX: tuple[tuple[str, str], ...] = (
+    ("claude-", "anthropic"),
+    ("gpt-", "openai"),
+    ("o1-", "openai"),
+    ("o3-", "openai"),
+    ("gemini-", "google"),
 )
 
-UNKNOWN_PRICING = ModelPricing(
-    input=Decimal("0"),
-    output=Decimal("0"),
-    cache_write=Decimal("0"),
-    cache_read=Decimal("0"),
-)
 
-# Lookup table. Keys match the model identifiers our config emits. Both
-# the bare ID and the dated ID forms are covered so a clawbolt instance
-# pinned to e.g. ``claude-haiku-4-5-20251001`` resolves correctly.
-_PRICING_BY_MODEL: dict[str, ModelPricing] = {
-    "claude-sonnet-4-6": _SONNET_4_6,
-    "claude-opus-4-7": _OPUS_4_7,
-    "claude-haiku-4-5": _HAIKU_4_5,
-    "claude-haiku-4-5-20251001": _HAIKU_4_5,
-}
-
-
-def lookup_pricing(model: str) -> ModelPricing:
-    """Return pricing for *model*, or ``UNKNOWN_PRICING`` when unmapped.
-
-    A miss is logged at the call site (in ``LLMUsageStore.log``) so we
-    notice when a new provider lands without a pricing entry.
-    """
-    return _PRICING_BY_MODEL.get(model, UNKNOWN_PRICING)
+def _provider_id_for(model: str) -> str | None:
+    """Best-effort provider id for *model*, or ``None`` for autodetection."""
+    for prefix, pid in _PROVIDER_ID_BY_PREFIX:
+        if model.startswith(prefix):
+            return pid
+    return None
 
 
 def is_known_model(model: str) -> bool:
-    """Whether *model* has a pricing entry. Used by the logger to decide
-    when to emit a "no pricing" warning."""
-    return model in _PRICING_BY_MODEL
+    """Whether ``genai-prices`` can price this model.
+
+    Used by the logger to decide when to emit a "no pricing entry"
+    warning. The check goes through the same lookup path as
+    ``calc_price`` so a true result implies ``compute_cost`` will not
+    fall back to zero.
+    """
+    if not model:
+        return False
+    try:
+        calc_price(
+            Usage(input_tokens=1, output_tokens=0),
+            model_ref=model,
+            provider_id=_provider_id_for(model),
+        )
+    except (LookupError, ValueError):
+        return False
+    return True
 
 
 def compute_cost(
@@ -100,21 +84,34 @@ def compute_cost(
 ) -> Decimal:
     """Return the dollar cost for a single LLM call as a 6-decimal Decimal.
 
-    Charges ``input_tokens`` at the model's input rate, ``output_tokens``
-    at the output rate, and the cache columns at their dedicated rates.
-    The caller passes ``input_tokens`` as Anthropic reports it: the
-    *non-cached* prompt tokens, with cache reads / writes accounted
-    separately. We do not double-count.
+    Charges via ``genai-prices``, which understands per-provider
+    accounting quirks (Anthropic's input bucket includes cached tokens,
+    cache-write surcharges, cache-read discounts, OpenAI's prompt-cache
+    discount, etc.) so the caller does not have to.
 
-    Returns ``Decimal('0.000000')`` for models without a pricing entry,
-    and quantises the result to six decimal places (matching the
-    ``Numeric(12, 6)`` column on ``llm_usage_logs``).
+    Returns ``Decimal('0.000000')`` for models the library does not
+    know; the caller should log a warning so a missing model produces
+    a ``genai-prices`` upgrade rather than silent zero-cost rows
+    forever.
     """
-    pricing = lookup_pricing(model)
-    cost = (
-        pricing.input * Decimal(input_tokens)
-        + pricing.output * Decimal(output_tokens)
-        + pricing.cache_write * Decimal(cache_creation_input_tokens or 0)
-        + pricing.cache_read * Decimal(cache_read_input_tokens or 0)
-    ) / Decimal("1000000")
-    return cost.quantize(Decimal("0.000001"))
+    cache_creation = cache_creation_input_tokens or 0
+    cache_read = cache_read_input_tokens or 0
+    # Anthropic (and several other providers) price the full input
+    # bucket including cached tokens; the library expects
+    # ``input_tokens`` to be the total. Per-bucket multipliers come
+    # from the cache-specific fields.
+    total_input = input_tokens + cache_creation + cache_read
+    try:
+        result = calc_price(
+            Usage(
+                input_tokens=total_input,
+                cache_write_tokens=cache_creation,
+                cache_read_tokens=cache_read,
+                output_tokens=output_tokens,
+            ),
+            model_ref=model,
+            provider_id=_provider_id_for(model),
+        )
+    except (LookupError, ValueError):
+        return Decimal("0.000000")
+    return result.total_price.quantize(_QUANT)

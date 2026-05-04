@@ -1,7 +1,11 @@
 """Tests for LLM cost computation.
 
-Covers the pricing table and the compute_cost helper. End-to-end wiring
-into ``LLMUsageStore.log`` is exercised in ``test_llm_usage_store``.
+The pricing module is now a thin wrapper around ``genai-prices``; we
+test its behavior contract (returns Decimal, 6-decimal quantisation,
+unknown-model fallback, Anthropic input-token bucketing convention)
+rather than asserting exact dollar amounts. Pinning specific rates
+would defeat the point of switching to a library that updates prices
+when providers change them.
 """
 
 from __future__ import annotations
@@ -9,16 +13,38 @@ from __future__ import annotations
 from decimal import Decimal
 
 import pytest
+from genai_prices import Usage, calc_price
 
 from backend.app.services.llm_pricing import (
-    UNKNOWN_PRICING,
+    _provider_id_for,
     compute_cost,
     is_known_model,
-    lookup_pricing,
 )
 
 # ---------------------------------------------------------------------------
-# Pricing table
+# Provider-id resolution
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "model,expected",
+    [
+        ("claude-sonnet-4-6", "anthropic"),
+        ("claude-opus-4-7", "anthropic"),
+        ("claude-haiku-4-5-20251001", "anthropic"),
+        ("gpt-4o", "openai"),
+        ("o1-mini", "openai"),
+        ("o3-mini", "openai"),
+        ("gemini-2.0-flash", "google"),
+        ("some-bespoke-model", None),
+    ],
+)
+def test_provider_id_resolution(model: str, expected: str | None) -> None:
+    assert _provider_id_for(model) == expected
+
+
+# ---------------------------------------------------------------------------
+# Known / unknown model
 # ---------------------------------------------------------------------------
 
 
@@ -28,109 +54,35 @@ from backend.app.services.llm_pricing import (
         "claude-sonnet-4-6",
         "claude-opus-4-7",
         "claude-haiku-4-5",
-        "claude-haiku-4-5-20251001",
+        "claude-haiku-4-5-20251001",  # dated alias prefix-matches
     ],
 )
-def test_lookup_returns_real_pricing_for_supported_models(model: str) -> None:
-    p = lookup_pricing(model)
-    assert p.input > 0
-    assert p.output > 0
-    assert p.cache_write > 0
-    assert p.cache_read > 0
+def test_is_known_model_for_supported_models(model: str) -> None:
+    assert is_known_model(model) is True
 
 
-def test_lookup_returns_unknown_pricing_for_unmapped_model() -> None:
-    assert lookup_pricing("gpt-99") is UNKNOWN_PRICING
-    assert UNKNOWN_PRICING.input == Decimal("0")
-    assert UNKNOWN_PRICING.output == Decimal("0")
-
-
-def test_is_known_model_only_matches_pricing_table() -> None:
-    assert is_known_model("claude-sonnet-4-6") is True
+def test_is_known_model_for_unmapped_model() -> None:
+    assert is_known_model("not-a-real-model-99") is False
     assert is_known_model("") is False
-    assert is_known_model("gpt-4") is False
-
-
-def test_anthropic_cache_multipliers_match_published_rates() -> None:
-    """Cache writes are 1.25x input, cache reads are 0.1x input. If
-    Anthropic ever revises the multipliers we want a test failure here
-    so we update the table deliberately rather than drift silently.
-    """
-    sonnet = lookup_pricing("claude-sonnet-4-6")
-    assert sonnet.cache_write == sonnet.input * Decimal("1.25")
-    assert sonnet.cache_read == sonnet.input * Decimal("0.10")
-
-    opus = lookup_pricing("claude-opus-4-7")
-    assert opus.cache_write == opus.input * Decimal("1.25")
-    assert opus.cache_read == opus.input * Decimal("0.10")
 
 
 # ---------------------------------------------------------------------------
-# compute_cost
+# compute_cost contract
 # ---------------------------------------------------------------------------
 
 
-def test_zero_tokens_costs_nothing() -> None:
+def test_compute_cost_returns_decimal() -> None:
+    cost = compute_cost("claude-sonnet-4-6", 1000, 500)
+    assert isinstance(cost, Decimal)
+
+
+def test_compute_cost_zero_tokens_costs_nothing() -> None:
     assert compute_cost("claude-sonnet-4-6", 0, 0) == Decimal("0.000000")
 
 
-def test_unknown_model_costs_nothing_regardless_of_tokens() -> None:
-    """Conservative fallback: prefer "we don't know" over a bad estimate."""
+def test_unknown_model_falls_through_to_zero() -> None:
+    """Conservative fallback: prefer 'we don't know' over a bad estimate."""
     assert compute_cost("not-a-real-model", 1_000_000, 1_000_000) == Decimal("0.000000")
-
-
-def test_sonnet_cost_at_published_rates() -> None:
-    """Sonnet 4.6: $3 input, $15 output per 1M tokens. A 1M input + 1M
-    output call should cost $18.000000.
-    """
-    cost = compute_cost("claude-sonnet-4-6", 1_000_000, 1_000_000)
-    assert cost == Decimal("18.000000")
-
-
-def test_opus_cost_at_published_rates() -> None:
-    """Opus 4.7: $15 input, $75 output per 1M tokens."""
-    cost = compute_cost("claude-opus-4-7", 1_000_000, 1_000_000)
-    assert cost == Decimal("90.000000")
-
-
-def test_cache_tokens_charged_at_dedicated_rates() -> None:
-    """1M cache write tokens at $3.75/M plus 1M cache read tokens at
-    $0.30/M = $4.050000 for sonnet.
-    """
-    cost = compute_cost(
-        "claude-sonnet-4-6",
-        input_tokens=0,
-        output_tokens=0,
-        cache_creation_input_tokens=1_000_000,
-        cache_read_input_tokens=1_000_000,
-    )
-    assert cost == Decimal("4.050000")
-
-
-def test_realistic_session_cost() -> None:
-    """Sanity check using a heartbeat_decision shape pulled from a real
-    contractor session: ~362 input tokens, ~92 output tokens, ~2206
-    cache-write tokens. The cost should be small but non-zero, and the
-    result should quantise to 6 decimal places for the Numeric(12, 6)
-    column.
-    """
-    cost = compute_cost(
-        "claude-sonnet-4-6",
-        input_tokens=362,
-        output_tokens=92,
-        cache_creation_input_tokens=2206,
-        cache_read_input_tokens=0,
-    )
-    # 362*$3 + 92*$15 + 2206*$3.75, all per 1M
-    expected = (
-        Decimal("362") * Decimal("3.00")
-        + Decimal("92") * Decimal("15.00")
-        + Decimal("2206") * Decimal("3.75")
-    ) / Decimal("1000000")
-    assert cost == expected.quantize(Decimal("0.000001"))
-    # Sanity: roughly 1.5 cents.
-    assert cost < Decimal("0.02")
-    assert cost > Decimal("0")
 
 
 def test_compute_cost_handles_none_cache_columns() -> None:
@@ -148,12 +100,85 @@ def test_compute_cost_handles_none_cache_columns() -> None:
 
 def test_compute_cost_quantises_to_six_decimals() -> None:
     """Numeric(12, 6) on the column constrains us to 6 fractional
-    digits. A pricing math result with more digits should be quantised
-    here so the DB never rejects an insert."""
-    # 1 input token: 3/1M = 0.000003
+    digits. The library may return more precision than that."""
     cost = compute_cost("claude-sonnet-4-6", 1, 0)
-    assert cost == Decimal("0.000003")
-    # exponent should match the Numeric column's scale (-6 for 6 fractional digits)
+    # Exponent is -6 (six fractional digits) regardless of how the
+    # library rounded internally.
     exponent = cost.as_tuple().exponent
     assert isinstance(exponent, int)
     assert exponent == -6
+
+
+# ---------------------------------------------------------------------------
+# Anthropic input-token bucketing convention
+# ---------------------------------------------------------------------------
+
+
+def test_compute_cost_aggregates_input_buckets_for_anthropic() -> None:
+    """``genai-prices`` follows Anthropic's wire-protocol convention:
+    ``Usage.input_tokens`` is the total prompt size (uncached + cache
+    creation + cache reads), with cache write/read columns charging
+    their own rates on top.
+
+    Our `compute_cost` API takes them split out (matching what we
+    persist) and is responsible for the aggregation. This test pins
+    that wiring by checking ``compute_cost`` matches a hand-built
+    library call.
+    """
+    library_result = calc_price(
+        Usage(
+            input_tokens=362 + 2206,  # plain + cache_write
+            cache_write_tokens=2206,
+            cache_read_tokens=0,
+            output_tokens=92,
+        ),
+        model_ref="claude-sonnet-4-6",
+        provider_id="anthropic",
+    ).total_price.quantize(Decimal("0.000001"))
+
+    our_result = compute_cost(
+        "claude-sonnet-4-6",
+        input_tokens=362,
+        output_tokens=92,
+        cache_creation_input_tokens=2206,
+        cache_read_input_tokens=0,
+    )
+    assert our_result == library_result
+
+
+def test_compute_cost_treats_cache_read_distinctly() -> None:
+    """Cache reads are charged at a discount in Anthropic's pricing.
+    The library handles the multiplier; we just need to pass them
+    through the right field. Compare two equal-token calls where one
+    has the cache-read shape and one has only plain input."""
+    cache_heavy = compute_cost(
+        "claude-sonnet-4-6",
+        input_tokens=0,
+        output_tokens=0,
+        cache_creation_input_tokens=0,
+        cache_read_input_tokens=10_000,
+    )
+    plain = compute_cost(
+        "claude-sonnet-4-6",
+        input_tokens=10_000,
+        output_tokens=0,
+    )
+    # Cache reads are cheaper than plain input.
+    assert cache_heavy < plain
+    # And both are non-zero.
+    assert cache_heavy > Decimal("0")
+    assert plain > Decimal("0")
+
+
+def test_known_anthropic_models_all_produce_nonzero_cost() -> None:
+    """Smoke test: a 1k input + 500 output call returns >0 cost for
+    every Anthropic SKU we currently invoke. Catches a future
+    library refactor that quietly drops one of these."""
+    for model in (
+        "claude-sonnet-4-6",
+        "claude-opus-4-7",
+        "claude-haiku-4-5",
+        "claude-haiku-4-5-20251001",
+    ):
+        cost = compute_cost(model, 1000, 500)
+        assert cost > Decimal("0"), f"{model} priced at zero"
