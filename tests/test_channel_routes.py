@@ -344,7 +344,6 @@ async def test_last_inbound_at_stamped_by_ingestion(client: TestClient, test_use
                 channel="telegram",
                 sender_id="111",
                 text="hello",
-                session_id="test-session",
                 external_message_id="ext-1",
                 media_refs=[],
             )

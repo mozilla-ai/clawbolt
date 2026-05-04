@@ -53,9 +53,7 @@ def _make_session(db: Session, user: User, channel: str = "bluebubbles") -> Chat
     cs = ChatSession(
         session_id=f"sess-{uuid.uuid4().hex[:8]}",
         user_id=user.id,
-        is_active=True,
         channel=channel,
-        last_compacted_seq=0,
         created_at=now,
         last_message_at=now,
     )

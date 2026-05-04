@@ -51,7 +51,7 @@ def test_chat_endpoint_returns_request_id(
     webchat_client: TestClient,
     webchat_user: User,
 ) -> None:
-    """POST /api/user/chat should return request_id and session_id."""
+    """POST /api/user/chat should return a request_id."""
     resp = webchat_client.post(
         "/api/user/chat",
         data={"message": "Hi there"},
@@ -60,7 +60,6 @@ def test_chat_endpoint_returns_request_id(
     assert resp.status_code == 200
     data = resp.json()
     assert "request_id" in data
-    assert "session_id" in data
     assert len(data["request_id"]) > 0
 
 
@@ -68,67 +67,6 @@ def test_chat_endpoint_missing_body(webchat_client: TestClient) -> None:
     """Empty request (no message, no files) should return 422."""
     resp = webchat_client.post("/api/user/chat", data={"message": ""})
     assert resp.status_code == 422
-
-
-def test_chat_returns_same_session(
-    webchat_client: TestClient,
-    webchat_user: User,
-) -> None:
-    """Multiple messages within the session timeout should use the same session."""
-    resp1 = webchat_client.post(
-        "/api/user/chat",
-        data={"message": "First message"},
-    )
-    resp2 = webchat_client.post(
-        "/api/user/chat",
-        data={"message": "Second message"},
-    )
-
-    assert resp1.json()["session_id"] == resp2.json()["session_id"]
-
-
-def test_chat_with_explicit_session_id(
-    webchat_client: TestClient,
-    webchat_user: User,
-) -> None:
-    """Sending session_id should resume that session."""
-    resp1 = webchat_client.post(
-        "/api/user/chat",
-        data={"message": "First message"},
-    )
-    session_id = resp1.json()["session_id"]
-
-    resp2 = webchat_client.post(
-        "/api/user/chat",
-        data={"message": "Second message", "session_id": session_id},
-    )
-
-    assert resp2.status_code == 200
-    assert resp2.json()["session_id"] == session_id
-
-
-def test_chat_with_invalid_session_id(webchat_client: TestClient) -> None:
-    """Invalid session_id format should return 422."""
-    resp = webchat_client.post(
-        "/api/user/chat",
-        data={"message": "Hello", "session_id": "../../bad"},
-    )
-    assert resp.status_code == 422
-
-
-def test_chat_with_nonexistent_session_id(
-    webchat_client: TestClient,
-    webchat_user: User,
-) -> None:
-    """Valid-format but nonexistent session_id should create a new session."""
-    resp = webchat_client.post(
-        "/api/user/chat",
-        data={"message": "Hello", "session_id": "9999_9999"},
-    )
-
-    assert resp.status_code == 200
-    # A new session should have been created (not the requested one)
-    assert resp.json()["session_id"] != "9999_9999"
 
 
 # ---------------------------------------------------------------------------
@@ -157,7 +95,6 @@ def test_chat_with_image_upload(
     assert resp.status_code == 200
     data = resp.json()
     assert "request_id" in data
-    assert "session_id" in data
 
 
 def test_chat_with_files_only(
