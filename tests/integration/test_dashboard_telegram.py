@@ -77,9 +77,7 @@ def _create_session(
         cs = ChatSession(
             session_id=session_id,
             user_id=user.id,
-            is_active=True,
             channel="",
-            last_compacted_seq=0,
             created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )
@@ -150,7 +148,7 @@ class TestDashboardSeesTelegramData:
                 },
             ],
         )
-        resp = real_auth_client.get("/api/user/sessions/1_100")
+        resp = real_auth_client.get("/api/user/conversation")
         assert resp.status_code == 200
         data = resp.json()
         assert data["session_id"] == "1_100"
@@ -269,7 +267,7 @@ class TestMultiChannelSingleTenant:
             patch("backend.app.agent.ingestion.settings.message_batch_window_ms", 0),
             TestClient(app) as c,
         ):
-            resp = c.get(f"/api/user/sessions/{tg_user.id}_500")
+            resp = c.get("/api/user/conversation")
             assert resp.status_code == 200
             data = resp.json()
             assert data["session_id"] == f"{tg_user.id}_500"

@@ -188,7 +188,6 @@ class TestReportInterception:
             )
             db.commit()
             session_db_id = cs.id
-            session_external_id = cs.session_id
         finally:
             db.close()
 
@@ -200,7 +199,6 @@ class TestReportInterception:
             channel="telegram",
             sender_id=report_user.user_id,
             text="/report",
-            session_id=session_external_id,
         )
 
         with (

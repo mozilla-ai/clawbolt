@@ -6,7 +6,7 @@ import {
   useMemory,
   useToolConfig,
   useChannelConfig,
-  useSession,
+  useConversation,
 } from './queries';
 import api from '@/api';
 import type { ReactNode } from 'react';
@@ -15,7 +15,7 @@ vi.mock('@/api', () => ({
   default: {
     getProfile: vi.fn(),
     updateProfile: vi.fn(),
-    getSession: vi.fn(),
+    getConversation: vi.fn(),
     getMemory: vi.fn(),
     updateMemory: vi.fn(),
     getToolConfig: vi.fn(),
@@ -106,25 +106,17 @@ describe('useChannelConfig', () => {
   });
 });
 
-describe('useSession', () => {
-  it('fetches session detail when id is provided', async () => {
+describe('useConversation', () => {
+  it('fetches the user conversation', async () => {
     const mockDetail = { session_id: 's1', messages: [] };
-    vi.mocked(api.getSession).mockResolvedValue(mockDetail as never);
+    vi.mocked(api.getConversation).mockResolvedValue(mockDetail as never);
 
-    const { result } = renderHook(() => useSession('s1'), { wrapper: createWrapper() });
+    const { result } = renderHook(() => useConversation(), { wrapper: createWrapper() });
 
     await waitFor(() => expect(result.current.data).toBeDefined());
 
     expect(result.current.data).toEqual(mockDetail);
-    expect(api.getSession).toHaveBeenCalledWith('s1');
-  });
-
-  it('does not fetch when id is null', async () => {
-    const { result } = renderHook(() => useSession(null), { wrapper: createWrapper() });
-
-    // Should remain in pending state but never fire the request
-    expect(result.current.fetchStatus).toBe('idle');
-    expect(api.getSession).not.toHaveBeenCalled();
+    expect(api.getConversation).toHaveBeenCalled();
   });
 });
 

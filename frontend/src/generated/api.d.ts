@@ -598,7 +598,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/user/sessions": {
+    "/api/user/conversation": {
         parameters: {
             query?: never;
             header?: never;
@@ -606,10 +606,15 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List Sessions
-         * @description List sessions with message counts, ordered by last_message_at DESC.
+         * Get Conversation
+         * @description Return the user's conversation transcript, or an empty shape if none yet.
+         *
+         *     Returning an empty shape (rather than 404) lets the frontend render
+         *     the chat input without special-casing the first-message-ever flow.
+         *     The session row is created by the agent pipeline on the first
+         *     inbound message, not by this endpoint.
          */
-        get: operations["list_sessions_api_user_sessions_get"];
+        get: operations["get_conversation_api_user_conversation_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -618,7 +623,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/user/sessions/{session_id}": {
+    "/api/user/conversation/system-prompt": {
         parameters: {
             query?: never;
             header?: never;
@@ -626,27 +631,7 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * Get Session
-         * @description Get a full conversation transcript with tool interactions.
-         */
-        get: operations["get_session_api_user_sessions__session_id__get"];
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/user/sessions/{session_id}/system-prompt": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /**
-         * Get Session System Prompt
+         * Get Conversation System Prompt
          * @description Return the system prompt that would be sent on the next turn.
          *
          *     Reconstructed live from current user state (profile, soul, memory,
@@ -670,7 +655,7 @@ export interface paths {
          *       out of onboarding mode while this preview still reports
          *       ``is_onboarding=true`` based on the in-memory heuristic.
          */
-        get: operations["get_session_system_prompt_api_user_sessions__session_id__system_prompt_get"];
+        get: operations["get_conversation_system_prompt_api_user_conversation_system_prompt_get"];
         put?: never;
         post?: never;
         delete?: never;
@@ -679,7 +664,7 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
-    "/api/user/sessions/{session_id}/messages/batch": {
+    "/api/user/conversation/messages/batch": {
         parameters: {
             query?: never;
             header?: never;
@@ -691,15 +676,15 @@ export interface paths {
         post?: never;
         /**
          * Delete Messages Batch
-         * @description Delete specific messages from a session by their sequence numbers.
+         * @description Delete specific messages from the user's conversation by sequence number.
          */
-        delete: operations["delete_messages_batch_api_user_sessions__session_id__messages_batch_delete"];
+        delete: operations["delete_messages_batch_api_user_conversation_messages_batch_delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/user/sessions/{session_id}/messages/{seq}": {
+    "/api/user/conversation/messages/{seq}": {
         parameters: {
             query?: never;
             header?: never;
@@ -711,15 +696,15 @@ export interface paths {
         post?: never;
         /**
          * Delete Single Message
-         * @description Delete a single message from a session by its sequence number.
+         * @description Delete a single message from the user's conversation by sequence number.
          */
-        delete: operations["delete_single_message_api_user_sessions__session_id__messages__seq__delete"];
+        delete: operations["delete_single_message_api_user_conversation_messages__seq__delete"];
         options?: never;
         head?: never;
         patch?: never;
         trace?: never;
     };
-    "/api/user/sessions/{session_id}/messages": {
+    "/api/user/conversation/messages": {
         parameters: {
             query?: never;
             header?: never;
@@ -731,12 +716,12 @@ export interface paths {
         post?: never;
         /**
          * Delete Conversation History
-         * @description Delete all messages from a session, preserving memory and the session itself.
+         * @description Delete all messages from the user's conversation, preserving memory.
          *
-         *     Resets the compaction pointer and system prompt so the conversation
-         *     continues with a clean slate while retaining compacted memory.
+         *     Resets the initial system prompt so the conversation continues with
+         *     a clean slate while retaining compacted memory.
          */
-        delete: operations["delete_conversation_history_api_user_sessions__session_id__messages_delete"];
+        delete: operations["delete_conversation_history_api_user_conversation_messages_delete"];
         options?: never;
         head?: never;
         patch?: never;
@@ -885,8 +870,6 @@ export interface components {
              * @default
              */
             message: string;
-            /** Session Id */
-            session_id?: string | null;
             /**
              * Files
              * @default []
@@ -1265,8 +1248,6 @@ export interface components {
             created_at: string;
             /** Last Message At */
             last_message_at: string;
-            /** Is Active */
-            is_active: boolean;
             /**
              * Channel
              * @default
@@ -1277,38 +1258,8 @@ export interface components {
              * @default
              */
             initial_system_prompt: string;
-            /**
-             * Last Compacted Seq
-             * @default 0
-             */
-            last_compacted_seq: number;
             /** Messages */
             messages: components["schemas"]["SessionMessage"][];
-        };
-        /** SessionListItem */
-        SessionListItem: {
-            /** Session Id */
-            session_id: string;
-            /**
-             * Channel
-             * @default
-             */
-            channel: string;
-            /** Is Active */
-            is_active: boolean;
-            /** Message Count */
-            message_count: number;
-            /** Created At */
-            created_at: string;
-            /** Last Message At */
-            last_message_at: string;
-        };
-        /** SessionListResponse */
-        SessionListResponse: {
-            /** Total */
-            total: number;
-            /** Items */
-            items: components["schemas"]["SessionListItem"][];
         };
         /** SessionMessage */
         SessionMessage: {
@@ -1547,8 +1498,6 @@ export interface components {
         _ChatAccepted: {
             /** Request Id */
             request_id: string;
-            /** Session Id */
-            session_id: string;
         };
     };
     responses: never;
@@ -2390,46 +2339,11 @@ export interface operations {
             };
         };
     };
-    list_sessions_api_user_sessions_get: {
-        parameters: {
-            query?: {
-                limit?: number;
-                offset?: number;
-                is_active?: boolean | null;
-            };
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        requestBody?: never;
-        responses: {
-            /** @description Successful Response */
-            200: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["SessionListResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
-        };
-    };
-    get_session_api_user_sessions__session_id__get: {
+    get_conversation_api_user_conversation_get: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                session_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -2443,24 +2357,13 @@ export interface operations {
                     "application/json": components["schemas"]["SessionDetailResponse"];
                 };
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
-    get_session_system_prompt_api_user_sessions__session_id__system_prompt_get: {
+    get_conversation_system_prompt_api_user_conversation_system_prompt_get: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                session_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -2474,24 +2377,13 @@ export interface operations {
                     "application/json": components["schemas"]["SessionSystemPromptResponse"];
                 };
             };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
-                };
-            };
         };
     };
-    delete_messages_batch_api_user_sessions__session_id__messages_batch_delete: {
+    delete_messages_batch_api_user_conversation_messages_batch_delete: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                session_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody: {
@@ -2520,12 +2412,11 @@ export interface operations {
             };
         };
     };
-    delete_single_message_api_user_sessions__session_id__messages__seq__delete: {
+    delete_single_message_api_user_conversation_messages__seq__delete: {
         parameters: {
             query?: never;
             header?: never;
             path: {
-                session_id: string;
                 seq: number;
             };
             cookie?: never;
@@ -2552,13 +2443,11 @@ export interface operations {
             };
         };
     };
-    delete_conversation_history_api_user_sessions__session_id__messages_delete: {
+    delete_conversation_history_api_user_conversation_messages_delete: {
         parameters: {
             query?: never;
             header?: never;
-            path: {
-                session_id: string;
-            };
+            path?: never;
             cookie?: never;
         };
         requestBody?: never;
@@ -2570,15 +2459,6 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DeleteMessagesResponse"];
-                };
-            };
-            /** @description Validation Error */
-            422: {
-                headers: {
-                    [name: string]: unknown;
-                };
-                content: {
-                    "application/json": components["schemas"]["HTTPValidationError"];
                 };
             };
         };

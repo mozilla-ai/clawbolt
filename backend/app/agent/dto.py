@@ -66,8 +66,6 @@ class SessionMetadata(BaseModel):
     session_id: str = ""
     user_id: str = ""
     last_message_at: str = ""
-    is_active: bool = True
-    last_compacted_seq: int = 0
     channel: str = ""
 
 
@@ -77,10 +75,8 @@ class SessionState(BaseModel):
     session_id: str = ""
     user_id: str = ""
     messages: list[StoredMessage] = Field(default_factory=list)
-    is_active: bool = True
     created_at: str = ""
     last_message_at: str = ""
-    last_compacted_seq: int = 0
     channel: str = ""
     initial_system_prompt: str = ""
 
