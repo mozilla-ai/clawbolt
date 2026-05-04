@@ -102,10 +102,12 @@ export default function DashboardPage() {
   const oauth = useOAuthStatus();
   const calendarConfig = useCalendarConfig();
   const memory = useMemory();
-  const { currentAuthUser, isPremium } = useAuth();
-  // In premium, the LLM model/provider is an admin-only operational detail.
-  // OSS single-tenant deployments have no role concept, so the card always shows.
-  const canSeeModelConfig = !isPremium || currentAuthUser?.role === 'admin';
+  const { isPremium } = useAuth();
+  // The LLM provider/model card is an OSS single-tenant convenience. In premium,
+  // LLM config lives in the admin panel (admin -> Config tab); the card linked
+  // to /app/settings, where the Model tab is hidden for premium users, leaving
+  // a dead-end click. Hide it for all premium users (admin and non-admin).
+  const canSeeModelConfig = !isPremium;
   const modelConfig = useModelConfig({ enabled: canSeeModelConfig });
   const updateProfile = useUpdateProfile();
 
