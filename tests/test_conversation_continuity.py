@@ -179,19 +179,6 @@ async def test_get_or_create_conversation_reuses_old_session(
     assert conv.session_id == old_session_id
 
 
-@pytest.mark.asyncio()
-async def test_get_or_create_conversation_with_external_session_id(
-    test_user: User,
-) -> None:
-    """New conversation should store external session ID."""
-    conv, is_new = await get_or_create_conversation(
-        test_user.id, external_session_id="session_abc123"
-    )
-    assert is_new is True
-    # SessionState stores external_session_id if available
-    assert conv.session_id is not None
-
-
 def test_webhook_uses_canonical_get_or_create_conversation() -> None:
     """Webhook should use context.get_or_create_conversation, not a local duplicate."""
     from backend.app.channels import telegram

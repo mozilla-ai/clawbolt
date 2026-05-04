@@ -57,7 +57,6 @@ class InboundMessage:
     sender_username: str | None = None
     downloaded_media: list[DownloadedMedia] = field(default_factory=list)
     request_id: str = ""
-    session_id: str | None = None
 
 
 def _check_channel_route_enabled(user_id: str, channel: str) -> bool | None:
@@ -626,9 +625,7 @@ async def _handle_report_command(
 
     try:
         try:
-            session, _is_new = await get_or_create_conversation(
-                user.id, external_session_id=inbound.session_id
-            )
+            session, _is_new = await get_or_create_conversation(user.id)
         except Exception:
             logger.exception(
                 "/report: failed to resolve session for user %s; skipping persistence",
@@ -812,9 +809,7 @@ async def process_inbound_from_bus(
         gate.resolve(user.id, ApprovalDecision.INTERRUPTED)
         # Fall through to normal session/pipeline dispatch below.
 
-    session, _is_new = await get_or_create_conversation(
-        user.id, external_session_id=inbound.session_id
-    )
+    session, _is_new = await get_or_create_conversation(user.id)
     logger.debug(
         "process_inbound_from_bus: session %s (new=%s) for user %s",
         session.session_id,

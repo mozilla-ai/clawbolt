@@ -276,26 +276,11 @@ async def load_conversation_history(
     return history
 
 
-async def get_or_create_conversation(
-    user_id: str,
-    external_session_id: str | None = None,
-) -> tuple[SessionState, bool]:
+async def get_or_create_conversation(user_id: str) -> tuple[SessionState, bool]:
     """Get the user's conversation, creating it on first access.
 
-    Each user has a single persistent conversation; this returns it,
-    creating the session row on the first call. ``external_session_id``
-    is honored for cross-channel resume (webchat ↔ Telegram) when it
-    matches an existing session for this user; otherwise the user's
-    canonical session is returned.
-
-    Returns ``(session, is_new)`` where ``is_new`` is True only on the
-    very first message for a user.
+    Each user has a single persistent conversation (enforced by the
+    ``uq_sessions_user_id`` constraint). Returns ``(session, is_new)``
+    where ``is_new`` is True only on the very first message for a user.
     """
-    session_store = get_session_store(user_id)
-
-    if external_session_id is not None:
-        session = session_store.load_session(external_session_id)
-        if session is not None and session.user_id == user_id:
-            return session, False
-
-    return await session_store.get_or_create_session()
+    return await get_session_store(user_id).get_or_create_session()
