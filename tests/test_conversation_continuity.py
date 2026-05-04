@@ -133,7 +133,6 @@ async def test_get_or_create_conversation_new(
     conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is True
     assert conv.user_id == test_user.id
-    assert conv.is_active is True
 
 
 @pytest.mark.asyncio()
@@ -166,9 +165,7 @@ async def test_get_or_create_conversation_reuses_old_session(
         cs = ChatSession(
             session_id=old_session_id,
             user_id=test_user.id,
-            is_active=True,
             channel="",
-            last_compacted_seq=0,
             created_at=old_time,
             last_message_at=old_time,
         )
@@ -180,36 +177,6 @@ async def test_get_or_create_conversation_reuses_old_session(
     conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is False
     assert conv.session_id == old_session_id
-
-
-@pytest.mark.asyncio()
-async def test_get_or_create_conversation_with_external_session_id(
-    test_user: User,
-) -> None:
-    """New conversation should store external session ID."""
-    conv, is_new = await get_or_create_conversation(
-        test_user.id, external_session_id="session_abc123"
-    )
-    assert is_new is True
-    # SessionState stores external_session_id if available
-    assert conv.session_id is not None
-
-
-@pytest.mark.asyncio()
-async def test_get_or_create_conversation_force_new(
-    test_user: User,
-) -> None:
-    """force_new=True should always create a new session."""
-    conv1, _ = await get_or_create_conversation(test_user.id)
-
-    conv2, is_new = await get_or_create_conversation(test_user.id, force_new=True)
-    assert is_new is True
-    assert conv2.session_id != conv1.session_id
-
-    # Without force_new, should reuse the newest session
-    conv3, is_new = await get_or_create_conversation(test_user.id)
-    assert is_new is False
-    assert conv3.session_id == conv2.session_id
 
 
 def test_webhook_uses_canonical_get_or_create_conversation() -> None:

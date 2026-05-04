@@ -1014,7 +1014,7 @@ async def test_dispatch_reply_step_suppresses_when_sends_reply_tool_succeeds() -
     )
     ctx = PipelineContext(
         user=User(id="1", user_id="test"),
-        session=SessionState(session_id="s", user_id="1", is_active=True),
+        session=SessionState(session_id="s", user_id="1"),
         message=StoredMessage(direction="inbound", body="hi", seq=1),
         media_urls=[],
         channel="telegram",
@@ -1047,7 +1047,7 @@ async def test_dispatch_reply_step_sends_when_sends_reply_tool_fails() -> None:
     )
     ctx = PipelineContext(
         user=User(id="1", user_id="test"),
-        session=SessionState(session_id="s", user_id="1", is_active=True),
+        session=SessionState(session_id="s", user_id="1"),
         message=StoredMessage(direction="inbound", body="hi", seq=1),
         media_urls=[],
         channel="telegram",
@@ -1077,7 +1077,7 @@ async def test_dispatch_reply_step_resolves_sse_on_empty_reply() -> None:
     response = AgentResponse(reply_text="", tool_calls=[])
     ctx = PipelineContext(
         user=User(id="1", user_id="test"),
-        session=SessionState(session_id="s", user_id="1", is_active=True),
+        session=SessionState(session_id="s", user_id="1"),
         message=StoredMessage(direction="inbound", body="don't reply", seq=1),
         media_urls=[],
         channel="webchat",
@@ -1103,7 +1103,7 @@ async def test_dispatch_reply_step_no_outbound_on_empty_reply_without_request_id
     response = AgentResponse(reply_text="", tool_calls=[])
     ctx = PipelineContext(
         user=User(id="1", user_id="test"),
-        session=SessionState(session_id="s", user_id="1", is_active=True),
+        session=SessionState(session_id="s", user_id="1"),
         message=StoredMessage(direction="inbound", body="don't reply", seq=1),
         media_urls=[],
         channel="telegram",
@@ -1114,44 +1114,6 @@ async def test_dispatch_reply_step_no_outbound_on_empty_reply_without_request_id
     await dispatch_reply_step(ctx)
 
     assert message_bus.outbound.empty()
-
-
-@pytest.mark.asyncio()
-@patch("backend.app.agent.core.amessages")
-async def test_empty_reply_after_tools_accepted_on_second_attempt(
-    mock_amessages: object,
-    test_user: User,
-    conversation: SessionState,
-    inbound_message: StoredMessage,
-) -> None:
-    """When LLM calls tools, returns empty, gets re-prompted, returns empty again: accept it.
-
-    The softer re-prompt allows the LLM to intentionally return empty text on the
-    second attempt. The system should accept that (3 LLM calls total, no fourth).
-    """
-    # Round 0: LLM calls a tool (e.g. read_file) -- tool is executed
-    # Round 1: LLM returns empty text -- re-prompt fires (once)
-    # Round 2: LLM returns empty again -- accepted (re-prompt already used)
-    # Round 3: should NOT happen
-    mock_amessages.side_effect = [  # type: ignore[union-attr]
-        make_tool_call_response([{"name": "read_file", "arguments": {"path": "MEMORY.md"}}]),
-        make_text_response(""),  # Empty after tools -- triggers re-prompt
-        make_text_response(""),  # Empty again -- accepted (intentional silence)
-        make_text_response("Oops I replied anyway"),  # Should NOT be reached
-    ]
-
-    response = await handle_inbound_message(
-        user=test_user,
-        session=conversation,
-        message=inbound_message,
-        media_urls=[],
-        channel="telegram",
-    )
-
-    # The agent should accept the empty reply after re-prompt
-    assert response.reply_text == ""
-    # Three LLM calls: tool round + empty reply + re-prompt. No fourth call.
-    assert mock_amessages.call_count == 3  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------

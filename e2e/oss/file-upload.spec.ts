@@ -26,9 +26,7 @@ test.describe('File Upload - API Tests', () => {
 
     const body = await res.json();
     expect(body.request_id).toBeTruthy();
-    expect(body.session_id).toBeTruthy();
     expect(typeof body.request_id).toBe('string');
-    expect(typeof body.session_id).toBe('string');
   });
 
   test('POST /api/user/chat with only a file (no message) returns 200', async ({
@@ -100,22 +98,6 @@ test.describe('File Upload - API Tests', () => {
     expect(res.ok()).toBe(true);
     const body = await res.json();
     expect(body.request_id).toBeTruthy();
-    expect(body.session_id).toBeTruthy();
-  });
-
-  test('POST /api/user/chat with invalid session_id returns 422', async ({
-    request,
-    baseURL,
-  }) => {
-    const res = await request.post(`${baseURL}/api/user/chat`, {
-      multipart: {
-        message: 'test',
-        session_id: 'invalid-format',
-      },
-    });
-    expect(res.status()).toBe(422);
-    const body = await res.json();
-    expect(body.detail).toContain('session_id must match pattern');
   });
 });
 

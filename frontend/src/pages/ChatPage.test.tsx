@@ -8,10 +8,12 @@ import ChatPage from './ChatPage';
 // Mock the api module
 vi.mock('@/api', () => ({
   default: {
-    getSession: vi.fn(),
-    getSessionSystemPrompt: vi.fn(),
+    getConversation: vi.fn(),
+    getConversationSystemPrompt: vi.fn(),
     sendChatMessage: vi.fn(),
-    listSessions: vi.fn().mockResolvedValue({ total: 0, items: [] }),
+    deleteConversationHistory: vi.fn().mockResolvedValue(undefined),
+    deleteMessage: vi.fn().mockResolvedValue(undefined),
+    deleteMessages: vi.fn().mockResolvedValue(undefined),
     subscribeToActivity: vi.fn().mockReturnValue(new AbortController()),
   },
 }));
@@ -39,15 +41,13 @@ describe('ChatPage auto-focus', () => {
 describe('ChatPage tool interactions', () => {
   it('displays tool interactions when loading session history', async () => {
     const sessionId = '1_1000';
-    mockApi.getSession.mockResolvedValue({
+    mockApi.getConversation.mockResolvedValue({
       session_id: sessionId,
       user_id: '1',
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
-      is_active: true,
       channel: 'webchat',
       initial_system_prompt: '',
-      last_compacted_seq: 0,
       messages: [
         {
           seq: 1,
@@ -82,15 +82,13 @@ describe('ChatPage tool interactions', () => {
 
   it('does not render tool section when there are no tool interactions', async () => {
     const sessionId = '1_2000';
-    mockApi.getSession.mockResolvedValue({
+    mockApi.getConversation.mockResolvedValue({
       session_id: sessionId,
       user_id: '1',
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
-      is_active: true,
       channel: 'webchat',
       initial_system_prompt: '',
-      last_compacted_seq: 0,
       messages: [
         {
           seq: 1,
@@ -124,15 +122,13 @@ describe('ChatPage tool interaction expand/collapse', () => {
   const sessionId = '1_4000';
 
   function mockSessionWithTools(toolInteractions: Record<string, unknown>[]) {
-    mockApi.getSession.mockResolvedValue({
+    mockApi.getConversation.mockResolvedValue({
       session_id: sessionId,
       user_id: '1',
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
-      is_active: true,
       channel: 'webchat',
       initial_system_prompt: '',
-      last_compacted_seq: 0,
       messages: [
         {
           seq: 1,
@@ -287,31 +283,15 @@ describe('ChatPage tool interaction expand/collapse', () => {
   });
 });
 
-describe('ChatPage session auto-discovery', () => {
-  it('discovers the most recent active session when no session is saved', async () => {
-    const sessionId = '1_3000';
-    mockApi.listSessions.mockResolvedValue({
-      total: 1,
-      items: [
-        {
-          session_id: sessionId,
-          channel: 'webchat',
-          is_active: true,
-          message_count: 2,
-          created_at: '2025-01-01T00:00:00Z',
-          last_message_at: '2025-01-01T00:01:00Z',
-        },
-      ],
-    });
-    mockApi.getSession.mockResolvedValue({
-      session_id: sessionId,
+describe('ChatPage conversation auto-load', () => {
+  it('loads the user conversation on mount', async () => {
+    mockApi.getConversation.mockResolvedValue({
+      session_id: 'sess-1',
       user_id: '1',
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
-      is_active: true,
       channel: 'webchat',
       initial_system_prompt: '',
-      last_compacted_seq: 0,
       messages: [
         {
           seq: 1,
@@ -330,12 +310,10 @@ describe('ChatPage session auto-discovery', () => {
       ],
     });
 
-    // Render without ?session= param and with empty localStorage
     renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: '/app/chat' });
 
-    // Should discover the session and load its history
     await waitFor(() => {
-      expect(mockApi.listSessions).toHaveBeenCalledWith({ is_active: true, limit: 1 });
+      expect(mockApi.getConversation).toHaveBeenCalled();
     });
 
     await waitFor(() => {
@@ -344,17 +322,22 @@ describe('ChatPage session auto-discovery', () => {
     });
   });
 
-  it('shows empty state when no active sessions exist', async () => {
-    mockApi.listSessions.mockResolvedValue({ total: 0, items: [] });
+  it('shows empty state when no conversation exists yet', async () => {
+    mockApi.getConversation.mockResolvedValue({
+      session_id: '',
+      user_id: '1',
+      created_at: '',
+      last_message_at: '',
+      channel: '',
+      initial_system_prompt: '',
+      messages: [],
+    });
 
     renderWithRouter(<ChatActivityProvider><ChatPage /></ChatActivityProvider>, { route: '/app/chat' });
 
     await waitFor(() => {
-      expect(mockApi.listSessions).toHaveBeenCalled();
+      expect(screen.getByText('Send a message to start chatting.')).toBeInTheDocument();
     });
-
-    // Should show the empty state prompt
-    expect(screen.getByText('Send a message to start chatting.')).toBeInTheDocument();
   });
 });
 
@@ -397,15 +380,13 @@ describe('ChatPage concurrent messaging', () => {
 describe('ChatPage current system prompt panel', () => {
   it('lazy-loads the live system prompt only when the user expands the panel', async () => {
     const sessionId = '1_5000';
-    mockApi.getSession.mockResolvedValue({
+    mockApi.getConversation.mockResolvedValue({
       session_id: sessionId,
       user_id: '1',
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
-      is_active: true,
       channel: 'webchat',
       initial_system_prompt: 'STALE FIRST-TURN PROMPT',
-      last_compacted_seq: 0,
       messages: [
         {
           seq: 1,
@@ -423,7 +404,7 @@ describe('ChatPage current system prompt panel', () => {
         },
       ],
     });
-    mockApi.getSessionSystemPrompt.mockResolvedValue({
+    mockApi.getConversationSystemPrompt.mockResolvedValue({
       session_id: sessionId,
       system_prompt: 'LIVE PROMPT FROM ENDPOINT',
       is_onboarding: false,
@@ -442,7 +423,7 @@ describe('ChatPage current system prompt panel', () => {
     // Panel toggle is visible but the endpoint hasn't been hit yet.
     const toggle = screen.getByRole('button', { name: /current system prompt/i });
     expect(toggle).toBeInTheDocument();
-    expect(mockApi.getSessionSystemPrompt).not.toHaveBeenCalled();
+    expect(mockApi.getConversationSystemPrompt).not.toHaveBeenCalled();
 
     // We must NOT show the stale frozen snapshot. Even before opening
     // the panel, the old initial_system_prompt text should be absent.
@@ -456,20 +437,18 @@ describe('ChatPage current system prompt panel', () => {
     await waitFor(() => {
       expect(screen.getByText('LIVE PROMPT FROM ENDPOINT')).toBeInTheDocument();
     });
-    expect(mockApi.getSessionSystemPrompt).toHaveBeenCalledWith(sessionId);
+    expect(mockApi.getConversationSystemPrompt).toHaveBeenCalled();
   });
 
   it('shows the Onboarding badge when the live prompt is in onboarding mode', async () => {
     const sessionId = '1_5001';
-    mockApi.getSession.mockResolvedValue({
+    mockApi.getConversation.mockResolvedValue({
       session_id: sessionId,
       user_id: '1',
       created_at: '2025-01-01T00:00:00Z',
       last_message_at: '2025-01-01T00:01:00Z',
-      is_active: true,
       channel: 'webchat',
       initial_system_prompt: '',
-      last_compacted_seq: 0,
       messages: [
         {
           seq: 1,
@@ -487,7 +466,7 @@ describe('ChatPage current system prompt panel', () => {
         },
       ],
     });
-    mockApi.getSessionSystemPrompt.mockResolvedValue({
+    mockApi.getConversationSystemPrompt.mockResolvedValue({
       session_id: sessionId,
       system_prompt: 'BOOTSTRAP CONTENT',
       is_onboarding: true,
