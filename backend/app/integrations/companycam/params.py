@@ -7,7 +7,34 @@ focused on registration and factory wiring. Imported by
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+import json
+from typing import Any
+
+from pydantic import BaseModel, Field, field_validator
+
+
+def _coerce_tags_to_list(value: Any) -> Any:
+    """Parse JSON-encoded strings into lists so the LLM can pass either shape.
+
+    Mirrors the ``_coerce_data_to_dict`` helper in the QuickBooks factory:
+    Sonnet occasionally over-quotes the ``tags`` argument and emits it as
+    ``"[]"`` or ``"[\\"kitchen\\"]"`` instead of a real JSON array. Accept
+    both forms on the first round to avoid a wasted retry.
+    """
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "tags must be a JSON array or a JSON-encoded array string; "
+                f"could not parse string as JSON: {exc.msg}"
+            ) from exc
+        if not isinstance(parsed, list):
+            raise ValueError(
+                f"tags must be a JSON array; got a JSON-encoded {type(parsed).__name__}"
+            )
+        return parsed
+    return value
 
 
 class CompanyCamSearchParams(BaseModel):
@@ -36,6 +63,8 @@ class CompanyCamUploadPhotoParams(BaseModel):
     )
     description: str = Field(default="", description="Photo description")
     tags: list[str] = Field(default_factory=list, description="Tags to apply to the photo")
+
+    _coerce_tags = field_validator("tags", mode="before")(_coerce_tags_to_list)
 
 
 class CompanyCamGetProjectParams(BaseModel):
@@ -75,6 +104,8 @@ class CompanyCamListCommentsParams(BaseModel):
 class CompanyCamTagPhotoParams(BaseModel):
     photo_id: str = Field(description="CompanyCam photo ID to tag")
     tags: list[str] = Field(description="Tags to add to the photo")
+
+    _coerce_tags = field_validator("tags", mode="before")(_coerce_tags_to_list)
 
 
 class CompanyCamDeletePhotoParams(BaseModel):
