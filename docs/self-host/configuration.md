@@ -75,6 +75,7 @@ When `LINQ_API_TOKEN` is set, the iMessage channel is powered by Linq and users 
 | `BLUEBUBBLES_ALLOWED_NUMBERS` | (empty) | E.164 phone number or email, `*` for all, or empty to deny all |
 | `BLUEBUBBLES_SEND_METHOD` | `apple-script` | Send method: `apple-script` (default) or `private-api` |
 | `BLUEBUBBLES_IMESSAGE_ADDRESS` | (empty) | iCloud email or phone number displayed in the UI for users to text |
+| `BLUEBUBBLES_BACKFILL_LOOKBACK_MINUTES` | `30` | On startup, ask the BlueBubbles server for messages dated in the last N minutes and replay any whose webhook never reached us during a Clawbolt outage. Idempotency dedup makes this safe on healthy boots. `0` disables the sweep. |
 
 When `BLUEBUBBLES_SERVER_URL` and `BLUEBUBBLES_PASSWORD` are set, the iMessage channel is powered by BlueBubbles. [BlueBubbles](https://github.com/BlueBubblesApp/bluebubbles-server) is a free, open-source iMessage bridge that runs on any Mac with iMessage signed in.
 
