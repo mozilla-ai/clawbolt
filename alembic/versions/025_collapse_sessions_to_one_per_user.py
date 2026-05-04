@@ -6,11 +6,25 @@ per user, but no production code path or UI ever created a second session.
 
 This migration:
 
-1. Picks each user's most recent session (by ``last_message_at``, falling
-   back to ``created_at``) as canonical, re-keys any messages on other
-   sessions to point at it, then deletes the now-empty extras. In
-   practice no users have multiple sessions today, but the migration
-   handles the case defensively rather than asserting.
+1. Picks each user's *oldest* session (by ``created_at``, falling back
+   to ``last_message_at`` and ``id``) as canonical, renumbers any
+   messages on other ("loser") sessions to follow the canonical's
+   ``MAX(seq)``, re-keys those messages onto the canonical, then
+   deletes the now-empty losers. In practice no users have multiple
+   sessions today, but the migration preserves data defensively rather
+   than asserting.
+
+   Two design notes:
+   - The ``messages`` table has ``UNIQUE(session_id, seq)``, and every
+     session starts at ``seq=1``. A naive UPDATE that only re-keyed
+     ``session_id`` would collide on first overlap. The renumber step
+     bumps loser seqs above the canonical's ``MAX(seq)`` so the final
+     state is unique.
+   - Picking the oldest session as canonical (rather than the newest)
+     keeps the merged seq ordering chronological: canonical messages
+     are oldest with low seqs, loser messages are newer with higher
+     seqs. The ``session_id`` of the surviving row is no longer
+     load-bearing for the frontend, so this choice is safe.
 
 2. Drops two columns made dead by the dead-code removal in the previous
    commit:
@@ -43,7 +57,16 @@ depends_on: tuple[str, ...] | None = None
 def upgrade() -> None:
     bind = op.get_bind()
 
-    # 1. Dedupe sessions: pick canonical per user, re-key messages, drop the rest.
+    # 1. Dedupe sessions. For each user, pick a canonical session (the
+    #    oldest), renumber loser-session messages to follow the
+    #    canonical's MAX(seq), re-key them onto the canonical, then
+    #    delete the now-empty loser rows. Every step is idempotent if
+    #    the user only had one session to begin with (the no-op case
+    #    that applies to ~all production users).
+    #
+    #    The two ORDER BY clauses below MUST agree on which session is
+    #    canonical (rn=1) and which are losers (rn>1); otherwise the
+    #    DELETE would drop the session whose messages we just rekeyed.
     bind.execute(
         sa.text(
             """
@@ -53,23 +76,46 @@ def upgrade() -> None:
                     user_id,
                     ROW_NUMBER() OVER (
                         PARTITION BY user_id
-                        ORDER BY last_message_at DESC NULLS LAST, created_at DESC, id DESC
+                        ORDER BY created_at ASC, last_message_at ASC NULLS FIRST, id ASC
                     ) AS rn
                 FROM sessions
             ),
             canonical AS (
                 SELECT user_id, id AS canonical_id FROM ranked WHERE rn = 1
             ),
+            canonical_max_seq AS (
+                SELECT
+                    c.canonical_id,
+                    COALESCE(MAX(m.seq), 0) AS max_seq
+                FROM canonical c
+                LEFT JOIN messages m ON m.session_id = c.canonical_id
+                GROUP BY c.canonical_id
+            ),
             losers AS (
-                SELECT r.id AS loser_id, c.canonical_id
+                SELECT
+                    r.id AS loser_id,
+                    cms.canonical_id,
+                    cms.max_seq
                 FROM ranked r
                 JOIN canonical c ON c.user_id = r.user_id
+                JOIN canonical_max_seq cms ON cms.canonical_id = c.canonical_id
                 WHERE r.rn > 1
+            ),
+            renumbered AS (
+                SELECT
+                    m.id AS message_id,
+                    l.canonical_id,
+                    l.max_seq + ROW_NUMBER() OVER (
+                        PARTITION BY l.canonical_id
+                        ORDER BY m.timestamp, m.id
+                    ) AS new_seq
+                FROM messages m
+                JOIN losers l ON m.session_id = l.loser_id
             )
             UPDATE messages m
-            SET session_id = l.canonical_id
-            FROM losers l
-            WHERE m.session_id = l.loser_id
+            SET session_id = r.canonical_id, seq = r.new_seq
+            FROM renumbered r
+            WHERE m.id = r.message_id
             """
         )
     )
@@ -81,7 +127,7 @@ def upgrade() -> None:
                 SELECT id FROM (
                     SELECT id, ROW_NUMBER() OVER (
                         PARTITION BY user_id
-                        ORDER BY last_message_at DESC NULLS LAST, created_at DESC, id DESC
+                        ORDER BY created_at ASC, last_message_at ASC NULLS FIRST, id ASC
                     ) AS rn
                     FROM sessions
                 ) ranked
