@@ -29,8 +29,10 @@ Clawbolt: Heartbeat check-ins are now disabled.
 
 Good things to add: client follow-ups, estimate deadlines, material orders, upcoming inspections.
 
-## Business hours
+## Timing
 
-Check-in messages are only sent during your configured business hours. Make sure your timezone is set correctly (just tell your assistant your timezone and it will save it).
+Check-in messages skip your active conversations: if you have just messaged the assistant, it will not interrupt with a proactive note on top. There is also a daily cap on proactive messages so a busy day does not turn into a stream of pings.
+
+If you mention working hours in your assistant profile (e.g. "I work 7am to 5pm"), the assistant uses that as soft guidance when deciding what is urgent enough to send outside those hours. Make sure your timezone is set correctly (just tell your assistant your timezone and it will save it).
 
 The Heartbeat page in the dashboard is available if you want a visual overview, but everything can be managed through chat.

@@ -1047,6 +1047,7 @@ class ClawboltAgent:
                 self._llm_model_override or settings.llm_model,
                 response,
                 purpose,
+                provider=self._llm_provider_override or settings.llm_provider,
             )
             if response.usage and response.usage.input_tokens:
                 self._last_input_tokens = response.usage.input_tokens

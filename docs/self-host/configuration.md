@@ -104,6 +104,7 @@ See [Storage Providers](./storage.md) for setup instructions.
 | `APPROVAL_TIMEOUT_SECONDS` | `120` | Seconds to wait for user approval of a tool call before automatically denying |
 | `AGENT_PROCESSING_TIMEOUT_SECONDS` | `300` | Maximum seconds for a single message's agent processing (includes waiting for the per-user lock). Prevents one hung LLM call from blocking all subsequent messages for the same user |
 | `MESSAGE_BATCH_WINDOW_MS` | `1500` | Milliseconds to wait for more messages before processing. Groups rapid-fire messages into one agent call. Set to `0` to disable |
+| `INBOUND_RECOVERY_LOOKBACK_MINUTES` | `30` | On startup, sweep for inbound messages persisted but never dispatched to the agent (worker died during the batcher window). Re-dispatch each one. Older orphans are skipped. Set to `0` to disable |
 | `MAX_TOOL_ROUNDS` | `10` | Maximum tool-calling rounds per agent invocation |
 | `MAX_INPUT_TOKENS` | `120000` | Max input token budget before context trimming |
 | `CONTEXT_TRIM_TARGET_TOKENS` | `80000` | Target token count after trimming |
@@ -139,8 +140,6 @@ See [Storage Providers](./storage.md) for setup instructions.
 | `HEARTBEAT_DEFAULT_FREQUENCY` | `30m` | Default check-in frequency shown to new users (e.g. `15m`, `1h`, `daily`) |
 | `HEARTBEAT_INTERVAL_MINUTES` | `30` | Minutes between heartbeat evaluation ticks |
 | `HEARTBEAT_MAX_DAILY_MESSAGES` | `5` | Max proactive messages per user per day |
-| `HEARTBEAT_QUIET_HOURS_START` | `20` | Hour (24h) to stop sending heartbeats |
-| `HEARTBEAT_QUIET_HOURS_END` | `7` | Hour (24h) to resume sending heartbeats |
 | `HEARTBEAT_MODEL` | (same as `LLM_MODEL`) | Model used for heartbeat messages |
 | `HEARTBEAT_PROVIDER` | (same as `LLM_PROVIDER`) | Provider used for heartbeat messages |
 | `HEARTBEAT_CONCURRENCY` | `5` | Max concurrent user evaluations per tick |

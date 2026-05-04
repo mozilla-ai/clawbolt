@@ -483,7 +483,7 @@ async def evaluate_heartbeat_need(
     if response is None:
         raise RuntimeError("Heartbeat LLM retry loop exited without response")
 
-    log_llm_usage(user.id, model, response, "heartbeat_decision")
+    log_llm_usage(user.id, model, response, "heartbeat_decision", provider=provider)
     decision = _parse_decision_response(response)
     if response.usage:
         decision.input_tokens = response.usage.input_tokens or 0
