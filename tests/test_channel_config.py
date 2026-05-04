@@ -1,9 +1,7 @@
 """Tests for channel config GET/PUT endpoints."""
 
-import json
 from collections.abc import Iterator
-from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -29,13 +27,28 @@ def _clear_bot_token() -> Iterator[None]:
     settings.telegram_bot_token = original
 
 
+@pytest.fixture()
+def _stub_store() -> Iterator[MagicMock]:
+    """Replace the SettingsStore with a no-op mock for tests that PUT.
+
+    The route tests care about HTTP semantics and in-memory ``settings``
+    mutation, not actual persistence. The mock captures ``save`` calls
+    so individual tests can assert on them when relevant.
+    """
+    with patch(
+        "backend.app.routers.user_profile.get_settings_store",
+        return_value=MagicMock(),
+    ) as factory:
+        yield factory.return_value
+
+
 def test_get_channel_config_token_set(client: TestClient, _set_bot_token: None) -> None:
     """GET returns telegram_bot_token_set=True when token is configured."""
     resp = client.get("/api/user/channels/config")
     assert resp.status_code == 200
     data = resp.json()
     assert data["telegram_bot_token_set"] is True
-    # Should never leak the actual token
+    # Should never leak the actual token.
     assert "test-token-123" not in str(data)
 
 
@@ -47,7 +60,9 @@ def test_get_channel_config_token_not_set(client: TestClient, _clear_bot_token: 
     assert data["telegram_bot_token_set"] is False
 
 
-def test_update_channel_config_token(client: TestClient, _clear_bot_token: None) -> None:
+def test_update_channel_config_token(
+    client: TestClient, _clear_bot_token: None, _stub_store: MagicMock
+) -> None:
     """PUT with a new token updates settings in-memory and GET reflects change."""
     resp = client.put(
         "/api/user/channels/config",
@@ -56,60 +71,58 @@ def test_update_channel_config_token(client: TestClient, _clear_bot_token: None)
     assert resp.status_code == 200
     data = resp.json()
     assert data["telegram_bot_token_set"] is True
-
-    # Verify settings updated in-memory
     assert settings.telegram_bot_token == "new-bot-token-456"
 
-    # GET should also reflect the change
+    # GET should also reflect the change.
     resp2 = client.get("/api/user/channels/config")
     assert resp2.json()["telegram_bot_token_set"] is True
 
-    # Clean up
     settings.telegram_bot_token = ""
 
 
-def test_update_channel_config_persists_to_config_json(
-    client: TestClient, tmp_path: Path, _clear_bot_token: None
+def test_update_channel_config_persists_via_store(
+    client: TestClient, _clear_bot_token: None, _stub_store: MagicMock
 ) -> None:
-    """PUT with a token writes to config.json in the data directory."""
-    config_path = tmp_path / "config.json"
-
-    with patch(
-        "backend.app.routers.user_profile.save_persistent_config",
-        wraps=lambda updates, path=None: _write_config(config_path, updates),
-    ):
-        resp = client.put(
-            "/api/user/channels/config",
-            json={"telegram_bot_token": "persisted-token"},
-        )
+    """PUT routes the update through the SettingsStore."""
+    resp = client.put(
+        "/api/user/channels/config",
+        json={"telegram_bot_token": "persisted-token"},
+    )
 
     assert resp.status_code == 200
-    config_data = json.loads(config_path.read_text())
-    assert config_data["telegram_bot_token"] == "persisted-token"
+    _stub_store.save.assert_called_once()
+    saved_updates, save_kwargs = _stub_store.save.call_args
+    assert saved_updates[0] == {"telegram_bot_token": "persisted-token"}
+    assert "actor_user_id" in save_kwargs
 
-    # Clean up
     settings.telegram_bot_token = ""
 
 
-def _write_config(path: Path, updates: dict[str, str]) -> None:
-    """Helper to write config.json for testing."""
-    existing: dict[str, str] = {}
-    if path.is_file():
-        existing = json.loads(path.read_text())
-    existing.update(updates)
-    path.write_text(json.dumps(existing, indent=2) + "\n")
+def test_update_channel_config_strips_mask_round_trip(
+    client: TestClient, _set_bot_token: None, _stub_store: MagicMock
+) -> None:
+    """PUT carrying ``********`` for a secret is treated as 'no change'."""
+    resp = client.put(
+        "/api/user/channels/config",
+        json={"telegram_bot_token": "********", "telegram_allowed_chat_id": "111"},
+    )
+    assert resp.status_code == 200
+    # The token is unchanged in-memory.
+    assert settings.telegram_bot_token == "test-token-123"
+    # Only the non-secret field went to the store.
+    saved_updates, _ = _stub_store.save.call_args
+    assert saved_updates[0] == {"telegram_allowed_chat_id": "111"}
 
 
 def test_update_channel_config_null_token_is_ignored(
-    client: TestClient, _set_bot_token: None
+    client: TestClient, _set_bot_token: None, _stub_store: MagicMock
 ) -> None:
     """PUT with null token should be ignored, preserving the existing value."""
     original_id = settings.telegram_allowed_chat_id
-    with patch("backend.app.routers.user_profile.save_persistent_config"):
-        resp = client.put(
-            "/api/user/channels/config",
-            json={"telegram_bot_token": None, "telegram_allowed_chat_id": "111"},
-        )
+    resp = client.put(
+        "/api/user/channels/config",
+        json={"telegram_bot_token": None, "telegram_allowed_chat_id": "111"},
+    )
     assert resp.status_code == 200
     assert resp.json()["telegram_bot_token_set"] is True
     assert settings.telegram_bot_token == "test-token-123"
@@ -129,7 +142,7 @@ def test_update_channel_config_null_only_returns_400(
 
 
 def test_update_channel_config_empty_string_clears_token(
-    client: TestClient, _set_bot_token: None
+    client: TestClient, _set_bot_token: None, _stub_store: MagicMock
 ) -> None:
     """PUT with empty string explicitly clears the token."""
     resp = client.put(
@@ -156,34 +169,30 @@ def test_get_channel_config_includes_allowed_chat_id(
         settings.telegram_allowed_chat_id = original
 
 
-def test_update_channel_config_allowed_chat_id(
-    client: TestClient,
-) -> None:
+def test_update_channel_config_allowed_chat_id(client: TestClient, _stub_store: MagicMock) -> None:
     """PUT updates telegram_allowed_chat_id in settings."""
     original = settings.telegram_allowed_chat_id
-    with patch("backend.app.routers.user_profile.save_persistent_config"):
-        try:
-            resp = client.put(
-                "/api/user/channels/config",
-                json={"telegram_allowed_chat_id": "444555"},
-            )
-            assert resp.status_code == 200
-            data = resp.json()
-            assert data["telegram_allowed_chat_id"] == "444555"
-            assert settings.telegram_allowed_chat_id == "444555"
-        finally:
-            settings.telegram_allowed_chat_id = original
+    try:
+        resp = client.put(
+            "/api/user/channels/config",
+            json={"telegram_allowed_chat_id": "444555"},
+        )
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["telegram_allowed_chat_id"] == "444555"
+        assert settings.telegram_allowed_chat_id == "444555"
+    finally:
+        settings.telegram_allowed_chat_id = original
 
 
 def test_update_channel_config_rejects_multiple_chat_ids(
-    client: TestClient,
+    client: TestClient, _stub_store: MagicMock
 ) -> None:
     """PUT rejects comma-separated chat IDs (only a single ID is allowed)."""
-    with patch("backend.app.routers.user_profile.save_persistent_config"):
-        resp = client.put(
-            "/api/user/channels/config",
-            json={"telegram_allowed_chat_id": "111,222"},
-        )
+    resp = client.put(
+        "/api/user/channels/config",
+        json={"telegram_allowed_chat_id": "111,222"},
+    )
     assert resp.status_code == 422
     assert "single" in resp.json()["detail"].lower()
 

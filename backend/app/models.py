@@ -16,6 +16,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
+    func,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
@@ -700,4 +702,36 @@ class UserPermissionSet(Base):
         DateTime(timezone=True),
         default=lambda: datetime.now(UTC),
         onupdate=lambda: datetime.now(UTC),
+    )
+
+
+class AppSetting(Base):
+    """Runtime-configurable settings keyed by name.
+
+    Backs ``backend.app.config_store.DbSettingsStore``. Reads happen
+    once at lifespan boot and on admin updates. Secret values (per the
+    store's ``_SECRET_SETTINGS`` allowlist) are envelope-encrypted into
+    ``value``; non-secret values are stored verbatim. ``is_secret``
+    locks each row to the policy in effect at write time so a future
+    allowlist change can't silently misread a row.
+
+    ``updated_at`` and the empty-string default for ``value`` use
+    ``server_default`` because the store writes via raw ``INSERT ... ON
+    CONFLICT`` rather than the ORM, so Python-side defaults wouldn't
+    fire on plain SQL paths.
+    """
+
+    __tablename__ = "app_settings"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
+    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
+        server_default=func.now(),
+        onupdate=lambda: datetime.now(UTC),
+    )
+    updated_by_user_id: Mapped[str | None] = mapped_column(
+        String, ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )

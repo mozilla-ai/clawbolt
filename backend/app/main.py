@@ -20,11 +20,15 @@ from backend.app.channels.linq import LinqChannel
 from backend.app.channels.telegram import TelegramChannel
 from backend.app.channels.webchat import WebChatChannel
 from backend.app.config import (
-    load_persistent_config,
     log_config_warnings,
     settings,
     validate_imessage_backend,
     validate_personal_storage_backend,
+)
+from backend.app.config_store import (
+    apply_to_settings,
+    get_settings_store,
+    import_legacy_config_json,
 )
 from backend.app.database import SessionLocal, get_engine
 from backend.app.logging_utils import mask_pii
@@ -190,12 +194,25 @@ def _verify_database() -> None:
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     """Start/stop background services."""
-    # Load runtime-configurable settings (Telegram token, allowlists, etc.)
-    # from the volume-mounted data/config.json so they survive container
-    # restarts. This runs *before* load_dotenv() so that os.environ only
-    # contains real env vars at this point; .env values have not yet been
-    # injected. Real env vars still take precedence over config.json.
-    load_persistent_config()
+    # Hydrate the settings singleton from persistent storage. The store
+    # raises ConfigStoreError if its backend is unreachable (DB down,
+    # missing migration, decryption failure) so a misconfigured
+    # production environment fails the lifespan loudly rather than
+    # booting with empty defaults and crashing 30 lines deeper.
+    _verify_database()
+    store = get_settings_store()
+    # One-shot migration from the legacy data/config.json into the DB
+    # store. No-op once the table has any persistable rows, so safe to
+    # leave in place across releases.
+    import_legacy_config_json(store)
+    persisted = store.load()
+    applied = apply_to_settings(persisted)
+    if applied:
+        logger.info(
+            "Loaded %d setting(s) from settings store: %s",
+            len(applied),
+            sorted(applied),
+        )
 
     # Pydantic Settings reads .env for its own declared fields only and
     # does not mutate os.environ. Provider API keys like GROQ_API_KEY are
@@ -205,7 +222,6 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # env_file directive; this call covers bare-host / local-dev setups.
     load_dotenv()
 
-    _verify_database()
     _enforce_single_channel()
     validate_imessage_backend()
     validate_personal_storage_backend()

@@ -11,9 +11,12 @@ from backend.app.channel_state import realign_preferred_channel
 from backend.app.channels import is_bluebubbles_configured, reset_channel_clients
 from backend.app.config import (
     resolve_imessage_backend,
-    save_persistent_config,
     settings,
     update_settings,
+)
+from backend.app.config_store import (
+    get_settings_store,
+    strip_unchanged_secrets,
 )
 from backend.app.database import get_db
 from backend.app.models import ChannelRoute, HeartbeatLog, LLMUsageLog, User
@@ -195,10 +198,16 @@ async def get_channel_config(
 @router.put("/user/channels/config", response_model=ChannelConfigResponse)
 async def update_channel_config(
     body: ChannelConfigUpdate,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> ChannelConfigResponse:
     """Update server-level channel configuration."""
-    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    raw_updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not raw_updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # The UI re-submits ``MASK`` ("********") for unchanged secret fields;
+    # strip those so we don't overwrite real secrets with the sentinel.
+    updates = strip_unchanged_secrets(raw_updates)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -215,8 +224,7 @@ async def update_channel_config(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    # Persist to config.json inside the volume-mounted data directory.
-    save_persistent_config(updates)
+    get_settings_store().save(updates, actor_user_id=current_user.id)
 
     reset_channel_clients(updates)
 
@@ -387,7 +395,7 @@ async def get_model_config(
 @router.put("/user/model/config", response_model=ModelConfigResponse)
 async def update_model_config(
     body: ModelConfigUpdate,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> ModelConfigResponse:
     """Update server-level LLM model configuration.
 
@@ -405,7 +413,7 @@ async def update_model_config(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    save_persistent_config(updates)
+    get_settings_store().save(updates, actor_user_id=current_user.id)
     return _build_model_config_response()
 
 
@@ -436,10 +444,16 @@ async def get_storage_config(
 @router.put("/user/storage/config", response_model=StorageConfigResponse)
 async def update_storage_config(
     body: StorageConfigUpdate,
-    _current_user: User = Depends(get_current_user),
+    current_user: User = Depends(get_current_user),
 ) -> StorageConfigResponse:
     """Update server-level storage configuration."""
-    updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    raw_updates = {k: v for k, v in body.model_dump(exclude_unset=True).items() if v is not None}
+    if not raw_updates:
+        raise HTTPException(status_code=400, detail="No fields to update")
+
+    # Strip ``MASK`` round-trips for unchanged secret fields (e.g.
+    # ``dropbox_access_token``, ``google_drive_credentials_json``).
+    updates = strip_unchanged_secrets(raw_updates)
     if not updates:
         raise HTTPException(status_code=400, detail="No fields to update")
 
@@ -457,7 +471,7 @@ async def update_storage_config(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    save_persistent_config(updates)
+    get_settings_store().save(updates, actor_user_id=current_user.id)
     return _build_storage_config_response()
 
 

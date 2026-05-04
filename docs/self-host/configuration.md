@@ -21,6 +21,7 @@ All available settings are listed in `.env.example` with defaults and comments. 
 | `LOG_LEVEL` | `INFO` | Python log level (`DEBUG`, `INFO`, `WARNING`, `ERROR`) |
 | `DATA_DIR` | `data/users` | Directory for file-based user data storage |
 | `DATABASE_URL` | `postgresql://clawbolt:clawbolt@localhost:5432/clawbolt` | PostgreSQL connection URL |
+| `SETTINGS_STORE` | `db` | Backend for runtime-configurable settings (admin UI values). `db` writes to the `app_settings` table; `file` keeps the legacy `data/config.json` flow for file-based deployments |
 | `CORS_ORIGINS` | `http://localhost:3000,http://localhost:8000` | Comma-separated list of allowed CORS origins |
 | `JWT_SECRET` | `change-me-in-production` | Secret key for JWT signing. **Change this in production** |
 | `JWT_EXPIRY_MINUTES` | `15` | JWT token expiry time in minutes |

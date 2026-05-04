@@ -1,10 +1,6 @@
-import contextlib
 import hashlib
 import hmac
-import json
 import logging
-import os
-from pathlib import Path
 from typing import Any
 
 from pydantic import Field, SecretStr, ValidationError
@@ -39,6 +35,10 @@ class Settings(BaseSettings):
     jwt_secret: str = "change-me-in-production"
     jwt_expiry_minutes: int = Field(default=15, ge=1)
     premium_plugin: str | None = None
+    # Backend for runtime-configurable settings: "db" (default) stores in
+    # the app_settings table; "file" keeps the legacy data/config.json
+    # behavior for file-based deployments.
+    settings_store: str = "db"
 
     # Messaging
     messaging_provider: str = "telegram"
@@ -206,10 +206,12 @@ settings = Settings()
 TELEGRAM_API_BASE = "https://api.telegram.org"
 
 # ---------------------------------------------------------------------------
-# Persistent config.json -- survives container restarts via volume mount
+# Persistable settings -- runtime-configurable values stored by SettingsStore.
 # ---------------------------------------------------------------------------
 
-# Settings that can be persisted to config.json at runtime.
+# Allowlist of keys the admin UI is allowed to mutate at runtime. The
+# active SettingsStore (DB or file, see backend.app.config_store) reads
+# and writes only these keys; everything else is process-startup-only.
 PERSISTABLE_SETTINGS: frozenset[str] = frozenset(
     {
         "telegram_bot_token",
@@ -265,62 +267,6 @@ def update_settings(updates: dict[str, Any]) -> None:
 
     for key, value in updates.items():
         setattr(settings, key, value)
-
-
-def _config_json_path() -> Path:
-    """Return the path to config.json inside the volume-mounted data directory.
-
-    ``data_dir`` typically points at ``data/users``; the config file lives one
-    level up so it sits directly inside the mounted ``data/`` volume.
-    """
-    return Path(settings.data_dir).parent / "config.json"
-
-
-def load_persistent_config(path: Path | None = None) -> dict[str, Any]:
-    """Load config.json and apply values to the settings singleton.
-
-    Values from config.json override defaults but are themselves overridden by
-    real environment variables.  Returns the loaded dict (empty if the file
-    does not exist).
-    """
-    config_path = path or _config_json_path()
-    if not config_path.is_file():
-        return {}
-
-    try:
-        data: dict[str, Any] = json.loads(config_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError) as exc:
-        logger.warning("Failed to read %s: %s", config_path, exc)
-        return {}
-
-    filtered: dict[str, Any] = {}
-    for key, value in data.items():
-        if key not in PERSISTABLE_SETTINGS:
-            continue
-        # Environment variables always win.
-        env_name = key.upper()
-        if os.environ.get(env_name):
-            continue
-        filtered[key] = value
-
-    if filtered:
-        update_settings(filtered)
-
-    return data
-
-
-def save_persistent_config(updates: dict[str, str], path: Path | None = None) -> None:
-    """Merge *updates* into config.json, creating the file if needed."""
-    config_path = path or _config_json_path()
-
-    existing: dict[str, Any] = {}
-    if config_path.is_file():
-        with contextlib.suppress(json.JSONDecodeError, OSError):
-            existing = json.loads(config_path.read_text(encoding="utf-8"))
-
-    existing.update(updates)
-    config_path.parent.mkdir(parents=True, exist_ok=True)
-    config_path.write_text(json.dumps(existing, indent=2) + "\n", encoding="utf-8")
 
 
 def resolve_imessage_backend(s: "Settings | None" = None) -> str | None:
