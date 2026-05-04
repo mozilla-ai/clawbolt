@@ -566,15 +566,20 @@ describe('DashboardPage', () => {
     expect(mockGetModelConfig).not.toHaveBeenCalled();
   });
 
-  it('shows the Settings card for admin users in premium', async () => {
+  it('hides the Settings card for admin users in premium too', async () => {
+    // In premium, LLM config lives in the admin panel Config tab. The dashboard
+    // card linked to /app/settings, where the Model tab is hidden for premium
+    // users -> dead-end click. Hide the card for premium admins as well.
     authMock.state.isPremium = true;
     authMock.state.currentAuthUser = { id: 1, name: 'Admin', role: 'admin' };
     setupMocks();
     renderWithRouter(<DashboardPage />);
 
     await waitFor(() => {
-      expect(screen.getByText('Settings')).toBeInTheDocument();
+      expect(screen.getByText('Channels')).toBeInTheDocument();
     });
-    expect(mockGetModelConfig).toHaveBeenCalled();
+    expect(screen.queryByText('Settings')).not.toBeInTheDocument();
+    expect(screen.queryByText('AI model and provider configuration.')).not.toBeInTheDocument();
+    expect(mockGetModelConfig).not.toHaveBeenCalled();
   });
 });
