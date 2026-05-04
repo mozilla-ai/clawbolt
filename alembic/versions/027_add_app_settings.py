@@ -10,8 +10,8 @@ The table is intentionally tiny: settings are read at most once per
 boot (and on admin updates) and we want zero ceremony around adding new
 keys.
 
-Revision ID: 026
-Revises: 025
+Revision ID: 027
+Revises: 026
 Create Date: 2026-05-04
 """
 
@@ -21,8 +21,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "026"
-down_revision: str = "025"
+revision: str = "027"
+down_revision: str = "026"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 
