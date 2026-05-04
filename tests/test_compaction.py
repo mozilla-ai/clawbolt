@@ -32,7 +32,6 @@ def session(test_user: UserData) -> SessionState:
         session_id="test-session",
         user_id=test_user.id,
         messages=[],
-        is_active=True,
     )
 
 
@@ -1022,13 +1021,13 @@ async def test_compact_session_no_summary_skips_history(test_user: UserData) -> 
 
 @pytest.mark.asyncio()
 async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
-    """Two concurrent get_or_create_session calls for the same user must not
-    create two active sessions.
+    """Two concurrent get_or_create_session calls for the same user must
+    converge on the same session row.
 
-    Regression: there is no uniqueness constraint on (user_id, is_active=True),
-    so without serialization both callers see 'no session' and both insert.
-    The advisory lock in get_or_create_session should serialize them so the
-    second caller sees the first's committed row.
+    The schema enforces ``UNIQUE(user_id)`` on ``sessions``, but the
+    advisory lock in ``get_or_create_session`` is what makes the
+    runner-up gracefully see the winner's row instead of raising an
+    IntegrityError.
     """
     db = _db_module.SessionLocal()
     try:
@@ -1066,11 +1065,11 @@ async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
     try:
         from backend.app.models import ChatSession as CS
 
-        active_count = db.query(CS).filter_by(user_id=user.id, is_active=True).count()
+        session_count = db.query(CS).filter_by(user_id=user.id).count()
     finally:
         db.close()
 
-    assert active_count == 1, f"expected 1 active session, got {active_count}"
+    assert session_count == 1, f"expected 1 session, got {session_count}"
 
 
 # --- CompactionEvent persistence ---

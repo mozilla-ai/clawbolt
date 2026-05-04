@@ -35,14 +35,16 @@ router = APIRouter()
 async def list_sessions(
     limit: int = Query(50, ge=1, le=200),
     offset: int = Query(0, ge=0),
-    is_active: bool | None = Query(None),
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> SessionListResponse:
-    """List sessions with message counts, ordered by last_message_at DESC."""
+    """List sessions with message counts, ordered by last_message_at DESC.
+
+    Each user has at most one session (enforced by the
+    ``uq_sessions_user_id`` constraint), so this endpoint returns at
+    most one item. The list shape is preserved for API stability.
+    """
     base_filter = [ChatSession.user_id == current_user.id]
-    if is_active is not None:
-        base_filter.append(ChatSession.is_active == is_active)
 
     total: int = (db.query(sa_func.count(ChatSession.id)).filter(*base_filter).scalar()) or 0
 
@@ -63,7 +65,6 @@ async def list_sessions(
         SessionListItem(
             session_id=cs.session_id,
             channel=cs.channel or "",
-            is_active=cs.is_active,
             message_count=count,
             created_at=cs.created_at.isoformat() if cs.created_at else "",
             last_message_at=cs.last_message_at.isoformat() if cs.last_message_at else "",
@@ -121,10 +122,8 @@ async def get_session(
         user_id=session.user_id,
         created_at=session.created_at,
         last_message_at=session.last_message_at,
-        is_active=session.is_active,
         channel=session.channel,
         initial_system_prompt=session.initial_system_prompt,
-        last_compacted_seq=session.last_compacted_seq,
         messages=messages,
     )
 
@@ -242,8 +241,8 @@ async def delete_conversation_history(
 ) -> DeleteMessagesResponse:
     """Delete all messages from a session, preserving memory and the session itself.
 
-    Resets the compaction pointer and system prompt so the conversation
-    continues with a clean slate while retaining compacted memory.
+    Resets the initial system prompt so the conversation continues with
+    a clean slate while retaining compacted memory.
     """
     store = get_session_store(current_user.id)
     async with user_locks.acquire(current_user.id):

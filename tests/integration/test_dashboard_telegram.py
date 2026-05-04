@@ -77,9 +77,7 @@ def _create_session(
         cs = ChatSession(
             session_id=session_id,
             user_id=user.id,
-            is_active=True,
             channel="",
-            last_compacted_seq=0,
             created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )

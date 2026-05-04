@@ -133,7 +133,6 @@ async def test_get_or_create_conversation_new(
     conv, is_new = await get_or_create_conversation(test_user.id)
     assert is_new is True
     assert conv.user_id == test_user.id
-    assert conv.is_active is True
 
 
 @pytest.mark.asyncio()
@@ -166,9 +165,7 @@ async def test_get_or_create_conversation_reuses_old_session(
         cs = ChatSession(
             session_id=old_session_id,
             user_id=test_user.id,
-            is_active=True,
             channel="",
-            last_compacted_seq=0,
             created_at=old_time,
             last_message_at=old_time,
         )

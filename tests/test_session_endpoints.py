@@ -21,9 +21,7 @@ def _create_session(
         cs = ChatSession(
             session_id=session_id,
             user_id=user.id,
-            is_active=True,
             channel=channel,
-            last_compacted_seq=0,
             created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )
@@ -472,9 +470,7 @@ def test_delete_single_message_cross_user_isolation(client: TestClient, test_use
         cs = ChatSession(
             session_id="other_single_del",
             user_id=other_user_id,
-            is_active=True,
             channel="",
-            last_compacted_seq=0,
             created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )
@@ -601,9 +597,7 @@ def test_delete_batch_cross_user(client: TestClient, test_user: User) -> None:
         cs = ChatSession(
             session_id="other_batch_del",
             user_id=other_user_id,
-            is_active=True,
             channel="",
-            last_compacted_seq=0,
             created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )
@@ -697,7 +691,6 @@ def test_delete_conversation_history(client: TestClient, test_user: User) -> Non
     detail = resp.json()
     assert detail["session_id"] == "del_1"
     assert len(detail["messages"]) == 0
-    assert detail["last_compacted_seq"] == 0
     assert detail["initial_system_prompt"] == ""
 
 
@@ -757,9 +750,7 @@ def test_delete_conversation_history_cross_user_isolation(
         cs = ChatSession(
             session_id="other_session",
             user_id=other_user_id,
-            is_active=True,
             channel="",
-            last_compacted_seq=0,
             created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
         )

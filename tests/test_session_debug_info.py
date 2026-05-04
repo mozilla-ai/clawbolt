@@ -1,4 +1,4 @@
-"""Tests for session debug info: initial_system_prompt and last_compacted_seq."""
+"""Tests for session debug info: initial_system_prompt."""
 
 from datetime import UTC, datetime
 
@@ -17,18 +17,15 @@ def _create_session_with_prompt(
     user: User,
     session_id: str,
     initial_system_prompt: str = "",
-    last_compacted_seq: int = 0,
     messages: list[dict[str, object]] | None = None,
 ) -> None:
-    """Create a session row with optional system prompt and compaction seq."""
+    """Create a session row with an optional initial system prompt."""
     db = _db_module.SessionLocal()
     try:
         cs = ChatSession(
             session_id=session_id,
             user_id=user.id,
-            is_active=True,
             channel="",
-            last_compacted_seq=last_compacted_seq,
             initial_system_prompt=initial_system_prompt,
             created_at=datetime(2025, 1, 15, 10, 0, 0, tzinfo=UTC),
             last_message_at=datetime(2025, 1, 15, 10, 5, 0, tzinfo=UTC),
@@ -99,13 +96,12 @@ async def test_system_prompt_not_overwritten(test_user: User) -> None:
     assert loaded.initial_system_prompt == "Original prompt"
 
 
-def test_api_includes_system_prompt_and_compaction(client: TestClient, test_user: User) -> None:
-    """GET /api/user/sessions/{id} includes initial_system_prompt and last_compacted_seq."""
+def test_api_includes_system_prompt(client: TestClient, test_user: User) -> None:
+    """GET /api/user/sessions/{id} includes initial_system_prompt."""
     _create_session_with_prompt(
         test_user,
         "debug-sess-1",
         initial_system_prompt="You are a trades assistant.",
-        last_compacted_seq=5,
         messages=[
             {"direction": "inbound", "body": "Hi", "timestamp": "2025-01-15T10:01:00", "seq": 1},
         ],
@@ -115,7 +111,6 @@ def test_api_includes_system_prompt_and_compaction(client: TestClient, test_user
     assert resp.status_code == 200
     data = resp.json()
     assert data["initial_system_prompt"] == "You are a trades assistant."
-    assert data["last_compacted_seq"] == 5
 
 
 def test_api_empty_prompt_for_new_session(client: TestClient, test_user: User) -> None:
@@ -132,4 +127,3 @@ def test_api_empty_prompt_for_new_session(client: TestClient, test_user: User) -
     assert resp.status_code == 200
     data = resp.json()
     assert data["initial_system_prompt"] == ""
-    assert data["last_compacted_seq"] == 0
