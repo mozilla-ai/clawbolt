@@ -208,6 +208,7 @@ def _validate_calendar_id(
     calendar_id: str,
     enabled_calendars: list[tuple[str, str, list[str], str]],
     tool_name: str = "",
+    primary_calendar_id: str = "",
 ) -> tuple[str, str | None]:
     """Resolve and validate a calendar_id against the enabled set.
 
@@ -219,6 +220,12 @@ def _validate_calendar_id(
 
     When *tool_name* is set, also checks that the tool is not disabled
     on the resolved calendar.
+
+    *primary_calendar_id* (if provided) is used as a tiebreaker when the
+    LLM omits ``calendar_id`` and multiple calendars are allowed for the
+    tool. Without it, the agent would otherwise see a "Multiple calendars
+    available" error every time a contractor with crew sub-calendars
+    asks the agent to add an event.
     """
     enabled_ids = {cid for cid, _, _, _ in enabled_calendars}
 
@@ -236,6 +243,13 @@ def _validate_calendar_id(
         if not allowed:
             display = tool_name.replace("calendar_", "").replace("_", " ")
             return "", f"No calendars allow {display}. Update calendar permissions in Settings."
+        # Prefer the user's primary calendar (Google's ``primary: true``
+        # entry) when it is in the allowed set. The LLM has already
+        # signalled "no preference" by omitting calendar_id.
+        if primary_calendar_id:
+            for cid, _ in allowed:
+                if cid == primary_calendar_id:
+                    return cid, None
         return (
             "",
             f"Multiple calendars available. Please specify calendar_id. Options: {', '.join(f'{name} ({cid})' for cid, name in allowed)}",
@@ -291,6 +305,7 @@ def create_calendar_tools(
     service: GoogleCalendarService | Any,
     user_timezone: str = "",
     enabled_calendars: list[tuple[str, str, list[str], str]] | None = None,
+    primary_calendar_id: str = "",
 ) -> list[Tool]:
     """Create calendar tools bound to a calendar service instance.
 
@@ -304,6 +319,10 @@ def create_calendar_tools(
     *disabled_tools* is a list of tool names disabled on that calendar.
     *access_role* is the Google Calendar access role (owner/writer/reader/freeBusyReader).
     When empty or ``None``, defaults to ``[("primary", "Primary", [], "owner")]``.
+
+    *primary_calendar_id* is the calendar Google flags as ``primary: true``
+    on the user's calendarList. Used as a tiebreaker when the LLM omits
+    ``calendar_id`` and multiple calendars are enabled.
     """
     default_tz = _resolve_tz(user_timezone)
     raw: list[tuple[str, str, list[str], str]] = enabled_calendars or [
@@ -324,6 +343,10 @@ def create_calendar_tools(
     _enabled_ids = {cid for cid, _, _, _ in _enabled}
     _cal_name_map = {cid: name for cid, name, _, _ in _enabled}
     _disabled_map = {cid: set(disabled) for cid, _, disabled, _ in _enabled}
+    # Default to the OSS single-calendar fallback when caller didn't
+    # specify a primary, so the new tiebreaker matches historical
+    # behavior for users who haven't synced multi-calendar yet.
+    _primary_id = primary_calendar_id or (raw[0][0] if len(raw) == 1 else "")
 
     async def calendar_list_calendars() -> ToolResult:
         """List enabled calendars for the user."""
@@ -377,7 +400,9 @@ def create_calendar_tools(
         # Determine which calendars to query
         tool = ToolName.CALENDAR_LIST_EVENTS
         if calendar_id:
-            resolved_id, err = _validate_calendar_id(calendar_id, _enabled, tool_name=tool)
+            resolved_id, err = _validate_calendar_id(
+                calendar_id, _enabled, tool_name=tool, primary_calendar_id=_primary_id
+            )
             if err:
                 return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
             query_cals = [(resolved_id, _cal_name_map[resolved_id])]
@@ -452,7 +477,10 @@ def create_calendar_tools(
         """Create a new calendar event."""
         logger.debug("create_event called: title=%r calendar_id=%r", title, calendar_id)
         resolved_id, err = _validate_calendar_id(
-            calendar_id, _enabled, tool_name=ToolName.CALENDAR_CREATE_EVENT
+            calendar_id,
+            _enabled,
+            tool_name=ToolName.CALENDAR_CREATE_EVENT,
+            primary_calendar_id=_primary_id,
         )
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
@@ -528,7 +556,10 @@ def create_calendar_tools(
         """Update an existing calendar event."""
         logger.debug("update_event called: event_id=%r calendar_id=%r", event_id, calendar_id)
         resolved_id, err = _validate_calendar_id(
-            calendar_id, _enabled, tool_name=ToolName.CALENDAR_UPDATE_EVENT
+            calendar_id,
+            _enabled,
+            tool_name=ToolName.CALENDAR_UPDATE_EVENT,
+            primary_calendar_id=_primary_id,
         )
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
@@ -597,7 +628,10 @@ def create_calendar_tools(
         """Delete a calendar event."""
         logger.debug("delete_event called: event_id=%r calendar_id=%r", event_id, calendar_id)
         resolved_id, err = _validate_calendar_id(
-            calendar_id, _enabled, tool_name=ToolName.CALENDAR_DELETE_EVENT
+            calendar_id,
+            _enabled,
+            tool_name=ToolName.CALENDAR_DELETE_EVENT,
+            primary_calendar_id=_primary_id,
         )
         if err:
             return ToolResult(content=err, is_error=True, error_kind=ToolErrorKind.VALIDATION)
@@ -956,6 +990,26 @@ def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str], str]
     return [("primary", "Primary", [], "owner")]
 
 
+def _get_primary_calendar_id(user_id: str) -> str:
+    """Return the calendar_id of the row marked is_primary, or empty string.
+
+    Mirrors ``_get_enabled_calendars`` but pulls only the
+    ``is_primary=True`` row's calendar_id. Empty when the user has no
+    config at all (the literal ``"primary"`` magic alias is the implicit
+    default in that case) or when no row is flagged primary.
+    """
+    db = SessionLocal()
+    try:
+        row = (
+            db.query(CalendarConfig)
+            .filter_by(user_id=user_id, provider="google_calendar", is_primary=True)
+            .first()
+        )
+        return row.calendar_id if row is not None else ""
+    finally:
+        db.close()
+
+
 async def _calendar_factory(ctx: ToolContext) -> list[Tool]:
     """Factory for calendar tools, used by the registry."""
     if not settings.google_calendar_client_id or not settings.google_calendar_client_secret:
@@ -972,10 +1026,12 @@ async def _calendar_factory(ctx: ToolContext) -> list[Tool]:
         on_token_refresh=oauth_service.build_on_refresh_callback(ctx.user.id, "google_calendar"),
     )
     enabled_calendars = _get_enabled_calendars(ctx.user.id)
+    primary_calendar_id = _get_primary_calendar_id(ctx.user.id)
     return create_calendar_tools(
         service,
         user_timezone=ctx.user.timezone,
         enabled_calendars=enabled_calendars,
+        primary_calendar_id=primary_calendar_id,
     )
 
 

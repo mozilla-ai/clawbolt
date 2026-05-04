@@ -524,6 +524,13 @@ class CalendarConfig(Base):
     disabled_tools: Mapped[str] = mapped_column(Text, default="")
     access_role: Mapped[str] = mapped_column(String, default="")
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Mirrors Google Calendar's ``primary`` flag on the calendarList entry.
+    # When the agent fires a calendar tool without an explicit calendar_id
+    # and the user has multiple enabled calendars, the row marked
+    # is_primary wins. Avoids the "Multiple calendars available, please
+    # specify calendar_id" error every time a contractor with crew
+    # sub-calendars asks the agent to add an event.
+    is_primary: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )

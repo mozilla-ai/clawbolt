@@ -421,7 +421,7 @@ async def test_create_event_auto_select_single_calendar() -> None:
 
 @pytest.mark.asyncio()
 async def test_create_event_requires_calendar_id_multi(cal_tools: list[Tool]) -> None:
-    """With multiple enabled calendars, must specify calendar_id."""
+    """With multiple enabled calendars and no primary marked, must specify calendar_id."""
     tool = _get_tool(cal_tools, ToolName.CALENDAR_CREATE_EVENT)
     result = await tool.function(
         title="Job: Test",
@@ -431,6 +431,96 @@ async def test_create_event_requires_calendar_id_multi(cal_tools: list[Tool]) ->
     assert result.is_error is True
     assert result.error_kind == ToolErrorKind.VALIDATION
     assert "Multiple calendars available" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_create_event_uses_primary_when_id_omitted(
+    cal_service: MockGoogleCalendarService,
+) -> None:
+    """When primary_calendar_id is set and the LLM omits calendar_id, the
+    tool resolves to the primary instead of erroring on ambiguity. This
+    is the case the contractor with crew sub-calendars hits constantly:
+    "add to my calendar" used to fail because Personal/Vinny/Isaac were
+    all enabled and the LLM didn't pick one.
+    """
+    tools = create_calendar_tools(
+        cal_service,
+        enabled_calendars=_DEFAULT_ENABLED,
+        primary_calendar_id="primary",
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Job: Test",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert result.is_error is False, result.content
+    # Mock service records the calendar_id each event was created on.
+    new_event = cal_service.events[-1]
+    assert cal_service._event_calendar_map[new_event.id] == "primary"
+
+
+@pytest.mark.asyncio()
+async def test_create_event_falls_through_when_primary_not_in_allowed_set(
+    cal_service: MockGoogleCalendarService,
+) -> None:
+    """If the configured primary is not in the enabled-and-allowed set
+    (e.g. user revoked write access on it), the tiebreaker silently
+    declines and the historical "Multiple calendars" error returns. This
+    keeps the change strictly additive: no new failure modes.
+    """
+    tools = create_calendar_tools(
+        cal_service,
+        enabled_calendars=_DEFAULT_ENABLED,
+        primary_calendar_id="not-in-enabled-set@example.com",
+    )
+    tool = _get_tool(tools, ToolName.CALENDAR_CREATE_EVENT)
+    result = await tool.function(
+        title="Job: Test",
+        start="2026-03-28T09:00:00",
+        end="2026-03-28T17:00:00",
+    )
+    assert result.is_error is True
+    assert "Multiple calendars available" in result.content
+
+
+@pytest.mark.asyncio()
+async def test_validate_calendar_id_prefers_primary() -> None:
+    """Direct test of the helper: when calendar_id is empty and primary
+    is in the allowed set, return it instead of the ambiguity error.
+    """
+    from backend.app.integrations.calendar.factory import _validate_calendar_id
+
+    enabled: list[tuple[str, str, list[str], str]] = [
+        ("primary", "Personal", [], "owner"),
+        ("jobs@example.com", "Jobs", [], "writer"),
+    ]
+    resolved, err = _validate_calendar_id(
+        "",
+        enabled,
+        tool_name=ToolName.CALENDAR_CREATE_EVENT,
+        primary_calendar_id="primary",
+    )
+    assert err is None
+    assert resolved == "primary"
+
+
+@pytest.mark.asyncio()
+async def test_validate_calendar_id_single_calendar_unaffected() -> None:
+    """Single-calendar users still auto-resolve regardless of primary
+    flag (preserves the historical fast path).
+    """
+    from backend.app.integrations.calendar.factory import _validate_calendar_id
+
+    enabled: list[tuple[str, str, list[str], str]] = [("primary", "Personal", [], "owner")]
+    resolved, err = _validate_calendar_id(
+        "",
+        enabled,
+        tool_name=ToolName.CALENDAR_CREATE_EVENT,
+        primary_calendar_id="",  # No primary flag, single cal still resolves.
+    )
+    assert err is None
+    assert resolved == "primary"
 
 
 @pytest.mark.asyncio()

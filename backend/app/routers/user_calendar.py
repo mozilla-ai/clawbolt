@@ -104,7 +104,33 @@ async def update_calendar_config(
     body: CalendarConfigUpdate,
     current_user: User = Depends(get_current_user),
 ) -> CalendarConfigResponse:
-    """Replace all enabled calendars (delete existing, insert new)."""
+    """Replace all enabled calendars (delete existing, insert new).
+
+    The ``is_primary`` flag is auto-detected by querying Google's
+    calendarList for the current user, so the frontend does not need to
+    pass it through. The agent uses it to disambiguate when the LLM
+    omits ``calendar_id`` and the user has multiple enabled calendars.
+    """
+    # Best-effort lookup of the user's primary calendar from Google.
+    # If this fails (rate limit, transient error) we fall through with
+    # primary_id = "" so the row stays is_primary=False rather than
+    # blocking the save.
+    primary_id = ""
+    try:
+        service = await _get_calendar_service(current_user)
+        google_cals = await service.list_calendars()
+        for c in google_cals:
+            if c.primary:
+                primary_id = c.id
+                break
+    except HTTPException:
+        # Calendar not configured / not connected. Skip the lookup.
+        pass
+    except Exception:
+        logger.exception(
+            "Failed to fetch calendarList for is_primary detection (user %s)", current_user.id
+        )
+
     db = SessionLocal()
     try:
         db.query(CalendarConfig).filter_by(
@@ -120,6 +146,7 @@ async def update_calendar_config(
                 display_name=entry.display_name,
                 disabled_tools=json.dumps(entry.disabled_tools) if entry.disabled_tools else "",
                 access_role=entry.access_role,
+                is_primary=bool(primary_id) and entry.calendar_id == primary_id,
             )
             db.add(config)
             new_configs.append(config)
