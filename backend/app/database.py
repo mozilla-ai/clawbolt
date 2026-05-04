@@ -13,12 +13,34 @@ _lock = threading.RLock()
 
 
 def get_engine() -> Engine:
-    """Return the singleton engine, creating it on first call."""
+    """Return the singleton engine, creating it on first call.
+
+    Pool tuning is defensive against silent connection drops in cloud
+    environments. Hosted Postgres setups (Railway, RDS proxies, NAT
+    gateways) routinely close idle TCP sockets without sending a FIN,
+    leaving the client end half-open. A sync DB call from an async route
+    that hits such a socket can block the event loop for the kernel's
+    default ~2h TCP retransmit window: zero CPU, no logs, no crash, and
+    the platform's liveness probe still passes because /health/live
+    never touches the DB. ``pool_recycle`` rotates connections before
+    any reasonable NAT timeout, and the TCP keepalive options let the
+    kernel detect a dead socket within ~80s instead.
+    """
     global _engine
     if _engine is None:
         with _lock:
             if _engine is None:
-                _engine = create_engine(settings.database_url, pool_pre_ping=True)
+                _engine = create_engine(
+                    settings.database_url,
+                    pool_pre_ping=True,
+                    pool_recycle=1800,
+                    connect_args={
+                        "keepalives": 1,
+                        "keepalives_idle": 30,
+                        "keepalives_interval": 10,
+                        "keepalives_count": 5,
+                    },
+                )
     return _engine
 
 
