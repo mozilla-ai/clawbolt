@@ -855,6 +855,11 @@ export interface paths {
         /**
          * Update Calendar Config
          * @description Replace all enabled calendars (delete existing, insert new).
+         *
+         *     The ``is_primary`` flag is auto-detected by querying Google's
+         *     calendarList for the current user, so the frontend does not need to
+         *     pass it through. The agent uses it to disambiguate when the LLM
+         *     omits ``calendar_id`` and the user has multiple enabled calendars.
          */
         put: operations["update_calendar_config_api_user_calendar_config_put"];
         post?: never;
