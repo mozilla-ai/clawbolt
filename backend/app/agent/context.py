@@ -6,7 +6,6 @@ import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
-from sqlalchemy import text
 
 from backend.app.agent.approval import _parse_approval_response
 from backend.app.agent.compaction import compact_session
@@ -18,9 +17,8 @@ from backend.app.agent.messages import (
     ToolResultMessage,
     UserMessage,
 )
-from backend.app.agent.session_db import SessionStore, get_session_store
+from backend.app.agent.session_db import get_session_store
 from backend.app.config import settings
-from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 
 logger = logging.getLogger(__name__)
@@ -91,99 +89,6 @@ class StoredToolInteraction(BaseModel):
     receipt: StoredToolReceipt | None = None
 
 
-def _compaction_lock_key(session_id: str) -> str:
-    """Advisory-lock key serializing compaction for a single session."""
-    return f"compact:{session_id}"
-
-
-async def _run_compaction_in_background(
-    session_store: SessionStore,
-    session: SessionState,
-    user_id: str,
-    trimmed_agent_messages: list[AgentMessage],
-    max_message_seq: int,
-) -> None:
-    """Run compaction and update the session's tracking field.
-
-    This is designed to be fired as a background task via asyncio.create_task
-    so it does not block message processing.
-
-    Wrapped in a session-scoped Postgres advisory lock keyed on
-    ``session_id``. If another worker is already compacting this session,
-    ``pg_try_advisory_lock`` returns false and we skip the LLM call without
-    waiting. This closes the read-then-write race where two workers would
-    both load the stale ``last_compacted_seq``, both call the LLM, and both
-    append to HISTORY.md. After acquiring the lock we re-check the
-    watermark so a completed compaction from another worker is respected.
-    """
-    db = SessionLocal()
-    lock_acquired = False
-    lock_key = _compaction_lock_key(session.session_id)
-    try:
-        try:
-            got_lock = db.execute(
-                text("SELECT pg_try_advisory_lock(hashtext(:k))"),
-                {"k": lock_key},
-            ).scalar()
-            # Close the implicit read transaction; the advisory lock is
-            # session-scoped and survives the commit. Keeps the connection
-            # out of idle-in-transaction state across the LLM call below.
-            db.commit()
-        except Exception:
-            logger.exception("Failed to acquire compaction lock for session %s", session.session_id)
-            return
-        if not got_lock:
-            logger.info(
-                "Skipping compaction for session %s: another worker holds the compaction lock",
-                session.session_id,
-            )
-            return
-        lock_acquired = True
-
-        fresh = session_store.load_session(session.session_id)
-        current_watermark = fresh.last_compacted_seq if fresh is not None else 0
-        if max_message_seq <= current_watermark:
-            logger.info(
-                "Skipping compaction for session %s: already compacted through seq %d (requested %d)",
-                session.session_id,
-                current_watermark,
-                max_message_seq,
-            )
-            return
-
-        saved, compacted_seq = await compact_session(
-            user_id, trimmed_agent_messages, max_message_seq=max_message_seq
-        )
-        if compacted_seq is not None:
-            await session_store.update_compaction_seq(session, compacted_seq)
-        if saved:
-            logger.info(
-                "Session compaction extracted %d fact(s) from %d trimmed message(s) for user %s",
-                len(saved),
-                len(trimmed_agent_messages),
-                user_id,
-            )
-    except Exception:
-        logger.exception(
-            "Session compaction failed for session %s, user %s",
-            session.session_id,
-            user_id,
-        )
-    finally:
-        if lock_acquired:
-            try:
-                db.execute(
-                    text("SELECT pg_advisory_unlock(hashtext(:k))"),
-                    {"k": lock_key},
-                )
-                db.commit()
-            except Exception:
-                logger.exception(
-                    "Failed to release compaction lock for session %s", session.session_id
-                )
-        db.close()
-
-
 def trigger_compaction_for_dropped(
     user_id: str,
     dropped_messages: list[AgentMessage],
@@ -194,18 +99,14 @@ def trigger_compaction_for_dropped(
     drops messages. The compaction task extracts durable facts from the
     dropped messages and stores them in MEMORY.md.
 
-    Unlike the old count-based compaction in ``load_conversation_history``,
-    the dropped messages here are ``AgentMessage`` objects without DB sequence
-    numbers. We pass ``max_message_seq=None`` so ``compact_session`` extracts
-    facts without advancing the compaction watermark. Session-end consolidation
-    (``_consolidate_previous_session``) handles watermark tracking using real
-    DB sequence values.
+    The dropped messages are ``AgentMessage`` objects without DB sequence
+    numbers, so ``max_message_seq`` is passed as None and no compaction
+    watermark is advanced. This is the only compaction trigger in the
+    system.
     """
     if not dropped_messages or not settings.compaction_enabled:
         return
 
-    # Use compact_session directly (no seq tracking needed).
-    # We don't need a session object since we're not updating compaction_seq.
     async def _run_trim_compaction() -> None:
         try:
             saved, _ = await compact_session(user_id, dropped_messages, max_message_seq=None)
@@ -375,89 +276,26 @@ async def load_conversation_history(
     return history
 
 
-async def _consolidate_previous_session(
-    session_store: SessionStore,
-    user_id: str,
-    current_session_id: str,
-) -> None:
-    """Consolidate unconsolidated messages from the most recent previous session.
-
-    When a new session is created because the old one timed out, this function
-    finds the previous session and runs compaction on any messages that were
-    never compacted.  This ensures short conversations (that never overflowed
-    the context window) still get their facts extracted and history logged.
-    """
-    for sid in reversed(session_store.list_session_ids()):
-        if sid == current_session_id:
-            continue
-        prev = session_store.load_session(sid)
-        if prev is None or not prev.messages:
-            continue
-
-        # Find unconsolidated messages
-        unconsolidated = [m for m in prev.messages if m.seq > prev.last_compacted_seq]
-        if not unconsolidated:
-            break
-
-        trimmed_agent_messages: list[AgentMessage] = []
-        for msg in unconsolidated:
-            content = msg.processed_context if msg.processed_context else msg.body
-            if msg.direction == MessageDirection.INBOUND:
-                trimmed_agent_messages.append(UserMessage(content=content))
-            else:
-                trimmed_agent_messages.append(AssistantMessage(content=content))
-
-        if trimmed_agent_messages:
-            max_seq = max(m.seq for m in unconsolidated)
-            task = asyncio.create_task(
-                _run_compaction_in_background(
-                    session_store,
-                    prev,
-                    user_id,
-                    trimmed_agent_messages,
-                    max_seq,
-                )
-            )
-            _background_tasks.add(task)
-            task.add_done_callback(_background_tasks.discard)
-            logger.info(
-                "Triggered session-end consolidation for user %s: %d messages from session %s",
-                user_id,
-                len(trimmed_agent_messages),
-                sid,
-            )
-        break
-
-
 async def get_or_create_conversation(
     user_id: str,
     external_session_id: str | None = None,
-    force_new: bool = False,
 ) -> tuple[SessionState, bool]:
-    """Get active conversation or create new one.
+    """Get the user's conversation, creating it on first access.
 
-    Sessions are persistent: the most recent active session is always reused
-    regardless of age.  Pass ``force_new=True`` to explicitly start a fresh
-    conversation (e.g. from a "New Conversation" button in the web GUI).
-    Returns (session, is_new).
+    Each user has a single persistent conversation; this returns it,
+    creating the session row on the first call. ``external_session_id``
+    is honored for cross-channel resume (webchat ↔ Telegram) when it
+    matches an existing session for this user; otherwise the user's
+    canonical session is returned.
 
-    When a new session is created, any unconsolidated messages from the
-    previous session are consolidated in the background.
+    Returns ``(session, is_new)`` where ``is_new`` is True only on the
+    very first message for a user.
     """
     session_store = get_session_store(user_id)
 
-    if not force_new and external_session_id is not None:
+    if external_session_id is not None:
         session = session_store.load_session(external_session_id)
         if session is not None and session.user_id == user_id:
             return session, False
 
-    session, is_new = await session_store.get_or_create_session(force_new=force_new)
-
-    if is_new and settings.compaction_enabled:
-        await _consolidate_previous_session(
-            session_store,
-            user_id,
-            session.session_id,
-        )
-
-    return session, is_new
+    return await session_store.get_or_create_session()
