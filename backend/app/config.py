@@ -74,6 +74,14 @@ class Settings(BaseSettings):
     approval_timeout_seconds: int = Field(default=120, ge=1)
     agent_processing_timeout_seconds: float = Field(default=300.0, gt=0)
     message_batch_window_ms: int = Field(default=1500, ge=100)
+    # Inbound messages are persisted before MessageBatcher schedules an
+    # in-memory flush task. If the worker dies during that window the
+    # message lives in the DB but never reaches the agent. On startup we
+    # sweep for inbound rows from the last N minutes that have no
+    # outbound after them and re-dispatch each. Older orphans are
+    # unlikely to still be relevant; tune up if you have evidence
+    # otherwise. 0 disables the sweep entirely.
+    inbound_recovery_lookback_minutes: int = Field(default=30, ge=0)
     max_tool_rounds: int = Field(default=10, ge=1)
     max_input_tokens: int = Field(default=600_000, ge=1)
     context_trim_target_tokens: int = Field(default=400_000, ge=1)
