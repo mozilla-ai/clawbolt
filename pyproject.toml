@@ -22,6 +22,7 @@ dependencies = [
     "cachetools>=5.3",
     "Pillow>=10.0",
     "simpleeval>=1.0",
+    "genai-prices>=0.0.57,<0.1",
 ]
 
 [project.optional-dependencies]
