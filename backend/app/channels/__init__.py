@@ -1,5 +1,7 @@
 """Channel registry and BaseChannel export."""
 
+from collections.abc import Mapping
+
 from backend.app.channels.base import BaseChannel
 from backend.app.channels.manager import ChannelManager
 from backend.app.config import settings
@@ -42,10 +44,12 @@ def is_bluebubbles_configured() -> bool:
     return False
 
 
-def reset_channel_clients(updates: dict[str, object]) -> None:
+def reset_channel_clients(updates: Mapping[str, object]) -> None:
     """Reset live channel HTTP clients after credential changes.
 
     Call after updating settings so channels pick up new tokens/URLs.
+    Accepts any read-only mapping so callers don't have to widen
+    ``dict[str, str]`` to ``dict[str, object]`` at the call site.
     """
     if "telegram_bot_token" in updates:
         try:
