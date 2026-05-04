@@ -22,7 +22,7 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from backend.app.channels.bluebubbles import BlueBubblesChannel
+from backend.app.channels.bluebubbles import BlueBubblesChannel, _derive_webhook_token
 from tests.mocks.bluebubbles import make_bluebubbles_webhook_payload
 
 _PATCH_BUS_PUBLISH = "backend.app.bus.message_bus.publish_inbound"
@@ -216,9 +216,15 @@ async def test_webhook_processed_message_is_not_replayed_after_restart(
     fake_client = MagicMock()
     fake_client.post = AsyncMock(return_value=_make_query_response([raw_message]))
 
+    # Real password is required: backfill short-circuits when
+    # ``bluebubbles_password`` is empty, which would silently neuter
+    # this test (it would pass trivially without ever invoking dedup).
+    password = "test-password"
+    token = _derive_webhook_token(password)
+
     with (
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_server_url", "https://x"),
-        patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", ""),
+        patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", password),
         patch(
             "backend.app.channels.bluebubbles.settings.bluebubbles_backfill_lookback_minutes",
             30,
@@ -230,15 +236,22 @@ async def test_webhook_processed_message_is_not_replayed_after_restart(
         # Step 1: live webhook delivers the message via the running app.
         # Goes through the real router -> handle_webhook_inbound ->
         # IdempotencyStore.try_mark_seen, which commits the seen-row.
-        webhook_resp = bluebubbles_client.post("/api/webhooks/bluebubbles", json=webhook_payload)
+        webhook_resp = bluebubbles_client.post(
+            f"/api/webhooks/bluebubbles?token={token}", json=webhook_payload
+        )
         assert webhook_resp.status_code == 200
         assert mock_pub.call_count == 1, "live webhook should publish to bus on first delivery"
 
         # Step 2: server restarts. Backfill runs against the same
         # BlueBubbles server, which still has the message in its
         # lookback window. Idempotency must reject it.
-        await channel.run_startup_backfill()
+        replayed = await channel.run_startup_backfill()
 
+    # Backfill saw 1 message and ran it through handle_webhook_inbound,
+    # so its return value (attempted-before-dedup) is 1; the bus publish
+    # count is what protects against re-pinging the user.
+    assert replayed == 1, "backfill should have attempted the message (then deduped)"
+    fake_client.post.assert_called_once()  # backfill actually ran the query
     assert mock_pub.call_count == 1, (
         "backfill replayed a message the live webhook already handled; "
         "users would be re-pinged with stale replies on every restart"
