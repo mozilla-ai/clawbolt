@@ -111,6 +111,29 @@ def test_apply_to_settings_uses_store_when_env_unset() -> None:
         settings.llm_provider = original
 
 
+def test_apply_to_settings_empty_env_var_does_not_block_store_value() -> None:
+    """Empty-string env var (``LLM_PROVIDER=""``) must not block the store value.
+
+    Regression guard for the original production incident: Pydantic
+    Settings reads ``""`` from the env var, the file backend silently
+    returns ``{}``, and ``settings.llm_provider`` stays ``""``.
+    ``_verify_llm_settings`` then crashes with ``LLMProvider('')``.
+
+    Empty string is falsy in Python, so ``os.environ.get(KEY)`` is
+    falsy, so the env-precedence check does NOT skip — store value
+    wins. This test pins that behavior so a future "if KEY in
+    os.environ" rewrite doesn't silently flip the meaning.
+    """
+    original = settings.llm_provider
+    try:
+        with patch.dict("os.environ", {"LLM_PROVIDER": ""}):
+            applied = apply_to_settings({"llm_provider": "anthropic"})
+        assert applied == {"llm_provider": "anthropic"}
+        assert settings.llm_provider == "anthropic"
+    finally:
+        settings.llm_provider = original
+
+
 # ---------------------------------------------------------------------------
 # JsonFileSettingsStore
 # ---------------------------------------------------------------------------

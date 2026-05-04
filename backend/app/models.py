@@ -16,8 +16,8 @@ from sqlalchemy import (
     String,
     Text,
     UniqueConstraint,
+    false,
     func,
-    text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from sqlalchemy.types import TypeDecorator
@@ -720,7 +720,7 @@ class AppSetting(Base):
 
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     value: Mapped[str] = mapped_column(Text, nullable=False, server_default="")
-    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("FALSE"))
+    is_secret: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=false())
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         nullable=False,
