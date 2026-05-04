@@ -27,6 +27,7 @@ from backend.app.agent.trimming import trim_messages
 from backend.app.models import User
 from tests.mocks.llm import (
     extract_system_text,
+    make_empty_response,
     make_error_response,
     make_text_response,
     make_tool_call_response,
@@ -2169,6 +2170,50 @@ async def test_valid_stop_reasons_not_treated_as_error(
 
         assert response.is_error_fallback is False, f"stop_reason={stop_reason} was wrongly error"
         assert response.reply_text == "Reply!"
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_empty_reply_after_tool_calls_is_silent(
+    mock_amessages: object, test_user: User
+) -> None:
+    """Empty reply after tool calls is preserved as a silent action.
+
+    A prior version of the loop re-prompted the LLM when reply_text was
+    empty after tool execution. That retry caused the model to leak
+    meta-reasoning into the user-facing reply (parentheticals like
+    "(no reply, internal cleanup only)" sent verbatim). The current
+    contract: an empty reply after tools is left empty; the dispatcher
+    handles it as a silent action.
+    """
+    tool_response = make_tool_call_response(
+        tool_calls=[
+            {
+                "name": "recall_facts",
+                "arguments": json.dumps({"query": "profile"}),
+            }
+        ]
+    )
+    empty_followup = make_empty_response()
+    mock_amessages.side_effect = [tool_response, empty_followup]  # type: ignore[union-attr]
+
+    mock_recall = AsyncMock(return_value=ToolResult(content="name: Mike"))
+    tool = Tool(
+        name="recall_facts",
+        description="Recall facts",
+        function=mock_recall,
+        params_model=_QueryParams,
+    )
+
+    agent = ClawboltAgent(user=test_user)
+    agent.register_tools([tool])
+    response = await agent.process_message("Just thinking aloud")
+
+    mock_recall.assert_called_once()
+    # Two LLM calls only: tool call, empty reply. No third (retry) call.
+    assert mock_amessages.call_count == 2  # type: ignore[union-attr]
+    assert response.reply_text == ""
+    assert not response.is_error_fallback
 
 
 # ---------------------------------------------------------------------------

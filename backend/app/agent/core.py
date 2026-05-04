@@ -1110,9 +1110,8 @@ class ClawboltAgent:
 
                 # Empty reply after tools is intentional silent action; do not re-prompt.
                 if not reply_text and actions_taken:
-                    logger.info(
-                        "Round %d: empty reply after %d tool call(s); "
-                        "no message will be dispatched",
+                    logger.debug(
+                        "Round %d: empty reply after %d tool call(s); treating as silent action",
                         _round,
                         len(actions_taken),
                     )
