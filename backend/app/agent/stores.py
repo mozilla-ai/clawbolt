@@ -423,11 +423,12 @@ class IdempotencyStore:
 # ---------------------------------------------------------------------------
 
 
-# Models we have already warned about lacking a pricing entry. Bounded
-# in practice by the number of distinct model strings the deployment
-# emits, which is typically 1-3. Avoids 437 identical warnings per session
-# when a new provider lands without a pricing table update.
-_warned_unpriced_models: set[str] = set()
+# (provider, model) tuples we have already warned about lacking pricing
+# data. Bounded in practice by the number of distinct (provider, model)
+# pairs the deployment emits, which is typically 1-3. Avoids one
+# warning per LLM call when a new model lands ahead of a genai-prices
+# data refresh.
+_warned_unpriced_models: set[tuple[str, str]] = set()
 
 
 class LLMUsageStore:
@@ -442,42 +443,48 @@ class LLMUsageStore:
         prompt_tokens: int,
         completion_tokens: int,
         purpose: str,
+        provider: str = "",
         cache_creation_input_tokens: int | None = None,
         cache_read_input_tokens: int | None = None,
     ) -> None:
         """Insert a LLMUsageLog row with computed cost.
 
         Maps prompt_tokens -> input_tokens, completion_tokens -> output_tokens
-        as the ORM model uses input_tokens/output_tokens naming. Cost is
-        computed via ``services.llm_pricing`` (a thin wrapper around the
-        ``genai-prices`` library); unknown models fall through with
-        ``cost=0.000000`` and a once-per-process warning log so we
-        notice when our pricing data is stale.
+        as the ORM model uses input_tokens/output_tokens naming. *provider*
+        is the any-llm provider id (``"anthropic"``, ``"openai"``, etc.) and
+        is persisted alongside the model so downstream analytics never has
+        to re-derive it from the model string. Cost is computed via
+        ``services.llm_pricing`` (a thin wrapper around the ``genai-prices``
+        library); unknown (provider, model) combinations fall through with
+        ``cost=0.000000`` and a once-per-process warning so we notice when
+        our pricing data is stale.
         """
         cost = compute_cost(
             model,
+            provider=provider,
             input_tokens=prompt_tokens,
             output_tokens=completion_tokens,
             cache_creation_input_tokens=cache_creation_input_tokens,
             cache_read_input_tokens=cache_read_input_tokens,
         )
         if (
-            not is_known_model(model)
+            not is_known_model(model, provider=provider)
             and (prompt_tokens or completion_tokens)
-            and model not in _warned_unpriced_models
+            and (provider, model) not in _warned_unpriced_models
         ):
-            _warned_unpriced_models.add(model)
+            _warned_unpriced_models.add((provider, model))
             logger.warning(
-                "genai-prices does not know model %r; logging usage with "
-                "cost=0. Bump the genai-prices dependency to pick up new "
-                "model pricing.",
+                "genai-prices does not know provider=%r model=%r; logging "
+                "usage with cost=0. Bump the genai-prices dependency to "
+                "pick up new model pricing.",
+                provider,
                 model,
             )
 
         with db_session() as db:
             entry = LLMUsageLog(
                 user_id=self.user_id,
-                provider="",
+                provider=provider,
                 model=model,
                 input_tokens=prompt_tokens,
                 output_tokens=completion_tokens,

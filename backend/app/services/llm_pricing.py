@@ -1,16 +1,20 @@
 """LLM cost computation backed by the ``genai-prices`` library.
 
-Replaces the hand-rolled per-model pricing table this module used to
-keep in code with a thin wrapper around `pydantic/genai-prices
+Thin wrapper around `pydantic/genai-prices
 <https://github.com/pydantic/genai-prices>`_, the community-maintained
-source of truth for provider pricing. Adding a new model now means
-``uv lock --upgrade-package genai-prices``; we no longer carry the
-risk of stale rates drifting out of sync with what the providers
-actually charge.
+source of truth for provider pricing. Adding a new model means
+``uv lock --upgrade-package genai-prices``; we do not keep our own
+rate table in code.
 
-The library's price table is bundled at install time, so this module
+The library's price data is bundled at install time, so this module
 makes no network call. Pricing data refreshes when we bump the
 ``genai-prices`` dependency.
+
+The caller passes the any-llm provider id alongside the model name,
+since both are known at every dispatch site (see
+``settings.llm_provider``). Authoritative provider routing means we
+never have to guess "which vendor does this model name belong to" from
+prefixes; we just forward what the agent loop already knew.
 
 Used by ``LLMUsageStore.log`` to populate the ``cost`` column on every
 ``llm_usage_logs`` row instead of leaving it hardcoded at 0.
@@ -32,30 +36,8 @@ logger = logging.getLogger(__name__)
 _QUANT = Decimal("0.000001")
 
 
-# Map our canonical model-name prefixes to ``genai-prices`` provider
-# ids. Supplying the provider id skips the library's auto-detection
-# scan and disambiguates models whose names appear under more than one
-# provider. Unmapped prefixes fall through with ``provider_id=None``;
-# the library then probes all providers.
-_PROVIDER_ID_BY_PREFIX: tuple[tuple[str, str], ...] = (
-    ("claude-", "anthropic"),
-    ("gpt-", "openai"),
-    ("o1-", "openai"),
-    ("o3-", "openai"),
-    ("gemini-", "google"),
-)
-
-
-def _provider_id_for(model: str) -> str | None:
-    """Best-effort provider id for *model*, or ``None`` for autodetection."""
-    for prefix, pid in _PROVIDER_ID_BY_PREFIX:
-        if model.startswith(prefix):
-            return pid
-    return None
-
-
-def is_known_model(model: str) -> bool:
-    """Whether ``genai-prices`` can price this model.
+def is_known_model(model: str, *, provider: str = "") -> bool:
+    """Whether ``genai-prices`` can price this (provider, model) pair.
 
     Used by the logger to decide when to emit a "no pricing entry"
     warning. The check goes through the same lookup path as
@@ -68,7 +50,7 @@ def is_known_model(model: str) -> bool:
         calc_price(
             Usage(input_tokens=1, output_tokens=0),
             model_ref=model,
-            provider_id=_provider_id_for(model),
+            provider_id=provider or None,
         )
     except (LookupError, ValueError):
         return False
@@ -79,20 +61,27 @@ def compute_cost(
     model: str,
     input_tokens: int,
     output_tokens: int,
+    *,
+    provider: str = "",
     cache_creation_input_tokens: int | None = None,
     cache_read_input_tokens: int | None = None,
 ) -> Decimal:
     """Return the dollar cost for a single LLM call as a 6-decimal Decimal.
+
+    *provider* is the any-llm provider id (``"anthropic"``, ``"openai"``,
+    etc.) under which *model* was invoked. Pass it explicitly: skipping
+    autodetection is faster and disambiguates models whose name appears
+    under more than one provider.
 
     Charges via ``genai-prices``, which understands per-provider
     accounting quirks (Anthropic's input bucket includes cached tokens,
     cache-write surcharges, cache-read discounts, OpenAI's prompt-cache
     discount, etc.) so the caller does not have to.
 
-    Returns ``Decimal('0.000000')`` for models the library does not
-    know; the caller should log a warning so a missing model produces
-    a ``genai-prices`` upgrade rather than silent zero-cost rows
-    forever.
+    Returns ``Decimal('0.000000')`` for (provider, model) pairs the
+    library does not know; the caller should log a warning so a missing
+    model produces a ``genai-prices`` upgrade rather than silent
+    zero-cost rows forever.
     """
     cache_creation = cache_creation_input_tokens or 0
     cache_read = cache_read_input_tokens or 0
@@ -110,7 +99,7 @@ def compute_cost(
                 output_tokens=output_tokens,
             ),
             model_ref=model,
-            provider_id=_provider_id_for(model),
+            provider_id=provider or None,
         )
     except (LookupError, ValueError):
         return Decimal("0.000000")

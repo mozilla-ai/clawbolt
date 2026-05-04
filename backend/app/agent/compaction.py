@@ -208,7 +208,7 @@ async def compact_session(
         logger.exception("Compaction LLM call failed for user %s", user_id)
         return "", None
 
-    log_llm_usage(user_id, model, response, purpose="compaction")
+    log_llm_usage(user_id, model, response, purpose="compaction", provider=provider)
 
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)

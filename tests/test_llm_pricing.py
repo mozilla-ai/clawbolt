@@ -1,11 +1,11 @@
 """Tests for LLM cost computation.
 
-The pricing module is now a thin wrapper around ``genai-prices``; we
-test its behavior contract (returns Decimal, 6-decimal quantisation,
-unknown-model fallback, Anthropic input-token bucketing convention)
-rather than asserting exact dollar amounts. Pinning specific rates
-would defeat the point of switching to a library that updates prices
-when providers change them.
+The pricing module is a thin wrapper around ``genai-prices``; we test
+its behavior contract (returns Decimal, 6-decimal quantisation,
+unknown-model fallback, Anthropic input-token bucketing convention,
+explicit provider routing) rather than asserting exact dollar amounts.
+Pinning specific rates would defeat the point of switching to a library
+that updates prices when providers change them.
 """
 
 from __future__ import annotations
@@ -15,33 +15,7 @@ from decimal import Decimal
 import pytest
 from genai_prices import Usage, calc_price
 
-from backend.app.services.llm_pricing import (
-    _provider_id_for,
-    compute_cost,
-    is_known_model,
-)
-
-# ---------------------------------------------------------------------------
-# Provider-id resolution
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    "model,expected",
-    [
-        ("claude-sonnet-4-6", "anthropic"),
-        ("claude-opus-4-7", "anthropic"),
-        ("claude-haiku-4-5-20251001", "anthropic"),
-        ("gpt-4o", "openai"),
-        ("o1-mini", "openai"),
-        ("o3-mini", "openai"),
-        ("gemini-2.0-flash", "google"),
-        ("some-bespoke-model", None),
-    ],
-)
-def test_provider_id_resolution(model: str, expected: str | None) -> None:
-    assert _provider_id_for(model) == expected
-
+from backend.app.services.llm_pricing import compute_cost, is_known_model
 
 # ---------------------------------------------------------------------------
 # Known / unknown model
@@ -58,12 +32,19 @@ def test_provider_id_resolution(model: str, expected: str | None) -> None:
     ],
 )
 def test_is_known_model_for_supported_models(model: str) -> None:
-    assert is_known_model(model) is True
+    assert is_known_model(model, provider="anthropic") is True
 
 
 def test_is_known_model_for_unmapped_model() -> None:
-    assert is_known_model("not-a-real-model-99") is False
-    assert is_known_model("") is False
+    assert is_known_model("not-a-real-model-99", provider="anthropic") is False
+    assert is_known_model("", provider="anthropic") is False
+
+
+def test_is_known_model_works_without_provider_via_autodetect() -> None:
+    """Empty provider falls through to ``calc_price`` autodetection.
+    Used by legacy callers that haven't been updated yet."""
+    assert is_known_model("claude-sonnet-4-6") is True
+    assert is_known_model("not-a-real-model") is False
 
 
 # ---------------------------------------------------------------------------
@@ -72,17 +53,27 @@ def test_is_known_model_for_unmapped_model() -> None:
 
 
 def test_compute_cost_returns_decimal() -> None:
-    cost = compute_cost("claude-sonnet-4-6", 1000, 500)
+    cost = compute_cost("claude-sonnet-4-6", 1000, 500, provider="anthropic")
     assert isinstance(cost, Decimal)
 
 
 def test_compute_cost_zero_tokens_costs_nothing() -> None:
-    assert compute_cost("claude-sonnet-4-6", 0, 0) == Decimal("0.000000")
+    assert compute_cost("claude-sonnet-4-6", 0, 0, provider="anthropic") == Decimal("0.000000")
 
 
 def test_unknown_model_falls_through_to_zero() -> None:
     """Conservative fallback: prefer 'we don't know' over a bad estimate."""
-    assert compute_cost("not-a-real-model", 1_000_000, 1_000_000) == Decimal("0.000000")
+    assert compute_cost("not-a-real-model", 1_000_000, 1_000_000, provider="anthropic") == Decimal(
+        "0.000000"
+    )
+
+
+def test_unknown_provider_falls_through_to_zero() -> None:
+    """A custom local-provider id (e.g. self-hosted ollama) genai-prices
+    doesn't know about must not crash; we just record cost=0."""
+    assert compute_cost("claude-sonnet-4-6", 1000, 500, provider="my-local-shim") == Decimal(
+        "0.000000"
+    )
 
 
 def test_compute_cost_handles_none_cache_columns() -> None:
@@ -92,6 +83,7 @@ def test_compute_cost_handles_none_cache_columns() -> None:
         "claude-sonnet-4-6",
         input_tokens=100,
         output_tokens=10,
+        provider="anthropic",
         cache_creation_input_tokens=None,
         cache_read_input_tokens=None,
     )
@@ -101,12 +93,39 @@ def test_compute_cost_handles_none_cache_columns() -> None:
 def test_compute_cost_quantises_to_six_decimals() -> None:
     """Numeric(12, 6) on the column constrains us to 6 fractional
     digits. The library may return more precision than that."""
-    cost = compute_cost("claude-sonnet-4-6", 1, 0)
+    cost = compute_cost("claude-sonnet-4-6", 1, 0, provider="anthropic")
     # Exponent is -6 (six fractional digits) regardless of how the
     # library rounded internally.
     exponent = cost.as_tuple().exponent
     assert isinstance(exponent, int)
     assert exponent == -6
+
+
+# ---------------------------------------------------------------------------
+# Provider routing
+# ---------------------------------------------------------------------------
+
+
+def test_provider_is_passed_to_library_not_inferred_from_model() -> None:
+    """When the caller passes a provider explicitly, the library uses
+    it directly (no name-prefix guessing on our end). A model-name
+    string on its own is no longer enough information for routing."""
+    # Same model id, two different providers: behavior should depend on
+    # the provider we pass, not on a heuristic over the name.
+    pc = calc_price(
+        Usage(input_tokens=100, output_tokens=50),
+        model_ref="claude-sonnet-4-6",
+        provider_id="anthropic",
+    )
+    our = compute_cost("claude-sonnet-4-6", 100, 50, provider="anthropic")
+    assert our == pc.total_price.quantize(Decimal("0.000001"))
+
+
+def test_compute_cost_works_without_provider_via_autodetect() -> None:
+    """Empty provider string falls through to ``calc_price`` autodetect.
+    This is the legacy fallback for old callers."""
+    cost = compute_cost("claude-sonnet-4-6", 1000, 500)
+    assert cost > Decimal("0")
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +159,7 @@ def test_compute_cost_aggregates_input_buckets_for_anthropic() -> None:
         "claude-sonnet-4-6",
         input_tokens=362,
         output_tokens=92,
+        provider="anthropic",
         cache_creation_input_tokens=2206,
         cache_read_input_tokens=0,
     )
@@ -155,6 +175,7 @@ def test_compute_cost_treats_cache_read_distinctly() -> None:
         "claude-sonnet-4-6",
         input_tokens=0,
         output_tokens=0,
+        provider="anthropic",
         cache_creation_input_tokens=0,
         cache_read_input_tokens=10_000,
     )
@@ -162,6 +183,7 @@ def test_compute_cost_treats_cache_read_distinctly() -> None:
         "claude-sonnet-4-6",
         input_tokens=10_000,
         output_tokens=0,
+        provider="anthropic",
     )
     # Cache reads are cheaper than plain input.
     assert cache_heavy < plain
@@ -180,5 +202,5 @@ def test_known_anthropic_models_all_produce_nonzero_cost() -> None:
         "claude-haiku-4-5",
         "claude-haiku-4-5-20251001",
     ):
-        cost = compute_cost(model, 1000, 500)
+        cost = compute_cost(model, 1000, 500, provider="anthropic")
         assert cost > Decimal("0"), f"{model} priced at zero"
