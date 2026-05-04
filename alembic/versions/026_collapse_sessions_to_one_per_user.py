@@ -37,8 +37,8 @@ This migration:
    single-conversation invariant. After this constraint is in place,
    no future code path can accidentally reintroduce multi-session.
 
-Revision ID: 025
-Revises: 024
+Revision ID: 026
+Revises: 025
 Create Date: 2026-05-04
 """
 
@@ -48,8 +48,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "025"
-down_revision: str = "024"
+revision: str = "026"
+down_revision: str = "025"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 

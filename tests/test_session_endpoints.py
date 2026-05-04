@@ -101,9 +101,7 @@ def test_get_conversation_full_detail(client: TestClient, test_user: User) -> No
     assert data["messages"][1]["tool_interactions"][0]["tool"] == "save_fact"
 
 
-def test_get_conversation_appends_receipts_to_outbound(
-    client: TestClient, test_user: User
-) -> None:
+def test_get_conversation_appends_receipts_to_outbound(client: TestClient, test_user: User) -> None:
     """Outbound messages with tool receipts include the rendered receipt block."""
     tool_json = json.dumps(
         [
@@ -214,9 +212,7 @@ def test_get_conversation_channel_defaults_empty(client: TestClient, test_user: 
     assert resp.json()["channel"] == ""
 
 
-def test_get_conversation_scoped_to_authenticated_user(
-    client: TestClient, test_user: User
-) -> None:
+def test_get_conversation_scoped_to_authenticated_user(client: TestClient, test_user: User) -> None:
     """A different user's session is invisible to this user's GET."""
     db = _db_module.SessionLocal()
     try:
@@ -469,9 +465,7 @@ def test_delete_batch_empty_seqs(client: TestClient, test_user: User) -> None:
 
 def test_delete_batch_no_conversation(client: TestClient, test_user: User) -> None:
     """Batch delete before any conversation exists returns 404."""
-    resp = client.request(
-        "DELETE", "/api/user/conversation/messages/batch", json={"seqs": [1, 2]}
-    )
+    resp = client.request("DELETE", "/api/user/conversation/messages/batch", json={"seqs": [1, 2]})
     assert resp.status_code == 404
 
 

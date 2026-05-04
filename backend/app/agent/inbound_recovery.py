@@ -169,13 +169,11 @@ def _build_dispatch_inputs(
         session_id=chat_session.session_id,
         user_id=chat_session.user_id,
         messages=[stored],
-        is_active=chat_session.is_active,
         created_at=chat_session.created_at.isoformat() if chat_session.created_at else "",
         last_message_at=(
             chat_session.last_message_at.isoformat() if chat_session.last_message_at else ""
         ),
         channel=chat_session.channel or "",
-        last_compacted_seq=chat_session.last_compacted_seq,
     )
     return user, state, stored
 
@@ -276,13 +274,11 @@ async def recover_orphan_inbound_messages() -> int:
             channel = chat_session.channel or ""
             media_refs = _parse_media_refs(msg.media_urls_json or "")
             try:
-                # Re-run the original conversation lookup so any session
-                # rotation that happened since the message was written is
-                # honored. Falls back to the reconstructed state above if
-                # this raises.
-                refreshed_state, _ = await get_or_create_conversation(
-                    user.id, external_session_id=chat_session.session_id
-                )
+                # Re-run the conversation lookup so the live session
+                # state reflects any messages persisted since the
+                # orphan was written. Falls back to the reconstructed
+                # state above if this raises.
+                refreshed_state, _ = await get_or_create_conversation(user.id)
                 state = refreshed_state if refreshed_state is not None else state
             except Exception:
                 logger.exception(
