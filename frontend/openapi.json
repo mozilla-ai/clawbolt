@@ -990,92 +990,11 @@
         }
       }
     },
-    "/api/user/sessions": {
+    "/api/user/conversation": {
       "get": {
-        "summary": "List Sessions",
-        "description": "List sessions with message counts, ordered by last_message_at DESC.",
-        "operationId": "list_sessions_api_user_sessions_get",
-        "parameters": [
-          {
-            "name": "limit",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "maximum": 200,
-              "minimum": 1,
-              "default": 50,
-              "title": "Limit"
-            }
-          },
-          {
-            "name": "offset",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "type": "integer",
-              "minimum": 0,
-              "default": 0,
-              "title": "Offset"
-            }
-          },
-          {
-            "name": "is_active",
-            "in": "query",
-            "required": false,
-            "schema": {
-              "anyOf": [
-                {
-                  "type": "boolean"
-                },
-                {
-                  "type": "null"
-                }
-              ],
-              "title": "Is Active"
-            }
-          }
-        ],
-        "responses": {
-          "200": {
-            "description": "Successful Response",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/SessionListResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
-          }
-        }
-      }
-    },
-    "/api/user/sessions/{session_id}": {
-      "get": {
-        "summary": "Get Session",
-        "description": "Get a full conversation transcript with tool interactions.",
-        "operationId": "get_session_api_user_sessions__session_id__get",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Session Id"
-            }
-          }
-        ],
+        "summary": "Get Conversation",
+        "description": "Return the user's conversation transcript, or an empty shape if none yet.\n\nReturning an empty shape (rather than 404) lets the frontend render\nthe chat input without special-casing the first-message-ever flow.\nThe session row is created by the agent pipeline on the first\ninbound message, not by this endpoint.",
+        "operationId": "get_conversation_api_user_conversation_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1086,36 +1005,15 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
         }
       }
     },
-    "/api/user/sessions/{session_id}/system-prompt": {
+    "/api/user/conversation/system-prompt": {
       "get": {
-        "summary": "Get Session System Prompt",
+        "summary": "Get Conversation System Prompt",
         "description": "Return the system prompt that would be sent on the next turn.\n\nReconstructed live from current user state (profile, soul, memory,\nonboarding status, tool availability) so the UI doesn't show a\nstale snapshot from the first turn of the session.\n\nKnown approximations:\n\n* The preview omits specialist tool guidelines that get appended\n  mid-turn when the LLM calls ``list_capabilities`` to activate a\n  category. It matches the start-of-turn tool list, mirroring how\n  the agent itself starts each turn fresh.\n* Tools whose factories require a storage backend or an outbound\n  publish hook (currently ``send_media_reply``,\n  ``upload_to_storage``, and ``organize_file``) are filtered out\n  by the registry's dependency gates because the preview can't\n  safely construct those runtime hooks. Their usage hints will\n  not appear in the Tool Guidelines section.\n* If a user's ``BOOTSTRAP.md`` cannot be created on disk by the\n  runtime (rare, requires an OS-level error), the runtime drops\n  out of onboarding mode while this preview still reports\n  ``is_onboarding=true`` based on the in-memory heuristic.",
-        "operationId": "get_session_system_prompt_api_user_sessions__session_id__system_prompt_get",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Session Id"
-            }
-          }
-        ],
+        "operationId": "get_conversation_system_prompt_api_user_conversation_system_prompt_get",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1126,45 +1024,24 @@
                 }
               }
             }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
-                }
-              }
-            }
           }
         }
       }
     },
-    "/api/user/sessions/{session_id}/messages/batch": {
+    "/api/user/conversation/messages/batch": {
       "delete": {
         "summary": "Delete Messages Batch",
-        "description": "Delete specific messages from a session by their sequence numbers.",
-        "operationId": "delete_messages_batch_api_user_sessions__session_id__messages_batch_delete",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Session Id"
-            }
-          }
-        ],
+        "description": "Delete specific messages from the user's conversation by sequence number.",
+        "operationId": "delete_messages_batch_api_user_conversation_messages_batch_delete",
         "requestBody": {
-          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/BatchDeleteRequest"
               }
             }
-          }
+          },
+          "required": true
         },
         "responses": {
           "200": {
@@ -1190,21 +1067,12 @@
         }
       }
     },
-    "/api/user/sessions/{session_id}/messages/{seq}": {
+    "/api/user/conversation/messages/{seq}": {
       "delete": {
         "summary": "Delete Single Message",
-        "description": "Delete a single message from a session by its sequence number.",
-        "operationId": "delete_single_message_api_user_sessions__session_id__messages__seq__delete",
+        "description": "Delete a single message from the user's conversation by sequence number.",
+        "operationId": "delete_single_message_api_user_conversation_messages__seq__delete",
         "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Session Id"
-            }
-          },
           {
             "name": "seq",
             "in": "path",
@@ -1239,22 +1107,11 @@
         }
       }
     },
-    "/api/user/sessions/{session_id}/messages": {
+    "/api/user/conversation/messages": {
       "delete": {
         "summary": "Delete Conversation History",
-        "description": "Delete all messages from a session, preserving memory and the session itself.\n\nResets the compaction pointer and system prompt so the conversation\ncontinues with a clean slate while retaining compacted memory.",
-        "operationId": "delete_conversation_history_api_user_sessions__session_id__messages_delete",
-        "parameters": [
-          {
-            "name": "session_id",
-            "in": "path",
-            "required": true,
-            "schema": {
-              "type": "string",
-              "title": "Session Id"
-            }
-          }
-        ],
+        "description": "Delete all messages from the user's conversation, preserving memory.\n\nResets the initial system prompt so the conversation continues with\na clean slate while retaining compacted memory.",
+        "operationId": "delete_conversation_history_api_user_conversation_messages_delete",
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -1262,16 +1119,6 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/DeleteMessagesResponse"
-                }
-              }
-            }
-          },
-          "422": {
-            "description": "Validation Error",
-            "content": {
-              "application/json": {
-                "schema": {
-                  "$ref": "#/components/schemas/HTTPValidationError"
                 }
               }
             }
@@ -1549,17 +1396,6 @@
             "type": "string",
             "title": "Message",
             "default": ""
-          },
-          "session_id": {
-            "anyOf": [
-              {
-                "type": "string"
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Session Id"
           },
           "files": {
             "items": {
@@ -2528,10 +2364,6 @@
             "type": "string",
             "title": "Last Message At"
           },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
-          },
           "channel": {
             "type": "string",
             "title": "Channel",
@@ -2541,11 +2373,6 @@
             "type": "string",
             "title": "Initial System Prompt",
             "default": ""
-          },
-          "last_compacted_seq": {
-            "type": "integer",
-            "title": "Last Compacted Seq",
-            "default": 0
           },
           "messages": {
             "items": {
@@ -2561,69 +2388,9 @@
           "user_id",
           "created_at",
           "last_message_at",
-          "is_active",
           "messages"
         ],
         "title": "SessionDetailResponse"
-      },
-      "SessionListItem": {
-        "properties": {
-          "session_id": {
-            "type": "string",
-            "title": "Session Id"
-          },
-          "channel": {
-            "type": "string",
-            "title": "Channel",
-            "default": ""
-          },
-          "is_active": {
-            "type": "boolean",
-            "title": "Is Active"
-          },
-          "message_count": {
-            "type": "integer",
-            "title": "Message Count"
-          },
-          "created_at": {
-            "type": "string",
-            "title": "Created At"
-          },
-          "last_message_at": {
-            "type": "string",
-            "title": "Last Message At"
-          }
-        },
-        "type": "object",
-        "required": [
-          "session_id",
-          "is_active",
-          "message_count",
-          "created_at",
-          "last_message_at"
-        ],
-        "title": "SessionListItem"
-      },
-      "SessionListResponse": {
-        "properties": {
-          "total": {
-            "type": "integer",
-            "title": "Total"
-          },
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/SessionListItem"
-            },
-            "type": "array",
-            "title": "Items"
-          }
-        },
-        "type": "object",
-        "required": [
-          "total",
-          "items"
-        ],
-        "title": "SessionListResponse"
       },
       "SessionMessage": {
         "properties": {
@@ -3178,16 +2945,11 @@
           "request_id": {
             "type": "string",
             "title": "Request Id"
-          },
-          "session_id": {
-            "type": "string",
-            "title": "Session Id"
           }
         },
         "type": "object",
         "required": [
-          "request_id",
-          "session_id"
+          "request_id"
         ],
         "title": "_ChatAccepted"
       }

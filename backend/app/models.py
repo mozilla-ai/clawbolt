@@ -242,16 +242,21 @@ class ChannelRoute(Base):
 
 
 class ChatSession(Base):
+    """Per-user conversation metadata. Exactly one row per user (UNIQUE on
+    user_id). Messages link here for ``initial_system_prompt`` capture and
+    last-message bookkeeping; there is no concept of multiple sessions
+    per user.
+    """
+
     __tablename__ = "sessions"
+    __table_args__ = (UniqueConstraint("user_id", name="uq_sessions_user_id"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     session_id: Mapped[str] = mapped_column(String, unique=True, nullable=False)
     user_id: Mapped[str] = mapped_column(
         String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
     )
-    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     channel: Mapped[str] = mapped_column(String, default="")
-    last_compacted_seq: Mapped[int] = mapped_column(Integer, default=0)
     initial_system_prompt: Mapped[str] = mapped_column(Text, default="")
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)

@@ -1014,7 +1014,7 @@ async def test_dispatch_reply_step_suppresses_when_sends_reply_tool_succeeds() -
     )
     ctx = PipelineContext(
         user=User(id="1", user_id="test"),
-        session=SessionState(session_id="s", user_id="1", is_active=True),
+        session=SessionState(session_id="s", user_id="1"),
         message=StoredMessage(direction="inbound", body="hi", seq=1),
         media_urls=[],
         channel="telegram",
@@ -1047,7 +1047,7 @@ async def test_dispatch_reply_step_sends_when_sends_reply_tool_fails() -> None:
     )
     ctx = PipelineContext(
         user=User(id="1", user_id="test"),
-        session=SessionState(session_id="s", user_id="1", is_active=True),
+        session=SessionState(session_id="s", user_id="1"),
         message=StoredMessage(direction="inbound", body="hi", seq=1),
         media_urls=[],
         channel="telegram",
@@ -1077,7 +1077,7 @@ async def test_dispatch_reply_step_resolves_sse_on_empty_reply() -> None:
     response = AgentResponse(reply_text="", tool_calls=[])
     ctx = PipelineContext(
         user=User(id="1", user_id="test"),
-        session=SessionState(session_id="s", user_id="1", is_active=True),
+        session=SessionState(session_id="s", user_id="1"),
         message=StoredMessage(direction="inbound", body="don't reply", seq=1),
         media_urls=[],
         channel="webchat",
@@ -1103,7 +1103,7 @@ async def test_dispatch_reply_step_no_outbound_on_empty_reply_without_request_id
     response = AgentResponse(reply_text="", tool_calls=[])
     ctx = PipelineContext(
         user=User(id="1", user_id="test"),
-        session=SessionState(session_id="s", user_id="1", is_active=True),
+        session=SessionState(session_id="s", user_id="1"),
         message=StoredMessage(direction="inbound", body="don't reply", seq=1),
         media_urls=[],
         channel="telegram",

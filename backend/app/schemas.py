@@ -126,10 +126,8 @@ class SessionDetailResponse(BaseModel):
     user_id: str
     created_at: str
     last_message_at: str
-    is_active: bool
     channel: str = ""
     initial_system_prompt: str = ""
-    last_compacted_seq: int = 0
     messages: list[SessionMessage]
 
 
@@ -331,25 +329,6 @@ class HeartbeatLogListResponse(BaseModel):
 class DeleteHeartbeatLogsResponse(BaseModel):
     status: str
     deleted: int
-
-
-# ---------------------------------------------------------------------------
-# Session list (admin)
-# ---------------------------------------------------------------------------
-
-
-class SessionListItem(BaseModel):
-    session_id: str
-    channel: str = ""
-    is_active: bool
-    message_count: int
-    created_at: str
-    last_message_at: str
-
-
-class SessionListResponse(BaseModel):
-    total: int
-    items: list[SessionListItem]
 
 
 class DeleteMessagesResponse(BaseModel):

@@ -123,7 +123,6 @@ def create_test_session(
     user_id: str,
     session_id: str = "test-conv",
     messages: list[StoredMessage] | None = None,
-    is_active: bool = True,
     channel: str = "",
 ) -> SessionState:
     """Create a ChatSession row in the test DB and return a matching SessionState.
@@ -137,9 +136,7 @@ def create_test_session(
         cs = ChatSession(
             session_id=session_id,
             user_id=user_id,
-            is_active=is_active,
             channel=channel,
-            last_compacted_seq=0,
             created_at=datetime.now(UTC),
             last_message_at=datetime.now(UTC),
         )
@@ -168,7 +165,6 @@ def create_test_session(
             session_id=session_id,
             user_id=user_id,
             messages=list(messages or []),
-            is_active=is_active,
             created_at=cs.created_at.isoformat(),
             last_message_at=cs.last_message_at.isoformat(),
             channel=channel,

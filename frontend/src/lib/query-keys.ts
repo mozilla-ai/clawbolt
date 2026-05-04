@@ -1,10 +1,10 @@
 export const queryKeys = {
   profile: ['profile'] as const,
   dataSharingConsent: ['dataSharingConsent'] as const,
-  sessions: {
-    all: ['sessions'] as const,
-    detail: (id: string) => ['sessions', 'detail', id] as const,
-    systemPrompt: (id: string) => ['sessions', 'system-prompt', id] as const,
+  conversation: {
+    all: ['conversation'] as const,
+    detail: ['conversation', 'detail'] as const,
+    systemPrompt: ['conversation', 'system-prompt'] as const,
   },
   memory: {
     all: ['memory'] as const,

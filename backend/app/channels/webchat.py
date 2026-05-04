@@ -3,8 +3,8 @@
 Messages are submitted via POST and responses arrive asynchronously through
 a Server-Sent Events (SSE) endpoint. The POST handler normalizes the message
 into an ``InboundMessage``, publishes it to the message bus, and returns a
-``request_id`` + ``session_id`` immediately. The frontend then opens an SSE
-connection to ``/api/user/chat/events/{request_id}`` to receive the reply.
+``request_id`` immediately. The frontend then opens an SSE connection to
+``/api/user/chat/events/{request_id}`` to receive the reply.
 
 Supports file and image uploads via multipart/form-data. Uploaded files are
 converted directly into ``DownloadedMedia`` objects (skipping the Telegram
@@ -14,14 +14,12 @@ download step) and processed through the same vision/audio pipeline.
 import asyncio
 import collections.abc
 import json
-import re
 import uuid
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 
-from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.auth.dependencies import get_current_user
 from backend.app.bus import message_bus
@@ -30,12 +28,9 @@ from backend.app.config import settings
 from backend.app.media.download import DEFAULT_MIME_TYPE, DownloadedMedia, generate_filename
 from backend.app.models import User
 
-_SESSION_ID_RE = re.compile(r"^[\w-]+_\d+(_[\w]+)?$")
-
 
 class _ChatAccepted(BaseModel):
     request_id: str
-    session_id: str
 
 
 class WebChatChannel(BaseChannel):
@@ -56,7 +51,6 @@ class WebChatChannel(BaseChannel):
         @router.post("/user/chat", response_model=_ChatAccepted)
         async def send_chat_message(
             message: str = Form(default=""),
-            session_id: str | None = Form(default=None),
             files: list[UploadFile] = File(default=[]),
             user: User = Depends(get_current_user),
         ) -> _ChatAccepted:
@@ -65,12 +59,6 @@ class WebChatChannel(BaseChannel):
 
             if not text and not files:
                 raise HTTPException(status_code=422, detail="Either message text or files required")
-
-            if session_id is not None and not _SESSION_ID_RE.match(session_id):
-                raise HTTPException(
-                    status_code=422,
-                    detail="session_id must match pattern: digits_digits or digits_digits_digits",
-                )
 
             # Build DownloadedMedia from uploaded files
             downloaded_media: list[DownloadedMedia] = []
@@ -95,12 +83,6 @@ class WebChatChannel(BaseChannel):
                     )
                 )
 
-            # Get/create session so we can return session_id immediately
-            session, _ = await get_or_create_conversation(
-                user.id,
-                external_session_id=session_id,
-            )
-
             request_id = str(uuid.uuid4())
 
             # Register response future and event queue before publishing so
@@ -115,11 +97,10 @@ class WebChatChannel(BaseChannel):
                 text=text,
                 downloaded_media=downloaded_media,
                 request_id=request_id,
-                session_id=session.session_id,
             )
             await message_bus.publish_inbound(inbound)
 
-            return _ChatAccepted(request_id=request_id, session_id=session.session_id)
+            return _ChatAccepted(request_id=request_id)
 
         @router.get("/user/chat/events/{request_id}")
         async def chat_events(

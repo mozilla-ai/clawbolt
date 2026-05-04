@@ -67,29 +67,22 @@ export function useUpdateDataSharingConsent() {
   });
 }
 
-// --- Sessions ---
+// --- Conversation ---
 
-export function useSession(
-  sessionId: string | null,
-  refetchInterval?: number | false,
-) {
+export function useConversation(refetchInterval?: number | false) {
   return useQuery({
-    queryKey: queryKeys.sessions.detail(sessionId!),
-    queryFn: () => api.getSession(sessionId!),
-    enabled: !!sessionId,
+    queryKey: queryKeys.conversation.detail,
+    queryFn: () => api.getConversation(),
     refetchInterval: refetchInterval ?? false,
     retry: false,
   });
 }
 
-export function useSessionSystemPrompt(
-  sessionId: string | null,
-  opts: { enabled?: boolean } = {},
-) {
+export function useConversationSystemPrompt(opts: { enabled?: boolean } = {}) {
   return useQuery({
-    queryKey: queryKeys.sessions.systemPrompt(sessionId!),
-    queryFn: () => api.getSessionSystemPrompt(sessionId!),
-    enabled: !!sessionId && (opts.enabled ?? true),
+    queryKey: queryKeys.conversation.systemPrompt,
+    queryFn: () => api.getConversationSystemPrompt(),
+    enabled: opts.enabled ?? true,
     retry: false,
     // staleTime: 0 means every panel-open kicks off a background refetch,
     // so the displayed prompt reflects current state (memory edits,

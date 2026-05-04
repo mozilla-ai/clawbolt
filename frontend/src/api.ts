@@ -23,7 +23,6 @@ import type {
   OAuthStatusResponse,
   ProviderInfo,
   SessionDetailResponse,
-  SessionListResponse,
   SessionSystemPromptResponse,
   ToolConfigResponse,
   ToolConfigUpdateEntry,
@@ -42,7 +41,7 @@ function _getAuthHeaders(): Record<string, string> {
 }
 
 /** Error with an HTTP status attached, so callers can distinguish 404 from other failures. */
-export class ApiError extends Error {
+class ApiError extends Error {
   status: number | undefined;
   constructor(message: string, status: number | undefined) {
     super(message);
@@ -104,51 +103,34 @@ const api = {
     return data as DataSharingConsentResponse;
   },
 
-  // Sessions
-  getSession: async (sessionId: string) => {
-    const { data, error, response } = await client.GET('/api/user/sessions/{session_id}', {
-      params: { path: { session_id: sessionId } },
-    });
-    if (error) _throwApiError(error, 'Failed to get session', response?.status);
+  // Conversation
+  getConversation: async () => {
+    const { data, error } = await client.GET('/api/user/conversation');
+    if (error) _throwApiError(error, 'Failed to get conversation');
     return data as SessionDetailResponse;
   },
-  listSessions: async (params?: { limit?: number; offset?: number; is_active?: boolean }) => {
-    const { data, error } = await client.GET('/api/user/sessions', {
-      params: { query: params },
-    });
-    if (error) _throwApiError(error, 'Failed to list sessions');
-    return data as SessionListResponse;
-  },
-  getSessionSystemPrompt: async (sessionId: string) => {
-    const { data, error, response } = await client.GET(
-      '/api/user/sessions/{session_id}/system-prompt',
-      { params: { path: { session_id: sessionId } } },
-    );
-    if (error) _throwApiError(error, 'Failed to get system prompt', response?.status);
+  getConversationSystemPrompt: async () => {
+    const { data, error } = await client.GET('/api/user/conversation/system-prompt');
+    if (error) _throwApiError(error, 'Failed to get system prompt');
     return data as SessionSystemPromptResponse;
   },
 
-  deleteConversationHistory: async (sessionId: string) => {
-    const { error } = await client.DELETE('/api/user/sessions/{session_id}/messages', {
-      params: { path: { session_id: sessionId } },
-    });
+  deleteConversationHistory: async () => {
+    const { error } = await client.DELETE('/api/user/conversation/messages');
     if (error) _throwApiError(error, 'Failed to delete conversation history');
   },
 
-  deleteMessage: async (sessionId: string, seq: number) => {
-    const { error } = await client.DELETE('/api/user/sessions/{session_id}/messages/{seq}' as never, {
-      params: { path: { session_id: sessionId, seq } },
+  deleteMessage: async (seq: number) => {
+    const { error } = await client.DELETE('/api/user/conversation/messages/{seq}' as never, {
+      params: { path: { seq } },
     } as never);
     if (error) _throwApiError(error, 'Failed to delete message');
   },
 
-  deleteMessages: async (sessionId: string, seqs: number[]) => {
+  deleteMessages: async (seqs: number[]) => {
     const { error } = await client.DELETE(
-      '/api/user/sessions/{session_id}/messages/batch' as never,
-      {
-        params: { path: { session_id: sessionId } },
-        body: { seqs },
-      } as never,
+      '/api/user/conversation/messages/batch' as never,
+      { body: { seqs } } as never,
     );
     if (error) _throwApiError(error, 'Failed to delete messages');
   },
@@ -455,16 +437,12 @@ const api = {
   // Chat (async: POST submits, SSE delivers reply -- stays manual)
   sendChatMessage: async (
     message: string,
-    sessionId?: string,
     files?: File[],
     onEvent?: (event: { type: string; tool_name?: string; content?: string }) => void,
     onAccepted?: (accepted: ChatAccepted) => void,
   ): Promise<ChatResponse> => {
     const formData = new FormData();
     formData.append('message', message);
-    if (sessionId) {
-      formData.append('session_id', sessionId);
-    }
     if (files) {
       for (const file of files) {
         formData.append('files', file);
@@ -549,7 +527,6 @@ const api = {
                         reader.cancel();
                         resolve({
                           reply: payload.reply || '',
-                          session_id: accepted.session_id,
                         });
                         return;
                       }

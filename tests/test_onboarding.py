@@ -34,7 +34,6 @@ def _ensure_session_on_disk(user: User, session: SessionState) -> None:
             "_type": "metadata",
             "session_id": session.session_id,
             "user_id": user.id,
-            "is_active": session.is_active,
         }
         lines = [json.dumps(meta)]
         for msg in session.messages:
@@ -287,7 +286,6 @@ def onboarding_session(new_user: User) -> SessionState:
     session = SessionState(
         session_id="onboarding-session",
         user_id=new_user.id,
-        is_active=True,
         messages=[
             StoredMessage(
                 direction="inbound",
@@ -406,7 +404,6 @@ async def test_complete_profile_uses_normal_prompt(
     session = SessionState(
         session_id="test-session",
         user_id=test_user.id,
-        is_active=True,
         messages=[
             StoredMessage(direction="inbound", body="How much for a deck?", seq=1),
         ],
@@ -485,7 +482,6 @@ async def test_prepopulated_user_gets_onboarding_complete(
     session = SessionState(
         session_id="test-session",
         user_id=user.id,
-        is_active=True,
         messages=[
             StoredMessage(
                 direction="inbound",
@@ -562,7 +558,6 @@ async def test_empty_user_without_bootstrap_self_heals_and_onboards(
     session = SessionState(
         session_id="empty-user-session",
         user_id=user.id,
-        is_active=True,
         messages=[
             StoredMessage(direction="inbound", body="hi", seq=1),
         ],
@@ -641,7 +636,6 @@ async def test_prepopulated_user_included_in_heartbeat(
     session = SessionState(
         session_id="test-session",
         user_id=user.id,
-        is_active=True,
         messages=[
             StoredMessage(
                 direction="inbound",
@@ -712,7 +706,6 @@ async def test_no_completion_message_when_already_onboarded(
     session = SessionState(
         session_id="test-session",
         user_id=test_user.id,
-        is_active=True,
         messages=[
             StoredMessage(
                 direction="inbound",
@@ -995,7 +988,6 @@ async def test_onboarding_completes_via_heuristic_when_bootstrap_not_deleted(
     session = SessionState(
         session_id="onboard-session",
         user_id=user.id,
-        is_active=True,
         messages=[*prior_messages, current_message],
     )
     _ensure_session_on_disk(user, session)
@@ -1084,7 +1076,6 @@ async def test_heuristic_does_not_fire_when_only_name_set_early(
     session = SessionState(
         session_id="early-session",
         user_id=user.id,
-        is_active=True,
         messages=[
             StoredMessage(direction="inbound", body="hey", seq=1),
             StoredMessage(direction="outbound", body="hi I'm Clawbolt", seq=2),
@@ -1185,7 +1176,6 @@ async def test_heuristic_blocked_by_message_count_gate(
     session = SessionState(
         session_id="fast-session",
         user_id=user.id,
-        is_active=True,
         messages=[current_message],
     )
     _ensure_session_on_disk(user, session)
@@ -1268,7 +1258,6 @@ async def test_onboarding_force_completes_at_max_user_messages(
     session = SessionState(
         session_id="endless-session",
         user_id=user.id,
-        is_active=True,
         messages=[*prior_messages, current_message],
     )
     _ensure_session_on_disk(user, session)
@@ -1378,7 +1367,6 @@ async def test_auto_exit_when_name_tz_captured_and_min_turns_reached(
     session = SessionState(
         session_id="auto-exit-session",
         user_id=user.id,
-        is_active=True,
         messages=[*prior_messages, current_message],
     )
     _ensure_session_on_disk(user, session)
@@ -1459,7 +1447,6 @@ async def test_auto_exit_does_not_fire_below_min_turns(
     session = SessionState(
         session_id="too-fast-session",
         user_id=user.id,
-        is_active=True,
         messages=[current_message],
     )
     _ensure_session_on_disk(user, session)
@@ -1547,7 +1534,6 @@ async def test_auto_exit_does_not_fire_without_timezone(
     session = SessionState(
         session_id="no-tz-session",
         user_id=user.id,
-        is_active=True,
         messages=[*prior_messages, current_message],
     )
     _ensure_session_on_disk(user, session)

@@ -2,7 +2,7 @@
 
 import asyncio
 import json
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 
@@ -14,8 +14,6 @@ from backend.app.agent.compaction import (
     compact_session,
 )
 from backend.app.agent.context import (
-    _consolidate_previous_session,
-    get_or_create_conversation,
     load_conversation_history,
 )
 from backend.app.agent.file_store import SessionState, StoredMessage, UserData
@@ -23,7 +21,6 @@ from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.stores import HeartbeatStore
-from backend.app.enums import MessageDirection
 from backend.app.models import User
 from tests.mocks.llm import extract_system_text, make_text_response
 
@@ -35,7 +32,6 @@ def session(test_user: UserData) -> SessionState:
         session_id="test-session",
         user_id=test_user.id,
         messages=[],
-        is_active=True,
     )
 
 
@@ -1023,286 +1019,15 @@ async def test_compact_session_no_summary_skips_history(test_user: UserData) -> 
     assert memory_store.read_history() == ""
 
 
-# --- Session-end consolidation tests ---
-
-
-@pytest.mark.asyncio()
-async def test_consolidate_previous_session_triggers_compaction() -> None:
-    """When a new session starts, unconsolidated messages from the previous
-    session should trigger background compaction."""
-    db = _db_module.SessionLocal()
-    try:
-        user = User(
-            user_id="consolidation-test",
-            phone="+15550003333",
-            channel_identifier="333",
-            preferred_channel="telegram",
-            onboarding_complete=True,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        db.expunge(user)
-    finally:
-        db.close()
-
-    session_store = get_session_store(user.id)
-
-    old_session, _ = await session_store.get_or_create_session()
-    await session_store.add_message(old_session, MessageDirection.INBOUND, "My rate is $75/hr")
-    await session_store.add_message(old_session, MessageDirection.OUTBOUND, "Got it, saved.")
-    assert old_session.last_compacted_seq == 0
-
-    new_session, is_new = await session_store.get_or_create_session(force_new=True)
-    assert is_new
-    assert new_session.session_id != old_session.session_id
-
-    with patch(
-        "backend.app.agent.context._run_compaction_in_background",
-        new_callable=AsyncMock,
-    ) as mock_compact:
-        await _consolidate_previous_session(
-            session_store,
-            user.id,
-            new_session.session_id,
-        )
-
-    mock_compact.assert_called_once()
-    call_args = mock_compact.call_args
-    agent_messages = call_args[0][3]
-    assert len(agent_messages) == 2
-    assert call_args[0][4] == 2
-
-
-@pytest.mark.asyncio()
-async def test_consolidate_previous_session_skips_already_compacted() -> None:
-    """If the previous session was fully compacted, no compaction should trigger."""
-    db = _db_module.SessionLocal()
-    try:
-        user = User(
-            user_id="consolidation-skip",
-            phone="+15550004444",
-            channel_identifier="444",
-            preferred_channel="telegram",
-            onboarding_complete=True,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        db.expunge(user)
-    finally:
-        db.close()
-
-    session_store = get_session_store(user.id)
-
-    old_session, _ = await session_store.get_or_create_session()
-    await session_store.add_message(old_session, MessageDirection.INBOUND, "Hello")
-    await session_store.add_message(old_session, MessageDirection.OUTBOUND, "Hi!")
-    await session_store.update_compaction_seq(old_session, 2)
-
-    new_session, is_new = await session_store.get_or_create_session(force_new=True)
-    assert is_new
-
-    with patch(
-        "backend.app.agent.context._run_compaction_in_background",
-        new_callable=AsyncMock,
-    ) as mock_compact:
-        await _consolidate_previous_session(
-            session_store,
-            user.id,
-            new_session.session_id,
-        )
-
-    mock_compact.assert_not_called()
-
-
-@pytest.mark.asyncio()
-async def test_get_or_create_conversation_triggers_consolidation() -> None:
-    """get_or_create_conversation should consolidate previous session on force_new."""
-    db = _db_module.SessionLocal()
-    try:
-        user = User(
-            user_id="conv-consolidation",
-            phone="+15550005555",
-            channel_identifier="555",
-            preferred_channel="telegram",
-            onboarding_complete=True,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        db.expunge(user)
-    finally:
-        db.close()
-
-    session_store = get_session_store(user.id)
-    old_session, _ = await session_store.get_or_create_session()
-    await session_store.add_message(old_session, MessageDirection.INBOUND, "Some info")
-
-    with patch(
-        "backend.app.agent.context._consolidate_previous_session",
-        new_callable=AsyncMock,
-    ) as mock_consolidate:
-        _, is_new = await get_or_create_conversation(user.id, force_new=True)
-
-    assert is_new
-    mock_consolidate.assert_called_once()
-
-
-@pytest.mark.asyncio()
-async def test_get_or_create_conversation_no_consolidation_when_disabled() -> None:
-    """get_or_create_conversation should skip consolidation when compaction disabled."""
-    db = _db_module.SessionLocal()
-    try:
-        user = User(
-            user_id="conv-no-consolidation",
-            phone="+15550006666",
-            channel_identifier="666",
-            preferred_channel="telegram",
-            onboarding_complete=True,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        db.expunge(user)
-    finally:
-        db.close()
-
-    session_store = get_session_store(user.id)
-    old_session, _ = await session_store.get_or_create_session()
-    await session_store.add_message(old_session, MessageDirection.INBOUND, "Some info")
-
-    with (
-        patch(
-            "backend.app.agent.context._consolidate_previous_session",
-            new_callable=AsyncMock,
-        ) as mock_consolidate,
-        patch("backend.app.agent.context.settings") as mock_settings,
-    ):
-        mock_settings.compaction_enabled = False
-        _, is_new = await get_or_create_conversation(user.id, force_new=True)
-
-    assert is_new
-    mock_consolidate.assert_not_called()
-
-
-@pytest.mark.asyncio()
-async def test_run_compaction_skips_when_watermark_already_advanced() -> None:
-    """If last_compacted_seq is already >= max_message_seq (e.g. another worker
-    already compacted these messages, or a previous run crashed between
-    compact_session and update_compaction_seq), we must not re-run compaction.
-
-    Without this guard, the LLM rewrites MEMORY.md again and, worse, appends
-    a duplicate entry to HISTORY.md every time.
-    """
-    from backend.app.agent.context import _run_compaction_in_background
-
-    db = _db_module.SessionLocal()
-    try:
-        user = User(
-            user_id="compaction-watermark-race",
-            phone="+15550007777",
-            channel_identifier="777",
-            preferred_channel="telegram",
-            onboarding_complete=True,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        db.expunge(user)
-    finally:
-        db.close()
-
-    session_store = get_session_store(user.id)
-    session, _ = await session_store.get_or_create_session()
-    await session_store.add_message(session, MessageDirection.INBOUND, "msg 1")
-    await session_store.add_message(session, MessageDirection.OUTBOUND, "msg 2")
-    await session_store.update_compaction_seq(session, 5)
-
-    stale_session_view = session_store.load_session(session.session_id)
-    assert stale_session_view is not None
-    stale_session_view.last_compacted_seq = 0
-
-    messages: list[AgentMessage] = [UserMessage(content="msg 1"), AssistantMessage(content="msg 2")]
-
-    with patch("backend.app.agent.context.compact_session", new_callable=AsyncMock) as mock_compact:
-        await _run_compaction_in_background(
-            session_store, stale_session_view, user.id, messages, max_message_seq=3
-        )
-
-    mock_compact.assert_not_called()
-
-
-@pytest.mark.asyncio()
-async def test_run_compaction_skips_when_peer_worker_holds_lock() -> None:
-    """When another worker already holds the per-session compaction advisory
-    lock, this worker must return without running compact_session so both
-    workers can't race and append duplicate HISTORY.md entries.
-
-    The watermark re-check alone doesn't prevent the race: two workers can
-    both read the old watermark, both call the LLM, and both append before
-    either one writes the new seq. The advisory lock closes that window.
-    """
-    import backend.app.agent.context as context_module
-    from backend.app.agent.context import _run_compaction_in_background
-
-    db = _db_module.SessionLocal()
-    try:
-        user = User(
-            user_id="compaction-lock-race",
-            phone="+15550009999",
-            channel_identifier="999",
-            preferred_channel="telegram",
-            onboarding_complete=True,
-        )
-        db.add(user)
-        db.commit()
-        db.refresh(user)
-        db.expunge(user)
-    finally:
-        db.close()
-
-    session_store = get_session_store(user.id)
-    session, _ = await session_store.get_or_create_session()
-
-    messages: list[AgentMessage] = [UserMessage(content="a"), AssistantMessage(content="b")]
-
-    class _LockedSession:
-        """SessionLocal stand-in where pg_try_advisory_lock returns False."""
-
-        def execute(self, *_args: object, **_kwargs: object) -> object:
-            class _Result:
-                def scalar(self) -> bool:
-                    return False
-
-            return _Result()
-
-        def commit(self) -> None:
-            pass
-
-        def close(self) -> None:
-            pass
-
-    with (
-        patch.object(context_module, "SessionLocal", _LockedSession),
-        patch("backend.app.agent.context.compact_session", new_callable=AsyncMock) as mock_compact,
-    ):
-        await _run_compaction_in_background(
-            session_store, session, user.id, messages, max_message_seq=10
-        )
-
-    mock_compact.assert_not_called()
-
-
 @pytest.mark.asyncio()
 async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
-    """Two concurrent get_or_create_session calls for the same user must not
-    create two active sessions.
+    """Two concurrent get_or_create_session calls for the same user must
+    converge on the same session row.
 
-    Regression: there is no uniqueness constraint on (user_id, is_active=True),
-    so without serialization both callers see 'no session' and both insert.
-    The advisory lock in get_or_create_session should serialize them so the
-    second caller sees the first's committed row.
+    The schema enforces ``UNIQUE(user_id)`` on ``sessions``, but the
+    advisory lock in ``get_or_create_session`` is what makes the
+    runner-up gracefully see the winner's row instead of raising an
+    IntegrityError.
     """
     db = _db_module.SessionLocal()
     try:
@@ -1340,11 +1065,11 @@ async def test_concurrent_get_or_create_session_does_not_duplicate() -> None:
     try:
         from backend.app.models import ChatSession as CS
 
-        active_count = db.query(CS).filter_by(user_id=user.id, is_active=True).count()
+        session_count = db.query(CS).filter_by(user_id=user.id).count()
     finally:
         db.close()
 
-    assert active_count == 1, f"expected 1 active session, got {active_count}"
+    assert session_count == 1, f"expected 1 session, got {session_count}"
 
 
 # --- CompactionEvent persistence ---

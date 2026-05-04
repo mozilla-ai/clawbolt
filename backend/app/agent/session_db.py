@@ -54,10 +54,8 @@ def _session_to_state(
         session_id=cs.session_id,
         user_id=cs.user_id,
         messages=[_msg_to_stored(m) for m in sorted(msgs, key=lambda m: m.seq)],
-        is_active=cs.is_active,
         created_at=cs.created_at.isoformat() if cs.created_at else "",
         last_message_at=cs.last_message_at.isoformat() if cs.last_message_at else "",
-        last_compacted_seq=cs.last_compacted_seq,
         channel=cs.channel,
         initial_system_prompt=cs.initial_system_prompt,
     )
@@ -99,20 +97,6 @@ class SessionStore:
         finally:
             db.close()
 
-    def list_session_ids(self) -> list[str]:
-        """List all session IDs for this user, sorted chronologically."""
-        db = SessionLocal()
-        try:
-            rows = (
-                db.query(ChatSession.session_id)
-                .filter_by(user_id=self.user_id)
-                .order_by(ChatSession.created_at)
-                .all()
-            )
-            return [r[0] for r in rows]
-        finally:
-            db.close()
-
     async def list_sessions(self) -> list[SessionState]:
         """Return all sessions with their messages for this user."""
         db = SessionLocal()
@@ -131,22 +115,18 @@ class SessionStore:
         finally:
             db.close()
 
-    async def get_or_create_session(
-        self,
-        force_new: bool = False,
-    ) -> tuple[SessionState, bool]:
-        """Get active session or create new one. Returns (session, is_new).
+    async def get_or_create_session(self) -> tuple[SessionState, bool]:
+        """Get the user's session, creating it on first call.
 
-        Sessions are persistent: the most recent active session is always
-        reused regardless of age. Pass ``force_new=True`` to explicitly
-        start a new conversation.
+        Each user has a single persistent session, enforced by the
+        ``uq_sessions_user_id`` UNIQUE constraint. Returns
+        ``(session, is_new)`` where ``is_new`` is True only on the very
+        first call for a user.
 
-        Concurrent messages on different channels for the same user would
-        otherwise race and produce two active sessions (no uniqueness
-        constraint exists on ``(user_id, is_active=True)``). We serialize
-        with a transaction-scoped Postgres advisory lock keyed on user_id
-        so whichever caller wins the lock either reuses or creates, and
-        the runner-up sees the winner's row.
+        Concurrent first-message arrivals on different channels would
+        otherwise race the INSERT and one would lose to the unique
+        constraint. We serialize with a transaction-scoped advisory lock
+        keyed on user_id so the runner-up sees the winner's row instead.
         """
         db = SessionLocal()
         try:
@@ -154,21 +134,13 @@ class SessionStore:
                 text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
                 {"k": f"session_create:{self.user_id}"},
             )
-            if not force_new:
-                cs = (
-                    db.query(ChatSession)
-                    .filter_by(user_id=self.user_id, is_active=True)
-                    .order_by(ChatSession.created_at.desc())
-                    .first()
-                )
-                if cs is not None:
-                    now = datetime.datetime.now(datetime.UTC)
-                    cs.last_message_at = now
-                    db.commit()
-                    messages = (
-                        db.query(Message).filter_by(session_id=cs.id).order_by(Message.seq).all()
-                    )
-                    return _session_to_state(cs, messages), False
+            cs = db.query(ChatSession).filter_by(user_id=self.user_id).first()
+            if cs is not None:
+                now = datetime.datetime.now(datetime.UTC)
+                cs.last_message_at = now
+                db.commit()
+                messages = db.query(Message).filter_by(session_id=cs.id).order_by(Message.seq).all()
+                return _session_to_state(cs, messages), False
 
             # Create new session with unique ID. Use timestamp + short UUID suffix
             # to keep IDs readable while avoiding races.
@@ -180,9 +152,7 @@ class SessionStore:
             cs = ChatSession(
                 session_id=session_id,
                 user_id=self.user_id,
-                is_active=True,
                 channel="",
-                last_compacted_seq=0,
                 created_at=now,
                 last_message_at=now,
             )
@@ -191,15 +161,22 @@ class SessionStore:
                 db.commit()
             except IntegrityError:
                 db.rollback()
-                # Extremely unlikely collision; retry with a new UUID
+                # Either a session_id collision (extremely unlikely) or
+                # the user_id UNIQUE lost a race despite the advisory
+                # lock. Reload and return the winner's row.
+                cs = db.query(ChatSession).filter_by(user_id=self.user_id).first()
+                if cs is not None:
+                    messages = (
+                        db.query(Message).filter_by(session_id=cs.id).order_by(Message.seq).all()
+                    )
+                    return _session_to_state(cs, messages), False
+                # No conflicting row found; retry with a fresh session_id.
                 short_uid = uuid.uuid4().hex[:8]
                 session_id = f"{self.user_id}_{ts}_{short_uid}"
                 cs = ChatSession(
                     session_id=session_id,
                     user_id=self.user_id,
-                    is_active=True,
                     channel="",
-                    last_compacted_seq=0,
                     created_at=now,
                     last_message_at=now,
                 )
@@ -235,9 +212,7 @@ class SessionStore:
                 cs = ChatSession(
                     session_id=session.session_id,
                     user_id=session.user_id,
-                    is_active=session.is_active,
                     channel=channel or session.channel,
-                    last_compacted_seq=session.last_compacted_seq,
                     created_at=now,
                     last_message_at=now,
                 )
@@ -398,19 +373,6 @@ class SessionStore:
                 db.commit()
             session.initial_system_prompt = system_prompt
 
-    async def update_compaction_seq(self, session: SessionState, seq: int) -> None:
-        """Update the last_compacted_seq in session metadata."""
-        with db_session() as db:
-            cs = (
-                db.query(ChatSession)
-                .filter_by(session_id=session.session_id, user_id=self.user_id)
-                .first()
-            )
-            if cs is not None:
-                cs.last_compacted_seq = seq
-                db.commit()
-            session.last_compacted_seq = seq
-
     def delete_message(self, session_id: str, seq: int) -> bool:
         """Delete a single message by seq number from a session.
 
@@ -450,7 +412,7 @@ class SessionStore:
             return count
 
     def delete_messages(self, session_id: str) -> int:
-        """Delete all messages from a session and reset its compaction pointer.
+        """Delete all messages from a session and clear its initial system prompt.
 
         Returns the number of messages deleted. The session row itself is
         preserved so the conversation can continue with an empty history.
@@ -468,7 +430,6 @@ class SessionStore:
                     synchronize_session="fetch",
                 )
             )
-            cs.last_compacted_seq = 0
             cs.initial_system_prompt = ""
             db.commit()
             return count
