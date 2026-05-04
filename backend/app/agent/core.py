@@ -1018,7 +1018,6 @@ class ClawboltAgent:
         memories_saved: list[dict[str, str]] = []
         tool_call_records: list[StoredToolInteraction] = []
         reply_text = ""
-        _empty_reply_retried = False
         _total_input_tokens = 0
         _total_output_tokens = 0
         _total_cache_creation_tokens = 0
@@ -1109,28 +1108,13 @@ class ClawboltAgent:
             if not parsed_raw:
                 reply_text = get_response_text(response)
 
-                # If the LLM returned empty text after executing tools, re-prompt
-                # once. This handles the case where the model performed work
-                # (e.g. read_file during onboarding) but did not produce a
-                # user-facing reply.
-                if not reply_text and actions_taken and not _empty_reply_retried:
-                    _empty_reply_retried = True
+                # Empty reply after tools is intentional silent action; do not re-prompt.
+                if not reply_text and actions_taken:
                     logger.debug(
-                        "Round %d: empty reply after tool execution, re-prompting",
+                        "Round %d: empty reply after %d tool call(s); treating as silent action",
                         _round,
+                        len(actions_taken),
                     )
-                    messages.append(
-                        UserMessage(
-                            content=(
-                                "[System: you called tools but did not send a text reply. "
-                                "If you intentionally chose not to respond "
-                                "(e.g. the user asked for silence), return empty text. "
-                                "Otherwise, please reply to the user.]"
-                            )
-                        )
-                    )
-                    await self._emit(TurnEndEvent(round_number=_round, has_more_tool_calls=True))
-                    continue
 
                 logger.debug(
                     "Round %d: no tool calls, final reply length=%d",
