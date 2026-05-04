@@ -139,6 +139,13 @@ class Settings(BaseSettings):
     bluebubbles_allowed_numbers: str = ""  # E.164 phone, "*", or empty (deny all)
     bluebubbles_send_method: str = "apple-script"  # "apple-script" or "private-api"
     bluebubbles_imessage_address: str = ""  # iCloud email or phone to display in the UI
+    # On startup, query the BlueBubbles server for messages received in the
+    # last N minutes and replay any whose webhook never reached us (Clawbolt
+    # was down or unreachable). Dedup is structural: the idempotency store
+    # rejects messages we already processed via the live webhook path.
+    # 0 disables the sweep entirely. Tune up for tolerance of longer
+    # outages, down for stricter "no replies to stale messages" behavior.
+    bluebubbles_backfill_lookback_minutes: int = Field(default=30, ge=0)
 
     # Google Calendar
     google_calendar_client_id: str = ""

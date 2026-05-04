@@ -298,6 +298,21 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     except Exception:
         logger.exception("Orphan inbound recovery failed on startup")
 
+    # Replay any BlueBubbles iMessages that arrived while Clawbolt was down.
+    # The orphan recovery above only handles messages that reached our DB;
+    # a webhook delivery that failed because Clawbolt was unreachable
+    # leaves no DB row, so we have to ask the BlueBubbles server for them.
+    try:
+        bb_channel = manager.get("bluebubbles")
+        if isinstance(bb_channel, BlueBubblesChannel):
+            replayed = await bb_channel.run_startup_backfill()
+            if replayed:
+                logger.info("Replayed %d BlueBubbles message(s) from startup backfill", replayed)
+    except KeyError:
+        pass
+    except Exception:
+        logger.exception("BlueBubbles startup backfill failed")
+
     yield
 
     # Cancel any channel start tasks still running.
