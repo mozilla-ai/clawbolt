@@ -41,6 +41,11 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 5
+    env:
+      # Surface 1.x Query API call sites in CI logs so the async migration
+      # (issue #1139) can pick them off incrementally. Non-blocking: warnings
+      # are visible but do not fail the build. See issue #1142.
+      SQLALCHEMY_WARN_20: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -66,6 +71,7 @@ jobs:
     env:
       TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
       TELEGRAM_TEST_CHAT_ID: ${{ secrets.TELEGRAM_TEST_CHAT_ID }}
+      SQLALCHEMY_WARN_20: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4
@@ -167,6 +173,7 @@ jobs:
           --health-retries 5
     env:
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+      SQLALCHEMY_WARN_20: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: astral-sh/setup-uv@v4

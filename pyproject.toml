@@ -59,6 +59,15 @@ markers = [
     "integration: integration tests that call a real LLM API (requires ANTHROPIC_API_KEY)",
 ]
 addopts = "-m 'not e2e and not integration'"
+# Surface SQLAlchemy 2.0 legacy/deprecation warnings as a worklist for the
+# async DB migration (issue #1139). Non-blocking: warnings are visible in CI
+# logs but do not fail the build. Pair with SQLALCHEMY_WARN_20=1 in CI env.
+filterwarnings = [
+    "default::sqlalchemy.exc.SADeprecationWarning",
+    "default::sqlalchemy.exc.LegacyAPIWarning",
+    "default::sqlalchemy.exc.MovedIn20Warning",
+    "default::sqlalchemy.exc.Base20DeprecationWarning",
+]
 
 [tool.ty.environment]
 python-version = "3.11"
