@@ -85,6 +85,14 @@ class Settings(BaseSettings):
     max_tool_rounds: int = Field(default=10, ge=1)
     max_input_tokens: int = Field(default=600_000, ge=1)
     context_trim_target_tokens: int = Field(default=400_000, ge=1)
+    # Cap user turns kept verbatim in LLM context. Long single-conversation
+    # histories reinforce their own dominant tone, so new requests inherit
+    # prior conversational patterns rather than optimal procedural ones.
+    # Trimming oldest turns past this cap (independent of token budget)
+    # rolls them through compaction into MEMORY.md / USER.md / SOUL.md.
+    # Set ge=2 so at least one prior turn is always retained alongside the
+    # current one. Tune up if compaction proves too aggressive.
+    context_trim_target_turns: int = Field(default=80, ge=2)
     llm_max_retries: int = Field(default=3, ge=1)
     # Use Anthropic's 1-hour extended-TTL cache instead of the default
     # 5-minute ephemeral cache. Inactive users with conversation gaps

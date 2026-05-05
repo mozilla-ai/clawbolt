@@ -110,6 +110,7 @@ See [Storage Providers](./storage.md) for setup instructions.
 | `MAX_TOOL_ROUNDS` | `10` | Maximum tool-calling rounds per agent invocation |
 | `MAX_INPUT_TOKENS` | `120000` | Max input token budget before context trimming |
 | `CONTEXT_TRIM_TARGET_TOKENS` | `80000` | Target token count after trimming |
+| `CONTEXT_TRIM_TARGET_TURNS` | `80` | Cap on user turns kept verbatim in LLM context. Long single-conversation histories reinforce their own dominant tone, so this trims oldest turns past the cap (independent of the token budget) and rolls them through compaction into `MEMORY.md`, `USER.md`, and `SOUL.md` |
 | `LLM_MAX_RETRIES` | `3` | Maximum number of retry attempts on rate limit errors |
 | `LLM_CACHE_EXTENDED_TTL` | `true` | Use Anthropic's 1-hour extended cache TTL instead of the default 5 minutes. Reduces cold-start cache misses for users with multi-hour gaps between messages. Set to `false` on non-Anthropic providers that reject the `ttl` field |
 
