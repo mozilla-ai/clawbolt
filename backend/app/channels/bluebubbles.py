@@ -13,12 +13,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import get_async_engine
 from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
@@ -654,10 +654,21 @@ class BlueBubblesChannel(BaseChannel):
             logger.debug("BlueBubbles backfill disabled (bluebubbles_backfill_lookback_minutes=0)")
             return 0
 
-        db = SessionLocal()
+        # The advisory lock is session-scoped (lives on the underlying
+        # PG connection until released or the connection closes). We
+        # must hold it on a dedicated ``AsyncConnection`` rather than an
+        # ``AsyncSession``: ``AsyncSession.commit()`` returns the
+        # connection to the pool, where a peer coroutine can check it
+        # out and call ``pg_try_advisory_lock`` on it (locks are
+        # reentrant per PG session), letting both callers enter the
+        # critical section. The replay business logic still uses its
+        # own ``AsyncSession`` via ``handle_webhook_inbound``; that
+        # session is on a SEPARATE connection from the lock, which is
+        # fine because the lock lives on the pinned ``lock_conn``.
+        lock_conn = await get_async_engine().connect()
         lock_acquired = False
         try:
-            if not _try_acquire_backfill_lock(db):
+            if not await _try_acquire_backfill_lock(lock_conn):
                 logger.info("Another worker is running BlueBubbles backfill; skipping on this boot")
                 return 0
             lock_acquired = True
@@ -745,8 +756,8 @@ class BlueBubblesChannel(BaseChannel):
             return attempted
         finally:
             if lock_acquired:
-                _release_backfill_lock(db)
-            db.close()
+                await _release_backfill_lock(lock_conn)
+            await lock_conn.close()
 
 
 # ---------------------------------------------------------------------------
@@ -759,34 +770,61 @@ class BlueBubblesChannel(BaseChannel):
 # and have no per-instance state.
 
 
-def _try_acquire_backfill_lock(db: Session) -> bool:
+async def _try_acquire_backfill_lock(conn: AsyncConnection) -> bool:
     """Acquire the per-process backfill advisory lock.
 
-    Mirrors ``inbound_recovery._try_acquire_lock``. ``pg_try_advisory_lock``
-    returns True on first acquisition, False if another worker on a
-    rolling restart already holds the lock. We commit to release the
-    implicit read transaction; the advisory lock itself is session-scoped
-    and survives until ``_release_backfill_lock``.
+    ``pg_try_advisory_lock`` returns True on first acquisition, False if
+    another worker on a rolling restart already holds the lock. The
+    advisory lock is session-scoped: it lives on the underlying PG
+    connection until released or the connection closes.
+
+    ``conn`` MUST be an ``AsyncConnection`` (not an ``AsyncSession``).
+    ``AsyncSession.commit()`` returns the underlying DBAPI connection
+    to the pool, where a peer coroutine can check it out and call
+    ``pg_try_advisory_lock`` on it; PG advisory locks are reentrant
+    per session, so both callers would enter the critical section. The
+    advisory lock must stay pinned to the same physical connection
+    from acquire through unlock; only ``AsyncConnection`` provides
+    that pinning.
+
+    The caller MUST hold the same ``AsyncConnection`` across acquire +
+    critical section + release; otherwise ``pg_advisory_unlock`` runs
+    on a different connection and silently no-ops (see
+    ``tests/test_inbound_recovery.py``,
+    ``test_unlock_on_different_connection_is_a_no_op``).
+
+    No commit is issued here: ``Connection.execute()`` runs in an
+    implicit transaction that is fine to leave open; the advisory
+    lock takes effect immediately and persists until the connection
+    closes. Committing would not return the connection to the pool
+    (we hold it directly), so it's safe to skip.
     """
     try:
-        got = db.execute(
+        result = await conn.execute(
             text("SELECT pg_try_advisory_lock(hashtext(:k))"),
             {"k": _BACKFILL_LOCK_KEY},
-        ).scalar()
-        db.commit()
+        )
+        got = result.scalar()
     except Exception:
         logger.exception("Failed to acquire BlueBubbles backfill advisory lock")
         return False
     return bool(got)
 
 
-def _release_backfill_lock(db: Session) -> None:
-    """Best-effort release of the backfill lock."""
+async def _release_backfill_lock(conn: AsyncConnection) -> None:
+    """Best-effort release of the backfill lock.
+
+    ``conn`` MUST be the same ``AsyncConnection`` that ``_try_acquire_backfill_lock``
+    succeeded on. See that function's docstring for the connection-pinning
+    rationale: ``pg_advisory_unlock`` on a different connection is a
+    silent no-op, so passing an ``AsyncSession`` (whose ``commit`` may
+    have recycled the connection) lets the lock leak past the
+    critical section.
+    """
     try:
-        db.execute(
+        await conn.execute(
             text("SELECT pg_advisory_unlock(hashtext(:k))"),
             {"k": _BACKFILL_LOCK_KEY},
         )
-        db.commit()
     except Exception:
         logger.exception("Failed to release BlueBubbles backfill advisory lock")
