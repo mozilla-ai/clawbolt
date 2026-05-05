@@ -244,12 +244,37 @@ def _format_results(rows: list[dict[str, Any]]) -> str:
             if key in ("domain", "sparse", "MetaData"):
                 continue
             if isinstance(val, dict):
-                name = val.get("name", "")
-                ref_val = val.get("value", "")
-                if name:
-                    parts.append(f"{key}: {name} ({ref_val})")
-                elif ref_val:
-                    parts.append(f"{key}: {ref_val}")
+                if "name" in val or "value" in val:
+                    name = val.get("name", "")
+                    ref_val = val.get("value", "")
+                    if name and ref_val:
+                        parts.append(f"{key}: {name} ({ref_val})")
+                    elif name or ref_val:
+                        parts.append(f"{key}: {name or ref_val}")
+                elif "Address" in val:
+                    parts.append(f"{key}: {val['Address']}")
+                elif "FreeFormNumber" in val:
+                    parts.append(f"{key}: {val['FreeFormNumber']}")
+                elif "URI" in val:
+                    parts.append(f"{key}: {val['URI']}")
+                elif any(k in val for k in ("Line1", "City", "PostalCode")):
+                    addr_bits = [
+                        val[k]
+                        for k in (
+                            "Line1",
+                            "Line2",
+                            "City",
+                            "CountrySubDivisionCode",
+                            "PostalCode",
+                        )
+                        if val.get(k)
+                    ]
+                    if addr_bits:
+                        parts.append(f"{key}: {', '.join(addr_bits)}")
+                else:
+                    # Fail loud on unknown dict shapes so future QBO fields
+                    # surface (verbose but visible) rather than disappearing.
+                    parts.append(f"{key}: {json.dumps(val)}")
             elif isinstance(val, list):
                 if key == "Line" and val:
                     items = []
