@@ -229,6 +229,47 @@ def test_db_store_save_and_load_round_trips(_db_store: DbSettingsStore) -> None:
     assert loaded["telegram_bot_token"] == "real-secret-token"
 
 
+def test_db_store_int_setting_round_trips_through_text_column(
+    _db_store: DbSettingsStore,
+) -> None:
+    """Integer persistable settings round-trip cleanly through the TEXT
+    value column. Save accepts the int, the column stores its string
+    form, and the boot-time hydration coerces back to int via Pydantic.
+
+    Mirrors the actual boot path:
+      ``settings_store.load() → apply_to_settings(loaded)``
+    so the test fails closed if either half drifts (e.g. a future
+    refactor that drops ``str(value)`` from ``apply_to_settings`` or
+    changes the load-path return type).
+
+    Regression guard: when ``llm_max_tokens_*`` were added to
+    ``PERSISTABLE_SETTINGS``, they became the first int-typed
+    persistable settings. Without coercion in ``update_settings``,
+    the Settings singleton would end up holding a string and any
+    arithmetic on it would crash.
+    """
+    original = settings.llm_max_tokens_agent
+    try:
+        _db_store.save({"llm_max_tokens_agent": 4096})
+        # Stored verbatim as TEXT, not transparently re-typed by the store.
+        assert _db_store.load()["llm_max_tokens_agent"] == "4096"
+
+        # Boot path: load from store, apply to settings. ``apply_to_settings``
+        # skips keys that have a non-empty matching env var, so clear the
+        # env var first to make sure the store value wins.
+        with patch.dict("os.environ", {}, clear=False):
+            import os
+
+            os.environ.pop("LLM_MAX_TOKENS_AGENT", None)
+            applied = apply_to_settings(_db_store.load())
+        assert applied["llm_max_tokens_agent"] == "4096"
+        # The live singleton holds the typed int, not the raw string.
+        assert settings.llm_max_tokens_agent == 4096
+        assert isinstance(settings.llm_max_tokens_agent, int)
+    finally:
+        settings.llm_max_tokens_agent = original
+
+
 def test_db_store_secrets_are_envelope_encrypted_at_rest(
     _db_store: DbSettingsStore,
 ) -> None:
