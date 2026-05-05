@@ -13,12 +13,12 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import Select, select
 
 from backend.app.agent.dto import UserData
 from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
-from backend.app.database import SessionLocal, db_session
+from backend.app.database import AsyncSessionLocal, SessionLocal, db_session, db_session_async
 from backend.app.models import User
 
 logger = logging.getLogger(__name__)
@@ -126,20 +126,78 @@ _USER_UPDATABLE_FIELDS: frozenset[str] = frozenset(
 )
 
 
+# Dual-API rollout (issue #1151, follows the IdempotencyStore pilot in
+# #1199). Internal logic is factored into pure ``select(...)`` builders
+# so the sync and async methods stay in lockstep without a class
+# hierarchy. Each existing public method keeps its plain name; the new
+# ``*_async`` peer uses real async DB access via ``AsyncSessionLocal``.
+def _user_by_id_select(user_id: str | int) -> Select[tuple[User]]:
+    """Builder shared by ``get_by_id`` / ``get_by_id_async`` and the update paths."""
+    return select(User).filter_by(id=str(user_id))
+
+
+def _user_by_user_id_select(user_id: str) -> Select[tuple[User]]:
+    """Builder shared by ``get_by_user_id`` / ``get_by_user_id_async``."""
+    return select(User).filter_by(user_id=user_id)
+
+
+def _list_users_select() -> Select[tuple[User]]:
+    """Builder shared by ``list_all`` / ``list_all_async``."""
+    return select(User).order_by(User.created_at)
+
+
+def _apply_updates(user: User, fields: dict[str, Any]) -> None:
+    """Apply allowlisted attribute updates to a User row in place.
+
+    Pure helper so ``update`` / ``update_async`` use identical
+    field-allowlist semantics. The caller owns the session and the
+    surrounding commit / refresh.
+    """
+    for key, value in fields.items():
+        if key in _USER_UPDATABLE_FIELDS:
+            setattr(user, key, value)
+
+
 class UserStore:
-    """Database-backed user storage using User ORM model."""
+    """Database-backed user storage using User ORM model.
+
+    Dual-API store (issue #1151). Each public method has an ``*_async``
+    peer with identical semantics; the two share query construction via
+    the ``_user_by_id_select`` / ``_user_by_user_id_select`` /
+    ``_list_users_select`` builders above. Existing callers keep working
+    unchanged while OSS-internal callers migrate to the async API one
+    site at a time. Follows the IdempotencyStore pilot pattern (#1199).
+    """
 
     async def get_by_id(self, user_id: str | int) -> UserData | None:
         """Look up a user by primary key (id)."""
         with db_session() as db:
-            user = db.execute(select(User).filter_by(id=str(user_id))).scalar_one_or_none()
+            user = db.execute(_user_by_id_select(user_id)).scalar_one_or_none()
             return _user_to_dto(user) if user else None
+
+    async def get_by_id_async(self, user_id: str | int) -> UserData | None:
+        """Async peer of ``get_by_id``."""
+        db = AsyncSessionLocal()
+        try:
+            user = (await db.execute(_user_by_id_select(user_id))).scalar_one_or_none()
+            return _user_to_dto(user) if user else None
+        finally:
+            await db.close()
 
     async def get_by_user_id(self, user_id: str) -> UserData | None:
         """Look up a user by user_id (e.g., 'google_12345')."""
         with db_session() as db:
-            user = db.execute(select(User).filter_by(user_id=user_id)).scalar_one_or_none()
+            user = db.execute(_user_by_user_id_select(user_id)).scalar_one_or_none()
             return _user_to_dto(user) if user else None
+
+    async def get_by_user_id_async(self, user_id: str) -> UserData | None:
+        """Async peer of ``get_by_user_id``."""
+        db = AsyncSessionLocal()
+        try:
+            user = (await db.execute(_user_by_user_id_select(user_id))).scalar_one_or_none()
+            return _user_to_dto(user) if user else None
+        finally:
+            await db.close()
 
     async def create(self, user_id: str, **fields: Any) -> UserData:
         """Create a new User row and return it as a DTO."""
@@ -150,24 +208,52 @@ class UserStore:
             db.refresh(user)
             return _user_to_dto(user)
 
+    async def create_async(self, user_id: str, **fields: Any) -> UserData:
+        """Async peer of ``create``."""
+        async with db_session_async() as db:
+            user = User(user_id=user_id, **fields)
+            db.add(user)
+            await db.commit()
+            await db.refresh(user)
+            return _user_to_dto(user)
+
     async def update(self, user_id: str | int, **fields: Any) -> UserData | None:
         """Update a User row by primary key."""
         with db_session() as db:
-            user = db.execute(select(User).filter_by(id=str(user_id))).scalar_one_or_none()
+            user = db.execute(_user_by_id_select(user_id)).scalar_one_or_none()
             if user is None:
                 return None
-            for key, value in fields.items():
-                if key in _USER_UPDATABLE_FIELDS:
-                    setattr(user, key, value)
+            _apply_updates(user, fields)
             db.commit()
             db.refresh(user)
+            return _user_to_dto(user)
+
+    async def update_async(self, user_id: str | int, **fields: Any) -> UserData | None:
+        """Async peer of ``update``."""
+        async with db_session_async() as db:
+            user = (await db.execute(_user_by_id_select(user_id))).scalar_one_or_none()
+            if user is None:
+                return None
+            _apply_updates(user, fields)
+            await db.commit()
+            await db.refresh(user)
             return _user_to_dto(user)
 
     async def list_all(self) -> list[UserData]:
         """Return all users."""
         with db_session() as db:
-            users = db.execute(select(User).order_by(User.created_at)).scalars().all()
+            users = db.execute(_list_users_select()).scalars().all()
             return [_user_to_dto(u) for u in users]
+
+    async def list_all_async(self) -> list[UserData]:
+        """Async peer of ``list_all``."""
+        db = AsyncSessionLocal()
+        try:
+            result = await db.execute(_list_users_select())
+            users = result.scalars().all()
+            return [_user_to_dto(u) for u in users]
+        finally:
+            await db.close()
 
 
 _user_store: UserStore | None = None
