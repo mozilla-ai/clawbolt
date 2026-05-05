@@ -1008,9 +1008,10 @@ class ClawboltAgent:
         trimmed_count = original_count - len(messages)
         if trimmed_count > 0:
             logger.warning(
-                "Trimmed %d message(s) from conversation history (limit %d tokens)",
+                "Trimmed %d message(s) from conversation history (limit %d tokens, %d user turns)",
                 trimmed_count,
                 settings.context_trim_target_tokens,
+                settings.context_trim_target_turns,
             )
 
         llm_kwargs: dict[str, Any] = {}
