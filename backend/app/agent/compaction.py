@@ -350,6 +350,28 @@ async def compact_session(
         soul_before=current_soul,
         soul_after=new_soul,
     )
+    # Capture the LLM call itself for Layer 5 admin observability:
+    # the trimmed conversation that was sent (the static system prompt
+    # and the four current memory files are excluded; the system prompt
+    # is identical across events and the memory inputs are already in
+    # the ``*_text_before`` snapshots), the unparsed response text, and
+    # the parsed fields as a JSON string. All three share the per-file
+    # truncation cap so an unusually long conversation does not blow up
+    # the row.
+    parsed_response_json = json.dumps(
+        {
+            "memory_update": result.memory_update,
+            "summary": result.summary,
+            "user_profile_update": result.user_profile_update,
+            "soul_update": result.soul_update,
+        },
+        ensure_ascii=False,
+    )
+    llm_call = {
+        "prompt_text": _serialize_snapshot(conversation_text, cap),
+        "raw_response_text": _serialize_snapshot(raw_content, cap),
+        "parsed_response_json": _serialize_snapshot(parsed_response_json, cap),
+    }
 
     # Persist the metrics + snapshots. Either UPDATE the pending row that
     # ``trigger_compaction_for_dropped`` pre-inserted (event_id provided),
@@ -370,6 +392,7 @@ async def compact_session(
             soul_updated=bool(result.soul_update),
             summary_len=len(result.summary or ""),
             snapshots=snapshots,
+            llm_call=llm_call,
         )
     except Exception:
         logger.exception("Failed to persist compaction event for user %s", user_id)
@@ -434,13 +457,18 @@ def _persist_compaction_event(
     soul_updated: bool,
     summary_len: int,
     snapshots: dict[str, str | None],
+    llm_call: dict[str, str | None],
 ) -> None:
     """Write or update one ``CompactionEvent`` row.
 
     When ``event_id`` is provided, UPDATE the pre-inserted ``'pending'``
     row (the agent-loop path). Otherwise INSERT a new ``'completed'`` row
-    (test / legacy path). Imports SQLAlchemy lazily so the agent module
-    does not pull it at import time on every pure-logic test.
+    (test / legacy path). ``llm_call`` carries the migration-031 columns
+    (``prompt_text``, ``raw_response_text``, ``parsed_response_json``);
+    keeping it as a dict mirrors the ``snapshots`` shape so adding more
+    audit columns later does not require re-threading positional args.
+    Imports SQLAlchemy lazily so the agent module does not pull it at
+    import time on every pure-logic test.
     """
     from backend.app.database import SessionLocal
     from backend.app.models import CompactionEvent
@@ -471,6 +499,8 @@ def _persist_compaction_event(
                 event.status = "completed"
                 for col, value in snapshots.items():
                     setattr(event, col, value)
+                for col, value in llm_call.items():
+                    setattr(event, col, value)
         if event_id is None:
             db.add(
                 CompactionEvent(
@@ -487,6 +517,7 @@ def _persist_compaction_event(
                     summary_len=summary_len,
                     status="completed",
                     **snapshots,
+                    **llm_call,
                 )
             )
         db.commit()
