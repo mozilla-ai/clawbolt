@@ -31,8 +31,10 @@ from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Any, Protocol
 
-from sqlalchemy import text
+from sqlalchemy import Row, text
+from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import Session
+from sqlalchemy.sql.elements import TextClause
 
 from backend.app.config import (
     PERSISTABLE_SETTINGS,
@@ -175,6 +177,116 @@ class SettingsStore(Protocol):
 # ---------------------------------------------------------------------------
 
 
+# Dual-API rollout (issue #1175, follows the IdempotencyStore pilot in
+# #1199). Internal logic is factored into pure module-level helpers so
+# the sync and async methods stay in lockstep without a class
+# hierarchy. Each existing public method keeps its plain name; the new
+# ``*_async`` peer uses real async DB access via the configured async
+# session factory (default: ``AsyncSessionLocal``).
+#
+# These helpers are intentionally not parameterized over the bind type:
+# they return raw-SQL TextClauses and pure Python payloads, which both
+# ``Session.execute`` and ``AsyncSession.execute`` accept.
+def _load_select_sql() -> TextClause:
+    """Builder shared by ``load`` / ``load_async``."""
+    return text("SELECT key, value, is_secret FROM app_settings")
+
+
+def _save_upsert_sql() -> TextClause:
+    """Builder shared by ``save`` / ``save_async``.
+
+    One round-trip: ON CONFLICT upsert for the whole batch.
+    """
+    return text(
+        """
+        INSERT INTO app_settings (key, value, is_secret, updated_by_user_id)
+        VALUES (:key, :value, :is_secret, :actor)
+        ON CONFLICT (key) DO UPDATE SET
+            value = EXCLUDED.value,
+            is_secret = EXCLUDED.is_secret,
+            updated_at = NOW(),
+            updated_by_user_id = EXCLUDED.updated_by_user_id
+        """
+    )
+
+
+def _delete_sql() -> TextClause:
+    """Builder shared by ``delete`` / ``delete_async``."""
+    return text("DELETE FROM app_settings WHERE key = ANY(:keys)")
+
+
+def _encryption_context() -> _encryption.EncryptionContext:
+    """Encryption context shared by both sync and async paths.
+
+    Module-level so the sync and async methods see identical (table,
+    column) bindings without going through an instance method.
+    """
+    return {"table": "app_settings", "column": "value"}
+
+
+def _build_save_rows(
+    updates: Mapping[str, str],
+    kek: KEKProvider,
+    *,
+    actor_user_id: str | None,
+) -> list[dict[str, Any]]:
+    """Validate updates and prepare rows for the upsert statement.
+
+    Pure helper so ``save`` / ``save_async`` use identical
+    persistable-key validation and secret-encryption semantics. Raises
+    ``ValueError`` for keys outside ``PERSISTABLE_SETTINGS`` so the
+    failure mode does not depend on which code path the caller picked.
+    """
+    rows: list[dict[str, Any]] = []
+    ctx = _encryption_context()
+    for key, value in updates.items():
+        if key not in PERSISTABLE_SETTINGS:
+            raise ValueError(
+                f"{key!r} is not a persistable setting (allowed: {sorted(PERSISTABLE_SETTINGS)})"
+            )
+        secret = is_secret(key)
+        stored_value = _encryption.encrypt(value, kek, ctx) if secret and value else value
+        rows.append(
+            {
+                "key": key,
+                "value": stored_value,
+                "is_secret": secret,
+                "actor": actor_user_id,
+            }
+        )
+    return rows
+
+
+def _decode_load_rows(rows: Iterable[Row[Any]], kek: KEKProvider) -> dict[str, str]:
+    """Decrypt secret values and assemble the load() return dict.
+
+    Pure helper so ``load`` / ``load_async`` use identical decryption
+    semantics. Empty values short-circuit to "" without a decrypt call,
+    matching the original behavior. Decryption failures are wrapped in
+    ``ConfigStoreError`` so the failure mode is the same regardless of
+    which path discovered the bad row.
+
+    Accepts ``Row[Any]`` because SQLAlchemy's ``Result.all()`` returns
+    ``Sequence[Row[Any]]`` for both sync and async paths; positional
+    unpacking matches the (key, value, is_secret) shape of the SELECT.
+    """
+    result: dict[str, str] = {}
+    ctx = _encryption_context()
+    for row in rows:
+        key, value, is_secret_flag = row[0], row[1], row[2]
+        if not value:
+            result[key] = ""
+            continue
+        if is_secret_flag:
+            try:
+                result[key] = _encryption.decrypt(value, kek, ctx)
+            except Exception as exc:
+                raise ConfigStoreError(f"Failed to decrypt app_settings.{key}: {exc}") from exc
+        else:
+            result[key] = value
+    return result
+
+
 class DbSettingsStore:
     """Stores settings in the ``app_settings`` table.
 
@@ -186,90 +298,131 @@ class DbSettingsStore:
     in tests, the same bound transaction) as the rest of the app. That
     keeps FK references like ``updated_by_user_id`` consistent with
     rows the route handler just inserted in the same request.
+
+    Dual-API store (issue #1175). Each public method has an ``*_async``
+    peer with identical semantics; the two share validation, encryption,
+    and SQL construction via the module-level ``_build_save_rows`` /
+    ``_decode_load_rows`` / ``_load_select_sql`` / ``_save_upsert_sql`` /
+    ``_delete_sql`` helpers above. Sync callers (lifespan boot, admin
+    routes still on sync) keep working unchanged while async callers
+    can opt into the ``*_async`` peers without falling back to a sync
+    DB call from async context. Follows the IdempotencyStore pilot
+    pattern (#1199) and mirrors the per-store conversions in #1200,
+    #1201, #1203.
     """
 
     _CONTEXT_TABLE = "app_settings"
     _CONTEXT_COLUMN = "value"
 
-    def __init__(self, session_factory: Callable[[], Session], kek_provider: KEKProvider) -> None:
+    def __init__(
+        self,
+        session_factory: Callable[[], Session],
+        kek_provider: KEKProvider,
+        async_session_factory: Callable[[], AsyncSession] | None = None,
+    ) -> None:
+        """Construct a store bound to the given session factories.
+
+        ``session_factory`` is the existing sync factory. The optional
+        ``async_session_factory`` is used by the ``*_async`` methods.
+        When omitted, the async methods resolve the singleton
+        ``AsyncSessionLocal`` factory at call time. Tests that drive
+        the async API through a per-test transaction can pass the
+        rebound ``async_sessionmaker`` from the ``async_db`` fixture
+        explicitly, mirroring how sync tests pass ``SessionLocal``
+        rebound by the autouse ``_isolate_stores`` fixture.
+        """
         self._session_factory = session_factory
         self._kek = kek_provider
+        self._async_session_factory = async_session_factory
+
+    def _resolve_async_factory(self) -> Callable[[], AsyncSession]:
+        """Return the async session factory to use for this call.
+
+        Deferred lookup: the constructor default is ``None`` so that a
+        store instantiated before the async engine has booted (e.g. at
+        import time) doesn't capture a stale factory. The first
+        ``*_async`` call resolves the factory from
+        ``backend.app.database`` (which honors test rebinding of the
+        module-level ``_async_session_factory``).
+        """
+        if self._async_session_factory is not None:
+            return self._async_session_factory
+        # Local import to avoid a cycle with backend.app.database at
+        # module load (config_store is imported during settings boot
+        # via the lifespan handler, before some test fixtures have run).
+        from backend.app.database import AsyncSessionLocal
+
+        return AsyncSessionLocal
 
     def load(self) -> dict[str, str]:
         try:
             with self._session_factory() as db:
-                rows = db.execute(text("SELECT key, value, is_secret FROM app_settings")).all()
+                rows = db.execute(_load_select_sql()).all()
         except Exception as exc:
             raise ConfigStoreError(f"Failed to query app_settings: {exc}") from exc
 
-        result: dict[str, str] = {}
-        for key, value, is_secret_flag in rows:
-            if not value:
-                result[key] = ""
-                continue
-            if is_secret_flag:
-                try:
-                    result[key] = _encryption.decrypt(value, self._kek, self._encryption_context())
-                except Exception as exc:
-                    raise ConfigStoreError(f"Failed to decrypt app_settings.{key}: {exc}") from exc
-            else:
-                result[key] = value
-        return result
+        return _decode_load_rows(rows, self._kek)
+
+    async def load_async(self) -> dict[str, str]:
+        """Async peer of ``load``."""
+        factory = self._resolve_async_factory()
+        try:
+            async with factory() as db:
+                rows = (await db.execute(_load_select_sql())).all()
+        except Exception as exc:
+            raise ConfigStoreError(f"Failed to query app_settings: {exc}") from exc
+
+        return _decode_load_rows(rows, self._kek)
 
     def save(self, updates: Mapping[str, str], *, actor_user_id: str | None = None) -> None:
         if not updates:
             return
-        rows: list[dict[str, Any]] = []
-        for key, value in updates.items():
-            if key not in PERSISTABLE_SETTINGS:
-                raise ValueError(
-                    f"{key!r} is not a persistable setting "
-                    f"(allowed: {sorted(PERSISTABLE_SETTINGS)})"
-                )
-            secret = is_secret(key)
-            stored_value = (
-                _encryption.encrypt(value, self._kek, self._encryption_context())
-                if secret and value
-                else value
-            )
-            rows.append(
-                {
-                    "key": key,
-                    "value": stored_value,
-                    "is_secret": secret,
-                    "actor": actor_user_id,
-                }
-            )
-
-        # One round-trip: ON CONFLICT upsert for the whole batch.
-        stmt = text(
-            """
-            INSERT INTO app_settings (key, value, is_secret, updated_by_user_id)
-            VALUES (:key, :value, :is_secret, :actor)
-            ON CONFLICT (key) DO UPDATE SET
-                value = EXCLUDED.value,
-                is_secret = EXCLUDED.is_secret,
-                updated_at = NOW(),
-                updated_by_user_id = EXCLUDED.updated_by_user_id
-            """
-        )
+        rows = _build_save_rows(updates, self._kek, actor_user_id=actor_user_id)
         with self._session_factory() as db:
-            db.execute(stmt, rows)
+            db.execute(_save_upsert_sql(), rows)
             db.commit()
+
+    async def save_async(
+        self, updates: Mapping[str, str], *, actor_user_id: str | None = None
+    ) -> None:
+        """Async peer of ``save``.
+
+        Same persistable-key validation, same encryption-on-write, same
+        single-statement upsert. ``ValueError`` for non-persistable
+        keys is raised before any IO, matching the sync path.
+        """
+        if not updates:
+            return
+        rows = _build_save_rows(updates, self._kek, actor_user_id=actor_user_id)
+        factory = self._resolve_async_factory()
+        async with factory() as db:
+            await db.execute(_save_upsert_sql(), rows)
+            await db.commit()
 
     def delete(self, keys: Iterable[str]) -> None:
         keys_list = list(keys)
         if not keys_list:
             return
         with self._session_factory() as db:
-            db.execute(
-                text("DELETE FROM app_settings WHERE key = ANY(:keys)"),
-                {"keys": keys_list},
-            )
+            db.execute(_delete_sql(), {"keys": keys_list})
             db.commit()
 
+    async def delete_async(self, keys: Iterable[str]) -> None:
+        """Async peer of ``delete``."""
+        keys_list = list(keys)
+        if not keys_list:
+            return
+        factory = self._resolve_async_factory()
+        async with factory() as db:
+            await db.execute(_delete_sql(), {"keys": keys_list})
+            await db.commit()
+
     def _encryption_context(self) -> _encryption.EncryptionContext:
-        return {"table": self._CONTEXT_TABLE, "column": self._CONTEXT_COLUMN}
+        # Kept for backward-compat with any subclass / external caller
+        # that may have referenced the instance method directly. The
+        # module-level ``_encryption_context()`` is the source of truth
+        # for both sync and async paths.
+        return _encryption_context()
 
 
 # ---------------------------------------------------------------------------
