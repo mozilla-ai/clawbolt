@@ -180,31 +180,31 @@ class User(Base):
         super().__init__(**kwargs)
 
     channel_routes: Mapped[list["ChannelRoute"]] = relationship(
-        "ChannelRoute", back_populates="user", cascade="all, delete-orphan"
+        "ChannelRoute", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     sessions: Mapped[list["ChatSession"]] = relationship(
-        "ChatSession", back_populates="user", cascade="all, delete-orphan"
+        "ChatSession", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     media_files: Mapped[list["MediaFile"]] = relationship(
-        "MediaFile", back_populates="user", cascade="all, delete-orphan"
+        "MediaFile", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     memory_documents: Mapped[list["MemoryDocument"]] = relationship(
-        "MemoryDocument", back_populates="user", cascade="all, delete-orphan"
+        "MemoryDocument", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     heartbeat_logs: Mapped[list["HeartbeatLog"]] = relationship(
-        "HeartbeatLog", back_populates="user", cascade="all, delete-orphan"
+        "HeartbeatLog", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     llm_usage_logs: Mapped[list["LLMUsageLog"]] = relationship(
-        "LLMUsageLog", back_populates="user", cascade="all, delete-orphan"
+        "LLMUsageLog", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     tool_configs: Mapped[list["ToolConfig"]] = relationship(
-        "ToolConfig", back_populates="user", cascade="all, delete-orphan"
+        "ToolConfig", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     calendar_configs: Mapped[list["CalendarConfig"]] = relationship(
-        "CalendarConfig", back_populates="user", cascade="all, delete-orphan"
+        "CalendarConfig", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     oauth_tokens: Mapped[list["OAuthToken"]] = relationship(
-        "OAuthToken", back_populates="user", cascade="all, delete-orphan"
+        "OAuthToken", back_populates="user", cascade="all, delete-orphan", lazy="raise"
     )
     # Reports this user filed via ``/report``. ``ReportedConversation``
     # has two FKs to ``users.id`` (``user_id`` for the reporter,
@@ -218,6 +218,7 @@ class User(Base):
         back_populates="user",
         cascade="all, delete-orphan",
         foreign_keys="ReportedConversation.user_id",
+        lazy="raise",
     )
 
 
@@ -240,7 +241,7 @@ class ChannelRoute(Base):
     # that their configured channel actually delivers messages end-to-end.
     last_inbound_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
-    user: Mapped["User"] = relationship("User", back_populates="channel_routes")
+    user: Mapped["User"] = relationship("User", back_populates="channel_routes", lazy="raise")
 
 
 class ChatSession(Base):
@@ -274,9 +275,9 @@ class ChatSession(Base):
     # has been trimmed yet (default for fresh sessions and pre-feature rows).
     last_trim_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
-    user: Mapped["User"] = relationship("User", back_populates="sessions")
+    user: Mapped["User"] = relationship("User", back_populates="sessions", lazy="raise")
     messages: Mapped[list["Message"]] = relationship(
-        "Message", back_populates="session", cascade="all, delete-orphan"
+        "Message", back_populates="session", cascade="all, delete-orphan", lazy="raise"
     )
 
 
@@ -324,7 +325,9 @@ class Message(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
-    session: Mapped["ChatSession"] = relationship("ChatSession", back_populates="messages")
+    session: Mapped["ChatSession"] = relationship(
+        "ChatSession", back_populates="messages", lazy="raise"
+    )
 
 
 class MediaFile(Base):
@@ -344,7 +347,7 @@ class MediaFile(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="media_files")
+    user: Mapped["User"] = relationship("User", back_populates="media_files", lazy="raise")
 
 
 class MemoryDocument(Base):
@@ -382,7 +385,7 @@ class MemoryDocument(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="memory_documents")
+    user: Mapped["User"] = relationship("User", back_populates="memory_documents", lazy="raise")
 
 
 class HeartbeatLog(Base):
@@ -424,7 +427,7 @@ class HeartbeatLog(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="heartbeat_logs")
+    user: Mapped["User"] = relationship("User", back_populates="heartbeat_logs", lazy="raise")
 
 
 class ReportedConversation(Base):
@@ -477,6 +480,7 @@ class ReportedConversation(Base):
         "User",
         back_populates="reported_conversations",
         foreign_keys=[user_id],
+        lazy="raise",
     )
 
 
@@ -514,7 +518,7 @@ class LLMUsageLog(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="llm_usage_logs")
+    user: Mapped["User"] = relationship("User", back_populates="llm_usage_logs", lazy="raise")
 
 
 class CalendarConfig(Base):
@@ -549,7 +553,7 @@ class CalendarConfig(Base):
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="calendar_configs")
+    user: Mapped["User"] = relationship("User", back_populates="calendar_configs", lazy="raise")
 
 
 class ToolConfig(Base):
@@ -568,7 +572,7 @@ class ToolConfig(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     disabled_sub_tools: Mapped[str] = mapped_column(Text, default="")
 
-    user: Mapped["User"] = relationship("User", back_populates="tool_configs")
+    user: Mapped["User"] = relationship("User", back_populates="tool_configs", lazy="raise")
 
 
 class OAuthToken(Base):
@@ -610,7 +614,7 @@ class OAuthToken(Base):
         onupdate=lambda: datetime.now(UTC),
     )
 
-    user: Mapped["User"] = relationship("User", back_populates="oauth_tokens")
+    user: Mapped["User"] = relationship("User", back_populates="oauth_tokens", lazy="raise")
 
 
 class PendingApprovalRow(Base):
