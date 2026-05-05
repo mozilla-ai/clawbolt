@@ -21,6 +21,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy import Engine, text
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.orm import Session
 
 from backend.app.agent.inbound_recovery import (
@@ -36,6 +37,75 @@ from backend.app.config import settings
 from backend.app.database import SessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, Message, User
+
+
+async def _make_user_async(factory: async_sessionmaker) -> User:
+    """Async peer of ``_make_user`` for end-to-end tests that exercise
+    ``recover_orphan_inbound_messages`` (which now runs on the async
+    DB engine; a sync write would land in a different connection and
+    not be visible to the async sweep)."""
+    async with factory() as db:
+        user = User(
+            id=str(uuid.uuid4()),
+            user_id=f"recovery-test-{uuid.uuid4().hex[:8]}",
+            phone="+15555550101",
+            channel_identifier="+15555550101",
+            preferred_channel="bluebubbles",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        db.expunge(user)
+    return user
+
+
+async def _make_session_async(
+    factory: async_sessionmaker, user: User, channel: str = "bluebubbles"
+) -> ChatSession:
+    """Async peer of ``_make_session``."""
+    async with factory() as db:
+        now = datetime.datetime.now(datetime.UTC)
+        cs = ChatSession(
+            session_id=f"sess-{uuid.uuid4().hex[:8]}",
+            user_id=user.id,
+            channel=channel,
+            created_at=now,
+            last_message_at=now,
+        )
+        db.add(cs)
+        await db.commit()
+        await db.refresh(cs)
+        db.expunge(cs)
+    return cs
+
+
+async def _add_message_async(
+    factory: async_sessionmaker,
+    cs: ChatSession,
+    direction: str,
+    seq: int,
+    body: str,
+    *,
+    minutes_ago: int = 0,
+) -> Message:
+    """Async peer of ``_add_message``."""
+    async with factory() as db:
+        ts = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=minutes_ago)
+        msg = Message(
+            session_id=cs.id,
+            seq=seq,
+            direction=direction,
+            body=body,
+            external_message_id=f"ext-{seq}",
+            media_urls_json="[]",
+            timestamp=ts,
+        )
+        db.add(msg)
+        await db.commit()
+        await db.refresh(msg)
+        db.expunge(msg)
+    return msg
 
 
 def _make_user(db: Session) -> User:
@@ -249,18 +319,25 @@ def test_parse_media_refs_handles_invalid_json() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_recover_dispatches_each_orphan() -> None:
+async def test_recover_dispatches_each_orphan(async_db: async_sessionmaker) -> None:
     """The recovery loop calls ``_dispatch_to_pipeline`` once per orphan
-    and returns the count of successes."""
-    db = SessionLocal()
-    try:
-        user = _make_user(db)
-        cs = _make_session(db, user)
-        _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="one", minutes_ago=2)
-        _add_message(db, cs, MessageDirection.INBOUND, seq=2, body="two", minutes_ago=1)
-        expected_user_id = user.id
-    finally:
-        db.close()
+    and returns the count of successes.
+
+    Setup runs through the async fixture because
+    ``recover_orphan_inbound_messages`` now reads via an
+    ``AsyncSession``: a sync write committed on the per-test sync
+    transaction lives on a different connection and would not be
+    visible under READ COMMITTED. See AGENTS.md "Cross-API caveat".
+    """
+    user = await _make_user_async(async_db)
+    cs = await _make_session_async(async_db, user)
+    await _add_message_async(
+        async_db, cs, MessageDirection.INBOUND, seq=1, body="one", minutes_ago=2
+    )
+    await _add_message_async(
+        async_db, cs, MessageDirection.INBOUND, seq=2, body="two", minutes_ago=1
+    )
+    expected_user_id = user.id
 
     captured_user_ids: list[str] = []
     captured_bodies: list[str] = []
@@ -307,19 +384,21 @@ async def test_recover_short_circuits_when_lookback_zero() -> None:
 
 
 @pytest.mark.asyncio()
-async def test_recover_continues_past_individual_dispatch_failure() -> None:
+async def test_recover_continues_past_individual_dispatch_failure(
+    async_db: async_sessionmaker,
+) -> None:
     """One failing dispatch must not abort the whole sweep; the other
     orphan should still be recovered. Caller wraps the whole thing in a
     try/except too, but per-row resilience is what lets us deploy this
     in front of an in-flight queue without an all-or-nothing failure."""
-    db = SessionLocal()
-    try:
-        user = _make_user(db)
-        cs = _make_session(db, user)
-        _add_message(db, cs, MessageDirection.INBOUND, seq=1, body="one", minutes_ago=2)
-        _add_message(db, cs, MessageDirection.INBOUND, seq=2, body="two", minutes_ago=1)
-    finally:
-        db.close()
+    user = await _make_user_async(async_db)
+    cs = await _make_session_async(async_db, user)
+    await _add_message_async(
+        async_db, cs, MessageDirection.INBOUND, seq=1, body="one", minutes_ago=2
+    )
+    await _add_message_async(
+        async_db, cs, MessageDirection.INBOUND, seq=2, body="two", minutes_ago=1
+    )
 
     call_count = {"n": 0}
 
