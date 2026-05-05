@@ -191,6 +191,14 @@ class TestSectionBuilders:
         result = build_instructions_section()
         assert "Trade guidance" not in result
 
+    def test_build_instructions_section_includes_memory_write_mandate(self) -> None:
+        """Assembled instructions must carry the MEMORY.md same-turn write mandate (#1134)."""
+        result = build_instructions_section()
+        assert "MEMORY.md" in result
+        assert "edit_file" in result
+        assert "same turn" in result
+        assert "I'll remember that" in result
+
     def test_build_tool_guidelines_empty(self) -> None:
         """Should return empty string when no tools have usage hints."""
         tool = MagicMock()

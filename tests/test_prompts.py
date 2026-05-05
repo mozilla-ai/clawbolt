@@ -66,3 +66,46 @@ def test_default_soul_includes_clawbolt_name() -> None:
     """Default soul template should identify as Clawbolt."""
     soul = load_prompt("default_soul")
     assert "Clawbolt" in soul
+
+
+def test_instructions_mandate_memory_writes_in_same_turn() -> None:
+    """Instructions must require a same-turn edit_file call when learning a durable fact (#1134).
+
+    Previously the prompt said "update proactively" without forcing the
+    write to happen in the same turn the fact was learned. The agent
+    treated MEMORY.md updates as optional and the file went stale even
+    while it persisted facts to external systems. The strengthened
+    guidance must explicitly tie "learn a durable fact" to "call
+    edit_file in the same turn".
+    """
+    instructions = load_prompt("instructions")
+    assert "MEMORY.md" in instructions
+    assert "edit_file" in instructions
+    assert "same turn" in instructions
+
+
+def test_instructions_forbid_promise_without_edit() -> None:
+    """Instructions must forbid acknowledging a fact without an actual edit (#1134).
+
+    The failure mode was the agent saying "I'll remember that" while
+    making zero workspace tool calls. The prompt must name the
+    anti-pattern so the model recognizes it.
+    """
+    instructions = load_prompt("instructions")
+    assert "I'll remember that" in instructions
+
+
+def test_instructions_distinguish_durable_from_oneoff_facts() -> None:
+    """Instructions must give a rubric separating reusable facts from one-off details (#1134).
+
+    Without a rubric the agent either saved nothing (the original bug)
+    or risked the opposite failure of stuffing single-job ephemera into
+    MEMORY.md. The prompt must list both categories with examples so
+    the model can classify what it just learned.
+    """
+    instructions = load_prompt("instructions")
+    assert "durable" in instructions.lower()
+    assert "one-off" in instructions.lower()
+    # Concrete examples on both sides of the rubric.
+    assert "customer ID" in instructions or "customer IDs" in instructions
+    assert "paint" in instructions.lower()
