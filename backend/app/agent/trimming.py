@@ -20,9 +20,20 @@ from backend.app.config import settings
 _SUMMARY_MAX_CHARS = 500
 
 CONTEXT_TRIM_TARGET_TOKENS = settings.context_trim_target_tokens
+CONTEXT_TRIM_TARGET_TURNS = settings.context_trim_target_turns
 
 _OVERHEAD_TOKEN_ESTIMATE = 10_000
 _CHARS_PER_TOKEN = 4
+
+
+def _count_user_turns(msgs: list[AgentMessage]) -> int:
+    """Count user-authored turns in *msgs*.
+
+    Used as the unit for the turn-count cap. The system prompt and
+    summary placeholders are not user turns; only the original
+    ``UserMessage`` objects from the conversation count.
+    """
+    return sum(1 for m in msgs if isinstance(m, UserMessage))
 
 
 @dataclass
@@ -94,9 +105,10 @@ def _content_length(msgs: list[AgentMessage]) -> int:
 def trim_messages(
     messages: list[AgentMessage],
     target_tokens: int = CONTEXT_TRIM_TARGET_TOKENS,
+    target_turns: int | None = CONTEXT_TRIM_TARGET_TURNS,
     input_tokens: int | None = None,
 ) -> TrimResult:
-    """Trim conversation messages to fit within a token budget.
+    """Trim conversation messages to fit within a token and turn budget.
 
     Uses *input_tokens* (from ``response.usage.input_tokens``) to make
     accurate trimming decisions using the API-reported token count. When
@@ -105,7 +117,14 @@ def trim_messages(
     estimate whether trimming is needed.
 
     Keeps the system prompt (first message) and removes the oldest
-    conversation messages until the content fits within *target_tokens*.
+    conversation messages until the content fits within *target_tokens*
+    and the number of remaining user turns is within *target_turns*
+    (counting the current message). The turn cap fires independently
+    of the token budget so a chatty conversation that stays under the
+    token limit still rolls older turns through compaction, diluting
+    the influence of accumulated conversational patterns. Pass
+    ``target_turns=None`` to disable the turn-count guard.
+
     Tool-call / tool-result pairs are treated as atomic units: an
     ``AssistantMessage`` with ``tool_calls`` is never removed without also
     removing the ``ToolResultMessage`` entries that follow it (and
@@ -134,7 +153,9 @@ def trim_messages(
         orig_len = _content_length(messages) or 1
         return int(actual_input_tokens * _content_length(msgs) / orig_len)
 
-    if _tokens_for(messages) <= target_tokens:
+    over_token_budget = _tokens_for(messages) > target_tokens
+    over_turn_budget = target_turns is not None and _count_user_turns(messages) > target_turns
+    if not over_token_budget and not over_turn_budget:
         return TrimResult(messages=messages)
 
     system = messages[0]
@@ -160,14 +181,19 @@ def trim_messages(
             blocks.append([msg])
             i += 1
 
-    # Remove blocks from the front (oldest) until we fit the budget,
-    # but always keep at least the last block.
+    def _fits(remaining: list[AgentMessage]) -> bool:
+        if _tokens_for(remaining) > target_tokens:
+            return False
+        return not (target_turns is not None and _count_user_turns(remaining) > target_turns)
+
+    # Remove blocks from the front (oldest) until both budgets are
+    # satisfied, but always keep at least the last block.
     dropped: list[AgentMessage] = []
     while len(blocks) > 1:
         remaining: list[AgentMessage] = [system]
         for blk in blocks:
             remaining.extend(blk)
-        if _tokens_for(remaining) <= target_tokens:
+        if _fits(remaining):
             break
         removed_block = blocks.pop(0)
         dropped.extend(removed_block)

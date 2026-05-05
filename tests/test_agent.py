@@ -1141,6 +1141,156 @@ def test_trim_messages_no_summary_when_not_trimmed() -> None:
             assert "[Summary of earlier conversation:" not in msg.content
 
 
+# ---------------------------------------------------------------------------
+# Turn-count cap tests: long single-conversation pattern reinforcement guard
+# (issue #1135). The token budget alone cannot stop a chatty conversation
+# from drifting into pattern lock-in if it stays under the token limit.
+# ---------------------------------------------------------------------------
+
+
+def _build_turn_history(turn_pairs: int) -> list[AgentMessage]:
+    """Build a conversation with *turn_pairs* alternating user / assistant turns."""
+    history: list[AgentMessage] = []
+    for i in range(turn_pairs):
+        history.append(UserMessage(content=f"User turn {i}"))
+        history.append(AssistantMessage(content=f"Assistant reply {i}"))
+    return history
+
+
+def test_trim_messages_caps_turn_count() -> None:
+    """When user-turn count exceeds target_turns, oldest blocks should be dropped."""
+    # 200 turn pairs (chatty) but tiny content. Under any token budget but
+    # well past the turn cap. Without the turn cap this would not trim.
+    history = _build_turn_history(turn_pairs=200)
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *history,
+        UserMessage(content="Current message"),
+    ]
+    result = trim_messages(messages, target_tokens=10_000_000, target_turns=20, input_tokens=500)
+
+    # Token budget alone would not have trimmed; the turn cap did.
+    assert len(result.dropped) > 0
+    # Remaining user-turn count (history + current) is at or below the cap.
+    user_turns_remaining = sum(1 for m in result.messages if isinstance(m, UserMessage))
+    # At most target_turns + 1 (the injected summary placeholder).
+    assert user_turns_remaining <= 20 + 1
+    # Most recent turn survives.
+    assert result.messages[-1].content == "Current message"
+    # System prompt survives.
+    assert isinstance(result.messages[0], SystemMessage)
+
+
+def test_trim_messages_turn_cap_does_not_fire_below_threshold() -> None:
+    """Conversations under the turn cap should pass through unchanged."""
+    history = _build_turn_history(turn_pairs=10)
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *history,
+        UserMessage(content="Current message"),
+    ]
+    result = trim_messages(messages, target_tokens=10_000_000, target_turns=80, input_tokens=500)
+    assert result.dropped == []
+    assert result.messages == messages
+
+
+def test_trim_messages_turn_cap_disabled_when_none() -> None:
+    """target_turns=None should disable the turn-count guard entirely."""
+    history = _build_turn_history(turn_pairs=200)
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *history,
+        UserMessage(content="Current message"),
+    ]
+    result = trim_messages(messages, target_tokens=10_000_000, target_turns=None, input_tokens=500)
+    assert result.dropped == []
+    assert result.messages == messages
+
+
+def test_trim_messages_turn_cap_preserves_tool_call_pairs() -> None:
+    """Block-aware removal must not orphan tool results when the turn cap fires."""
+    # Build a long history where the oldest "turn" includes a tool call/result
+    # block so we can confirm the block is removed atomically.
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        UserMessage(content="Old user with tool"),
+        AssistantMessage(
+            content=None,
+            tool_calls=[ToolCallRequest(id="call_old", name="save_fact", arguments={})],
+        ),
+        ToolResultMessage(tool_call_id="call_old", content="Saved"),
+        AssistantMessage(content="Done!"),
+    ]
+    # Pad with many short turn pairs to push the conversation past the cap.
+    messages.extend(_build_turn_history(turn_pairs=50))
+    messages.append(UserMessage(content="Current message"))
+
+    result = trim_messages(messages, target_tokens=10_000_000, target_turns=10, input_tokens=500)
+
+    # Oldest "Old user with tool" turn should have been dropped along with
+    # its full tool block, and tool messages must stay paired.
+    assert all(m.content != "Old user with tool" for m in result.messages if hasattr(m, "content"))
+    has_tool_msg = any(isinstance(m, ToolResultMessage) for m in result.messages)
+    has_tc_msg = any(isinstance(m, AssistantMessage) and m.tool_calls for m in result.messages)
+    assert has_tool_msg == has_tc_msg
+
+
+def test_trim_messages_combined_token_and_turn_budgets() -> None:
+    """Whichever budget binds first should drive trimming; both stay respected."""
+    # Long, fat content: both budgets are violated.
+    big = "x" * 4000
+    fat_history: list[AgentMessage] = []
+    for i in range(150):
+        fat_history.append(UserMessage(content=f"Turn {i}: {big}"))
+        fat_history.append(AssistantMessage(content=f"Reply {i}: {big}"))
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *fat_history,
+        UserMessage(content="Current message"),
+    ]
+    result = trim_messages(messages, target_tokens=5000, target_turns=20, input_tokens=500_000)
+    # Both caps satisfied after trimming.
+    user_turns_remaining = sum(1 for m in result.messages if isinstance(m, UserMessage))
+    assert user_turns_remaining <= 20 + 1  # +1 for the injected summary
+    assert len(result.messages) < len(messages)
+    assert len(result.dropped) > 0
+
+
+@pytest.mark.asyncio()
+@patch("backend.app.agent.core.amessages")
+async def test_agent_trims_chatty_conversation_below_token_limit(
+    mock_amessages: AsyncMock,
+    test_user: User,
+) -> None:
+    """A 200-turn chatty conversation under the token budget should still be trimmed.
+
+    Regression test for issue #1135: pattern lock-in from accumulated
+    conversational tone, even when total tokens stay well under the limit.
+    """
+    mock_amessages.return_value = make_text_response("Ok!")
+
+    # 200 short turn pairs: trivial token footprint, well under the 400K cap.
+    long_history = _build_turn_history(turn_pairs=200)
+
+    agent = ClawboltAgent(user=test_user)
+    # Simulate the API reporting a low token count so the token budget is
+    # not violated; only the turn cap should fire.
+    agent._last_input_tokens = 5_000
+
+    await agent.process_message(
+        "Current message",
+        conversation_history=long_history,
+        system_prompt_override="Short system prompt",
+    )
+
+    call_args = mock_amessages.call_args
+    sent_messages = call_args.kwargs["messages"]
+    # First non-system message should be the trim summary.
+    assert "[Summary of earlier conversation:" in sent_messages[0]["content"]
+    # Far fewer than the original 400 messages should reach the LLM.
+    assert len(sent_messages) < 400
+
+
 @pytest.mark.asyncio()
 @patch("backend.app.agent.core.amessages")
 async def test_process_message_injects_summary_when_trimming(

@@ -62,6 +62,8 @@ async def test_onboarding_extracts_profile_from_intro() -> None:
         mock_settings.llm_model = _ANTHROPIC_MODEL
         mock_settings.llm_api_base = None
         mock_settings.llm_max_tokens_agent = 500
+        mock_settings.context_trim_target_tokens = 400_000
+        mock_settings.context_trim_target_turns = 80
 
         agent = ClawboltAgent(user=user)
         tools = create_workspace_tools(user.id)
