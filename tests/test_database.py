@@ -93,6 +93,7 @@ def test_engine_uses_pool_recycle_and_tcp_keepalives() -> None:
             "keepalives_idle": 30,
             "keepalives_interval": 10,
             "keepalives_count": 5,
+            "options": "-c statement_timeout=30000",
         }
     finally:
         _db_module._engine = saved_engine

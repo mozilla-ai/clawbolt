@@ -35,6 +35,59 @@ def _refresh_lock_key(user_id: str, integration: str) -> str:
     return f"oauth_refresh:{user_id}:{integration}"
 
 
+# Bound on how long we'll wait for an OAuth refresh advisory lock.
+# Session-scoped advisory locks survive only as long as the holder's PG
+# session does, but a connection that drops without proper teardown can
+# leave a lock held until Postgres notices the peer is gone, which on a
+# proxied/NAT'd setup can take an hour or more. ``pg_advisory_lock`` would
+# block the calling thread (and a sync DB call inside an async route would
+# block the entire event loop) for that whole window. Polling
+# ``pg_try_advisory_lock`` with a bounded wait fails fast instead: a
+# legitimate peer normally releases within milliseconds, and a stale lock
+# means we skip this refresh attempt and let the next one (sweep tick or
+# next get_valid_token call) try again.
+_LOCK_RETRY_INTERVAL_S = 0.1
+_LOCK_MAX_WAIT_S = 5.0
+
+
+async def _try_acquire_advisory_lock_async(db: Any, lock_key: str) -> bool:
+    """Async-safe bounded acquire of a session-scoped advisory lock.
+
+    Returns True on acquire, False if the wait expires. Uses
+    ``await asyncio.sleep`` between polls so the event loop stays
+    responsive during contention.
+    """
+    deadline = time.monotonic() + _LOCK_MAX_WAIT_S
+    while True:
+        acquired = db.execute(
+            text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+            {"k": lock_key},
+        ).scalar()
+        # Always commit so we don't sit idle-in-transaction between polls.
+        db.commit()
+        if acquired:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        await asyncio.sleep(_LOCK_RETRY_INTERVAL_S)
+
+
+def _try_acquire_advisory_lock_sync(db: Any, lock_key: str) -> bool:
+    """Sync variant for use from sync callbacks (e.g. on_refresh)."""
+    deadline = time.monotonic() + _LOCK_MAX_WAIT_S
+    while True:
+        acquired = db.execute(
+            text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+            {"k": lock_key},
+        ).scalar()
+        db.commit()
+        if acquired:
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(_LOCK_RETRY_INTERVAL_S)
+
+
 # Per-process TTL on cached tokens. A single agent turn loads OAuth
 # credentials repeatedly (auth_check during registry build, factory
 # create() during tool instantiation, then again per actual tool call).
@@ -565,13 +618,15 @@ class OAuthService:
             db = SessionLocal()
             lock_key = _refresh_lock_key(user_id, integration)
             try:
-                db.execute(
-                    text("SELECT pg_advisory_lock(hashtext(:k))"),
-                    {"k": lock_key},
-                )
-                # Close the implicit read transaction; the advisory lock is
-                # session-scoped and survives the commit.
-                db.commit()
+                if not _try_acquire_advisory_lock_sync(db, lock_key):
+                    logger.warning(
+                        "on_refresh callback could not acquire OAuth lock within %.1fs, "
+                        "skipping persist: user=%s integration=%s",
+                        _LOCK_MAX_WAIT_S,
+                        user_id,
+                        integration,
+                    )
+                    return
                 try:
                     # Bypass the cache: this load is the peer-write detection
                     # point for the on_refresh callback path. Same race as
@@ -673,14 +728,15 @@ class OAuthService:
         db = SessionLocal()
         lock_key = _refresh_lock_key(user_id, integration)
         try:
-            db.execute(
-                text("SELECT pg_advisory_lock(hashtext(:k))"),
-                {"k": lock_key},
-            )
-            # Close the implicit read transaction so we aren't idle-in-
-            # transaction across the httpx POST. The advisory lock is
-            # session-scoped and survives the commit.
-            db.commit()
+            if not await _try_acquire_advisory_lock_async(db, lock_key):
+                logger.warning(
+                    "OAuth refresh lock contended for >%.1fs, skipping refresh: "
+                    "user=%s integration=%s",
+                    _LOCK_MAX_WAIT_S,
+                    user_id,
+                    integration,
+                )
+                return None
             try:
                 # Bypass the cache: the post-lock reload exists to detect
                 # a peer worker's just-persisted refresh, which an in-memory
