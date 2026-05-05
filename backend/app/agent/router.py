@@ -45,7 +45,7 @@ from backend.app.agent.tools.registry import (
     ensure_tool_modules_imported,
 )
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal
 from backend.app.enums import MessageDirection
 from backend.app.media.download import DownloadedMedia
 from backend.app.media.pipeline import process_message_media
@@ -722,16 +722,16 @@ async def handle_inbound_message(
         user.id,
         len(media_urls),
     )
-    db = SessionLocal()
+    db = AsyncSessionLocal()
     try:
-        route = db.execute(
-            select(ChannelRoute).filter_by(user_id=user.id, channel=channel)
+        route = (
+            await db.execute(select(ChannelRoute).filter_by(user_id=user.id, channel=channel))
         ).scalar_one_or_none()
         to_address = (
             (route.channel_identifier if route else None) or user.channel_identifier or user.phone
         )
     finally:
-        db.close()
+        await db.close()
     if not to_address:
         logger.error(
             "User %s has no channel_identifier or phone -- cannot send replies",

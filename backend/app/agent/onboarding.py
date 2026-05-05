@@ -13,7 +13,7 @@ from backend.app.agent.events import AgentEndEvent, AgentEvent
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal, db_session_async
 from backend.app.models import User
 
 if TYPE_CHECKING:
@@ -295,16 +295,13 @@ def build_onboarding_system_prompt(
     return builder.build()
 
 
-def _mark_onboarding_complete(user: User) -> None:
+async def _mark_onboarding_complete(user: User) -> None:
     """Persist onboarding_complete=True for the user."""
-    db = SessionLocal()
-    try:
-        db_user = db.execute(select(User).filter_by(id=user.id)).scalar_one_or_none()
+    async with db_session_async() as db:
+        db_user = (await db.execute(select(User).filter_by(id=user.id))).scalar_one_or_none()
         if db_user:
             db_user.onboarding_complete = True
-            db.commit()
-    finally:
-        db.close()
+            await db.commit()
     user.onboarding_complete = True
 
 
@@ -370,20 +367,22 @@ class OnboardingSubscriber:
         # file even though the prompt no longer asks the LLM to.
         if self._was_onboarding and not _bootstrap_path(self._user).exists():
             logger.info("Onboarding complete for user %s: BOOTSTRAP.md missing", self._user.id)
-            _mark_onboarding_complete(self._user)
+            await _mark_onboarding_complete(self._user)
             return
 
         # Refresh user_text/soul_text from DB before evaluating the gates,
         # since workspace tools may have updated those columns in this turn.
         if self._was_onboarding:
-            db = SessionLocal()
+            db = AsyncSessionLocal()
             try:
-                fresh = db.execute(select(User).filter_by(id=self._user.id)).scalar_one_or_none()
+                fresh = (
+                    await db.execute(select(User).filter_by(id=self._user.id))
+                ).scalar_one_or_none()
                 if fresh:
                     self._user.user_text = fresh.user_text
                     self._user.soul_text = fresh.soul_text
             finally:
-                db.close()
+                await db.close()
 
         # Path 2 (auto-exit, primary completion path in the post-2026-04
         # bootstrap design): name + timezone captured AND the user has
@@ -405,7 +404,7 @@ class OnboardingSubscriber:
             bootstrap = _bootstrap_path(self._user)
             if bootstrap.exists():
                 bootstrap.unlink()
-            _mark_onboarding_complete(self._user)
+            await _mark_onboarding_complete(self._user)
             return
 
         # Path 3: Strict heuristic backstop. Fires for users who somehow
@@ -428,7 +427,7 @@ class OnboardingSubscriber:
             bootstrap = _bootstrap_path(self._user)
             if bootstrap.exists():
                 bootstrap.unlink()
-            _mark_onboarding_complete(self._user)
+            await _mark_onboarding_complete(self._user)
             return
 
         # Path 3: Hard ceiling. After enough user messages, force-complete
@@ -451,7 +450,7 @@ class OnboardingSubscriber:
             bootstrap = _bootstrap_path(self._user)
             if bootstrap.exists():
                 bootstrap.unlink()
-            _mark_onboarding_complete(self._user)
+            await _mark_onboarding_complete(self._user)
             return
 
         # Path 4: pre-populated users. Not onboarding this turn but profile
@@ -467,7 +466,7 @@ class OnboardingSubscriber:
                 _has_user_timezone(self._user),
                 _has_custom_soul(self._user),
             )
-            _mark_onboarding_complete(self._user)
+            await _mark_onboarding_complete(self._user)
 
     def finalize(self, response: AgentResponse) -> None:
         """No-op. Kept for API compatibility with the pipeline."""
