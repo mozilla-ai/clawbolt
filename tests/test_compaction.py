@@ -24,6 +24,7 @@ from backend.app.agent.memory_db import get_memory_store
 from backend.app.agent.messages import AgentMessage, AssistantMessage, UserMessage
 from backend.app.agent.session_db import get_session_store
 from backend.app.agent.stores import HeartbeatStore
+from backend.app.config import settings
 from backend.app.enums import MessageDirection
 from backend.app.models import ChatSession, CompactionEvent, User
 from tests.mocks.llm import extract_system_text, make_text_response
@@ -745,6 +746,7 @@ async def test_compact_session_uses_configured_model(test_user: UserData) -> Non
         mock_settings.compaction_model = "test-compact-model"
         mock_settings.compaction_provider = "test-provider"
         mock_settings.compaction_max_tokens = 300
+        mock_settings.compaction_event_snapshot_max_bytes_per_file = 100_000
         mock_settings.llm_model = "test-model"
         mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
@@ -770,6 +772,7 @@ async def test_compact_session_falls_back_to_llm_model(test_user: UserData) -> N
         mock_settings.compaction_model = ""
         mock_settings.compaction_provider = ""
         mock_settings.compaction_max_tokens = 500
+        mock_settings.compaction_event_snapshot_max_bytes_per_file = 100_000
         mock_settings.llm_model = "test-model"
         mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
@@ -799,6 +802,7 @@ async def test_compact_session_logs_llm_usage(test_user: UserData) -> None:
         mock_settings.compaction_model = "test-compact-model"
         mock_settings.compaction_provider = "test-provider"
         mock_settings.compaction_max_tokens = 300
+        mock_settings.compaction_event_snapshot_max_bytes_per_file = 100_000
         mock_settings.llm_model = "test-model"
         mock_settings.llm_provider = "test-provider"
         mock_settings.llm_api_base = None
@@ -1457,5 +1461,114 @@ async def test_compact_session_with_event_id_updates_existing_row(
         # Total compaction events: still exactly one (UPDATE, not INSERT).
         all_events = db.query(CompactionEvent).filter_by(user_id=test_user.id).count()
         assert all_events == 1
+    finally:
+        db.close()
+
+
+# ---------------------------------------------------------------------------
+# Migration 031 capture (prompt / raw response / parsed fields)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_captures_llm_prompt_raw_and_parsed(
+    test_user: User,
+) -> None:
+    """compact_session must populate prompt_text, raw_response_text, and
+    parsed_response_json on the persisted row so admins can answer 'why
+    did the LLM only update some files?' from the UI rather than from
+    raw-SQL spelunking. The parsed JSON must round-trip the four
+    CompactionResult fields including empty strings for files the LLM
+    chose not to update.
+    """
+    raw_llm_text = json.dumps(
+        {
+            "memory_update": "# New MEMORY\n- learned",
+            "summary": "[TIMESTAMP] s",
+            # Mirrors the prod observation that motivated #414: the LLM
+            # routinely returns empty user_profile_update / soul_update.
+            "user_profile_update": "",
+            "soul_update": "",
+        }
+    )
+    mock_response = make_text_response(raw_llm_text)
+    dropped: list[AgentMessage] = [
+        UserMessage(content="tell me about the new project", seq=1),
+        AssistantMessage(content="sure, here is the plan", seq=2),
+    ]
+
+    with patch("backend.app.agent.compaction.amessages", return_value=mock_response):
+        await compact_session(test_user.id, dropped, max_message_seq=2)
+
+    db = _db_module.SessionLocal()
+    try:
+        ev = (
+            db.query(CompactionEvent)
+            .filter_by(user_id=test_user.id)
+            .order_by(CompactionEvent.id.desc())
+            .first()
+        )
+        assert ev is not None
+        # Prompt is the trimmed conversation block exactly. The static
+        # system prompt and the four current-memory inputs are NOT in
+        # this column (system is invariant across events; current
+        # memory is already in the *_text_before snapshots).
+        assert ev.prompt_text is not None
+        assert "tell me about the new project" in ev.prompt_text
+        assert "sure, here is the plan" in ev.prompt_text
+        # Raw response is the unparsed model output.
+        assert ev.raw_response_text == raw_llm_text
+        # Parsed JSON round-trips all four fields, including empties so
+        # the UI can render "(empty, file unchanged)" instead of hiding
+        # them.
+        assert ev.parsed_response_json is not None
+        parsed = json.loads(ev.parsed_response_json)
+        assert parsed["memory_update"] == "# New MEMORY\n- learned"
+        assert parsed["summary"] == "[TIMESTAMP] s"
+        assert parsed["user_profile_update"] == ""
+        assert parsed["soul_update"] == ""
+    finally:
+        db.close()
+
+
+@pytest.mark.asyncio()
+async def test_compact_session_truncates_oversized_prompt(
+    test_user: User,
+) -> None:
+    """A conversation that exceeds the per-file truncation cap must
+    write a structured truncation record into prompt_text rather than
+    blowing up the row. The cap is shared with the snapshot columns
+    from migration 030.
+    """
+    huge_user_message = "x" * 60_000
+    raw_llm_text = json.dumps({"memory_update": "ok", "summary": "[TIMESTAMP]"})
+    mock_response = make_text_response(raw_llm_text)
+    dropped: list[AgentMessage] = [
+        UserMessage(content=huge_user_message, seq=1),
+    ]
+
+    with (
+        patch("backend.app.agent.compaction.amessages", return_value=mock_response),
+        patch.object(
+            settings,
+            "compaction_event_snapshot_max_bytes_per_file",
+            10_000,
+        ),
+    ):
+        await compact_session(test_user.id, dropped, max_message_seq=1)
+
+    db = _db_module.SessionLocal()
+    try:
+        ev = (
+            db.query(CompactionEvent)
+            .filter_by(user_id=test_user.id)
+            .order_by(CompactionEvent.id.desc())
+            .first()
+        )
+        assert ev is not None
+        assert ev.prompt_text is not None
+        record = json.loads(ev.prompt_text)
+        assert record["truncated"] is True
+        assert record["size_bytes"] >= 60_000
     finally:
         db.close()
