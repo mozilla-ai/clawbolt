@@ -15,16 +15,21 @@ re-dispatches each via ``_dispatch_to_pipeline``. These tests exercise:
 from __future__ import annotations
 
 import datetime
+import threading
 import uuid
 from unittest.mock import AsyncMock, patch
 
 import pytest
+from sqlalchemy import Engine, text
 from sqlalchemy.orm import Session
 
 from backend.app.agent.inbound_recovery import (
+    _RECOVERY_LOCK_KEY,
     _build_dispatch_inputs,
     _find_orphaned_inbounds,
     _parse_media_refs,
+    _release_lock,
+    _try_acquire_lock,
     recover_orphan_inbound_messages,
 )
 from backend.app.config import settings
@@ -442,3 +447,348 @@ async def test_recovery_skips_when_another_worker_holds_the_lock() -> None:
 
     assert recovered == 0
     mock_dispatch.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Concurrency regression: pg_try_advisory_lock + pg_advisory_unlock pair
+# ---------------------------------------------------------------------------
+
+
+class TestInboundRecoveryLockSerialization:
+    """Regression tests for the ``pg_try_advisory_lock`` /
+    ``pg_advisory_unlock`` pair in ``inbound_recovery``.
+
+    Mirrors ``TestApprovalLockSerialization`` in ``test_approval.py`` but
+    targets the recovery-sweep lock instead of the approval-gate lock.
+    The recovery lock differs in two important ways:
+
+    * It is **session-scoped**, not transaction-scoped. ``pg_try_advisory_lock``
+      keeps the lock until ``pg_advisory_unlock`` is called or the
+      connection is closed; commits and rollbacks do not release it.
+    * It is **non-blocking**. ``pg_try_advisory_lock`` returns ``True`` on
+      acquisition and ``False`` if another session already holds the key,
+      so contenders must short-circuit rather than wait. This is what
+      lets a rolling restart skip duplicate sweeps cheaply: only the first
+      worker to come up runs the recovery, the others see ``False`` and
+      bail.
+
+    Concurrency primitive: ``threading.Thread`` with ``threading.Event``
+    and ``threading.Barrier`` coordination. The recovery code path is
+    currently sync. When it converts to async (issue #1158), this matrix
+    can be ported to ``asyncio.gather`` against ``AsyncSession`` with the
+    same assertions.
+
+    Database setup: each thread opens its own connection from the
+    session-scoped ``_pg_engine``. ``pg_try_advisory_lock`` is a real
+    Postgres feature scoped to the holding **session** (connection);
+    sharing a single connection across threads would mean every
+    ``pg_try_advisory_lock`` call returns ``True`` (recursive acquisition
+    on the same session), so the threads need independent connections to
+    actually exercise contention. The threads only call lock helpers (no
+    INSERT / UPDATE), so nothing leaks past the test.
+
+    No timestamp-based assertions here: ordering is established by
+    ``threading.Event`` set / wait, never by comparing ``time.monotonic()``
+    values across threads (see PR #1202 for the racy variant we are
+    avoiding).
+    """
+
+    # Number of concurrent recovery contenders to spawn. Large enough that
+    # if the lock primitive failed open, a duplicate would be statistically
+    # very likely; small enough not to stress CI thread limits.
+    _N_CONTENDERS = 5
+
+    # Upper bound for any blocking wait. Tuned generously so a slow CI
+    # runner does not flake.
+    _TIMEOUT_S = 5.0
+
+    def _try_lock_in_thread(
+        self,
+        engine: Engine,
+        ready: threading.Event,
+        release: threading.Event,
+        result: dict[str, bool],
+    ) -> None:
+        """Acquire the recovery lock on a fresh connection, hold it until
+        signaled, then release it on the **same** connection.
+
+        Same-connection coupling matters: ``pg_advisory_unlock`` only
+        releases a lock owned by the calling session. Releasing on a
+        different connection is a silent no-op in Postgres.
+        """
+        connection = engine.connect()
+        try:
+            acquired = bool(
+                connection.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                    {"k": _RECOVERY_LOCK_KEY},
+                ).scalar()
+            )
+            connection.commit()
+            result["acquired"] = acquired
+            ready.set()
+            if not acquired:
+                return
+            release.wait(timeout=self._TIMEOUT_S)
+            connection.execute(
+                text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                {"k": _RECOVERY_LOCK_KEY},
+            )
+            connection.commit()
+        finally:
+            connection.close()
+
+    def _race_contender(
+        self,
+        engine: Engine,
+        barrier: threading.Barrier,
+        results: list[bool],
+        results_lock: threading.Lock,
+    ) -> None:
+        """One of N contenders racing for the lock.
+
+        Opens a fresh connection, waits at the barrier, then calls the
+        production ``_try_acquire_lock`` helper. If acquired, releases via
+        ``_release_lock`` on the same connection. Records the outcome.
+        """
+
+        class _ConnSession:
+            """Minimal Session-shaped shim so ``_try_acquire_lock`` /
+            ``_release_lock`` (which call ``.execute(...)`` and
+            ``.commit()``) can run against a raw connection.
+
+            The production helpers take a ``Session``, but in the test we
+            need to control the underlying connection precisely (one per
+            thread). The shim forwards the two methods the helpers use
+            and nothing else.
+            """
+
+            def __init__(self, conn: object) -> None:
+                self._conn = conn
+
+            def execute(self, *args: object, **kwargs: object) -> object:
+                return self._conn.execute(*args, **kwargs)  # type: ignore[attr-defined]
+
+            def commit(self) -> None:
+                self._conn.commit()  # type: ignore[attr-defined]
+
+        connection = engine.connect()
+        try:
+            shim = _ConnSession(connection)
+            barrier.wait(timeout=self._TIMEOUT_S)
+            acquired = _try_acquire_lock(shim)  # type: ignore[arg-type]
+            with results_lock:
+                results.append(acquired)
+            if acquired:
+                _release_lock(shim)  # type: ignore[arg-type]
+        finally:
+            connection.close()
+
+    def test_only_one_of_n_concurrent_attempts_acquires_lock(self, _pg_engine: Engine) -> None:
+        """N threads racing for the recovery lock: exactly one acquires,
+        the rest see it taken and exit. This is the core "no duplicate
+        processing" invariant: under a rolling restart, if N workers boot
+        simultaneously, only one runs the sweep.
+
+        The first acquirer holds the lock until **all** contenders have
+        finished their ``pg_try_advisory_lock`` call. That holding is what
+        forces the others to observe ``False``. Without it, a lucky
+        scheduler could let each thread acquire-release-acquire and all
+        return ``True``, which would not exercise the contention path.
+        """
+        barrier = threading.Barrier(self._N_CONTENDERS + 1)
+        results: list[bool] = []
+        results_lock = threading.Lock()
+
+        # Pre-acquire the lock on a holder connection so every contender
+        # sees it taken. This is the deterministic shape: we do not rely
+        # on whichever contender thread happens to win the race.
+        holder_conn = _pg_engine.connect()
+        try:
+            held = bool(
+                holder_conn.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                    {"k": _RECOVERY_LOCK_KEY},
+                ).scalar()
+            )
+            holder_conn.commit()
+            assert held, "holder thread failed to pre-acquire the lock"
+
+            threads = [
+                threading.Thread(
+                    target=self._race_contender,
+                    args=(_pg_engine, barrier, results, results_lock),
+                )
+                for _ in range(self._N_CONTENDERS)
+            ]
+            for t in threads:
+                t.start()
+
+            # Release the barrier so all contenders call
+            # ``pg_try_advisory_lock`` as close to simultaneously as the
+            # OS scheduler allows.
+            barrier.wait(timeout=self._TIMEOUT_S)
+
+            for t in threads:
+                t.join(timeout=self._TIMEOUT_S)
+                assert not t.is_alive(), "contender thread did not finish"
+        finally:
+            holder_conn.execute(
+                text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                {"k": _RECOVERY_LOCK_KEY},
+            )
+            holder_conn.commit()
+            holder_conn.close()
+
+        # All N contenders observed the lock as taken. Zero acquired.
+        assert len(results) == self._N_CONTENDERS
+        assert results.count(True) == 0, (
+            f"expected zero contenders to acquire while holder held the lock, "
+            f"got {results.count(True)} of {self._N_CONTENDERS}; "
+            f"pg_try_advisory_lock did not exclude concurrent sessions"
+        )
+
+    def test_contender_succeeds_after_holder_releases(self, _pg_engine: Engine) -> None:
+        """Sequencing check: while a holder thread owns the lock, a
+        contender's ``pg_try_advisory_lock`` returns ``False``. After the
+        holder releases, a fresh attempt on a new connection returns
+        ``True``. This is the unblocking half of the no-duplicate
+        invariant: the lock must actually free up between sweeps,
+        otherwise a worker that crashed mid-sweep would poison every
+        future restart on the same DB.
+        """
+        ready = threading.Event()
+        release = threading.Event()
+        holder_result: dict[str, bool] = {}
+
+        holder = threading.Thread(
+            target=self._try_lock_in_thread,
+            args=(_pg_engine, ready, release, holder_result),
+        )
+        holder.start()
+        try:
+            assert ready.wait(timeout=self._TIMEOUT_S), "holder thread failed to acquire the lock"
+            assert holder_result.get("acquired") is True
+
+            # While the holder still owns the lock, a contender must not
+            # acquire it.
+            contender_conn = _pg_engine.connect()
+            try:
+                got = bool(
+                    contender_conn.execute(
+                        text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                        {"k": _RECOVERY_LOCK_KEY},
+                    ).scalar()
+                )
+                contender_conn.commit()
+                assert got is False, (
+                    "contender acquired the lock while holder owned it; "
+                    "pg_try_advisory_lock failed to exclude concurrent sessions"
+                )
+            finally:
+                contender_conn.close()
+        finally:
+            release.set()
+            holder.join(timeout=self._TIMEOUT_S)
+            assert not holder.is_alive(), "holder thread did not release and exit"
+
+        # Holder has released. A fresh attempt on a new connection now
+        # acquires successfully.
+        post_conn = _pg_engine.connect()
+        try:
+            got_after = bool(
+                post_conn.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                    {"k": _RECOVERY_LOCK_KEY},
+                ).scalar()
+            )
+            post_conn.commit()
+            assert got_after is True, "lock was not released after holder thread exited"
+            post_conn.execute(
+                text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                {"k": _RECOVERY_LOCK_KEY},
+            )
+            post_conn.commit()
+        finally:
+            post_conn.close()
+
+    def test_unlock_on_different_connection_is_a_no_op(self, _pg_engine: Engine) -> None:
+        """Lock-release coupling check: ``pg_advisory_unlock`` only
+        releases a lock owned by the **same** session. Calling it on a
+        different connection silently returns ``False`` and the lock
+        stays held.
+
+        This is the invariant the issue body calls out: under the async
+        conversion, the lock acquisition and release must remain coupled
+        to the same connection. If a future refactor accidentally routes
+        ``_release_lock`` through a different ``SessionLocal()`` than
+        ``_try_acquire_lock``, the unlock becomes a silent no-op and the
+        lock leaks for the lifetime of the original connection. This test
+        encodes that coupling so a regression surfaces immediately.
+        """
+        holder_conn = _pg_engine.connect()
+        wrong_conn = _pg_engine.connect()
+        observer_conn = _pg_engine.connect()
+        try:
+            # Holder acquires.
+            held = bool(
+                holder_conn.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                    {"k": _RECOVERY_LOCK_KEY},
+                ).scalar()
+            )
+            holder_conn.commit()
+            assert held is True
+
+            # Try to release on a different connection. Postgres returns
+            # ``False`` here (lock not owned by this session). The release
+            # is silently ineffective.
+            unlocked = bool(
+                wrong_conn.execute(
+                    text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                    {"k": _RECOVERY_LOCK_KEY},
+                ).scalar()
+            )
+            wrong_conn.commit()
+            assert unlocked is False, (
+                "pg_advisory_unlock returned True on a non-owning connection; "
+                "Postgres semantics changed and this test needs updating"
+            )
+
+            # The lock is still held: a third connection cannot acquire.
+            still_held = bool(
+                observer_conn.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                    {"k": _RECOVERY_LOCK_KEY},
+                ).scalar()
+            )
+            observer_conn.commit()
+            assert still_held is False, (
+                "lock was released by an unlock on a different connection; "
+                "the recovery code's same-connection coupling is broken"
+            )
+
+            # Releasing on the holder connection actually frees it.
+            holder_conn.execute(
+                text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                {"k": _RECOVERY_LOCK_KEY},
+            )
+            holder_conn.commit()
+
+            now_free = bool(
+                observer_conn.execute(
+                    text("SELECT pg_try_advisory_lock(hashtext(:k))"),
+                    {"k": _RECOVERY_LOCK_KEY},
+                ).scalar()
+            )
+            observer_conn.commit()
+            assert now_free is True, "lock did not free after release on the owning connection"
+            observer_conn.execute(
+                text("SELECT pg_advisory_unlock(hashtext(:k))"),
+                {"k": _RECOVERY_LOCK_KEY},
+            )
+            observer_conn.commit()
+        finally:
+            holder_conn.close()
+            wrong_conn.close()
+            observer_conn.close()
