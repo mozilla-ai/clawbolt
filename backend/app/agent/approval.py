@@ -33,7 +33,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.bus import OutboundMessage
 from backend.app.config import settings
-from backend.app.database import SessionLocal, db_session
+from backend.app.database import SessionLocal, db_session, db_session_async
 from backend.app.models import ApprovalEvent, PendingApprovalRow, UserPermissionSet
 
 logger = logging.getLogger(__name__)
@@ -42,6 +42,15 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 # ApprovalStore helpers
 # ---------------------------------------------------------------------------
+
+
+def _user_permissions_lock_key(user_id: str) -> str:
+    """Stable string key for the per-user permissions advisory lock.
+
+    Shared between sync and async callers so the two paths contend on
+    the same key.
+    """
+    return f"user_permissions:{user_id}"
 
 
 def _lock_user_permissions(db: Any, user_id: str) -> None:
@@ -54,7 +63,24 @@ def _lock_user_permissions(db: Any, user_id: str) -> None:
     """
     db.execute(
         text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
-        {"k": f"user_permissions:{user_id}"},
+        {"k": _user_permissions_lock_key(user_id)},
+    )
+
+
+async def _lock_user_permissions_async(db: Any, user_id: str) -> None:
+    """Async peer of ``_lock_user_permissions``.
+
+    Same ``pg_advisory_xact_lock`` semantics: the lock is bound to the
+    surrounding transaction and released only on COMMIT / ROLLBACK of
+    that transaction. ``db`` is an ``AsyncSession`` (or any handle that
+    awaits ``execute(...)``); the caller must hold the lock and the
+    matching read+write inside a single ``async with db.begin()`` /
+    ``async with db_session_async()`` block so the autobegun
+    transaction owns the lock.
+    """
+    await db.execute(
+        text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
+        {"k": _user_permissions_lock_key(user_id)},
     )
 
 
@@ -71,6 +97,15 @@ def _parse_row_data(row: UserPermissionSet | None) -> dict[str, Any]:
     if not isinstance(parsed, dict):
         return default
     return parsed
+
+
+def _select_user_permissions(user_id: str) -> Any:
+    """Select the ``UserPermissionSet`` row for one user.
+
+    Shared between sync and async paths so the query shape stays in
+    lockstep across the dual-API surface.
+    """
+    return select(UserPermissionSet).filter_by(user_id=user_id)
 
 
 # ---------------------------------------------------------------------------
@@ -212,9 +247,13 @@ class ApprovalStore:
 
     def _load(self, user_id: str) -> dict[str, Any]:
         with db_session() as db:
-            row = db.execute(
-                select(UserPermissionSet).filter_by(user_id=user_id)
-            ).scalar_one_or_none()
+            row = db.execute(_select_user_permissions(user_id)).scalar_one_or_none()
+            return _parse_row_data(row)
+
+    async def _load_async(self, user_id: str) -> dict[str, Any]:
+        """Async peer of ``_load``."""
+        async with db_session_async() as db:
+            row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
             return _parse_row_data(row)
 
     def _save(self, user_id: str, data: dict[str, Any]) -> None:
@@ -225,14 +264,31 @@ class ApprovalStore:
         payload = json.dumps(data, indent=2, default=str)
         with db_session() as db:
             _lock_user_permissions(db, user_id)
-            row = db.execute(
-                select(UserPermissionSet).filter_by(user_id=user_id)
-            ).scalar_one_or_none()
+            row = db.execute(_select_user_permissions(user_id)).scalar_one_or_none()
             if row is None:
                 db.add(UserPermissionSet(user_id=user_id, data=payload))
             else:
                 row.data = payload
             db.commit()
+
+    async def _save_async(self, user_id: str, data: dict[str, Any]) -> None:
+        """Async peer of ``_save``.
+
+        Acquires the per-user ``pg_advisory_xact_lock`` on the same
+        AsyncSession that performs the read+write. The lock and the
+        DML share one autobegun transaction, so the lock is released
+        only when ``await db.commit()`` (handled by
+        ``db_session_async``) ends that transaction.
+        """
+        payload = json.dumps(data, indent=2, default=str)
+        async with db_session_async() as db:
+            await _lock_user_permissions_async(db, user_id)
+            row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
+            if row is None:
+                db.add(UserPermissionSet(user_id=user_id, data=payload))
+            else:
+                row.data = payload
+            await db.commit()
 
     def load_user_permissions(self, user_id: str) -> dict[str, Any]:
         """Load the raw permission data for a user.
@@ -241,6 +297,10 @@ class ApprovalStore:
         repeated file reads.
         """
         return self._load(user_id)
+
+    async def load_user_permissions_async(self, user_id: str) -> dict[str, Any]:
+        """Async peer of ``load_user_permissions``."""
+        return await self._load_async(user_id)
 
     @staticmethod
     def resolve_permission(
@@ -283,6 +343,17 @@ class ApprovalStore:
         data = self._load(user_id)
         return self.resolve_permission(data, tool_name, resource, default)
 
+    async def check_permission_async(
+        self,
+        user_id: str,
+        tool_name: str,
+        resource: str | None = None,
+        default: PermissionLevel = PermissionLevel.ASK,
+    ) -> PermissionLevel:
+        """Async peer of ``check_permission``."""
+        data = await self._load_async(user_id)
+        return self.resolve_permission(data, tool_name, resource, default)
+
     def generate_defaults(self, user_id: str) -> dict[str, Any]:
         """Build a complete permissions dict with all tools at their default levels."""
         from backend.app.agent.tools.registry import (
@@ -310,9 +381,26 @@ class ApprovalStore:
             self._save(user_id, data)
         return data
 
+    async def ensure_complete_async(self, user_id: str) -> dict[str, Any]:
+        """Async peer of ``ensure_complete``."""
+        data = await self._load_async(user_id)
+        defaults = self.generate_defaults(user_id)
+        changed = False
+        for tool_name, default_level in defaults["tools"].items():
+            if tool_name not in data.get("tools", {}):
+                data.setdefault("tools", {})[tool_name] = default_level
+                changed = True
+        if changed:
+            await self._save_async(user_id, data)
+        return data
+
     def reset_permissions(self, user_id: str) -> None:
         """Reset all permissions to defaults."""
         self._save(user_id, self.generate_defaults(user_id))
+
+    async def reset_permissions_async(self, user_id: str) -> None:
+        """Async peer of ``reset_permissions``."""
+        await self._save_async(user_id, self.generate_defaults(user_id))
 
     def set_permission(
         self,
@@ -335,9 +423,7 @@ class ApprovalStore:
         """
         with db_session() as db:
             _lock_user_permissions(db, user_id)
-            row = db.execute(
-                select(UserPermissionSet).filter_by(user_id=user_id)
-            ).scalar_one_or_none()
+            row = db.execute(_select_user_permissions(user_id)).scalar_one_or_none()
             data = _parse_row_data(row)
 
             # ensure_complete-style backfill: fill missing tool defaults.
@@ -356,6 +442,45 @@ class ApprovalStore:
             else:
                 row.data = payload
             db.commit()
+
+    async def set_permission_async(
+        self,
+        user_id: str,
+        tool_name: str,
+        level: PermissionLevel,
+        resource: str | None = None,
+    ) -> None:
+        """Async peer of ``set_permission``.
+
+        Same lost-update guard as the sync path: lock + read +
+        backfill-merge + write all happen inside one autobegun async
+        transaction so the lock is released only after the write
+        commits. ``db_session_async`` calls ``await db.commit()``
+        implicitly via its context manager exit only on success;
+        rollback on exception drops the lock too. Either way the
+        transaction-scoped lock cannot leak past this method.
+        """
+        async with db_session_async() as db:
+            await _lock_user_permissions_async(db, user_id)
+            row = (await db.execute(_select_user_permissions(user_id))).scalar_one_or_none()
+            data = _parse_row_data(row)
+
+            # ensure_complete-style backfill: fill missing tool defaults.
+            defaults = self.generate_defaults(user_id)
+            for tname, default_level in defaults["tools"].items():
+                data.setdefault("tools", {}).setdefault(tname, default_level)
+
+            if resource is not None:
+                data.setdefault("resources", {}).setdefault(tool_name, {})[resource] = str(level)
+            else:
+                data.setdefault("tools", {})[tool_name] = str(level)
+
+            payload = json.dumps(data, indent=2, default=str)
+            if row is None:
+                db.add(UserPermissionSet(user_id=user_id, data=payload))
+            else:
+                row.data = payload
+            await db.commit()
 
 
 # ---------------------------------------------------------------------------

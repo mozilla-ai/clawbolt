@@ -25,7 +25,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.config import settings
-from backend.app.database import db_session, get_engine
+from backend.app.database import db_session, get_async_engine, get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -57,27 +57,30 @@ async def _try_acquire_advisory_lock_async(conn: Any, lock_key: str) -> bool:
     ``await asyncio.sleep`` between polls so the event loop stays
     responsive during contention.
 
-    ``conn`` MUST be a SQLAlchemy ``Connection`` (or other handle whose
-    ``commit()`` does NOT return the underlying DBAPI connection to the
-    pool). Passing a ``Session`` would break the lock semantics: in
-    SQLAlchemy 2.0 ``Session.commit()`` releases the underlying
-    connection back to the pool, where a peer can pick it up and call
-    ``pg_try_advisory_lock`` on it (locks are reentrant per PG session),
-    causing both callers to enter the critical section. The advisory
-    lock must stay pinned to the same physical connection from acquire
-    through unlock; only ``Connection`` provides that pinning.
+    ``conn`` MUST be a SQLAlchemy ``AsyncConnection`` (or other handle
+    whose ``commit()`` does NOT return the underlying DBAPI connection
+    to the pool). Passing an ``AsyncSession`` would break the lock
+    semantics: in SQLAlchemy 2.0 ``AsyncSession.commit()`` releases the
+    underlying connection back to the pool, where a peer task can pick
+    it up and call ``pg_try_advisory_lock`` on it (locks are reentrant
+    per PG session), causing both callers to enter the critical
+    section. The advisory lock must stay pinned to the same physical
+    connection from acquire through unlock; only ``AsyncConnection``
+    provides that pinning.
     """
     deadline = time.monotonic() + _LOCK_MAX_WAIT_S
     while True:
-        acquired = conn.execute(
+        result = await conn.execute(
             text("SELECT pg_try_advisory_lock(hashtext(:k))"),
             {"k": lock_key},
-        ).scalar()
+        )
+        acquired = result.scalar()
         # Commit ends the implicit transaction so we don't sit
-        # idle-in-transaction between polls. On a Connection this does
-        # NOT return the connection to the pool, so the session-scoped
-        # advisory lock stays attached to this same connection.
-        conn.commit()
+        # idle-in-transaction between polls. On an AsyncConnection this
+        # does NOT return the connection to the pool, so the
+        # session-scoped advisory lock stays attached to this same
+        # connection.
+        await conn.commit()
         if acquired:
             return True
         if time.monotonic() >= deadline:
@@ -749,14 +752,16 @@ class OAuthService:
         )
         # The advisory lock is session-scoped (lives on the underlying
         # PG connection until released or the connection closes). We
-        # must hold it on a dedicated ``Connection`` rather than a
-        # ``Session``: ``Session.commit()`` returns the connection to
-        # the pool, where a peer coroutine can check it out and call
-        # ``pg_try_advisory_lock`` on it (locks are reentrant per PG
-        # session), letting both callers enter the critical section.
-        # The token read / write business logic still uses its own
-        # ``Session`` via ``_load_token_uncached`` and ``save_token``.
-        lock_conn = get_engine().connect()
+        # must hold it on a dedicated ``AsyncConnection`` rather than
+        # an ``AsyncSession``: ``AsyncSession.commit()`` returns the
+        # connection to the pool, where a peer coroutine can check it
+        # out and call ``pg_try_advisory_lock`` on it (locks are
+        # reentrant per PG session), letting both callers enter the
+        # critical section. The token read / write business logic still
+        # uses its own sync ``Session`` via ``_load_token_uncached``
+        # and ``save_token``; only the lock primitive runs on the async
+        # engine so the polling waits do not block the event loop.
+        lock_conn = await get_async_engine().connect()
         lock_key = _refresh_lock_key(user_id, integration)
         try:
             if not await _try_acquire_advisory_lock_async(lock_conn, lock_key):
@@ -850,11 +855,11 @@ class OAuthService:
                 return token
             finally:
                 try:
-                    lock_conn.execute(
+                    await lock_conn.execute(
                         text("SELECT pg_advisory_unlock(hashtext(:k))"),
                         {"k": lock_key},
                     )
-                    lock_conn.commit()
+                    await lock_conn.commit()
                 except Exception:
                     logger.exception(
                         "Failed to release OAuth refresh lock: user=%s integration=%s",
@@ -862,7 +867,7 @@ class OAuthService:
                         integration,
                     )
         finally:
-            lock_conn.close()
+            await lock_conn.close()
 
     async def get_valid_token(
         self,

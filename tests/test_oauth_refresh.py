@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 from sqlalchemy import Engine, text
+from sqlalchemy.ext.asyncio import create_async_engine
 
 from backend.app.services.oauth import (
     _PERMANENT_OAUTH_ERROR_CODES,
@@ -492,14 +493,25 @@ class TestAdvisoryLockBounded:
             cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (lock_key,))
             peer.commit()
 
-            db = _pg_engine.connect()
+            # The async helper now operates on an ``AsyncConnection`` so the
+            # event loop stays responsive during the bounded poll. We build
+            # one off the production async engine, which targets the same DB
+            # as ``_pg_engine`` (per ``settings.database_url``).
+            async_engine = create_async_engine(
+                _pg_engine.url.set(drivername="postgresql+asyncpg"),
+                pool_pre_ping=True,
+            )
             try:
-                with patch("backend.app.services.oauth._LOCK_MAX_WAIT_S", 0.3):
-                    start = time.monotonic()
-                    acquired = await _try_acquire_advisory_lock_async(db, lock_key)
-                    elapsed = time.monotonic() - start
+                db = await async_engine.connect()
+                try:
+                    with patch("backend.app.services.oauth._LOCK_MAX_WAIT_S", 0.3):
+                        start = time.monotonic()
+                        acquired = await _try_acquire_advisory_lock_async(db, lock_key)
+                        elapsed = time.monotonic() - start
+                finally:
+                    await db.close()
             finally:
-                db.close()
+                await async_engine.dispose()
 
             assert acquired is False
             # Bounded wait, not the multi-hour pg_advisory_lock freeze.
@@ -512,14 +524,21 @@ class TestAdvisoryLockBounded:
     @pytest.mark.asyncio()
     async def test_async_acquire_succeeds_when_lock_free(self, _pg_engine: Engine) -> None:
         lock_key = _refresh_lock_key("free-user", "google_calendar")
-        db = _pg_engine.connect()
+        async_engine = create_async_engine(
+            _pg_engine.url.set(drivername="postgresql+asyncpg"),
+            pool_pre_ping=True,
+        )
         try:
-            acquired = await _try_acquire_advisory_lock_async(db, lock_key)
-            assert acquired is True
-            db.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": lock_key})
-            db.commit()
+            db = await async_engine.connect()
+            try:
+                acquired = await _try_acquire_advisory_lock_async(db, lock_key)
+                assert acquired is True
+                await db.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": lock_key})
+                await db.commit()
+            finally:
+                await db.close()
         finally:
-            db.close()
+            await async_engine.dispose()
 
     def test_sync_acquire_returns_false_when_lock_held_by_peer(self, _pg_engine: Engine) -> None:
         lock_key = _refresh_lock_key("contended-user-sync", "quickbooks")
@@ -864,23 +883,24 @@ class TestRefreshTokenLockSerialization:
         self, _pg_engine: Engine
     ) -> None:
         """Same-connection coupling check: the lock helper guarantees
-        nothing if the caller passes a ``Session`` (whose ``commit()``
-        returns the underlying connection to the pool).
+        nothing if the caller passes an ``AsyncSession`` (whose
+        ``commit()`` returns the underlying connection to the pool).
 
         This is the production bug encoded as an invariant: the
-        production refresh path now passes ``engine.connect()`` (a
-        ``Connection``), and any future refactor that swaps it back to
-        ``SessionLocal()`` re-introduces the bug. Mirrors the
-        same-connection-coupling check in
+        production refresh path now passes ``async_engine.connect()``
+        (an ``AsyncConnection``), and any future refactor that swaps
+        it back to ``AsyncSessionLocal()`` re-introduces the bug.
+        Mirrors the same-connection-coupling check in
         ``test_inbound_recovery.py::test_unlock_on_different_connection_is_a_no_op``.
 
         Demonstrates the failure mode by calling the helper twice on
-        two ``Session`` instances bound to a shared engine: the second
-        ``pg_try_advisory_lock`` returns ``True`` even though the first
-        Session never explicitly released, because the underlying
-        connection was returned to the pool by the intervening commit.
+        two ``AsyncSession`` instances bound to a shared engine: the
+        second ``pg_try_advisory_lock`` returns ``True`` even though
+        the first session never explicitly released, because the
+        underlying connection was returned to the pool by the
+        intervening commit.
         """
-        from sqlalchemy.orm import sessionmaker
+        from sqlalchemy.ext.asyncio import async_sessionmaker
 
         lock_key = _refresh_lock_key("session-misuse-user", "google_calendar")
         # pool_size=2 + max_overflow=0 keeps the pool small enough that
@@ -888,15 +908,13 @@ class TestRefreshTokenLockSerialization:
         # recycled between the two sessions. The point of this test is
         # to encode the exact failure mode the production fix avoids,
         # so we keep the setup minimal and close to the bug.
-        from sqlalchemy import create_engine
-
-        small_engine = create_engine(
-            _pg_engine.url,
+        small_engine = create_async_engine(
+            _pg_engine.url.set(drivername="postgresql+asyncpg"),
             pool_size=2,
             max_overflow=0,
         )
         try:
-            factory = sessionmaker(bind=small_engine)
+            factory = async_sessionmaker(bind=small_engine, expire_on_commit=False)
             s1 = factory()
             s2 = factory()
             try:
@@ -910,21 +928,21 @@ class TestRefreshTokenLockSerialization:
                 acquired_2 = await _try_acquire_advisory_lock_async(s2, lock_key)
                 assert acquired_1 is True
                 assert acquired_2 is True, (
-                    "Postgres advisory lock semantics changed: a Session "
+                    "Postgres advisory lock semantics changed: an AsyncSession "
                     "returning its connection to the pool no longer lets a "
-                    "peer Session re-acquire. If this is now False, the "
+                    "peer session re-acquire. If this is now False, the "
                     "production fix may be unnecessary; investigate before "
                     "deleting it."
                 )
             finally:
                 # Best-effort cleanup. ``pg_advisory_unlock_all`` on a
                 # raw connection drops every lock held by that PG
-                # session regardless of which Session originally
+                # session regardless of which session originally
                 # acquired it.
-                with small_engine.connect() as cleanup:
-                    cleanup.execute(text("SELECT pg_advisory_unlock_all()"))
-                    cleanup.commit()
-                s1.close()
-                s2.close()
+                async with small_engine.connect() as cleanup:
+                    await cleanup.execute(text("SELECT pg_advisory_unlock_all()"))
+                    await cleanup.commit()
+                await s1.close()
+                await s2.close()
         finally:
-            small_engine.dispose()
+            await small_engine.dispose()
