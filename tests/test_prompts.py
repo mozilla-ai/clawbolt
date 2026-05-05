@@ -66,3 +66,32 @@ def test_default_soul_includes_clawbolt_name() -> None:
     """Default soul template should identify as Clawbolt."""
     soul = load_prompt("default_soul")
     assert "Clawbolt" in soul
+
+
+def test_instructions_has_multi_field_propose_then_veto_section() -> None:
+    """Multi-field tasks should be handled by proposing complete results, not interviewing.
+
+    Issue #1132: analysis of one user's 109-turn conversation showed 49% of replies
+    had no tool action and 52% ended with questions, because the agent walked the
+    user through fields one at a time. The propose-then-veto guidance directs the
+    agent to fill in sensible defaults and surface a single proposal.
+    """
+    instructions = load_prompt("instructions")
+    assert "Multi-field tasks" in instructions
+    assert "propose" in instructions.lower()
+    # Make sure the section is action-oriented, not just descriptive: it should
+    # explicitly tell the agent to fill in defaults rather than enumerate fields.
+    assert "sensible defaults" in instructions.lower()
+
+
+def test_default_soul_frames_thoroughness_as_propose_then_veto() -> None:
+    """Soul should reframe thoroughness as proposing-then-vetoing, not interrogating.
+
+    Issue #1132: per-user SOUL.md files biased the agent toward verification by
+    treating thoroughness as 'check every field'. The default soul now explicitly
+    redefines thoroughness so user-edited souls inherit the right framing.
+    """
+    soul = load_prompt("default_soul")
+    lowered = soul.lower()
+    assert "veto" in lowered
+    assert "defaults" in lowered

@@ -145,11 +145,11 @@ The SyncToken is required for optimistic concurrency. If the entity was modified
 ### Voice-to-estimate (dictation workflow)
 This is the primary workflow for users who dictate job details from the field:
 1. User describes a job (client, scope, labor, materials) via chat
-2. Extract structured data from the description
+2. Extract structured data from the description, filling in defaults for anything the user did not specify (rate, quantity, expiration date, memo)
 3. `qb_query` Customer to check if the client exists
 4. If new client: `qb_create` Customer
 5. `qb_create` Estimate with line items (typically labor + materials)
-6. Confirm with user: "I created a draft estimate for [client] in QuickBooks. Want to review or adjust anything?"
+6. Summarize what you drafted and what you assumed in one line: "Drafted estimate for Smith: 8 hr labor at $50, materials $200, expires in 30 days. Change anything?"
 7. User comes back later to refine: `qb_query` the estimate (note the SyncToken in the results)
 8. `qb_update` Estimate with revised line items (include Id and SyncToken)
 9. When user says it's ready: `qb_send` Estimate to the client's email
