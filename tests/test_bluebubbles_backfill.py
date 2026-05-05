@@ -103,11 +103,14 @@ async def test_unconfigured_returns_zero_without_http() -> None:
 
 
 @pytest.mark.asyncio
-async def test_missed_message_is_replayed(bluebubbles_client: object) -> None:
+async def test_missed_message_is_replayed(bluebubbles_client: object, async_db: object) -> None:
     """A message returned by /api/v1/message/query is replayed onto the bus.
 
     The ``bluebubbles_client`` fixture is here to set up settings, allowlist,
-    and reset state. We don't use the TestClient itself.
+    and reset state. We don't use the TestClient itself. The ``async_db``
+    fixture rebinds the module-level async session factory to a per-test
+    connection so the backfill's advisory-lock SQL runs inside the
+    rolled-back outer transaction. See ``tests/conftest.py``.
     """
     channel = BlueBubblesChannel()
     msg = _query_message(text="hello after outage", message_guid="missed-001")
@@ -137,7 +140,9 @@ async def test_missed_message_is_replayed(bluebubbles_client: object) -> None:
 
 
 @pytest.mark.asyncio
-async def test_is_from_me_messages_are_skipped(bluebubbles_client: object) -> None:
+async def test_is_from_me_messages_are_skipped(
+    bluebubbles_client: object, async_db: object
+) -> None:
     """Outgoing messages echoed back by the query API are not replayed."""
     channel = BlueBubblesChannel()
     incoming = _query_message(text="from contact", message_guid="in-1")
@@ -165,7 +170,9 @@ async def test_is_from_me_messages_are_skipped(bluebubbles_client: object) -> No
 
 
 @pytest.mark.asyncio
-async def test_already_seen_messages_are_deduped(bluebubbles_client: object) -> None:
+async def test_already_seen_messages_are_deduped(
+    bluebubbles_client: object, async_db: object
+) -> None:
     """Messages we already processed via the live webhook are not re-replayed.
 
     Idempotency is enforced by ``IdempotencyStore.try_mark_seen`` keyed off
@@ -198,6 +205,7 @@ async def test_already_seen_messages_are_deduped(bluebubbles_client: object) -> 
 @pytest.mark.asyncio
 async def test_webhook_processed_message_is_not_replayed_after_restart(
     bluebubbles_client: TestClient,
+    async_db: object,
 ) -> None:
     """End-to-end production scenario: the live webhook delivered a message,
     the agent replied, the server later restarts, and the BlueBubbles query
@@ -259,7 +267,9 @@ async def test_webhook_processed_message_is_not_replayed_after_restart(
 
 
 @pytest.mark.asyncio
-async def test_chat_guid_is_cached_for_outbound_replies(bluebubbles_client: object) -> None:
+async def test_chat_guid_is_cached_for_outbound_replies(
+    bluebubbles_client: object, async_db: object
+) -> None:
     """Backfill populates the chat-guid cache so replies don't reconstruct it."""
     channel = BlueBubblesChannel()
     msg = _query_message(message_guid="cache-001")
@@ -290,7 +300,9 @@ async def test_chat_guid_is_cached_for_outbound_replies(bluebubbles_client: obje
 
 
 @pytest.mark.asyncio
-async def test_http_error_returns_zero_without_raising(bluebubbles_client: object) -> None:
+async def test_http_error_returns_zero_without_raising(
+    bluebubbles_client: object, async_db: object
+) -> None:
     """A wedged BlueBubbles server cannot block app startup."""
     channel = BlueBubblesChannel()
 
@@ -314,7 +326,7 @@ async def test_http_error_returns_zero_without_raising(bluebubbles_client: objec
 
 
 @pytest.mark.asyncio
-async def test_4xx_response_returns_zero(bluebubbles_client: object) -> None:
+async def test_4xx_response_returns_zero(bluebubbles_client: object, async_db: object) -> None:
     """A 4xx (e.g. wrong password) is logged but does not block startup."""
     channel = BlueBubblesChannel()
 
@@ -338,7 +350,7 @@ async def test_4xx_response_returns_zero(bluebubbles_client: object) -> None:
 
 
 @pytest.mark.asyncio
-async def test_empty_response_returns_zero(bluebubbles_client: object) -> None:
+async def test_empty_response_returns_zero(bluebubbles_client: object, async_db: object) -> None:
     """No messages in the lookback window is the common healthy-boot case."""
     channel = BlueBubblesChannel()
 
@@ -367,7 +379,9 @@ async def test_empty_response_returns_zero(bluebubbles_client: object) -> None:
 
 
 @pytest.mark.asyncio
-async def test_lookback_minutes_drives_after_param(bluebubbles_client: object) -> None:
+async def test_lookback_minutes_drives_after_param(
+    bluebubbles_client: object, async_db: object
+) -> None:
     """The ``after`` parameter is now-minus-lookback in unix milliseconds."""
     channel = BlueBubblesChannel()
 

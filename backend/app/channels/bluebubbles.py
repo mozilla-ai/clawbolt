@@ -13,12 +13,12 @@ from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
-from sqlalchemy.orm import Session
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.agent.ingestion import InboundMessage
 from backend.app.channels.base import BaseChannel, handle_webhook_inbound
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal
 from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
@@ -654,10 +654,10 @@ class BlueBubblesChannel(BaseChannel):
             logger.debug("BlueBubbles backfill disabled (bluebubbles_backfill_lookback_minutes=0)")
             return 0
 
-        db = SessionLocal()
+        db = AsyncSessionLocal()
         lock_acquired = False
         try:
-            if not _try_acquire_backfill_lock(db):
+            if not await _try_acquire_backfill_lock(db):
                 logger.info("Another worker is running BlueBubbles backfill; skipping on this boot")
                 return 0
             lock_acquired = True
@@ -745,8 +745,8 @@ class BlueBubblesChannel(BaseChannel):
             return attempted
         finally:
             if lock_acquired:
-                _release_backfill_lock(db)
-            db.close()
+                await _release_backfill_lock(db)
+            await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -759,7 +759,7 @@ class BlueBubblesChannel(BaseChannel):
 # and have no per-instance state.
 
 
-def _try_acquire_backfill_lock(db: Session) -> bool:
+async def _try_acquire_backfill_lock(db: AsyncSession) -> bool:
     """Acquire the per-process backfill advisory lock.
 
     Mirrors ``inbound_recovery._try_acquire_lock``. ``pg_try_advisory_lock``
@@ -767,26 +767,33 @@ def _try_acquire_backfill_lock(db: Session) -> bool:
     rolling restart already holds the lock. We commit to release the
     implicit read transaction; the advisory lock itself is session-scoped
     and survives until ``_release_backfill_lock``.
+
+    The same ``AsyncSession`` instance must be passed to
+    ``_release_backfill_lock`` so the unlock runs on the connection that
+    took the lock. ``pg_advisory_unlock`` on a different connection is a
+    silent no-op (see ``tests/test_inbound_recovery.py``,
+    ``test_unlock_on_different_connection_is_a_no_op``).
     """
     try:
-        got = db.execute(
+        result = await db.execute(
             text("SELECT pg_try_advisory_lock(hashtext(:k))"),
             {"k": _BACKFILL_LOCK_KEY},
-        ).scalar()
-        db.commit()
+        )
+        got = result.scalar()
+        await db.commit()
     except Exception:
         logger.exception("Failed to acquire BlueBubbles backfill advisory lock")
         return False
     return bool(got)
 
 
-def _release_backfill_lock(db: Session) -> None:
+async def _release_backfill_lock(db: AsyncSession) -> None:
     """Best-effort release of the backfill lock."""
     try:
-        db.execute(
+        await db.execute(
             text("SELECT pg_advisory_unlock(hashtext(:k))"),
             {"k": _BACKFILL_LOCK_KEY},
         )
-        db.commit()
+        await db.commit()
     except Exception:
         logger.exception("Failed to release BlueBubbles backfill advisory lock")
