@@ -165,6 +165,17 @@ The agent's capabilities are extended by adding tools. Tools follow a factory/re
 | `backend/app/agent/skills/loader.py` | SKILL.md loader (`get_skill_instructions`) |
 | `backend/app/routers/user_tools.py` | Dashboard wiring (`_CORE_FACTORIES`, `_FACTORY_META`) |
 
+## Editing prompt files (SKILL.md, system prompts)
+
+`SKILL.md` files and the agent system prompt are injected into the LLM context on every relevant turn, so prose costs tokens on every conversation. Be terse and non-redundant when editing them.
+
+- **Do not duplicate information that already lives elsewhere in the file.** If a field's shape is shown in a payload example or an example workflow, do not re-document it in a separate "field shapes" preamble. The agent reads the whole file.
+- **State rules at the failure mode, not as top-of-section framing.** A "do not claim X is unavailable" warning belongs inside the workflow that prevents X. A general preamble at the top of a section is usually padding the headings or steps already imply.
+- **Trust the steps.** A numbered workflow does not need an intro paragraph explaining when to use it; the heading and the cross-references from other sections already do that.
+- **Cut padding.** Phrases like "Use this whenever ...", "If a field is listed here, the entity has it ...", "It is important to ..." are framing the structure already implies. Delete the sentence; if the meaning is intact, it was redundant.
+
+After editing, read the diff and ask: did I add a new fact, or restate an old one? Restated facts double the prompt without doubling agent behavior.
+
 ## Definition of Done
 
 Every change must pass all checks before it's considered complete:

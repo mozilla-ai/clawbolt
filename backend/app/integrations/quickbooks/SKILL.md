@@ -14,14 +14,14 @@ You now have access to QuickBooks Online tools. Here is how to use them effectiv
 ## Query Guide (qb_query)
 
 ### Queryable entities and useful fields
-- Invoice: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, Balance, DueDate, TxnDate, EmailStatus
-- Estimate: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, TxnDate, ExpirationDate, TxnStatus
-- Customer: Id, SyncToken, DisplayName, PrimaryEmailAddr, PrimaryPhone, Balance
-- Item: Id, Name, Description, UnitPrice, Type
-- Payment: Id, CustomerRef, TotalAmt, TxnDate
-- Bill: Id, VendorRef, TotalAmt, DueDate, Balance
+- Invoice: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, Balance, DueDate, TxnDate, EmailStatus, BillEmail, BillEmailCc, BillEmailBcc, Line, CustomerMemo, PrivateNote, BillAddr, ShipAddr, LinkedTxn, PrintStatus, EInvoiceStatus
+- Estimate: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, TxnDate, ExpirationDate, TxnStatus, BillEmail, Line, CustomerMemo, PrivateNote, AcceptedDate, AcceptedBy, LinkedTxn
+- Customer: Id, SyncToken, DisplayName, CompanyName, PrimaryEmailAddr, PrimaryPhone, BillAddr, Balance, BalanceWithJobs, Active, Notes, ParentRef, Job
+- Item: Id, Name, FullyQualifiedName, Sku, Description, UnitPrice, Type, Active, IncomeAccountRef, ParentRef, QtyOnHand
+- Payment: Id, CustomerRef, TotalAmt, TxnDate, PaymentMethodRef, PaymentRefNum, UnappliedAmt, Line
+- Bill: Id, VendorRef, DocNumber, TotalAmt, Balance, DueDate, TxnDate, Line, PrivateNote
 
-SyncToken is returned in query results; you need it when updating an entity with `qb_update`.
+`BillEmail`, `BillEmailCc`, `BillEmailBcc` are shaped `{"Address": "..."}` (the recipient email recorded on the invoice or estimate). SyncToken is returned in query results; you need it when updating an entity with `qb_update`.
 
 ### Syntax
 SELECT <fields> FROM <Entity> [WHERE <conditions>] [ORDERBY <field> DESC] [MAXRESULTS <n>]
@@ -138,7 +138,7 @@ The SyncToken is required for optimistic concurrency. If the entity was modified
 ## Sending Invoices and Estimates (qb_send)
 
 - Pass `entity_type` (Invoice or Estimate), the entity ID (numeric), and the recipient email address.
-- Confirm the email address with the user before sending.
+- If you do not already have an email, follow "Recovering a customer email" below before asking the user.
 
 ## Common Workflows
 
@@ -160,6 +160,12 @@ This is the primary workflow for users who dictate job details from the field:
 3. User approves the estimate
 4. Convert estimate to invoice (see below)
 5. `qb_send` the invoice
+
+### Recovering a customer email
+1. `qb_query`: `SELECT * FROM Customer WHERE Id = '<customer_id>'` and check `PrimaryEmailAddr.Address`. If it's set, use it.
+2. If empty, `qb_query`: `SELECT * FROM Invoice WHERE CustomerRef = '<customer_id>' ORDERBY TxnDate DESC MAXRESULTS 5` and check `BillEmail.Address` on the returned rows. Use the most recent non-empty value.
+3. If still empty, repeat the same query against `Estimate`.
+4. Only ask the user when none of the above produced an address.
 
 ### Quick invoice
 1. `qb_query` Customer to get the customer Id
