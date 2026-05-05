@@ -23,7 +23,7 @@ from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
 
-from backend.app.agent.approval import PermissionLevel
+from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.media.download import DownloadedMedia
@@ -320,18 +320,22 @@ class ToolRegistry:
             created: list[Tool] = await result if inspect.isawaitable(result) else result  # type: ignore[assignment]
             if excluded_tool_names:
                 created = [t for t in created if t.name not in excluded_tool_names]
-            # Warn when SubToolInfo declares "ask" but the Tool has no
-            # approval_policy. This means the UI shows "ask" but the
-            # runtime will auto-execute without prompting.
+            # Auto-attach an ApprovalPolicy to any SubToolInfo-registered tool
+            # that lacks one. This makes the user's stored permission overrides
+            # authoritative for every user-controllable tool: even tools whose
+            # SubToolInfo default is "always" can be escalated to "ask" via the
+            # dashboard, and the runtime gate at core.py will respect that.
+            # Tools that are deliberately not user-controllable (the meta tool,
+            # heartbeat-context overrides) have no SubToolInfo and are left
+            # alone, preserving the policy=None hard-bypass semantic.
             if factory.sub_tools:
-                ask_names = {st.name for st in factory.sub_tools if st.default_permission == "ask"}
+                sub_by_name = {st.name: st for st in factory.sub_tools}
                 for tool in created:
-                    if tool.name in ask_names and tool.approval_policy is None:
-                        logger.warning(
-                            "Tool %s has default_permission='ask' in SubToolInfo "
-                            "but no approval_policy on the Tool object. "
-                            "The runtime will auto-execute without asking the user.",
-                            tool.name,
+                    if tool.approval_policy is None and tool.name in sub_by_name:
+                        sub = sub_by_name[tool.name]
+                        tool.approval_policy = ApprovalPolicy(
+                            default_level=PermissionLevel(sub.default_permission),
+                            description_builder=lambda _args, _d=sub.description: _d,
                         )
             tools.extend(created)
         return tools
