@@ -145,23 +145,47 @@ async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
     await engine.dispose()
 
 
+# Tables truncated between tests to give each test a clean slate. Built
+# from ``Base.metadata.sorted_tables`` so the TRUNCATE statement names
+# every table the schema knows about; ``CASCADE`` then handles
+# foreign-key chains regardless of order. Cached at import time.
+_TRUNCATE_TABLE_NAMES = [t.name for t in Base.metadata.sorted_tables]
+
+
 @pytest.fixture(autouse=True)
 def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
-    """Per-test isolation using PostgreSQL with transaction rollback.
+    """Per-test isolation via real commits + post-test TRUNCATE.
 
-    Opens a connection, begins a transaction, and binds the session factory
-    to it with join_transaction_block=True. Store code calls SessionLocal()
-    and commit() normally, but commits only affect a subtransaction. After
-    the test, the outer transaction is rolled back, leaving a clean DB.
+    The earlier design opened a session-long transaction and rebound the
+    sync session factory to ``join_transaction_mode="conditional_savepoint"``,
+    so test commits became savepoint releases inside one outer
+    transaction; teardown rolled the outer transaction back. That kept
+    sync writes invisible to other connections, which broke once
+    production code started doing async DB reads on the same data the
+    tests had inserted via the sync session (cross-API caveat in the
+    comment block below).
+
+    The new design lets ``SessionLocal()`` commit normally and TRUNCATEs
+    the schema after each test instead. Sync and async writes are now
+    real commits, so the async session pool sees them and vice versa.
+    Tests that previously relied on the savepoint to hide a partial
+    failure (e.g. ``IntegrityError`` from a flush in a unique-constraint
+    test) need to issue an explicit ``rollback`` after the expected
+    failure.
+
+    The fixture also disposes the sync engine pool on teardown. Code
+    paths like ``cleanup_orphaned_approvals`` take a session-scoped
+    ``pg_advisory_lock`` and return the connection to the pool with the
+    lock still held; the prior savepoint design pinned a single
+    connection per test, so the lock left the pool with the connection.
+    Under TRUNCATE isolation the engine pool is shared across tests, so
+    we close every pooled connection between tests to drop any
+    advisory locks the test left behind.
     """
-    connection = _pg_engine.connect()
-    transaction = connection.begin()
-
     test_session_factory = sessionmaker(
         autocommit=False,
         autoflush=False,
-        bind=connection,
-        join_transaction_mode="conditional_savepoint",
+        bind=_pg_engine,
     )
 
     old_engine = _db_module._engine
@@ -178,16 +202,33 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
         reset_approval_gate()
         yield
 
-    # Rollback undoes all data written during the test.
-    # The transaction may already be deassociated if a test triggered
-    # an IntegrityError (e.g. unique constraint tests), so check first.
-    if transaction.is_active:
-        transaction.rollback()
-    connection.close()
+    # TRUNCATE all tables with RESTART IDENTITY + CASCADE so the next
+    # test starts with empty tables and reset sequences.
+    with _pg_engine.begin() as conn:
+        conn.exec_driver_sql(
+            "TRUNCATE TABLE "
+            + ", ".join(f'"{name}"' for name in _TRUNCATE_TABLE_NAMES)
+            + " RESTART IDENTITY CASCADE"
+        )
+    # Drop pooled connections so the next test cannot pick up one that
+    # is still holding a session-scoped advisory lock left by, e.g.,
+    # ``cleanup_orphaned_approvals``.
+    _pg_engine.dispose()
 
     # Restore
     _db_module._engine = old_engine
     _db_module._SessionLocal = old_factory
+    # Clear the process-singleton async engine/factory so the next test
+    # creates them on its own event loop. asyncpg connections bind to
+    # the loop they were created on, and pytest-asyncio rotates loops
+    # between tests; a stale global async engine from test A's loop
+    # crashes test B with "Future attached to a different loop". Tests
+    # that opt into ``async_db`` rebind these globals to a per-test
+    # factory and restore the prior values at teardown, so this no-ops
+    # for that path. Sync dispose is fine: the leaked pool is GC'd
+    # after the loop closes (#1178).
+    _db_module._async_engine = None
+    _db_module._async_session_factory = None
     reset_stores()
     reset_session_stores()
     reset_memory_stores()
