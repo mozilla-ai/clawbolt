@@ -7,12 +7,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from sqlalchemy import Engine, text
 
 from backend.app.services.oauth import (
     _PERMANENT_OAUTH_ERROR_CODES,
     OAuthConfig,
     OAuthService,
     OAuthTokenData,
+    _refresh_lock_key,
+    _try_acquire_advisory_lock_async,
+    _try_acquire_advisory_lock_sync,
 )
 
 # ---------------------------------------------------------------------------
@@ -463,3 +467,78 @@ class TestNotifyReauthNeeded:
         assert msg.chat_id == "12345"
         assert "Google Calendar" in msg.content
         assert "expired" in msg.content
+
+
+# ---------------------------------------------------------------------------
+# Bounded advisory-lock acquisition
+# ---------------------------------------------------------------------------
+
+
+class TestAdvisoryLockBounded:
+    """Regression for a prod hang: ``pg_advisory_lock`` blocked the event loop
+    indefinitely when the lock was held by an orphaned session-scoped lock from
+    a dropped connection. The acquire path must fail fast under contention."""
+
+    @pytest.mark.asyncio()
+    async def test_async_acquire_returns_false_when_lock_held_by_peer(
+        self, _pg_engine: Engine
+    ) -> None:
+        lock_key = _refresh_lock_key("contended-user", "google_calendar")
+        peer = _pg_engine.raw_connection()
+        try:
+            cur = peer.cursor()
+            cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (lock_key,))
+            peer.commit()
+
+            db = _pg_engine.connect()
+            try:
+                with patch("backend.app.services.oauth._LOCK_MAX_WAIT_S", 0.3):
+                    start = time.monotonic()
+                    acquired = await _try_acquire_advisory_lock_async(db, lock_key)
+                    elapsed = time.monotonic() - start
+            finally:
+                db.close()
+
+            assert acquired is False
+            # Bounded wait, not the multi-hour pg_advisory_lock freeze.
+            assert elapsed < 1.0
+        finally:
+            cur.execute("SELECT pg_advisory_unlock_all()")
+            peer.commit()
+            peer.close()
+
+    @pytest.mark.asyncio()
+    async def test_async_acquire_succeeds_when_lock_free(self, _pg_engine: Engine) -> None:
+        lock_key = _refresh_lock_key("free-user", "google_calendar")
+        db = _pg_engine.connect()
+        try:
+            acquired = await _try_acquire_advisory_lock_async(db, lock_key)
+            assert acquired is True
+            db.execute(text("SELECT pg_advisory_unlock(hashtext(:k))"), {"k": lock_key})
+            db.commit()
+        finally:
+            db.close()
+
+    def test_sync_acquire_returns_false_when_lock_held_by_peer(self, _pg_engine: Engine) -> None:
+        lock_key = _refresh_lock_key("contended-user-sync", "quickbooks")
+        peer = _pg_engine.raw_connection()
+        try:
+            cur = peer.cursor()
+            cur.execute("SELECT pg_advisory_lock(hashtext(%s))", (lock_key,))
+            peer.commit()
+
+            db = _pg_engine.connect()
+            try:
+                with patch("backend.app.services.oauth._LOCK_MAX_WAIT_S", 0.3):
+                    start = time.monotonic()
+                    acquired = _try_acquire_advisory_lock_sync(db, lock_key)
+                    elapsed = time.monotonic() - start
+            finally:
+                db.close()
+
+            assert acquired is False
+            assert elapsed < 1.0
+        finally:
+            cur.execute("SELECT pg_advisory_unlock_all()")
+            peer.commit()
+            peer.close()
