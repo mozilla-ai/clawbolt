@@ -1,6 +1,7 @@
 """Conversation context loading and session management."""
 
 import asyncio
+import datetime
 import json
 import logging
 from typing import Any
@@ -19,7 +20,9 @@ from backend.app.agent.messages import (
 )
 from backend.app.agent.session_db import get_session_store
 from backend.app.config import settings
+from backend.app.database import db_session
 from backend.app.enums import MessageDirection
+from backend.app.models import ChatSession, CompactionEvent
 
 logger = logging.getLogger(__name__)
 
@@ -89,46 +92,130 @@ class StoredToolInteraction(BaseModel):
     receipt: StoredToolReceipt | None = None
 
 
+def _seqs_from_dropped(dropped: list[AgentMessage]) -> list[int]:
+    """Return the persisted ``messages.seq`` values carried by *dropped*.
+
+    Only ``UserMessage`` and ``AssistantMessage`` carry seq, and only when
+    they were loaded from the DB (in-memory constructions, e.g. the summary
+    placeholder injected by ``trim_messages``, are skipped).
+    """
+    seqs: list[int] = []
+    for m in dropped:
+        seq = getattr(m, "seq", None)
+        if isinstance(seq, int):
+            seqs.append(seq)
+    return seqs
+
+
 def trigger_compaction_for_dropped(
     user_id: str,
     dropped_messages: list[AgentMessage],
 ) -> None:
-    """Fire background compaction for messages that were trimmed from context.
+    """Fire compaction for messages that were trimmed from context.
 
     Called from the agent loop (``process_message``) when ``trim_messages``
-    drops messages. The compaction task extracts durable facts from the
-    dropped messages and stores them in MEMORY.md.
+    drops messages. Two-phase to keep the watermark and the audit log
+    consistent under crash:
 
-    The dropped messages are ``AgentMessage`` objects without DB sequence
-    numbers, so ``max_message_seq`` is passed as None and no compaction
-    watermark is advanced. This is the only compaction trigger in the
-    system.
+    1. Synchronously, in one transaction: insert a ``'pending'``
+       ``CompactionEvent`` row (with ``min_message_seq`` /
+       ``max_message_seq`` populated) AND advance ``sessions.last_trim_seq``
+       to ``max_message_seq``. After this commits, the next inbound's
+       ``load_conversation_history`` will already filter out the dropped
+       messages, so compaction will not re-fire for the same range.
+
+    2. Asynchronously: ``compact_session`` runs the LLM call, fills in the
+       four memory-file before/after snapshots on the same row, and flips
+       ``status`` to ``'completed'``. If the async task crashes, the row
+       stays ``'pending'`` so an admin (or a CLI replay) can identify the
+       seq range whose facts were never extracted. The watermark stays
+       advanced regardless: this is the design tradeoff (no per-message
+       compaction churn) for losing facts on a crashed compaction call.
+
+    This is the only compaction trigger in the system.
     """
     if not dropped_messages or not settings.compaction_enabled:
         return
 
-    async def _run_trim_compaction() -> None:
+    dropped_seqs = _seqs_from_dropped(dropped_messages)
+    if not dropped_seqs:
+        # All dropped messages were in-memory placeholders (e.g. an injected
+        # summary) with no DB rows to watermark against. Nothing to compact.
+        return
+
+    min_seq = min(dropped_seqs)
+    max_seq = max(dropped_seqs)
+    triggered_at = datetime.datetime.now(datetime.UTC)
+
+    # Phase 1: synchronous insert + watermark advance, in one transaction.
+    event_id: int | None = None
+    try:
+        with db_session() as db:
+            event = CompactionEvent(
+                user_id=user_id,
+                triggered_at=triggered_at,
+                status="pending",
+                min_message_seq=min_seq,
+                max_message_seq=max_seq,
+                trimmed_count=len(dropped_messages),
+            )
+            db.add(event)
+            db.flush()
+            event_id = event.id
+
+            cs = db.query(ChatSession).filter_by(user_id=user_id).first()
+            if cs is not None:
+                current = cs.last_trim_seq or 0
+                if max_seq > current:
+                    cs.last_trim_seq = max_seq
+            db.commit()
+    except Exception:
+        logger.exception(
+            "Failed to record pending compaction event for user %s; "
+            "watermark not advanced and async compaction skipped",
+            user_id,
+        )
+        return
+
+    if event_id is None:
+        # Defensive: db.flush() failed silently. Nothing to update.
+        return
+
+    async def _run_trim_compaction(event_id: int) -> None:
         try:
-            saved, _ = await compact_session(user_id, dropped_messages, max_message_seq=None)
+            saved, _ = await compact_session(
+                user_id,
+                dropped_messages,
+                max_message_seq=max_seq,
+                event_id=event_id,
+            )
             if saved:
                 logger.info(
-                    "Trim-based compaction extracted facts from %d dropped message(s) for user %s",
+                    "Trim-based compaction extracted facts from %d dropped "
+                    "message(s) for user %s (event_id=%d)",
                     len(dropped_messages),
                     user_id,
+                    event_id,
                 )
         except Exception:
             logger.exception(
-                "Trim-based compaction failed for user %s",
+                "Trim-based compaction failed for user %s (event_id=%d); "
+                "watermark stays advanced, event row stays 'pending'",
                 user_id,
+                event_id,
             )
 
-    task = asyncio.create_task(_run_trim_compaction())
+    task = asyncio.create_task(_run_trim_compaction(event_id))
     _background_tasks.add(task)
     task.add_done_callback(_background_tasks.discard)
     logger.info(
-        "Triggered trim-based compaction for user %s: %d dropped message(s)",
+        "Triggered trim-based compaction for user %s: %d dropped "
+        "message(s), seq range [%d, %d], event_id=%d",
         user_id,
         len(dropped_messages),
+        min_seq,
+        max_seq,
+        event_id,
     )
 
 
@@ -165,6 +252,7 @@ def _parse_tool_interactions(raw: str) -> list[StoredToolInteraction]:
 def _expand_outbound_with_tools(
     tool_interactions: list[StoredToolInteraction],
     reply_text: str,
+    seq: int | None = None,
 ) -> list[AgentMessage]:
     """Expand an outbound message with tool interactions into typed messages.
 
@@ -172,6 +260,13 @@ def _expand_outbound_with_tools(
     1. AssistantMessage with tool_calls (what the LLM requested)
     2. ToolResultMessage for each tool result
     3. AssistantMessage with the final reply text
+
+    *seq* is the source DB row's ``messages.seq``. When provided, both
+    AssistantMessage instances carry it, so the trim watermark write in
+    ``trigger_compaction_for_dropped`` can find the right value regardless
+    of which one ends up in the dropped list. ``ToolResultMessage`` does
+    not carry seq because tool results live inside the parent's
+    ``tool_interactions_json`` and share the parent's row.
     """
     messages: list[AgentMessage] = []
 
@@ -187,7 +282,7 @@ def _expand_outbound_with_tools(
         )
 
     # AssistantMessage requesting the tool calls (content is typically None)
-    messages.append(AssistantMessage(content=None, tool_calls=tool_call_requests))
+    messages.append(AssistantMessage(content=None, tool_calls=tool_call_requests, seq=seq))
 
     # ToolResultMessages for each tool execution
     for tc in tool_interactions:
@@ -199,7 +294,7 @@ def _expand_outbound_with_tools(
         )
 
     # Final AssistantMessage with the reply text
-    messages.append(AssistantMessage(content=reply_text))
+    messages.append(AssistantMessage(content=reply_text, seq=seq))
 
     return messages
 
@@ -223,6 +318,14 @@ async def load_conversation_history(
     guard against exceeding the LLM context window.
     """
     all_messages = session.messages
+
+    # Apply the trim watermark before any other filtering: messages with
+    # ``seq <= last_trim_seq`` have been compacted out of LLM context and
+    # their durable facts now live in MEMORY.md / USER.md / SOUL.md. Loading
+    # them again would re-trigger trim and re-fire compaction every message.
+    # NULL watermark = no filter (preserves pre-feature behavior).
+    if session.last_trim_seq is not None:
+        all_messages = [m for m in all_messages if m.seq > session.last_trim_seq]
     total_count = len(all_messages)
 
     # Get the most recent `limit` messages, excluding the current (last) one
@@ -248,13 +351,13 @@ async def load_conversation_history(
                 last_was_approval_prompt = False
                 continue
             last_was_approval_prompt = False
-            history.append(UserMessage(content=content))
+            history.append(UserMessage(content=content, seq=msg.seq))
         else:
             # Check for stored tool interactions
             tool_interactions = _parse_tool_interactions(msg.tool_interactions_json)
             if tool_interactions:
                 tool_interaction_count += len(tool_interactions)
-                history.extend(_expand_outbound_with_tools(tool_interactions, content))
+                history.extend(_expand_outbound_with_tools(tool_interactions, content, seq=msg.seq))
                 last_was_approval_prompt = False
             elif _is_approval_prompt(content):
                 # Skip approval prompts (real ones persisted by older code,
@@ -265,7 +368,7 @@ async def load_conversation_history(
                 # already-poisoned sessions without a DB migration.
                 last_was_approval_prompt = True
             else:
-                history.append(AssistantMessage(content=content))
+                history.append(AssistantMessage(content=content, seq=msg.seq))
                 last_was_approval_prompt = False
     logger.debug(
         "Loaded %d history messages (%d with tool interactions) for session %s",
