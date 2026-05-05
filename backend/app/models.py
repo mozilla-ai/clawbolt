@@ -638,6 +638,48 @@ class PendingApprovalRow(Base):
     )
 
 
+class ApprovalEvent(Base):
+    """Append-only audit log for tool-approval lifecycle transitions.
+
+    Companion to ``PendingApprovalRow``: that row tracks the single
+    in-flight request per user and is deleted on resolve, so it cannot
+    answer "what was the agent blocked on ten minutes ago?". Each
+    transition (``requested``, ``decided``, ``timed_out``, ``recovered``)
+    appends one row here so admins can replay the full sequence in the
+    activity feed.
+
+    ``decision`` is populated only on ``decided`` rows and carries the
+    ``ApprovalDecision`` value (``approved`` / ``denied`` /
+    ``always_allow`` / ``always_deny`` / ``interrupted``).
+
+    ``description`` echoes the tool's human-readable description that
+    was shown to the user. It can include user-pasted content (filenames,
+    URLs, message bodies), so admin surfaces must run it through PII
+    redaction before display, the same way ``Message.body`` is handled.
+
+    No retention sweep ships with this table. Volume is small (one row
+    per approval transition; an active session generates a handful per
+    day) and the data is the audit trail itself, so we let it
+    accumulate. Reconsider if a single user crosses ~10k rows.
+    """
+
+    __tablename__ = "approval_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    channel: Mapped[str] = mapped_column(String, default="")
+    chat_id: Mapped[str] = mapped_column(String, default="")
+    decision: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+
+
 class CompactionEvent(Base):
     """One row per session-compaction run.
 
