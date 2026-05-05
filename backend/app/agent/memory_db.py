@@ -10,8 +10,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Select, Update, literal_column, select, update
-from sqlalchemy import case as sa_case
+from sqlalchemy import Select, Update, select, update
 
 from backend.app.agent.store_cache import StoreCache
 from backend.app.database import (
@@ -50,25 +49,32 @@ def _user_select(user_id: str) -> Select[tuple[User]]:
     return select(User).filter_by(id=user_id)
 
 
-def _append_history_update(doc_id: int, entry: str) -> Update:
-    """Build the SQL-level history-append used by both sync and async paths.
+def _doc_select_for_update(user_id: str) -> Select[tuple[MemoryDocument]]:
+    """Builder for the locked read used by ``append_history*``.
 
-    Uses a CASE expression to substitute an empty string when the
-    column is NULL so concatenation yields the expected text instead
-    of NULL. Pulls the suffix into a single value so the SQL emitted
-    matches what the original sync path produced.
+    ``MemoryDocument.history_text`` is an ``EncryptedString`` column,
+    so we cannot append ciphertext on the SQL side: each row carries
+    its own DEK and the envelope format is not concat-friendly.
+    Instead, both sync and async append paths SELECT the row under
+    ``FOR UPDATE``, decrypt automatically on read, concatenate in
+    Python, and write the full new plaintext back. The row-level lock
+    serializes concurrent appenders so neither side loses its update.
     """
-    suffix = entry + "\n"
+    return select(MemoryDocument).filter_by(user_id=user_id).with_for_update()
+
+
+def _append_history_update(doc_id: int, full_new_text: str) -> Update:
+    """Build the UPDATE used by both sync and async ``append_history`` paths.
+
+    The caller has already read the current ``history_text`` under a
+    row-level lock, decrypted it, appended the new entry in Python, and
+    passes the full plaintext here. Encryption is automatic on bind,
+    so the column is rewritten with a fresh envelope every time.
+    """
     return (
         update(MemoryDocument)
         .where(MemoryDocument.id == doc_id)
-        .values(
-            history_text=sa_case(
-                (MemoryDocument.history_text.is_(None), literal_column("''")),
-                else_=MemoryDocument.history_text,
-            )
-            + suffix
-        )
+        .values(history_text=full_new_text)
         .execution_options(synchronize_session="fetch")
     )
 
@@ -185,24 +191,49 @@ class MemoryStore:
     async def append_history(self, entry: str) -> None:
         """Append an entry to history text (equivalent of HISTORY.md).
 
-        Uses SQL-level concatenation to avoid lost-update races when
-        two callers append concurrently.
+        Reads the current row under ``SELECT ... FOR UPDATE`` to
+        serialize concurrent appenders, decrypts and concatenates in
+        Python, then rewrites the column with the full plaintext.
+        SQL-side concatenation is not viable because
+        ``history_text`` is an ``EncryptedString`` column whose
+        envelope format is not concat-safe.
         """
+        suffix = entry + "\n"
         with db_session() as db:
-            doc = self._get_or_create_doc(db)
-            db.execute(_append_history_update(doc.id, entry))
+            doc = db.execute(_doc_select_for_update(self.user_id)).scalar_one_or_none()
+            if doc is None:
+                db.add(
+                    MemoryDocument(
+                        user_id=self.user_id,
+                        memory_text="",
+                        history_text=suffix,
+                    )
+                )
+            else:
+                full_new_text = (doc.history_text or "") + suffix
+                db.execute(_append_history_update(doc.id, full_new_text))
             db.commit()
 
     async def append_history_async(self, entry: str) -> None:
         """Async peer of ``append_history``.
 
-        Same SQL-level concatenation contract as the sync path; the
-        only difference is session acquisition and ``await``
-        placement.
+        Same lock-and-rewrite contract as the sync path; only the
+        session acquisition and ``await`` placement differ.
         """
+        suffix = entry + "\n"
         async with db_session_async() as db:
-            doc = await self._get_or_create_doc_async(db)
-            await db.execute(_append_history_update(doc.id, entry))
+            doc = (await db.execute(_doc_select_for_update(self.user_id))).scalar_one_or_none()
+            if doc is None:
+                db.add(
+                    MemoryDocument(
+                        user_id=self.user_id,
+                        memory_text="",
+                        history_text=suffix,
+                    )
+                )
+            else:
+                full_new_text = (doc.history_text or "") + suffix
+                await db.execute(_append_history_update(doc.id, full_new_text))
             await db.commit()
 
     # -- soul text ---------------------------------------------------------

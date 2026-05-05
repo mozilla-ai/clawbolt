@@ -102,29 +102,51 @@ async def test_async_append_history_creates_row(
     assert "first entry" in history
 
 
-async def test_async_append_history_persists_first_entry(
+async def test_async_append_history_multi_append_round_trips(
     async_db: async_sessionmaker,
     async_test_user: User,
 ) -> None:
-    """A first ``append_history_async`` call is readable via ``read_history_async``.
+    """Multiple sequential appends round-trip through ``read_history_async``.
 
+    Regression test for the encrypted-history concat bug.
     ``MemoryDocument.history_text`` is an ``EncryptedString`` column,
-    so the SQL-level ``history_text + suffix`` concatenation used by
-    both sync and async paths operates on ciphertext rather than
-    plaintext. Repeated appends do not produce a readable
-    concatenated transcript today; that is a pre-existing limitation
-    of the sync path which the async peer reproduces by design
-    (dual-API parity per #1153). The fix belongs in a follow-up that
-    rewrites the builder; both paths will pick it up via the shared
-    ``_append_history_update`` helper.
-
-    Contract this test pins down: the first append round-trips. The
-    multi-append behavior is intentionally out of scope here so we
-    do not lock in the broken contract.
+    so the original SQL-level ``history_text + suffix`` builder
+    concatenated ciphertext envelopes and broke decryption on read
+    after the second append. The fix reads the row under
+    ``SELECT ... FOR UPDATE``, concatenates plaintext in Python, and
+    rewrites the column with a fresh envelope. Both sync and async
+    paths share the rewritten ``_append_history_update`` helper.
     """
     store = MemoryStore(async_test_user.id)
     await store.append_history_async("first entry")
-    assert "first entry" in await store.read_history_async()
+    await store.append_history_async("second entry")
+    await store.append_history_async("third entry")
+
+    history = await store.read_history_async()
+    # Each entry was appended with a trailing newline. ``read_history_async``
+    # strips the outer whitespace, so the final entry's newline is gone but
+    # the inter-entry newlines remain.
+    assert history == "first entry\nsecond entry\nthird entry"
+
+
+async def test_async_append_history_sequential_appends_after_seed(
+    async_db: async_sessionmaker,
+    async_test_user: User,
+) -> None:
+    """Appending after a row already exists keeps every prior entry.
+
+    Targets the second-and-later append path (``UPDATE`` branch), as
+    opposed to the create-on-first-append branch covered by
+    ``test_async_append_history_creates_row``. The pre-fix builder
+    silently corrupted ``history_text`` here because SQL-side
+    concatenation glued two ciphertext envelopes together.
+    """
+    store = MemoryStore(async_test_user.id)
+    await store.append_history_async("seed")
+    await store.append_history_async("follow-up")
+
+    history = await store.read_history_async()
+    assert history == "seed\nfollow-up"
 
 
 async def test_async_append_history_does_not_disturb_memory_text(
