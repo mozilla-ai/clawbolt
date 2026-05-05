@@ -12,6 +12,7 @@ from backend.app.agent.tools.registry import ToolContext
 from backend.app.integrations.quickbooks.factory import (
     _describe_qb_query,
     _format_intuit_fault,
+    _format_results,
     _quickbooks_factory,
     create_quickbooks_tools,
 )
@@ -298,3 +299,107 @@ class TestFormatIntuitFault:
         out = _format_intuit_fault(exc, entity="Estimate")
         assert "502" in out
         assert "Bad Gateway" in out
+
+
+# -- Query result formatter --
+
+
+class TestFormatResults:
+    """The query result formatter is the agent's only window into QBO records.
+    Each known dict-envelope shape (Address, FreeFormNumber, URI, postal
+    address, name+value ref) must surface; unknown shapes must fail loud
+    via json.dumps rather than silently disappearing."""
+
+    def test_zero_rows(self) -> None:
+        assert _format_results([]) == "Query returned 0 results."
+
+    def test_name_value_ref(self) -> None:
+        """{name, value} refs format as 'name (value)'."""
+        out = _format_results([{"Id": "1", "CustomerRef": {"name": "Acme", "value": "42"}}])
+        assert "CustomerRef: Acme (42)" in out
+
+    def test_value_only_ref(self) -> None:
+        """A ref with only `value` (e.g. CustomerMemo) keeps the field name."""
+        out = _format_results([{"Id": "1", "CustomerMemo": {"value": "Thanks!"}}])
+        assert "CustomerMemo: Thanks!" in out
+
+    def test_name_only_ref(self) -> None:
+        """A ref with only `name` keeps the field name and shows the name."""
+        out = _format_results([{"Id": "1", "CustomerRef": {"name": "Acme"}}])
+        assert "CustomerRef: Acme" in out
+
+    def test_email_address_envelope(self) -> None:
+        """{Address} envelopes (BillEmail, PrimaryEmailAddr) surface the email."""
+        out = _format_results(
+            [
+                {
+                    "Id": "1",
+                    "BillEmail": {"Address": "ar@example.com"},
+                    "PrimaryEmailAddr": {"Address": "primary@example.com"},
+                }
+            ]
+        )
+        assert "BillEmail: ar@example.com" in out
+        assert "PrimaryEmailAddr: primary@example.com" in out
+
+    def test_phone_freeformnumber_envelope(self) -> None:
+        """{FreeFormNumber} envelopes (PrimaryPhone, Mobile, etc.) surface the number."""
+        out = _format_results(
+            [
+                {
+                    "Id": "1",
+                    "PrimaryPhone": {"FreeFormNumber": "555-0100"},
+                    "Mobile": {"FreeFormNumber": "555-0200"},
+                }
+            ]
+        )
+        assert "PrimaryPhone: 555-0100" in out
+        assert "Mobile: 555-0200" in out
+
+    def test_web_uri_envelope(self) -> None:
+        """{URI} envelopes (WebAddr) surface the URL."""
+        out = _format_results([{"Id": "1", "WebAddr": {"URI": "https://example.com"}}])
+        assert "WebAddr: https://example.com" in out
+
+    def test_postal_address_envelope(self) -> None:
+        """Address-shaped dicts (BillAddr, ShipAddr) join their parts."""
+        out = _format_results(
+            [
+                {
+                    "Id": "1",
+                    "BillAddr": {
+                        "Line1": "123 Main St",
+                        "City": "Pittsburgh",
+                        "CountrySubDivisionCode": "PA",
+                        "PostalCode": "15220",
+                    },
+                }
+            ]
+        )
+        assert "BillAddr: 123 Main St, Pittsburgh, PA, 15220" in out
+
+    def test_unknown_dict_shape_is_json_dumped(self) -> None:
+        """Unknown dict shapes must surface via json.dumps, never silently drop."""
+        out = _format_results([{"Id": "1", "MysteryField": {"weird": "shape"}}])
+        assert 'MysteryField: {"weird": "shape"}' in out
+
+    def test_customer_with_email_and_address_regression(self) -> None:
+        """Regression for issue #1137: a Customer query result with both
+        PrimaryEmailAddr and BillAddr must surface both fields. Before the
+        fix, both were silently dropped because their dicts had neither
+        `name` nor `value`."""
+        row = {
+            "Id": "540",
+            "DisplayName": "Acme Plumbing",
+            "BillEmail": {"Address": "billing@example.com"},
+            "PrimaryEmailAddr": {"Address": "primary@example.com"},
+            "PrimaryPhone": {"FreeFormNumber": "555-1234"},
+            "BillAddr": {"Line1": "1 Test Ave", "City": "Pittsburgh"},
+            "CustomerRef": {"name": "Acme Plumbing", "value": "16"},
+        }
+        out = _format_results([row])
+        assert "BillEmail: billing@example.com" in out
+        assert "PrimaryEmailAddr: primary@example.com" in out
+        assert "PrimaryPhone: 555-1234" in out
+        assert "BillAddr: 1 Test Ave, Pittsburgh" in out
+        assert "CustomerRef: Acme Plumbing (16)" in out
