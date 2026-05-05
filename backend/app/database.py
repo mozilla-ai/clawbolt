@@ -62,6 +62,11 @@ def _sync_database_url(url: str) -> str:
     return url
 
 
+# Public alias so callers outside this module (alembic env, tooling) can pin
+# their URLs to psycopg3 without reaching for a leading-underscore name.
+sync_database_url = _sync_database_url
+
+
 def _async_database_url(url: str) -> str:
     """Translate a sync postgres URL to its asyncpg equivalent.
 

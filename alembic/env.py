@@ -4,7 +4,7 @@ from sqlalchemy import engine_from_config, pool
 
 from alembic import context
 from backend.app.config import settings
-from backend.app.database import Base
+from backend.app.database import Base, sync_database_url
 from backend.app.models import (  # noqa: F401
     CalendarConfig,
     ChannelRoute,
@@ -23,8 +23,10 @@ from backend.app.models import (  # noqa: F401
 # Alembic Config object
 config = context.config
 
-# Set the SQLAlchemy URL from our app settings
-config.set_main_option("sqlalchemy.url", settings.database_url)
+# Set the SQLAlchemy URL from our app settings, routing through the helper so
+# that bare ``postgresql://`` and legacy ``postgresql+psycopg2://`` URLs are
+# pinned to the psycopg3 driver (matching the production sync engine).
+config.set_main_option("sqlalchemy.url", sync_database_url(settings.database_url))
 
 # Interpret the config file for Python logging
 if config.config_file_name is not None:
