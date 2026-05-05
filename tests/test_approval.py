@@ -1464,3 +1464,200 @@ class TestClassifyApprovalResponseCallShape:
         assert "response_format" in kwargs, (
             "response_format is what actually constrains the output to the enum"
         )
+
+
+class TestApprovalEvents:
+    """The audit log appends one row per lifecycle transition so admins
+    can replay what happened to an approval (requested, decided,
+    timed_out, recovered) instead of seeing the prompt text only.
+    """
+
+    @pytest.mark.asyncio()
+    async def test_requested_and_decided_pair_logged(self, test_user: User) -> None:
+        from backend.app.agent.approval import get_approval_event_store
+        from backend.app.database import db_session
+        from backend.app.models import ApprovalEvent
+
+        gate = ApprovalGate()
+        mock_publish = AsyncMock()
+
+        async def _resolve_soon() -> None:
+            await asyncio.sleep(0.01)
+            gate.resolve(test_user.id, ApprovalDecision.APPROVED)
+
+        task = asyncio.create_task(_resolve_soon())
+        await gate.request_approval(
+            user_id=test_user.id,
+            tool_name="write_file",
+            description="write a file",
+            publish_outbound=mock_publish,
+            channel="telegram",
+            chat_id="chat_1",
+            timeout=5.0,
+        )
+        await task
+
+        with db_session() as db:
+            rows = (
+                db.query(ApprovalEvent)
+                .filter(ApprovalEvent.user_id == test_user.id)
+                .order_by(ApprovalEvent.id.asc())
+                .all()
+            )
+        assert [r.event_type for r in rows] == ["requested", "decided"]
+        assert rows[0].tool_name == "write_file"
+        assert rows[0].description == "write a file"
+        assert rows[0].channel == "telegram"
+        assert rows[0].chat_id == "chat_1"
+        assert rows[0].decision is None
+        assert rows[1].decision == "approved"
+
+        # Read-side store returns them in chronological order.
+        events = get_approval_event_store().list_for_user(test_user.id)
+        assert [e.event_type for e in events] == ["requested", "decided"]
+        assert events[1].decision == "approved"
+
+    @pytest.mark.asyncio()
+    async def test_timeout_logs_timed_out_event(self, test_user: User) -> None:
+        from backend.app.database import db_session
+        from backend.app.models import ApprovalEvent
+
+        gate = ApprovalGate()
+        mock_publish = AsyncMock()
+
+        decision = await gate.request_approval(
+            user_id=test_user.id,
+            tool_name="write_file",
+            description="write a file",
+            publish_outbound=mock_publish,
+            channel="telegram",
+            chat_id="chat_1",
+            timeout=0.01,
+        )
+        assert decision == ApprovalDecision.DENIED
+
+        with db_session() as db:
+            rows = (
+                db.query(ApprovalEvent)
+                .filter(ApprovalEvent.user_id == test_user.id)
+                .order_by(ApprovalEvent.id.asc())
+                .all()
+            )
+        assert [r.event_type for r in rows] == ["requested", "timed_out"]
+        # No `decided` row on timeout: the gate never received a decision.
+        assert all(r.decision is None for r in rows)
+
+    @pytest.mark.asyncio()
+    async def test_resolve_records_interrupted_decision(self, test_user: User) -> None:
+        from backend.app.database import db_session
+        from backend.app.models import ApprovalEvent
+
+        gate = ApprovalGate()
+        mock_publish = AsyncMock()
+
+        async def _interrupt_soon() -> None:
+            await asyncio.sleep(0.01)
+            gate.resolve(test_user.id, ApprovalDecision.INTERRUPTED)
+
+        task = asyncio.create_task(_interrupt_soon())
+        await gate.request_approval(
+            user_id=test_user.id,
+            tool_name="discard_media",
+            description="discard staged media",
+            publish_outbound=mock_publish,
+            channel="telegram",
+            chat_id="chat_2",
+            timeout=5.0,
+        )
+        await task
+
+        with db_session() as db:
+            rows = (
+                db.query(ApprovalEvent)
+                .filter(ApprovalEvent.user_id == test_user.id)
+                .order_by(ApprovalEvent.id.asc())
+                .all()
+            )
+        assert rows[-1].event_type == "decided"
+        assert rows[-1].decision == "interrupted"
+
+    @pytest.mark.asyncio()
+    async def test_recovered_event_logged_on_orphan_cleanup(self, test_user: User) -> None:
+        from backend.app.agent.approval import cleanup_orphaned_approvals
+        from backend.app.database import db_session
+        from backend.app.models import ApprovalEvent, PendingApprovalRow
+
+        with db_session() as db:
+            db.add(
+                PendingApprovalRow(
+                    user_id=test_user.id,
+                    tool_name="write_file",
+                    description="write a file",
+                    channel="telegram",
+                    chat_id="chat_99",
+                )
+            )
+            db.commit()
+
+        async def _publish(msg: OutboundMessage) -> None:
+            return None
+
+        recovered = await cleanup_orphaned_approvals(_publish)
+        assert recovered == 1
+
+        with db_session() as db:
+            rows = (
+                db.query(ApprovalEvent)
+                .filter(ApprovalEvent.user_id == test_user.id)
+                .order_by(ApprovalEvent.id.asc())
+                .all()
+            )
+        assert [r.event_type for r in rows] == ["recovered"]
+        assert rows[0].tool_name == "write_file"
+        assert rows[0].channel == "telegram"
+        assert rows[0].chat_id == "chat_99"
+
+    @pytest.mark.asyncio()
+    async def test_event_store_respects_since_and_limit(self, test_user: User) -> None:
+        from datetime import UTC, datetime, timedelta
+
+        from backend.app.agent.approval import get_approval_event_store
+        from backend.app.database import db_session
+        from backend.app.models import ApprovalEvent
+
+        old = datetime.now(UTC) - timedelta(hours=2)
+        recent = datetime.now(UTC)
+        with db_session() as db:
+            db.add_all(
+                [
+                    ApprovalEvent(
+                        user_id=test_user.id,
+                        event_type="requested",
+                        tool_name="t",
+                        description="",
+                        channel="",
+                        chat_id="",
+                        created_at=old,
+                    ),
+                    ApprovalEvent(
+                        user_id=test_user.id,
+                        event_type="decided",
+                        tool_name="t",
+                        description="",
+                        channel="",
+                        chat_id="",
+                        decision="approved",
+                        created_at=recent,
+                    ),
+                ]
+            )
+            db.commit()
+
+        store = get_approval_event_store()
+        only_recent = store.list_for_user(
+            test_user.id, since=datetime.now(UTC) - timedelta(minutes=5)
+        )
+        assert [e.event_type for e in only_recent] == ["decided"]
+
+        capped = store.list_for_user(test_user.id, limit=1)
+        assert len(capped) == 1
