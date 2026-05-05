@@ -110,8 +110,63 @@ _MEDIA_UPDATABLE_FIELDS: frozenset[str] = frozenset(
 )
 
 
+# Builders shared by sync and async heartbeat methods (issue #1154).
+# Same dual-API pattern as the IdempotencyStore pilot in #1199: pure
+# ``select(...)`` builders so the two paths stay in lockstep without a
+# class hierarchy.
+def _heartbeat_user_select(user_id: str) -> Select[tuple[User]]:
+    """Builder shared by ``read_heartbeat_md`` / ``write_heartbeat_md`` peers."""
+    return select(User).filter_by(id=user_id)
+
+
+def _heartbeat_daily_count_select(
+    user_id: str,
+    today_start: datetime.datetime,
+    tomorrow_start: datetime.datetime,
+) -> Select[tuple[int]]:
+    """Builder shared by ``get_daily_count`` / ``get_daily_count_async``."""
+    return select(func.count(HeartbeatLog.id)).where(
+        HeartbeatLog.user_id == user_id,
+        HeartbeatLog.created_at >= today_start,
+        HeartbeatLog.created_at < tomorrow_start,
+        HeartbeatLog.action_type.notin_(("skip", "cleanup")),
+    )
+
+
+def _recent_heartbeat_logs_select(
+    user_id: str, since: datetime.datetime
+) -> Select[tuple[HeartbeatLog]]:
+    """Builder shared by ``get_recent_logs`` / ``get_recent_logs_async``."""
+    return (
+        select(HeartbeatLog)
+        .where(
+            HeartbeatLog.user_id == user_id,
+            HeartbeatLog.created_at >= since,
+        )
+        .order_by(HeartbeatLog.created_at)
+    )
+
+
+def _today_window_utc() -> tuple[datetime.datetime, datetime.datetime]:
+    """Compute today's [start, end) window in UTC for daily heartbeat counts."""
+    today = datetime.datetime.now(datetime.UTC).date()
+    today_start = datetime.datetime.combine(today, datetime.time.min, tzinfo=datetime.UTC)
+    tomorrow_start = today_start + datetime.timedelta(days=1)
+    return today_start, tomorrow_start
+
+
 class HeartbeatStore:
-    """Database-backed heartbeat storage using User.heartbeat_text and HeartbeatLog ORM models."""
+    """Database-backed heartbeat storage using User.heartbeat_text and HeartbeatLog ORM models.
+
+    Dual-API store (issue #1154). Each public method has an ``*_async``
+    peer with identical semantics; the two share query construction via
+    the ``_heartbeat_user_select`` / ``_heartbeat_daily_count_select`` /
+    ``_recent_heartbeat_logs_select`` builders above. Existing sync
+    callers (the heartbeat scheduler tick that runs outside the event
+    loop) keep working unchanged while OSS-internal hot paths migrate
+    to the async peers. Follows the IdempotencyStore pilot pattern
+    from PR #1199.
+    """
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
@@ -120,20 +175,39 @@ class HeartbeatStore:
         """Read freeform heartbeat markdown from User.heartbeat_text."""
         db = SessionLocal()
         try:
-            user = db.execute(select(User).filter_by(id=self.user_id)).scalar_one_or_none()
+            user = db.execute(_heartbeat_user_select(self.user_id)).scalar_one_or_none()
             if user is not None and user.heartbeat_text:
                 return user.heartbeat_text
             return ""
         finally:
             db.close()
 
+    async def read_heartbeat_md_async(self) -> str:
+        """Async peer of ``read_heartbeat_md``."""
+        db = AsyncSessionLocal()
+        try:
+            user = (await db.execute(_heartbeat_user_select(self.user_id))).scalar_one_or_none()
+            if user is not None and user.heartbeat_text:
+                return user.heartbeat_text
+            return ""
+        finally:
+            await db.close()
+
     async def write_heartbeat_md(self, text: str) -> None:
         """Write freeform heartbeat markdown to User.heartbeat_text."""
         with db_session() as db:
-            user = db.execute(select(User).filter_by(id=self.user_id)).scalar_one_or_none()
+            user = db.execute(_heartbeat_user_select(self.user_id)).scalar_one_or_none()
             if user is not None:
                 user.heartbeat_text = text
                 db.commit()
+
+    async def write_heartbeat_md_async(self, text: str) -> None:
+        """Async peer of ``write_heartbeat_md``."""
+        async with db_session_async() as db:
+            user = (await db.execute(_heartbeat_user_select(self.user_id))).scalar_one_or_none()
+            if user is not None:
+                user.heartbeat_text = text
+                await db.commit()
 
     async def log_heartbeat(
         self,
@@ -157,6 +231,28 @@ class HeartbeatStore:
             db.add(log)
             db.commit()
 
+    async def log_heartbeat_async(
+        self,
+        *,
+        action_type: str = "send",
+        message_text: str = "",
+        channel: str = "",
+        reasoning: str = "",
+        tasks: str = "",
+    ) -> None:
+        """Async peer of ``log_heartbeat``."""
+        async with db_session_async() as db:
+            log = HeartbeatLog(
+                user_id=self.user_id,
+                action_type=action_type,
+                message_text=message_text,
+                channel=channel,
+                reasoning=reasoning,
+                tasks=tasks,
+            )
+            db.add(log)
+            await db.commit()
+
     async def get_daily_count(self) -> int:
         """Count HeartbeatLog entries for today (UTC) that consumed the nudge budget.
 
@@ -168,23 +264,30 @@ class HeartbeatStore:
         """
         db = SessionLocal()
         try:
-            today = datetime.datetime.now(datetime.UTC).date()
-            today_start = datetime.datetime.combine(today, datetime.time.min, tzinfo=datetime.UTC)
-            tomorrow_start = today_start + datetime.timedelta(days=1)
+            today_start, tomorrow_start = _today_window_utc()
             count: int = (
                 db.execute(
-                    select(func.count(HeartbeatLog.id)).where(
-                        HeartbeatLog.user_id == self.user_id,
-                        HeartbeatLog.created_at >= today_start,
-                        HeartbeatLog.created_at < tomorrow_start,
-                        HeartbeatLog.action_type.notin_(("skip", "cleanup")),
-                    )
+                    _heartbeat_daily_count_select(self.user_id, today_start, tomorrow_start)
                 ).scalar()
                 or 0
             )
             return count
         finally:
             db.close()
+
+    async def get_daily_count_async(self) -> int:
+        """Async peer of ``get_daily_count``."""
+        db = AsyncSessionLocal()
+        try:
+            today_start, tomorrow_start = _today_window_utc()
+            count: int = (
+                await db.scalar(
+                    _heartbeat_daily_count_select(self.user_id, today_start, tomorrow_start)
+                )
+            ) or 0
+            return count
+        finally:
+            await db.close()
 
     async def get_recent_logs(
         self,
@@ -193,21 +296,23 @@ class HeartbeatStore:
         """Select HeartbeatLog entries where created_at >= since."""
         db = SessionLocal()
         try:
-            logs = (
-                db.execute(
-                    select(HeartbeatLog)
-                    .where(
-                        HeartbeatLog.user_id == self.user_id,
-                        HeartbeatLog.created_at >= since,
-                    )
-                    .order_by(HeartbeatLog.created_at)
-                )
-                .scalars()
-                .all()
-            )
+            logs = db.execute(_recent_heartbeat_logs_select(self.user_id, since)).scalars().all()
             return [_heartbeat_log_to_dto(log) for log in logs]
         finally:
             db.close()
+
+    async def get_recent_logs_async(
+        self,
+        since: datetime.datetime,
+    ) -> list[HeartbeatLogEntry]:
+        """Async peer of ``get_recent_logs``."""
+        db = AsyncSessionLocal()
+        try:
+            result = await db.execute(_recent_heartbeat_logs_select(self.user_id, since))
+            logs = result.scalars().all()
+            return [_heartbeat_log_to_dto(log) for log in logs]
+        finally:
+            await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -215,8 +320,88 @@ class HeartbeatStore:
 # ---------------------------------------------------------------------------
 
 
+# Builders shared by sync and async media methods (issue #1155). Pure
+# ``select(...)`` builders so the two paths stay in lockstep without a
+# class hierarchy. Same pattern as the IdempotencyStore pilot.
+def _media_list_select(user_id: str) -> Select[tuple[MediaFile]]:
+    """Builder shared by ``list_all`` / ``list_all_async``."""
+    return select(MediaFile).filter_by(user_id=user_id).order_by(MediaFile.created_at)
+
+
+def _media_existing_ids_select(user_id: str) -> Select[tuple[str]]:
+    """Builder shared by the ``create`` / ``create_async`` ID-allocation paths.
+
+    Locks the existing rows ``FOR UPDATE`` so two concurrent inserts do
+    not race to allocate the same ``media-NNN`` id.
+    """
+    return select(MediaFile.id).filter_by(user_id=user_id).with_for_update()
+
+
+def _media_by_id_select(user_id: str, media_id: str) -> Select[tuple[MediaFile]]:
+    """Builder shared by the ``update`` / ``update_async`` paths."""
+    return select(MediaFile).filter_by(id=media_id, user_id=user_id)
+
+
+def _media_by_url_select(user_id: str, original_url: str) -> Select[tuple[MediaFile]]:
+    """Builder shared by ``get_by_url`` / ``get_by_url_async``."""
+    return select(MediaFile).where(
+        MediaFile.user_id == user_id,
+        or_(
+            MediaFile.original_url == original_url,
+            MediaFile.storage_url == original_url,
+            MediaFile.storage_path == original_url,
+        ),
+    )
+
+
+def _media_count_by_prefix_select(user_id: str, prefix: str) -> Select[tuple[int]]:
+    """Builder shared by ``count_by_path_prefix`` / ``count_by_path_prefix_async``."""
+    return select(func.count(MediaFile.id)).where(
+        MediaFile.user_id == user_id,
+        MediaFile.storage_path.startswith(prefix),
+    )
+
+
+def _next_media_id(existing_ids: list[str]) -> str:
+    """Compute the next ``media-NNN`` id from the locked existing-id set.
+
+    Pure helper so ``create`` / ``create_async`` use identical
+    allocation semantics. The caller owns the lock and the surrounding
+    transaction.
+    """
+    max_num = 0
+    for mid in existing_ids:
+        if mid.startswith("media-"):
+            try:
+                num = int(mid[6:])
+                max_num = max(max_num, num)
+            except ValueError:
+                pass
+    return f"media-{max_num + 1:03d}"
+
+
+def _apply_media_updates(m: MediaFile, fields: dict[str, Any]) -> None:
+    """Apply allowlisted attribute updates to a MediaFile row in place.
+
+    Pure helper so ``update`` / ``update_async`` use identical
+    field-allowlist semantics. ``None`` values are skipped to match the
+    existing partial-update contract.
+    """
+    for key, value in fields.items():
+        if value is not None and key in _MEDIA_UPDATABLE_FIELDS:
+            setattr(m, key, value)
+
+
 class MediaStore:
-    """Database-backed media file storage using MediaFile ORM model."""
+    """Database-backed media file storage using MediaFile ORM model.
+
+    Dual-API store (issue #1155). Each public method has an ``*_async``
+    peer with identical semantics; the two share query construction via
+    the ``_media_list_select`` / ``_media_existing_ids_select`` /
+    ``_media_by_id_select`` / ``_media_by_url_select`` /
+    ``_media_count_by_prefix_select`` builders above. Follows the
+    IdempotencyStore pilot pattern from PR #1199.
+    """
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
@@ -225,16 +410,20 @@ class MediaStore:
         """Query all MediaFile rows, return as DTOs."""
         db = SessionLocal()
         try:
-            rows = (
-                db.execute(
-                    select(MediaFile).filter_by(user_id=self.user_id).order_by(MediaFile.created_at)
-                )
-                .scalars()
-                .all()
-            )
+            rows = db.execute(_media_list_select(self.user_id)).scalars().all()
             return [_media_to_dto(m) for m in rows]
         finally:
             db.close()
+
+    async def list_all_async(self) -> list[MediaData]:
+        """Async peer of ``list_all``."""
+        db = AsyncSessionLocal()
+        try:
+            result = await db.execute(_media_list_select(self.user_id))
+            rows = result.scalars().all()
+            return [_media_to_dto(m) for m in rows]
+        finally:
+            await db.close()
 
     async def create(
         self,
@@ -249,19 +438,9 @@ class MediaStore:
         with db_session() as db:
             # ID generation: "media-NNN" format -- lock rows to prevent races
             existing_ids = list(
-                db.execute(select(MediaFile.id).filter_by(user_id=self.user_id).with_for_update())
-                .scalars()
-                .all()
+                db.execute(_media_existing_ids_select(self.user_id)).scalars().all()
             )
-            max_num = 0
-            for mid in existing_ids:
-                if mid.startswith("media-"):
-                    try:
-                        num = int(mid[6:])
-                        max_num = max(max_num, num)
-                    except ValueError:
-                        pass
-            new_id = f"media-{max_num + 1:03d}"
+            new_id = _next_media_id(existing_ids)
 
             media = MediaFile(
                 id=new_id,
@@ -278,19 +457,56 @@ class MediaStore:
             db.refresh(media)
             return _media_to_dto(media)
 
+    async def create_async(
+        self,
+        original_url: str = "",
+        mime_type: str = "",
+        processed_text: str = "",
+        storage_url: str = "",
+        storage_path: str = "",
+        message_id: str | None = None,
+    ) -> MediaData:
+        """Async peer of ``create``."""
+        async with db_session_async() as db:
+            result = await db.execute(_media_existing_ids_select(self.user_id))
+            existing_ids = list(result.scalars().all())
+            new_id = _next_media_id(existing_ids)
+
+            media = MediaFile(
+                id=new_id,
+                user_id=self.user_id,
+                message_id=message_id or "",
+                original_url=original_url,
+                mime_type=mime_type,
+                processed_text=processed_text,
+                storage_url=storage_url,
+                storage_path=storage_path,
+            )
+            db.add(media)
+            await db.commit()
+            await db.refresh(media)
+            return _media_to_dto(media)
+
     async def update(self, media_id: str, **fields: Any) -> MediaData | None:
         """Update a MediaFile row by id."""
         with db_session() as db:
-            m = db.execute(
-                select(MediaFile).filter_by(id=media_id, user_id=self.user_id)
-            ).scalar_one_or_none()
+            m = db.execute(_media_by_id_select(self.user_id, media_id)).scalar_one_or_none()
             if m is None:
                 return None
-            for key, value in fields.items():
-                if value is not None and key in _MEDIA_UPDATABLE_FIELDS:
-                    setattr(m, key, value)
+            _apply_media_updates(m, fields)
             db.commit()
             db.refresh(m)
+            return _media_to_dto(m)
+
+    async def update_async(self, media_id: str, **fields: Any) -> MediaData | None:
+        """Async peer of ``update``."""
+        async with db_session_async() as db:
+            m = (await db.execute(_media_by_id_select(self.user_id, media_id))).scalar_one_or_none()
+            if m is None:
+                return None
+            _apply_media_updates(m, fields)
+            await db.commit()
+            await db.refresh(m)
             return _media_to_dto(m)
 
     async def get_by_url(self, original_url: str) -> MediaData | None:
@@ -307,36 +523,43 @@ class MediaStore:
             return None
         db = SessionLocal()
         try:
-            m = db.execute(
-                select(MediaFile).where(
-                    MediaFile.user_id == self.user_id,
-                    or_(
-                        MediaFile.original_url == original_url,
-                        MediaFile.storage_url == original_url,
-                        MediaFile.storage_path == original_url,
-                    ),
-                )
-            ).scalar_one_or_none()
+            m = db.execute(_media_by_url_select(self.user_id, original_url)).scalar_one_or_none()
             return _media_to_dto(m) if m else None
         finally:
             db.close()
+
+    async def get_by_url_async(self, original_url: str) -> MediaData | None:
+        """Async peer of ``get_by_url``."""
+        if not original_url:
+            return None
+        db = AsyncSessionLocal()
+        try:
+            m = (
+                await db.execute(_media_by_url_select(self.user_id, original_url))
+            ).scalar_one_or_none()
+            return _media_to_dto(m) if m else None
+        finally:
+            await db.close()
 
     async def count_by_path_prefix(self, prefix: str) -> int:
         """Count MediaFile rows where storage_path starts with prefix."""
         db = SessionLocal()
         try:
             count: int = (
-                db.execute(
-                    select(func.count(MediaFile.id)).where(
-                        MediaFile.user_id == self.user_id,
-                        MediaFile.storage_path.startswith(prefix),
-                    )
-                ).scalar()
-                or 0
+                db.execute(_media_count_by_prefix_select(self.user_id, prefix)).scalar() or 0
             )
             return count
         finally:
             db.close()
+
+    async def count_by_path_prefix_async(self, prefix: str) -> int:
+        """Async peer of ``count_by_path_prefix``."""
+        db = AsyncSessionLocal()
+        try:
+            count: int = (await db.scalar(_media_count_by_prefix_select(self.user_id, prefix))) or 0
+            return count
+        finally:
+            await db.close()
 
 
 # ---------------------------------------------------------------------------
@@ -521,8 +744,71 @@ class IdempotencyStore:
 _warned_unpriced_models: set[tuple[str, str]] = set()
 
 
+def _build_llm_usage_log(
+    *,
+    user_id: str,
+    model: str,
+    prompt_tokens: int,
+    completion_tokens: int,
+    purpose: str,
+    provider: str,
+    cache_creation_input_tokens: int | None,
+    cache_read_input_tokens: int | None,
+) -> LLMUsageLog:
+    """Compute cost, emit the unpriced-model warning, and build an LLMUsageLog row.
+
+    Pure helper shared by ``LLMUsageStore.log`` and ``log_async`` so the
+    two paths use identical pricing semantics, identical warning
+    suppression, and identical column population. Does not touch the
+    database; the caller owns the session and the surrounding commit.
+    """
+    cost = compute_cost(
+        model,
+        provider=provider,
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+    )
+    if (
+        not is_known_model(model, provider=provider)
+        and (prompt_tokens or completion_tokens)
+        and (provider, model) not in _warned_unpriced_models
+    ):
+        _warned_unpriced_models.add((provider, model))
+        logger.warning(
+            "genai-prices does not know provider=%r model=%r; logging "
+            "usage with cost=0. Bump the genai-prices dependency to "
+            "pick up new model pricing.",
+            provider,
+            model,
+        )
+
+    return LLMUsageLog(
+        user_id=user_id,
+        provider=provider,
+        model=model,
+        input_tokens=prompt_tokens,
+        output_tokens=completion_tokens,
+        total_tokens=prompt_tokens + completion_tokens,
+        cost=cost,
+        purpose=purpose,
+        cache_creation_input_tokens=cache_creation_input_tokens,
+        cache_read_input_tokens=cache_read_input_tokens,
+    )
+
+
 class LLMUsageStore:
-    """Database-backed LLM usage logging using LLMUsageLog ORM model."""
+    """Database-backed LLM usage logging using LLMUsageLog ORM model.
+
+    Dual-API store (issue #1156). The async peer matters for the
+    request hot path: premium reads from this table for quota
+    enforcement, and the sync write was a known event-loop blocking
+    risk. Sync and async paths share the ``_build_llm_usage_log``
+    helper so cost computation and the unpriced-model warning behave
+    identically. Follows the IdempotencyStore pilot pattern from
+    PR #1199.
+    """
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
@@ -549,43 +835,44 @@ class LLMUsageStore:
         ``cost=0.000000`` and a once-per-process warning so we notice when
         our pricing data is stale.
         """
-        cost = compute_cost(
-            model,
+        entry = _build_llm_usage_log(
+            user_id=self.user_id,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            purpose=purpose,
             provider=provider,
-            input_tokens=prompt_tokens,
-            output_tokens=completion_tokens,
             cache_creation_input_tokens=cache_creation_input_tokens,
             cache_read_input_tokens=cache_read_input_tokens,
         )
-        if (
-            not is_known_model(model, provider=provider)
-            and (prompt_tokens or completion_tokens)
-            and (provider, model) not in _warned_unpriced_models
-        ):
-            _warned_unpriced_models.add((provider, model))
-            logger.warning(
-                "genai-prices does not know provider=%r model=%r; logging "
-                "usage with cost=0. Bump the genai-prices dependency to "
-                "pick up new model pricing.",
-                provider,
-                model,
-            )
-
         with db_session() as db:
-            entry = LLMUsageLog(
-                user_id=self.user_id,
-                provider=provider,
-                model=model,
-                input_tokens=prompt_tokens,
-                output_tokens=completion_tokens,
-                total_tokens=prompt_tokens + completion_tokens,
-                cost=cost,
-                purpose=purpose,
-                cache_creation_input_tokens=cache_creation_input_tokens,
-                cache_read_input_tokens=cache_read_input_tokens,
-            )
             db.add(entry)
             db.commit()
+
+    async def log_async(
+        self,
+        model: str,
+        prompt_tokens: int,
+        completion_tokens: int,
+        purpose: str,
+        provider: str = "",
+        cache_creation_input_tokens: int | None = None,
+        cache_read_input_tokens: int | None = None,
+    ) -> None:
+        """Async peer of ``log``."""
+        entry = _build_llm_usage_log(
+            user_id=self.user_id,
+            model=model,
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            purpose=purpose,
+            provider=provider,
+            cache_creation_input_tokens=cache_creation_input_tokens,
+            cache_read_input_tokens=cache_read_input_tokens,
+        )
+        async with db_session_async() as db:
+            db.add(entry)
+            await db.commit()
 
 
 # ---------------------------------------------------------------------------
@@ -593,8 +880,83 @@ class LLMUsageStore:
 # ---------------------------------------------------------------------------
 
 
+# Builders shared by sync and async tool-config methods (issue #1157).
+# Pure ``select(...) / delete(...)`` builders so the two paths stay in
+# lockstep without a class hierarchy. Same pattern as the
+# IdempotencyStore pilot.
+def _tool_config_load_select(user_id: str) -> Select[tuple[ToolConfig]]:
+    """Builder shared by ``load`` / ``load_async``."""
+    return (
+        select(ToolConfig)
+        .filter_by(user_id=user_id)
+        .order_by(ToolConfig.domain_group_order, ToolConfig.name)
+    )
+
+
+def _tool_config_delete_for_user(user_id: str) -> Delete[tuple[ToolConfig]]:
+    """Builder shared by the ``save`` / ``save_async`` replace-all paths."""
+    return delete(ToolConfig).where(ToolConfig.user_id == user_id)
+
+
+def _tool_config_disabled_names_select(user_id: str) -> Select[tuple[str]]:
+    """Builder shared by ``get_disabled_tool_names`` / ``_async``."""
+    return select(ToolConfig.name).filter_by(user_id=user_id, enabled=False)
+
+
+def _tool_config_by_name_select(user_id: str, name: str) -> Select[tuple[ToolConfig]]:
+    """Builder shared by the ``set_enabled`` / ``set_enabled_async`` paths."""
+    return select(ToolConfig).filter_by(user_id=user_id, name=name)
+
+
+def _tool_config_disabled_sub_tools_select(user_id: str) -> Select[tuple[str]]:
+    """Builder shared by ``get_disabled_sub_tool_names`` / ``_async``."""
+    return (
+        select(ToolConfig.disabled_sub_tools)
+        .filter_by(user_id=user_id)
+        .where(ToolConfig.disabled_sub_tools != "")
+    )
+
+
+def _build_tool_config(user_id: str, entry: ToolConfigEntry) -> ToolConfig:
+    """Construct a ToolConfig ORM row from a DTO. Pure helper shared by save paths."""
+    disabled_sub = json.dumps(entry.disabled_sub_tools) if entry.disabled_sub_tools else ""
+    return ToolConfig(
+        user_id=user_id,
+        name=entry.name,
+        description=entry.description,
+        category=entry.category,
+        domain_group=entry.domain_group,
+        domain_group_order=entry.domain_group_order,
+        enabled=entry.enabled,
+        disabled_sub_tools=disabled_sub,
+    )
+
+
+def _new_disabled_tool_config(user_id: str, name: str, enabled: bool) -> ToolConfig:
+    """Construct a placeholder ToolConfig row for ``set_enabled`` when none exists."""
+    return ToolConfig(
+        user_id=user_id,
+        name=name,
+        description="",
+        category="domain",
+        domain_group="",
+        domain_group_order=0,
+        enabled=enabled,
+        disabled_sub_tools="",
+    )
+
+
 class ToolConfigStore:
-    """Database-backed tool configuration using ToolConfig ORM model."""
+    """Database-backed tool configuration using ToolConfig ORM model.
+
+    Dual-API store (issue #1157). Each public method has an ``*_async``
+    peer with identical semantics; the two share query construction via
+    the ``_tool_config_load_select`` / ``_tool_config_delete_for_user`` /
+    ``_tool_config_disabled_names_select`` /
+    ``_tool_config_by_name_select`` /
+    ``_tool_config_disabled_sub_tools_select`` builders above. Follows
+    the IdempotencyStore pilot pattern from PR #1199.
+    """
 
     def __init__(self, user_id: str) -> None:
         self.user_id = user_id
@@ -603,54 +965,60 @@ class ToolConfigStore:
         """Query all ToolConfig rows for this user, return as DTOs."""
         db = SessionLocal()
         try:
-            rows = (
-                db.execute(
-                    select(ToolConfig)
-                    .filter_by(user_id=self.user_id)
-                    .order_by(ToolConfig.domain_group_order, ToolConfig.name)
-                )
-                .scalars()
-                .all()
-            )
+            rows = db.execute(_tool_config_load_select(self.user_id)).scalars().all()
             return [_tool_config_to_dto(tc) for tc in rows]
         finally:
             db.close()
+
+    async def load_async(self) -> list[ToolConfigEntry]:
+        """Async peer of ``load``."""
+        db = AsyncSessionLocal()
+        try:
+            result = await db.execute(_tool_config_load_select(self.user_id))
+            rows = result.scalars().all()
+            return [_tool_config_to_dto(tc) for tc in rows]
+        finally:
+            await db.close()
 
     async def save(self, entries: list[ToolConfigEntry]) -> list[ToolConfigEntry]:
         """Replace all ToolConfig rows for this user with new entries."""
         with db_session() as db:
             # Delete existing rows for this user
-            db.execute(delete(ToolConfig).where(ToolConfig.user_id == self.user_id))
+            db.execute(_tool_config_delete_for_user(self.user_id))
 
             # Insert new rows
             for entry in entries:
-                disabled_sub = (
-                    json.dumps(entry.disabled_sub_tools) if entry.disabled_sub_tools else ""
-                )
-                tc = ToolConfig(
-                    user_id=self.user_id,
-                    name=entry.name,
-                    description=entry.description,
-                    category=entry.category,
-                    domain_group=entry.domain_group,
-                    domain_group_order=entry.domain_group_order,
-                    enabled=entry.enabled,
-                    disabled_sub_tools=disabled_sub,
-                )
-                db.add(tc)
+                db.add(_build_tool_config(self.user_id, entry))
             db.commit()
+            return entries
+
+    async def save_async(self, entries: list[ToolConfigEntry]) -> list[ToolConfigEntry]:
+        """Async peer of ``save``."""
+        async with db_session_async() as db:
+            await db.execute(_tool_config_delete_for_user(self.user_id))
+
+            for entry in entries:
+                db.add(_build_tool_config(self.user_id, entry))
+            await db.commit()
             return entries
 
     async def get_disabled_tool_names(self) -> set[str]:
         """Return the set of tool group names that are disabled."""
         db = SessionLocal()
         try:
-            rows = db.execute(
-                select(ToolConfig.name).filter_by(user_id=self.user_id, enabled=False)
-            ).all()
+            rows = db.execute(_tool_config_disabled_names_select(self.user_id)).all()
             return {row[0] for row in rows}
         finally:
             db.close()
+
+    async def get_disabled_tool_names_async(self) -> set[str]:
+        """Async peer of ``get_disabled_tool_names``."""
+        db = AsyncSessionLocal()
+        try:
+            result = await db.execute(_tool_config_disabled_names_select(self.user_id))
+            return {row[0] for row in result.all()}
+        finally:
+            await db.close()
 
     async def set_enabled(self, name: str, enabled: bool) -> None:
         """Set a single tool group's enabled state.
@@ -661,40 +1029,49 @@ class ToolConfigStore:
         """
         with db_session() as db:
             existing = db.execute(
-                select(ToolConfig).filter_by(user_id=self.user_id, name=name)
+                _tool_config_by_name_select(self.user_id, name)
             ).scalar_one_or_none()
             if existing:
                 existing.enabled = enabled
             else:
-                db.add(
-                    ToolConfig(
-                        user_id=self.user_id,
-                        name=name,
-                        description="",
-                        category="domain",
-                        domain_group="",
-                        domain_group_order=0,
-                        enabled=enabled,
-                        disabled_sub_tools="",
-                    )
-                )
+                db.add(_new_disabled_tool_config(self.user_id, name, enabled))
             db.commit()
+
+    async def set_enabled_async(self, name: str, enabled: bool) -> None:
+        """Async peer of ``set_enabled``."""
+        async with db_session_async() as db:
+            existing = (
+                await db.execute(_tool_config_by_name_select(self.user_id, name))
+            ).scalar_one_or_none()
+            if existing:
+                existing.enabled = enabled
+            else:
+                db.add(_new_disabled_tool_config(self.user_id, name, enabled))
+            await db.commit()
 
     async def get_disabled_sub_tool_names(self) -> set[str]:
         """Return the union of all disabled sub-tool names across all groups."""
         db = SessionLocal()
         try:
-            rows = db.execute(
-                select(ToolConfig.disabled_sub_tools)
-                .filter_by(user_id=self.user_id)
-                .where(ToolConfig.disabled_sub_tools != "")
-            ).all()
+            rows = db.execute(_tool_config_disabled_sub_tools_select(self.user_id)).all()
             result: set[str] = set()
             for (raw,) in rows:
                 result.update(_parse_disabled_sub_tools(raw))
             return result
         finally:
             db.close()
+
+    async def get_disabled_sub_tool_names_async(self) -> set[str]:
+        """Async peer of ``get_disabled_sub_tool_names``."""
+        db = AsyncSessionLocal()
+        try:
+            db_result = await db.execute(_tool_config_disabled_sub_tools_select(self.user_id))
+            result: set[str] = set()
+            for (raw,) in db_result.all():
+                result.update(_parse_disabled_sub_tools(raw))
+            return result
+        finally:
+            await db.close()
 
 
 # ---------------------------------------------------------------------------
