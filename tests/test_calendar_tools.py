@@ -110,7 +110,13 @@ async def test_factory_returns_6_tools_when_configured() -> None:
         patch("backend.app.integrations.calendar.factory.oauth_service") as mock_oauth,
         patch(
             "backend.app.integrations.calendar.factory._get_enabled_calendars",
+            new_callable=AsyncMock,
             return_value=[("primary", "Primary", [], "owner")],
+        ),
+        patch(
+            "backend.app.integrations.calendar.factory._get_primary_calendar_id",
+            new_callable=AsyncMock,
+            return_value="",
         ),
     ):
         mock_settings.google_calendar_client_id = "test-id"
@@ -986,10 +992,16 @@ async def test_factory_passes_enabled_calendars() -> None:
         ) as mock_create,
         patch(
             "backend.app.integrations.calendar.factory._get_enabled_calendars",
+            new_callable=AsyncMock,
             return_value=[
                 ("primary", "Personal", [], "owner"),
                 ("jobs@example.com", "Jobs", [ToolName.CALENDAR_CREATE_EVENT], "writer"),
             ],
+        ),
+        patch(
+            "backend.app.integrations.calendar.factory._get_primary_calendar_id",
+            new_callable=AsyncMock,
+            return_value="",
         ),
     ):
         mock_settings.google_calendar_client_id = "test-id"

@@ -11,10 +11,11 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import get_async_db
 from backend.app.integrations.calendar.factory import parse_disabled_tools
 from backend.app.integrations.calendar.service import GoogleCalendarService
 from backend.app.models import CalendarConfig, User
@@ -75,21 +76,20 @@ async def list_calendars(
 @router.get("/user/calendar/config", response_model=CalendarConfigResponse)
 async def get_calendar_config(
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
 ) -> CalendarConfigResponse:
     """Get all enabled calendars for the user."""
-    db = SessionLocal()
-    try:
-        configs = (
-            db.execute(
+    configs = (
+        (
+            await db.execute(
                 select(CalendarConfig).filter_by(
                     user_id=current_user.id, provider="google_calendar"
                 )
             )
-            .scalars()
-            .all()
         )
-    finally:
-        db.close()
+        .scalars()
+        .all()
+    )
 
     return CalendarConfigResponse(
         calendars=[
@@ -108,6 +108,7 @@ async def get_calendar_config(
 async def update_calendar_config(
     body: CalendarConfigUpdate,
     current_user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_async_db),
 ) -> CalendarConfigResponse:
     """Replace all enabled calendars (delete existing, insert new).
 
@@ -136,43 +137,39 @@ async def update_calendar_config(
             "Failed to fetch calendarList for is_primary detection (user %s)", current_user.id
         )
 
-    db = SessionLocal()
-    try:
-        db.execute(
-            delete(CalendarConfig).where(
-                CalendarConfig.user_id == current_user.id,
-                CalendarConfig.provider == "google_calendar",
-            )
+    await db.execute(
+        delete(CalendarConfig).where(
+            CalendarConfig.user_id == current_user.id,
+            CalendarConfig.provider == "google_calendar",
         )
+    )
 
-        new_configs: list[CalendarConfig] = []
-        for entry in body.calendars:
-            config = CalendarConfig(
-                user_id=current_user.id,
-                provider="google_calendar",
-                calendar_id=entry.calendar_id,
-                display_name=entry.display_name,
-                disabled_tools=json.dumps(entry.disabled_tools) if entry.disabled_tools else "",
-                access_role=entry.access_role,
-                is_primary=bool(primary_id) and entry.calendar_id == primary_id,
-            )
-            db.add(config)
-            new_configs.append(config)
-
-        db.commit()
-        for c in new_configs:
-            db.refresh(c)
-
-        return CalendarConfigResponse(
-            calendars=[
-                CalendarConfigEntry(
-                    calendar_id=c.calendar_id,
-                    display_name=c.display_name,
-                    disabled_tools=parse_disabled_tools(c.disabled_tools),
-                    access_role=c.access_role or "",
-                )
-                for c in new_configs
-            ]
+    new_configs: list[CalendarConfig] = []
+    for entry in body.calendars:
+        config = CalendarConfig(
+            user_id=current_user.id,
+            provider="google_calendar",
+            calendar_id=entry.calendar_id,
+            display_name=entry.display_name,
+            disabled_tools=json.dumps(entry.disabled_tools) if entry.disabled_tools else "",
+            access_role=entry.access_role,
+            is_primary=bool(primary_id) and entry.calendar_id == primary_id,
         )
-    finally:
-        db.close()
+        db.add(config)
+        new_configs.append(config)
+
+    await db.commit()
+    for c in new_configs:
+        await db.refresh(c)
+
+    return CalendarConfigResponse(
+        calendars=[
+            CalendarConfigEntry(
+                calendar_id=c.calendar_id,
+                display_name=c.display_name,
+                disabled_tools=parse_disabled_tools(c.disabled_tools),
+                access_role=c.access_role or "",
+            )
+            for c in new_configs
+        ]
+    )
