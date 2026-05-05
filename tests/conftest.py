@@ -462,7 +462,7 @@ def linq_client(test_user: User) -> Generator[TestClient]:
 
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
-        patch("backend.app.main._enforce_single_channel"),
+        patch("backend.app.main._enforce_single_channel", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.channels.linq.settings.linq_allowed_numbers", "*"),
         patch("backend.app.channels.linq.settings.linq_webhook_signing_secret", ""),
@@ -498,7 +498,7 @@ def bluebubbles_client(test_user: User) -> Generator[TestClient]:
 
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
-        patch("backend.app.main._enforce_single_channel"),
+        patch("backend.app.main._enforce_single_channel", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_allowed_numbers", "*"),
         patch("backend.app.channels.bluebubbles.settings.bluebubbles_password", ""),
@@ -524,7 +524,7 @@ def client(test_user: User) -> Generator[TestClient]:
     app.dependency_overrides[get_current_user] = _override_get_current_user
     with (
         patch("backend.app.main._verify_llm_settings", new_callable=AsyncMock),
-        patch("backend.app.main._enforce_single_channel"),
+        patch("backend.app.main._enforce_single_channel", new_callable=AsyncMock),
         patch("backend.app.agent.heartbeat.heartbeat_scheduler.start"),
         # Default allowlist to "*" (allow all) so tests are not blocked.
         # Individual allowlist tests override these values.
