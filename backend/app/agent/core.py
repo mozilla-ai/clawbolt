@@ -993,11 +993,14 @@ class ClawboltAgent:
 
         # Trim oldest conversation history if content exceeds the limit.
         # Uses the block-based trimmer which preserves tool-call/result pairing
-        # and injects a summary of dropped messages.
+        # and injects a summary of dropped messages. The turn-count cap fires
+        # independently of the token budget so chatty long conversations get
+        # rolled through compaction even when they stay under the token limit.
         original_count = len(messages)
         trim_result = trim_messages(
             messages,
             target_tokens=settings.context_trim_target_tokens,
+            target_turns=settings.context_trim_target_turns,
             input_tokens=self._last_input_tokens or None,
         )
         messages = trim_result.messages
