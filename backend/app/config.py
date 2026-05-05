@@ -283,20 +283,28 @@ def update_settings(updates: dict[str, Any]) -> None:
     validated against the Pydantic field definition before being applied, so
     type mismatches raise ``ValueError``.
 
+    Coerced values from validation are what get applied, so a non-string
+    field persisted as a string in the store (e.g. an int read back from
+    the TEXT ``app_settings.value`` column) lands on the singleton as
+    the correct type. Without this, code reading the field would get a
+    raw string and crash on type-specific operations.
+
     Validation runs for all keys before any are applied, so a failure on one
     key never leaves the singleton in a partially-updated state.
     """
+    coerced: dict[str, Any] = {}
     for key, value in updates.items():
         if key not in PERSISTABLE_SETTINGS:
             raise ValueError(
                 f"{key!r} is not a persistable setting (allowed: {sorted(PERSISTABLE_SETTINGS)})"
             )
         try:
-            Settings.model_validate({key: value})
+            validated = Settings.model_validate({key: value})
         except ValidationError as exc:
             raise ValueError(str(exc)) from exc
+        coerced[key] = getattr(validated, key)
 
-    for key, value in updates.items():
+    for key, value in coerced.items():
         setattr(settings, key, value)
 
 
