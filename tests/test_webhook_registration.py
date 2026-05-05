@@ -9,6 +9,7 @@ import pytest
 from backend.app.services.webhook import (
     discover_tunnel_url,
     register_telegram_webhook,
+    should_skip_tunnel_discovery,
     wait_for_dns,
 )
 
@@ -161,3 +162,32 @@ async def test_wait_for_dns_exhausts_retries() -> None:
 
     assert result is False
     assert mock_dns.call_count == 2
+
+
+# ---------------------------------------------------------------------------
+# should_skip_tunnel_discovery
+# ---------------------------------------------------------------------------
+
+
+def test_should_skip_tunnel_discovery_skips_https() -> None:
+    """https APP_BASE_URL should skip the cloudflared discovery loop."""
+    with patch("backend.app.services.webhook.settings.app_base_url", "https://prod.example.com"):
+        assert should_skip_tunnel_discovery() is True
+
+
+def test_should_skip_tunnel_discovery_runs_for_http_localhost() -> None:
+    """Default localhost http URL should still run discovery (local dev path)."""
+    with patch("backend.app.services.webhook.settings.app_base_url", "http://localhost:8000"):
+        assert should_skip_tunnel_discovery() is False
+
+
+def test_should_skip_tunnel_discovery_runs_for_http_alt_port() -> None:
+    """Any localhost dev port should still run discovery (port not hardcoded)."""
+    with patch("backend.app.services.webhook.settings.app_base_url", "http://localhost:9000"):
+        assert should_skip_tunnel_discovery() is False
+
+
+def test_should_skip_tunnel_discovery_is_case_insensitive() -> None:
+    """Uppercase HTTPS scheme should still trigger the skip."""
+    with patch("backend.app.services.webhook.settings.app_base_url", "HTTPS://prod.example.com"):
+        assert should_skip_tunnel_discovery() is True
