@@ -5,57 +5,23 @@ the dual-API rollout. All tests opt into the per-test ``async_db``
 fixture (see ``tests/conftest.py``) so writes are rolled back at
 teardown. Follows the IdempotencyStore pilot pattern from PR #1199.
 
-User-row setup runs through the async connection (see
-``async_test_user`` below) because the sync ``test_user`` fixture
-opens its own per-test transaction on a separate connection; rows
-committed there are invisible to the async store under READ
-COMMITTED. This matches the cross-API caveat called out in the
-design comment block in ``tests/conftest.py``.
+User-row setup runs through the shared ``async_test_user`` fixture in
+``tests/conftest.py``; that fixture routes the insert through the
+async connection because the sync ``test_user`` fixture opens its
+own per-test transaction on a separate connection and rows committed
+there are invisible to the async store under READ COMMITTED. This
+matches the cross-API caveat called out in the design comment block
+in ``tests/conftest.py``.
 """
 
 from __future__ import annotations
 
-import uuid
-
 import pytest
-import pytest_asyncio
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from backend.app.agent.memory_db import MemoryStore, get_memory_store
 from backend.app.models import MemoryDocument, User
-
-# ---------------------------------------------------------------------------
-# Fixture: create a User row inside the async per-test transaction.
-# ---------------------------------------------------------------------------
-
-
-@pytest_asyncio.fixture
-async def async_test_user(async_db: async_sessionmaker) -> User:
-    """Insert a User row through the async per-test transaction.
-
-    Mirrors the sync ``test_user`` fixture (see ``tests/conftest.py``)
-    but routes the write through the async connection so the row is
-    visible to async store reads in the same test. The async fixture's
-    outer transaction rollback unwinds the insert at teardown.
-    """
-    async with async_db() as db:
-        user = User(
-            id=str(uuid.uuid4()),
-            user_id="async-memory-test-user",
-            phone="+15555550123",
-            channel_identifier="async-memory-test-channel",
-            preferred_channel="telegram",
-            onboarding_complete=True,
-        )
-        db.add(user)
-        await db.commit()
-        await db.refresh(user)
-        # Detach so attribute access after the session closes does not
-        # trigger lazy IO.
-        db.expunge(user)
-    return user
-
 
 # ---------------------------------------------------------------------------
 # memory_text: read / write
