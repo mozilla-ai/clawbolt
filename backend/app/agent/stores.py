@@ -14,7 +14,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import Select, delete, func, or_, select
+from sqlalchemy import Delete, Select, delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
@@ -362,7 +362,7 @@ def _count_select() -> Select[tuple[int]]:
     return select(func.count(IdempotencyKey.id))
 
 
-def _prune_delete() -> Any:
+def _prune_delete() -> Delete[tuple[IdempotencyKey]]:
     """Build the DELETE that keeps the newest ``_SEEN_MAX`` rows.
 
     Uses a single DELETE with a NOT-IN subquery so the whole thing

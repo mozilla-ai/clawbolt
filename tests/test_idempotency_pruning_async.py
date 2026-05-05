@@ -204,8 +204,8 @@ async def test_async_writer_reads_back_through_async_session(
     """End-to-end: an async write is visible via an async read in the same test.
 
     This is the smallest possible cross-call check and validates that
-    the per-test ``AsyncConnection`` rebinding in
-    ``conftest._isolate_stores_async`` actually plumbs through to the
+    the per-test ``AsyncConnection`` rebinding in the ``async_db``
+    fixture (``tests/conftest.py``) actually plumbs through to the
     store's ``AsyncSessionLocal()`` calls.
     """
     store = IdempotencyStore()
