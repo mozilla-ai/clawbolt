@@ -14,9 +14,11 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import Delete, Select, delete, func, or_, select
+from sqlalchemy.exc import IntegrityError
 
 if TYPE_CHECKING:
+    from sqlalchemy.ext.asyncio import AsyncSession
     from sqlalchemy.orm import Session
 
 from backend.app.agent.dto import (
@@ -24,7 +26,7 @@ from backend.app.agent.dto import (
     MediaData,
     ToolConfigEntry,
 )
-from backend.app.database import SessionLocal, db_session
+from backend.app.database import AsyncSessionLocal, SessionLocal, db_session, db_session_async
 from backend.app.models import (
     HeartbeatLog,
     IdempotencyKey,
@@ -344,23 +346,70 @@ class MediaStore:
 _SEEN_MAX = 10_000
 
 
+# Pilot for the per-store dual-API rollout (issue #1150). Internal
+# logic is factored into pure ``select(...) / delete(...)`` builders
+# so the sync and async methods stay in lockstep without a class
+# hierarchy. Each public sync method has an ``*_async`` peer; both
+# forward through the same builders. Stores #1151-#1157 should
+# follow this pattern.
+def _seen_select(external_id: str) -> Select[tuple[IdempotencyKey]]:
+    """Builder shared by ``has_seen`` and ``has_seen_async``."""
+    return select(IdempotencyKey).filter_by(external_id=external_id)
+
+
+def _count_select() -> Select[tuple[int]]:
+    """Builder shared by the sync and async ``_prune`` paths."""
+    return select(func.count(IdempotencyKey.id))
+
+
+def _prune_delete() -> Delete[tuple[IdempotencyKey]]:
+    """Build the DELETE that keeps the newest ``_SEEN_MAX`` rows.
+
+    Uses a single DELETE with a NOT-IN subquery so the whole thing
+    runs in one snapshot under READ COMMITTED; concurrent prunes
+    just delete the same set of rows instead of cascading.
+    """
+    keep = select(IdempotencyKey.id).order_by(IdempotencyKey.id.desc()).limit(_SEEN_MAX)
+    return (
+        delete(IdempotencyKey)
+        .where(IdempotencyKey.id.notin_(keep))
+        .execution_options(synchronize_session=False)
+    )
+
+
 class IdempotencyStore:
     """Database-backed idempotency tracking for webhook deduplication.
 
     Uses the IdempotencyKey ORM model. No user_id scoping -- external_id
     is globally unique.
+
+    Pilot store for the dual-API (sync + async) rollout (issue #1150).
+    Each public sync method has an ``*_async`` peer with identical
+    semantics; the two share query construction via the
+    ``_seen_select`` / ``_count_select`` / ``_prune_delete`` builders
+    above. Sync callers (CLI, Alembic, premium) keep working unchanged
+    while OSS-internal callers migrate to the async API one site at a
+    time. Future store conversions (#1151-#1157) follow the same
+    pattern.
     """
 
     def has_seen(self, external_id: str) -> bool:
         """Check if an external message ID has been seen."""
         db = SessionLocal()
         try:
-            row = db.execute(
-                select(IdempotencyKey).filter_by(external_id=external_id)
-            ).scalar_one_or_none()
+            row = db.execute(_seen_select(external_id)).scalar_one_or_none()
             return row is not None
         finally:
             db.close()
+
+    async def has_seen_async(self, external_id: str) -> bool:
+        """Async peer of ``has_seen``."""
+        db = AsyncSessionLocal()
+        try:
+            row = (await db.execute(_seen_select(external_id))).scalar_one_or_none()
+            return row is not None
+        finally:
+            await db.close()
 
     def try_mark_seen(self, external_id: str) -> bool:
         """Atomically insert an IdempotencyKey row and return whether it was new.
@@ -369,8 +418,6 @@ class IdempotencyStore:
         ``False`` if it already existed (duplicate). This replaces the
         separate has_seen + mark_seen pattern to eliminate the TOCTOU race.
         """
-        from sqlalchemy.exc import IntegrityError
-
         with db_session() as db:
             key = IdempotencyKey(external_id=external_id)
             db.add(key)
@@ -388,6 +435,30 @@ class IdempotencyStore:
                 logger.warning("IdempotencyStore prune failed", exc_info=True)
         return True
 
+    async def try_mark_seen_async(self, external_id: str) -> bool:
+        """Async peer of ``try_mark_seen``.
+
+        Same TOCTOU-free contract: the unique-constraint violation on
+        ``external_id`` is the source of truth for "already seen". A
+        prune failure is logged and swallowed so a transient prune
+        error never makes a duplicate webhook re-fire.
+        """
+        async with db_session_async() as db:
+            key = IdempotencyKey(external_id=external_id)
+            db.add(key)
+            try:
+                await db.commit()
+            except IntegrityError:
+                await db.rollback()
+                return False
+
+            try:
+                await self._prune_async(db)
+            except Exception:
+                await db.rollback()
+                logger.warning("IdempotencyStore prune failed", exc_info=True)
+        return True
+
     def _prune(self, db: Session | None = None) -> None:
         """Remove the oldest rows when the table exceeds ``_SEEN_MAX``.
 
@@ -397,9 +468,6 @@ class IdempotencyStore:
 
         Keeps the newest rows by ``id`` (autoincrement, so allocation
         order is monotonic even if commit order isn't -- fine for dedup).
-        Uses a single DELETE with a NOT-IN subquery so the whole thing
-        runs in one snapshot under READ COMMITTED; concurrent prunes
-        just delete the same set of rows instead of cascading.
         We order by ``id`` rather than ``created_at`` because
         app-generated timestamps can drift across workers.
         """
@@ -407,16 +475,23 @@ class IdempotencyStore:
             with db_session() as db:
                 self._prune(db)
             return
-        count = db.scalar(select(func.count(IdempotencyKey.id))) or 0
+        count = db.scalar(_count_select()) or 0
         if count <= _SEEN_MAX:
             return
-        keep = select(IdempotencyKey.id).order_by(IdempotencyKey.id.desc()).limit(_SEEN_MAX)
-        db.execute(
-            delete(IdempotencyKey)
-            .where(IdempotencyKey.id.notin_(keep))
-            .execution_options(synchronize_session=False)
-        )
+        db.execute(_prune_delete())
         db.commit()
+
+    async def _prune_async(self, db: AsyncSession | None = None) -> None:
+        """Async peer of ``_prune``. Same semantics, awaitable."""
+        if db is None:
+            async with db_session_async() as db:
+                await self._prune_async(db)
+            return
+        count = (await db.scalar(_count_select())) or 0
+        if count <= _SEEN_MAX:
+            return
+        await db.execute(_prune_delete())
+        await db.commit()
 
     async def mark_seen(self, external_id: str) -> None:
         """Insert an IdempotencyKey row (ignore if it already exists).
@@ -424,6 +499,13 @@ class IdempotencyStore:
         Prefer ``try_mark_seen`` for atomic check-and-insert.
         """
         self.try_mark_seen(external_id)
+
+    async def mark_seen_async(self, external_id: str) -> None:
+        """Async peer of ``mark_seen``.
+
+        Prefer ``try_mark_seen_async`` for atomic check-and-insert.
+        """
+        await self.try_mark_seen_async(external_id)
 
 
 # ---------------------------------------------------------------------------

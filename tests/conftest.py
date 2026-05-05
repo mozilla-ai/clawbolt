@@ -1,11 +1,17 @@
 import uuid
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 from pathlib import Path
 from unittest.mock import AsyncMock, patch
 
 import pytest
+import pytest_asyncio
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import sessionmaker
 
 import backend.app.database as _db_module
@@ -23,6 +29,7 @@ from backend.app.models import ChatSession, Message, User
 from backend.app.services.rate_limiter import webhook_rate_limiter
 
 _TEST_DB_URL = "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+_ASYNC_TEST_DB_URL = "postgresql+asyncpg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
 
 
 @pytest.fixture(scope="session")
@@ -34,6 +41,30 @@ def _pg_engine() -> Generator[Engine]:
     yield engine
     Base.metadata.drop_all(engine)
     engine.dispose()
+
+
+@pytest_asyncio.fixture
+async def _pg_async_engine(_pg_engine: Engine) -> AsyncGenerator[AsyncEngine]:
+    """Function-scoped async PostgreSQL engine.
+
+    Depends on ``_pg_engine`` so the sync engine fixture has already
+    created (and will later drop) the schema. The async engine only
+    opens connections; it never runs DDL. Both engines target the
+    same database; each maintains its own connection pool, mirroring
+    the production setup in ``backend.app.database``.
+
+    Scope is per-test rather than per-session because asyncpg
+    connections bind to the event loop they were created on, and
+    pytest-asyncio runs each test on a fresh function-scoped loop by
+    default. A session-scoped engine would surface as
+    ``RuntimeError: Future attached to a different loop`` on the
+    second test. We pay one engine setup per async test (a few ms)
+    in exchange for not having to widen the loop scope across the
+    whole suite, which would entangle sync and async tests.
+    """
+    engine = create_async_engine(_ASYNC_TEST_DB_URL, pool_pre_ping=True)
+    yield engine
+    await engine.dispose()
 
 
 @pytest.fixture(autouse=True)
@@ -83,6 +114,101 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
     reset_session_stores()
     reset_memory_stores()
     reset_approval_gate()
+
+
+# ---------------------------------------------------------------------------
+# Async DB isolation fixture (issue #1148)
+# ---------------------------------------------------------------------------
+#
+# Pattern: per-test ``AsyncConnection`` + outer transaction, with the
+# module-level ``_async_session_factory`` rebound to an
+# ``async_sessionmaker(bind=connection, join_transaction_mode=
+# "create_savepoint")`` for the duration of the test. The async store
+# API (``IdempotencyStore.try_mark_seen_async`` etc.) calls
+# ``AsyncSessionLocal()``/``db_session_async()`` -> picks up the
+# rebound factory -> shares the per-test connection. Each
+# ``factory()``/``db_session_async()`` opens a new SAVEPOINT under the
+# outer transaction; ``await session.commit()`` releases that
+# SAVEPOINT only; ``await session.rollback()`` (e.g. on
+# ``IntegrityError``) unwinds to the SAVEPOINT and leaves the outer
+# transaction intact. The outer ``await connection.begin()``
+# transaction is rolled back at teardown, leaving a clean DB
+# regardless of how many awaits or commit/rollback cycles the test
+# performed.
+#
+# Differences from the sync ``_isolate_stores`` analog above:
+#   * Driver: asyncpg vs psycopg2. The async engine is built from
+#     ``postgresql+asyncpg://`` and lives on a function-scoped
+#     ``_pg_async_engine`` fixture (asyncpg connections bind to the
+#     event loop they were created on, so a session-scoped engine
+#     dies when pytest-asyncio rotates loops between tests).
+#   * Join mode: ``create_savepoint``, not ``conditional_savepoint``.
+#     The sync version's ``conditional_savepoint`` survives an
+#     ``IntegrityError`` because psycopg2 keeps the outer transaction
+#     alive when only the savepoint aborts. The asyncpg path detaches
+#     the outer transaction in the same scenario, which would surface
+#     to tests as "the row I just committed disappeared after a
+#     duplicate-insert error in a later session". Forcing every
+#     session into its own SAVEPOINT (``create_savepoint``) keeps the
+#     contract consistent across drivers.
+#   * Scope: opt-in. Sync tests do not request this fixture, so they
+#     pay no async setup cost. Tests that exercise the async store API
+#     add ``async_db`` to their parameter list.
+#   * Cross-API caveat: the sync and async per-test transactions live
+#     on independent connections. A sync write committed from
+#     ``_isolate_stores`` is NOT visible to an async read in the same
+#     test (each transaction sees its own snapshot under READ
+#     COMMITTED). Pure-async store tests are fine; mixed-API tests
+#     should drive their setup through the matching API.
+#
+# Future store-conversion PRs (#1151, #1152, #1153, #1154, #1155,
+# #1156, #1157, #1175) and the premium analog (premium #390) should
+# mirror this pattern: one ``AsyncConnection``, one outer transaction,
+# ``create_savepoint`` mode, rebind the factory, rollback at teardown.
+# ---------------------------------------------------------------------------
+
+
+@pytest_asyncio.fixture
+async def async_db(
+    _pg_async_engine: AsyncEngine,
+) -> AsyncGenerator[async_sessionmaker]:
+    """Per-test async DB isolation via SAVEPOINT-on-connection rollback.
+
+    Opt-in: request ``async_db`` from any test that needs the async
+    store API to run inside a per-test transaction. The fixture
+    rebinds ``backend.app.database._async_session_factory`` (and
+    ``_async_engine`` for completeness) so calls to
+    ``AsyncSessionLocal()`` / ``db_session_async()`` pick up the
+    test-scoped factory. See the design comment block above for the
+    full rationale and the pattern future store tests should mirror.
+    """
+    connection = await _pg_async_engine.connect()
+    transaction = await connection.begin()
+
+    test_async_factory: async_sessionmaker = async_sessionmaker(
+        bind=connection,
+        autoflush=False,
+        expire_on_commit=False,
+        join_transaction_mode="create_savepoint",
+    )
+
+    old_async_engine = _db_module._async_engine
+    old_async_factory = _db_module._async_session_factory
+    _db_module._async_engine = _pg_async_engine
+    _db_module._async_session_factory = test_async_factory
+
+    try:
+        yield test_async_factory
+    finally:
+        # Rollback unwinds the outer transaction; any inner SAVEPOINTs
+        # the test left open go with it. Mirrors the sync fixture's
+        # ``is_active`` guard: an unrecovered error inside the test
+        # may have already detached the transaction.
+        if transaction.is_active:
+            await transaction.rollback()
+        await connection.close()
+        _db_module._async_engine = old_async_engine
+        _db_module._async_session_factory = old_async_factory
 
 
 @pytest.fixture()
