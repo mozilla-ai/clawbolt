@@ -55,7 +55,7 @@ import json
 import logging
 from typing import TYPE_CHECKING
 
-from sqlalchemy import and_, exists, text
+from sqlalchemy import and_, exists, select, text
 
 from backend.app.agent.context import get_or_create_conversation
 from backend.app.agent.dto import SessionState, StoredMessage
@@ -108,18 +108,17 @@ def _find_orphaned_inbounds(
             OutboundAfter.c.direction == MessageDirection.OUTBOUND,
         )
     )
-    rows = (
-        db.query(Message, ChatSession)
+    rows = db.execute(
+        select(Message, ChatSession)
         .join(ChatSession, Message.session_id == ChatSession.id)
-        .filter(
+        .where(
             Message.direction == MessageDirection.INBOUND,
             Message.timestamp >= cutoff_utc,
             Message.timestamp <= freshness_floor_utc,
             ~has_outbound_after,
         )
         .order_by(Message.timestamp.asc())
-        .all()
-    )
+    ).all()
     # Convert Row objects to plain tuples so callers don't need to know
     # the Row API.
     return [(row[0], row[1]) for row in rows]
@@ -144,7 +143,7 @@ def _build_dispatch_inputs(
     Returns None when the user row is missing (extremely unlikely outside
     of a manual delete during the recovery window).
     """
-    user = db.query(User).filter_by(id=chat_session.user_id).first()
+    user = db.execute(select(User).filter_by(id=chat_session.user_id)).scalar_one_or_none()
     if user is None:
         logger.warning(
             "Skipping orphan recovery for message %d: user %s not found",

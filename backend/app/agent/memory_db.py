@@ -9,6 +9,9 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy import case as sa_case
+from sqlalchemy import literal_column, select, update
+
 from backend.app.agent.store_cache import StoreCache
 from backend.app.database import SessionLocal, db_session
 from backend.app.models import MemoryDocument, User
@@ -27,7 +30,9 @@ class MemoryStore:
         from sqlalchemy.orm import Session as SASession
 
         assert isinstance(db, SASession)
-        doc = db.query(MemoryDocument).filter_by(user_id=self.user_id).first()
+        doc = db.execute(
+            select(MemoryDocument).filter_by(user_id=self.user_id)
+        ).scalar_one_or_none()
         if doc is None:
             doc = MemoryDocument(user_id=self.user_id, memory_text="", history_text="")
             db.add(doc)
@@ -38,7 +43,9 @@ class MemoryStore:
         """Read memory text (equivalent of MEMORY.md)."""
         db = SessionLocal()
         try:
-            doc = db.query(MemoryDocument).filter_by(user_id=self.user_id).first()
+            doc = db.execute(
+                select(MemoryDocument).filter_by(user_id=self.user_id)
+            ).scalar_one_or_none()
             if doc is None:
                 return ""
             return (doc.memory_text or "").strip()
@@ -56,7 +63,9 @@ class MemoryStore:
         """Read history text (equivalent of HISTORY.md)."""
         db = SessionLocal()
         try:
-            doc = db.query(MemoryDocument).filter_by(user_id=self.user_id).first()
+            doc = db.execute(
+                select(MemoryDocument).filter_by(user_id=self.user_id)
+            ).scalar_one_or_none()
             if doc is None:
                 return ""
             return (doc.history_text or "").strip()
@@ -65,22 +74,21 @@ class MemoryStore:
 
     async def append_history(self, entry: str) -> None:
         """Append an entry to history text (equivalent of HISTORY.md)."""
-        from sqlalchemy import case as sa_case
-        from sqlalchemy import literal_column
-
         with db_session() as db:
             doc = self._get_or_create_doc(db)
             # Use SQL-level concatenation to avoid lost-update races
             suffix = entry + "\n"
-            db.query(MemoryDocument).filter_by(id=doc.id).update(
-                {
-                    MemoryDocument.history_text: sa_case(
+            db.execute(
+                update(MemoryDocument)
+                .where(MemoryDocument.id == doc.id)
+                .values(
+                    history_text=sa_case(
                         (MemoryDocument.history_text.is_(None), literal_column("''")),
                         else_=MemoryDocument.history_text,
                     )
                     + suffix
-                },
-                synchronize_session="fetch",
+                )
+                .execution_options(synchronize_session="fetch")
             )
             db.commit()
 
@@ -88,7 +96,7 @@ class MemoryStore:
         """Read soul text from User model."""
         db = SessionLocal()
         try:
-            user = db.query(User).filter_by(id=self.user_id).first()
+            user = db.execute(select(User).filter_by(id=self.user_id)).scalar_one_or_none()
             if user is None:
                 return ""
             raw = (user.soul_text or "").strip()
@@ -101,7 +109,7 @@ class MemoryStore:
     def write_soul(self, content: str) -> None:
         """Write soul text to User model."""
         with db_session() as db:
-            user = db.query(User).filter_by(id=self.user_id).first()
+            user = db.execute(select(User).filter_by(id=self.user_id)).scalar_one_or_none()
             if user is not None:
                 user.soul_text = f"# Soul\n\n{content}\n"
                 db.commit()
@@ -110,7 +118,7 @@ class MemoryStore:
         """Read user text from User model."""
         db = SessionLocal()
         try:
-            user = db.query(User).filter_by(id=self.user_id).first()
+            user = db.execute(select(User).filter_by(id=self.user_id)).scalar_one_or_none()
             if user is None:
                 return ""
             raw = (user.user_text or "").strip()
@@ -123,7 +131,7 @@ class MemoryStore:
     def write_user(self, content: str) -> None:
         """Write user text to User model."""
         with db_session() as db:
-            user = db.query(User).filter_by(id=self.user_id).first()
+            user = db.execute(select(User).filter_by(id=self.user_id)).scalar_one_or_none()
             if user is not None:
                 user.user_text = f"# User\n\n{content}\n"
                 db.commit()

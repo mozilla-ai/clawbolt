@@ -7,6 +7,7 @@ import logging
 from typing import Any
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from backend.app.agent.approval import _parse_approval_response
 from backend.app.agent.compaction import compact_session
@@ -164,7 +165,7 @@ def trigger_compaction_for_dropped(
             assert event.id is not None, "flush() must populate the autoincrement id"
             event_id = event.id
 
-            cs = db.query(ChatSession).filter_by(user_id=user_id).first()
+            cs = db.execute(select(ChatSession).filter_by(user_id=user_id)).scalar_one_or_none()
             if cs is not None:
                 current = cs.last_trim_seq or 0
                 if max_seq > current:

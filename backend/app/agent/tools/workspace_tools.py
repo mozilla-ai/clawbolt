@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolResult, ToolTags
@@ -140,7 +141,7 @@ def _db_read_sync(user_id: str, column: str) -> str:
     """Read a DB-backed virtual file column (synchronous)."""
     db = SessionLocal()
     try:
-        user = db.query(User).filter_by(id=user_id).first()
+        user = db.execute(select(User).filter_by(id=user_id)).scalar_one_or_none()
         if user is None:
             return ""
         return getattr(user, column, "") or ""
@@ -158,7 +159,7 @@ def _db_write_sync(user_id: str, column: str, content: str) -> None:
     from backend.app.database import db_session
 
     with db_session() as db:
-        user = db.query(User).filter_by(id=user_id).first()
+        user = db.execute(select(User).filter_by(id=user_id)).scalar_one_or_none()
         if user is not None:
             setattr(user, column, content)
             db.commit()
@@ -206,7 +207,7 @@ def _memory_doc_read_sync(user_id: str, column: str) -> str:
     """Read a MemoryDocument column (synchronous)."""
     db = SessionLocal()
     try:
-        doc = db.query(MemoryDocument).filter_by(user_id=user_id).first()
+        doc = db.execute(select(MemoryDocument).filter_by(user_id=user_id)).scalar_one_or_none()
         if doc is None:
             return ""
         return getattr(doc, column, "") or ""
@@ -224,7 +225,7 @@ def _memory_doc_write_sync(user_id: str, column: str, content: str) -> None:
     from backend.app.database import db_session
 
     with db_session() as db:
-        doc = db.query(MemoryDocument).filter_by(user_id=user_id).first()
+        doc = db.execute(select(MemoryDocument).filter_by(user_id=user_id)).scalar_one_or_none()
         if doc is None:
             doc = MemoryDocument(user_id=user_id, memory_text="", history_text="")
             db.add(doc)
@@ -260,7 +261,7 @@ def _permissions_read_sync(user_id: str) -> str:
 
     db = SessionLocal()
     try:
-        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        row = db.execute(select(UserPermissionSet).filter_by(user_id=user_id)).scalar_one_or_none()
         if row is None:
             return ""
         return row.data or ""
@@ -299,7 +300,7 @@ def _permissions_write_sync(user_id: str, content: str) -> None:
 
     with db_session() as db:
         _lock_user_permissions(db, user_id)
-        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        row = db.execute(select(UserPermissionSet).filter_by(user_id=user_id)).scalar_one_or_none()
         if row is None:
             db.add(UserPermissionSet(user_id=user_id, data=payload))
         else:
@@ -328,7 +329,7 @@ def _permissions_edit_sync(user_id: str, old_text: str, new_text: str) -> tuple[
 
     with db_session() as db:
         _lock_user_permissions(db, user_id)
-        row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+        row = db.execute(select(UserPermissionSet).filter_by(user_id=user_id)).scalar_one_or_none()
         current = (row.data if row is not None else "") or ""
 
         if old_text not in current:

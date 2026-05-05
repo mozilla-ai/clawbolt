@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 
 from any_llm import AuthenticationError, ContentFilterError
+from sqlalchemy import select
 
 from backend.app.agent import media_staging
 from backend.app.agent.approval import get_approval_store
@@ -723,7 +724,9 @@ async def handle_inbound_message(
     )
     db = SessionLocal()
     try:
-        route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel).first()
+        route = db.execute(
+            select(ChannelRoute).filter_by(user_id=user.id, channel=channel)
+        ).scalar_one_or_none()
         to_address = (
             (route.channel_identifier if route else None) or user.channel_identifier or user.phone
         )

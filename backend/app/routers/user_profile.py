@@ -1,8 +1,10 @@
 """Endpoints for user profile management."""
 
 import datetime
+from typing import cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy import func as sa_func
 from sqlalchemy.orm import Session
 
@@ -238,9 +240,12 @@ async def get_channel_routes(
 ) -> ChannelRouteListResponse:
     """Return the current user's channel routes with enabled status."""
     routes = (
-        db.query(ChannelRoute)
-        .filter(ChannelRoute.user_id == current_user.id)
-        .order_by(ChannelRoute.created_at)
+        db.execute(
+            select(ChannelRoute)
+            .where(ChannelRoute.user_id == current_user.id)
+            .order_by(ChannelRoute.created_at)
+        )
+        .scalars()
         .all()
     )
     return ChannelRouteListResponse(
@@ -291,13 +296,19 @@ async def update_channel_route(
 
     if body.enabled:
         # Single-channel enforcement: disable all other non-webchat routes
-        db.query(ChannelRoute).filter(
-            ChannelRoute.user_id == user.id,
-            ChannelRoute.channel != channel,
-            ChannelRoute.channel != "webchat",
-        ).update({"enabled": False})
+        db.execute(
+            update(ChannelRoute)
+            .where(
+                ChannelRoute.user_id == user.id,
+                ChannelRoute.channel != channel,
+                ChannelRoute.channel != "webchat",
+            )
+            .values(enabled=False)
+        )
 
-    route = db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel).first()
+    route = db.execute(
+        select(ChannelRoute).filter_by(user_id=user.id, channel=channel)
+    ).scalar_one_or_none()
     if route is None and user.channel_identifier:
         route = ChannelRoute(
             user_id=user.id,
@@ -514,16 +525,20 @@ async def get_heartbeat_logs(
 ) -> HeartbeatLogListResponse:
     """List heartbeat logs for the current user, most recent first."""
     total: int = (
-        db.query(sa_func.count(HeartbeatLog.id))
-        .filter(HeartbeatLog.user_id == current_user.id)
-        .scalar()
-    ) or 0
+        db.execute(
+            select(sa_func.count(HeartbeatLog.id)).where(HeartbeatLog.user_id == current_user.id)
+        ).scalar()
+        or 0
+    )
 
     logs = (
-        db.query(HeartbeatLog)
-        .filter(HeartbeatLog.user_id == current_user.id)
-        .order_by(HeartbeatLog.created_at.desc())
-        .limit(limit)
+        db.execute(
+            select(HeartbeatLog)
+            .where(HeartbeatLog.user_id == current_user.id)
+            .order_by(HeartbeatLog.created_at.desc())
+            .limit(limit)
+        )
+        .scalars()
         .all()
     )
 
@@ -551,11 +566,14 @@ async def delete_heartbeat_logs(
     db: Session = Depends(get_db),
 ) -> DeleteHeartbeatLogsResponse:
     """Delete all heartbeat logs for the current user."""
-    deleted: int = (
-        db.query(HeartbeatLog)
-        .filter(HeartbeatLog.user_id == current_user.id)
-        .delete(synchronize_session="fetch")
-    )
+    deleted: int = cast(
+        "CursorResult[object]",
+        db.execute(
+            delete(HeartbeatLog)
+            .where(HeartbeatLog.user_id == current_user.id)
+            .execution_options(synchronize_session="fetch")
+        ),
+    ).rowcount
     db.commit()
     return DeleteHeartbeatLogsResponse(status="deleted", deleted=deleted)
 
@@ -574,8 +592,8 @@ async def get_llm_usage(
     """Aggregate LLM usage for the current user over the last N days."""
     since = datetime.datetime.now(datetime.UTC) - datetime.timedelta(days=days)
 
-    rows = (
-        db.query(
+    rows = db.execute(
+        select(
             LLMUsageLog.purpose,
             sa_func.count(LLMUsageLog.id).label("call_count"),
             sa_func.coalesce(sa_func.sum(LLMUsageLog.input_tokens), 0).label("total_input_tokens"),
@@ -585,13 +603,12 @@ async def get_llm_usage(
             sa_func.coalesce(sa_func.sum(LLMUsageLog.total_tokens), 0).label("total_tokens"),
             sa_func.coalesce(sa_func.sum(LLMUsageLog.cost), 0).label("total_cost"),
         )
-        .filter(
+        .where(
             LLMUsageLog.user_id == current_user.id,
             LLMUsageLog.created_at >= since,
         )
         .group_by(LLMUsageLog.purpose)
-        .all()
-    )
+    ).all()
 
     by_purpose = [
         LLMUsageByPurpose(

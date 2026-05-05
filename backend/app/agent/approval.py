@@ -28,7 +28,7 @@ from typing import Any, Literal, cast
 from any_llm import acompletion
 from any_llm.types.completion import ChatCompletion
 from pydantic import BaseModel, Field
-from sqlalchemy import text
+from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.bus import OutboundMessage
@@ -212,7 +212,9 @@ class ApprovalStore:
 
     def _load(self, user_id: str) -> dict[str, Any]:
         with db_session() as db:
-            row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+            row = db.execute(
+                select(UserPermissionSet).filter_by(user_id=user_id)
+            ).scalar_one_or_none()
             return _parse_row_data(row)
 
     def _save(self, user_id: str, data: dict[str, Any]) -> None:
@@ -223,7 +225,9 @@ class ApprovalStore:
         payload = json.dumps(data, indent=2, default=str)
         with db_session() as db:
             _lock_user_permissions(db, user_id)
-            row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+            row = db.execute(
+                select(UserPermissionSet).filter_by(user_id=user_id)
+            ).scalar_one_or_none()
             if row is None:
                 db.add(UserPermissionSet(user_id=user_id, data=payload))
             else:
@@ -331,7 +335,9 @@ class ApprovalStore:
         """
         with db_session() as db:
             _lock_user_permissions(db, user_id)
-            row = db.query(UserPermissionSet).filter_by(user_id=user_id).first()
+            row = db.execute(
+                select(UserPermissionSet).filter_by(user_id=user_id)
+            ).scalar_one_or_none()
             data = _parse_row_data(row)
 
             # ensure_complete-style backfill: fill missing tool defaults.
@@ -656,7 +662,7 @@ async def cleanup_orphaned_approvals(
         lock_acquired = True
 
         try:
-            rows = db.query(PendingApprovalRow).all()
+            rows = db.execute(select(PendingApprovalRow)).scalars().all()
             snapshot = [(r.user_id, r.tool_name, r.channel, r.chat_id, r.created_at) for r in rows]
             db.commit()
         except Exception:
@@ -932,12 +938,16 @@ class ApprovalEventStore:
         on ``created_at``; pass it to scope to a recent window.
         """
         with db_session() as db:
-            q = db.query(ApprovalEvent).filter(ApprovalEvent.user_id == user_id)
+            stmt = select(ApprovalEvent).where(ApprovalEvent.user_id == user_id)
             if since is not None:
-                q = q.filter(ApprovalEvent.created_at >= since)
+                stmt = stmt.where(ApprovalEvent.created_at >= since)
             rows = (
-                q.order_by(ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc())
-                .limit(limit)
+                db.execute(
+                    stmt.order_by(ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc()).limit(
+                        limit
+                    )
+                )
+                .scalars()
                 .all()
             )
             return [

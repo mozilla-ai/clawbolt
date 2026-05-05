@@ -470,12 +470,14 @@ def _persist_compaction_event(
     Imports SQLAlchemy lazily so the agent module does not pull it at
     import time on every pure-logic test.
     """
+    from sqlalchemy import select
+
     from backend.app.database import SessionLocal
     from backend.app.models import CompactionEvent
 
     with SessionLocal() as db:
         if event_id is not None:
-            event = db.query(CompactionEvent).filter_by(id=event_id).first()
+            event = db.execute(select(CompactionEvent).filter_by(id=event_id)).scalar_one_or_none()
             if event is None:
                 logger.warning(
                     "Compaction event id=%d not found for user %s; "

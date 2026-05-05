@@ -14,7 +14,7 @@ import json
 import logging
 from typing import TYPE_CHECKING, Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import delete, func, or_, select
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -118,7 +118,7 @@ class HeartbeatStore:
         """Read freeform heartbeat markdown from User.heartbeat_text."""
         db = SessionLocal()
         try:
-            user = db.query(User).filter_by(id=self.user_id).first()
+            user = db.execute(select(User).filter_by(id=self.user_id)).scalar_one_or_none()
             if user is not None and user.heartbeat_text:
                 return user.heartbeat_text
             return ""
@@ -128,7 +128,7 @@ class HeartbeatStore:
     async def write_heartbeat_md(self, text: str) -> None:
         """Write freeform heartbeat markdown to User.heartbeat_text."""
         with db_session() as db:
-            user = db.query(User).filter_by(id=self.user_id).first()
+            user = db.execute(select(User).filter_by(id=self.user_id)).scalar_one_or_none()
             if user is not None:
                 user.heartbeat_text = text
                 db.commit()
@@ -170,15 +170,16 @@ class HeartbeatStore:
             today_start = datetime.datetime.combine(today, datetime.time.min, tzinfo=datetime.UTC)
             tomorrow_start = today_start + datetime.timedelta(days=1)
             count: int = (
-                db.query(func.count(HeartbeatLog.id))
-                .filter(
-                    HeartbeatLog.user_id == self.user_id,
-                    HeartbeatLog.created_at >= today_start,
-                    HeartbeatLog.created_at < tomorrow_start,
-                    HeartbeatLog.action_type.notin_(("skip", "cleanup")),
-                )
-                .scalar()
-            ) or 0
+                db.execute(
+                    select(func.count(HeartbeatLog.id)).where(
+                        HeartbeatLog.user_id == self.user_id,
+                        HeartbeatLog.created_at >= today_start,
+                        HeartbeatLog.created_at < tomorrow_start,
+                        HeartbeatLog.action_type.notin_(("skip", "cleanup")),
+                    )
+                ).scalar()
+                or 0
+            )
             return count
         finally:
             db.close()
@@ -191,12 +192,15 @@ class HeartbeatStore:
         db = SessionLocal()
         try:
             logs = (
-                db.query(HeartbeatLog)
-                .filter(
-                    HeartbeatLog.user_id == self.user_id,
-                    HeartbeatLog.created_at >= since,
+                db.execute(
+                    select(HeartbeatLog)
+                    .where(
+                        HeartbeatLog.user_id == self.user_id,
+                        HeartbeatLog.created_at >= since,
+                    )
+                    .order_by(HeartbeatLog.created_at)
                 )
-                .order_by(HeartbeatLog.created_at)
+                .scalars()
                 .all()
             )
             return [_heartbeat_log_to_dto(log) for log in logs]
@@ -220,9 +224,10 @@ class MediaStore:
         db = SessionLocal()
         try:
             rows = (
-                db.query(MediaFile)
-                .filter_by(user_id=self.user_id)
-                .order_by(MediaFile.created_at)
+                db.execute(
+                    select(MediaFile).filter_by(user_id=self.user_id).order_by(MediaFile.created_at)
+                )
+                .scalars()
                 .all()
             )
             return [_media_to_dto(m) for m in rows]
@@ -241,13 +246,11 @@ class MediaStore:
         """Insert a new MediaFile row and return it as a DTO."""
         with db_session() as db:
             # ID generation: "media-NNN" format -- lock rows to prevent races
-            existing_ids = [
-                row[0]
-                for row in db.query(MediaFile.id)
-                .filter_by(user_id=self.user_id)
-                .with_for_update()
+            existing_ids = list(
+                db.execute(select(MediaFile.id).filter_by(user_id=self.user_id).with_for_update())
+                .scalars()
                 .all()
-            ]
+            )
             max_num = 0
             for mid in existing_ids:
                 if mid.startswith("media-"):
@@ -276,7 +279,9 @@ class MediaStore:
     async def update(self, media_id: str, **fields: Any) -> MediaData | None:
         """Update a MediaFile row by id."""
         with db_session() as db:
-            m = db.query(MediaFile).filter_by(id=media_id, user_id=self.user_id).first()
+            m = db.execute(
+                select(MediaFile).filter_by(id=media_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if m is None:
                 return None
             for key, value in fields.items():
@@ -300,18 +305,16 @@ class MediaStore:
             return None
         db = SessionLocal()
         try:
-            m = (
-                db.query(MediaFile)
-                .filter(MediaFile.user_id == self.user_id)
-                .filter(
+            m = db.execute(
+                select(MediaFile).where(
+                    MediaFile.user_id == self.user_id,
                     or_(
                         MediaFile.original_url == original_url,
                         MediaFile.storage_url == original_url,
                         MediaFile.storage_path == original_url,
-                    )
+                    ),
                 )
-                .first()
-            )
+            ).scalar_one_or_none()
             return _media_to_dto(m) if m else None
         finally:
             db.close()
@@ -321,13 +324,14 @@ class MediaStore:
         db = SessionLocal()
         try:
             count: int = (
-                db.query(func.count(MediaFile.id))
-                .filter(
-                    MediaFile.user_id == self.user_id,
-                    MediaFile.storage_path.startswith(prefix),
-                )
-                .scalar()
-            ) or 0
+                db.execute(
+                    select(func.count(MediaFile.id)).where(
+                        MediaFile.user_id == self.user_id,
+                        MediaFile.storage_path.startswith(prefix),
+                    )
+                ).scalar()
+                or 0
+            )
             return count
         finally:
             db.close()
@@ -351,7 +355,9 @@ class IdempotencyStore:
         """Check if an external message ID has been seen."""
         db = SessionLocal()
         try:
-            row = db.query(IdempotencyKey).filter_by(external_id=external_id).first()
+            row = db.execute(
+                select(IdempotencyKey).filter_by(external_id=external_id)
+            ).scalar_one_or_none()
             return row is not None
         finally:
             db.close()
@@ -401,12 +407,14 @@ class IdempotencyStore:
             with db_session() as db:
                 self._prune(db)
             return
-        count = db.query(func.count(IdempotencyKey.id)).scalar() or 0
+        count = db.scalar(select(func.count(IdempotencyKey.id))) or 0
         if count <= _SEEN_MAX:
             return
         keep = select(IdempotencyKey.id).order_by(IdempotencyKey.id.desc()).limit(_SEEN_MAX)
-        db.query(IdempotencyKey).filter(IdempotencyKey.id.notin_(keep)).delete(
-            synchronize_session=False
+        db.execute(
+            delete(IdempotencyKey)
+            .where(IdempotencyKey.id.notin_(keep))
+            .execution_options(synchronize_session=False)
         )
         db.commit()
 
@@ -514,9 +522,12 @@ class ToolConfigStore:
         db = SessionLocal()
         try:
             rows = (
-                db.query(ToolConfig)
-                .filter_by(user_id=self.user_id)
-                .order_by(ToolConfig.domain_group_order, ToolConfig.name)
+                db.execute(
+                    select(ToolConfig)
+                    .filter_by(user_id=self.user_id)
+                    .order_by(ToolConfig.domain_group_order, ToolConfig.name)
+                )
+                .scalars()
                 .all()
             )
             return [_tool_config_to_dto(tc) for tc in rows]
@@ -527,7 +538,7 @@ class ToolConfigStore:
         """Replace all ToolConfig rows for this user with new entries."""
         with db_session() as db:
             # Delete existing rows for this user
-            db.query(ToolConfig).filter_by(user_id=self.user_id).delete()
+            db.execute(delete(ToolConfig).where(ToolConfig.user_id == self.user_id))
 
             # Insert new rows
             for entry in entries:
@@ -552,7 +563,9 @@ class ToolConfigStore:
         """Return the set of tool group names that are disabled."""
         db = SessionLocal()
         try:
-            rows = db.query(ToolConfig.name).filter_by(user_id=self.user_id, enabled=False).all()
+            rows = db.execute(
+                select(ToolConfig.name).filter_by(user_id=self.user_id, enabled=False)
+            ).all()
             return {row[0] for row in rows}
         finally:
             db.close()
@@ -565,7 +578,9 @@ class ToolConfigStore:
         metadata from the registry when building the full tool list.
         """
         with db_session() as db:
-            existing = db.query(ToolConfig).filter_by(user_id=self.user_id, name=name).first()
+            existing = db.execute(
+                select(ToolConfig).filter_by(user_id=self.user_id, name=name)
+            ).scalar_one_or_none()
             if existing:
                 existing.enabled = enabled
             else:
@@ -587,12 +602,11 @@ class ToolConfigStore:
         """Return the union of all disabled sub-tool names across all groups."""
         db = SessionLocal()
         try:
-            rows = (
-                db.query(ToolConfig.disabled_sub_tools)
+            rows = db.execute(
+                select(ToolConfig.disabled_sub_tools)
                 .filter_by(user_id=self.user_id)
-                .filter(ToolConfig.disabled_sub_tools != "")
-                .all()
-            )
+                .where(ToolConfig.disabled_sub_tools != "")
+            ).all()
             result: set[str] = set()
             for (raw,) in rows:
                 result.update(_parse_disabled_sub_tools(raw))

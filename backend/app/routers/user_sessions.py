@@ -11,6 +11,7 @@ import contextlib
 import json
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import select
 
 from backend.app.agent.concurrency import user_locks
 from backend.app.agent.context import StoredToolInteraction
@@ -38,7 +39,7 @@ def _user_session_id(user_id: str) -> str | None:
     """Return the user's session_id, or None if they have no conversation yet."""
     db = SessionLocal()
     try:
-        cs = db.query(ChatSession).filter_by(user_id=user_id).first()
+        cs = db.execute(select(ChatSession).filter_by(user_id=user_id)).scalar_one_or_none()
         return cs.session_id if cs is not None else None
     finally:
         db.close()
