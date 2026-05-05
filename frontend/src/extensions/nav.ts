@@ -4,6 +4,8 @@ export interface NavExtensionItem {
   to: string;
   label: string;
   icon: ComponentType;
+  /** Fired in addition to navigation, so extensions can reset internal state (e.g. hash-routed tabs). */
+  onClick?: () => void;
 }
 
 function ShieldIcon() {

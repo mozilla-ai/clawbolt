@@ -17,7 +17,11 @@ from backend.app.config import settings
 from backend.app.logging_utils import mask_pii
 from backend.app.media.download import DownloadedMedia, download_bounded, generate_filename
 from backend.app.services.rate_limiter import check_webhook_rate_limit
-from backend.app.services.webhook import discover_tunnel_url, wait_for_dns
+from backend.app.services.webhook import (
+    discover_tunnel_url,
+    should_skip_tunnel_discovery,
+    wait_for_dns,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -178,6 +182,9 @@ class LinqChannel(BaseChannel):
         secret from the response is stored for HMAC verification.
         """
         if not settings.linq_api_token:
+            return
+
+        if should_skip_tunnel_discovery():
             return
 
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
