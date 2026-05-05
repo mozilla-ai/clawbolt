@@ -11,8 +11,8 @@ NULL on existing sessions (nothing has been trimmed yet); the load path
 treats NULL as no filter, preserving today's behavior until the first
 trim writes a value.
 
-Revision ID: 028
-Revises: 027
+Revision ID: 029
+Revises: 028
 Create Date: 2026-05-05
 """
 
@@ -22,8 +22,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "028"
-down_revision: str = "027"
+revision: str = "029"
+down_revision: str = "028"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 
