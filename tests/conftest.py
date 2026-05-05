@@ -28,7 +28,7 @@ from backend.app.main import app
 from backend.app.models import ChatSession, Message, User
 from backend.app.services.rate_limiter import webhook_rate_limiter
 
-_TEST_DB_URL = "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+_TEST_DB_URL = "postgresql+psycopg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
 _ASYNC_TEST_DB_URL = "postgresql+asyncpg://clawbolt:clawbolt@localhost:5432/clawbolt_test"
 
 
