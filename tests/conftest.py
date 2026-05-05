@@ -190,6 +190,8 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
 
     old_engine = _db_module._engine
     old_factory = _db_module._SessionLocal
+    old_async_engine = _db_module._async_engine
+    old_async_session_factory = _db_module._async_session_factory
 
     _db_module._engine = _pg_engine
     _db_module._SessionLocal = test_session_factory
@@ -218,17 +220,20 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
     # Restore
     _db_module._engine = old_engine
     _db_module._SessionLocal = old_factory
-    # Clear the process-singleton async engine/factory so the next test
-    # creates them on its own event loop. asyncpg connections bind to
-    # the loop they were created on, and pytest-asyncio rotates loops
-    # between tests; a stale global async engine from test A's loop
-    # crashes test B with "Future attached to a different loop". Tests
-    # that opt into ``async_db`` rebind these globals to a per-test
-    # factory and restore the prior values at teardown, so this no-ops
-    # for that path. Sync dispose is fine: the leaked pool is GC'd
-    # after the loop closes (#1178).
-    _db_module._async_engine = None
-    _db_module._async_session_factory = None
+    # Restore the async engine/factory to whatever a session-scoped
+    # fixture (e.g. ``_isolate_async_engine`` from #1210) installed
+    # before this test ran. If nothing installed them, the prior values
+    # are ``None`` and we effectively clear loop-bound async state left
+    # behind by a test's ``async_db`` opt-in. asyncpg connections bind
+    # to the loop they were created on, and pytest-asyncio rotates
+    # loops between tests; a stale global async engine from test A's
+    # loop crashes test B with "Future attached to a different loop".
+    # Tests that opt into ``async_db`` rebind these globals to a
+    # per-test factory and restore the prior values at teardown, so
+    # this no-ops for that path. Sync dispose is fine: the leaked pool
+    # is GC'd after the loop closes (#1178).
+    _db_module._async_engine = old_async_engine
+    _db_module._async_session_factory = old_async_session_factory
     reset_stores()
     reset_session_stores()
     reset_memory_stores()
