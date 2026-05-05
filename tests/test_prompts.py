@@ -66,3 +66,41 @@ def test_default_soul_includes_clawbolt_name() -> None:
     """Default soul template should identify as Clawbolt."""
     soul = load_prompt("default_soul")
     assert "Clawbolt" in soul
+
+
+def test_instructions_require_same_turn_persistence() -> None:
+    """Instructions must require same-turn file persistence (#1133).
+
+    The prior wording ("Update when the user gives you feedback") was too
+    permissive: the model would acknowledge feedback verbally and never
+    actually call edit_file. Mid-conversation rules then got lost when the
+    transcript rolled out of context. Lock the rule in here so a future edit
+    that softens the directive trips immediately.
+    """
+    instructions = load_prompt("instructions")
+    assert "same turn" in instructions
+    # The instructions must explicitly mention the file-write tool the model
+    # is expected to call, not just "update SOUL.md".
+    assert "edit_file" in instructions
+
+
+def test_instructions_call_out_soul_md_behavioral_feedback() -> None:
+    """SOUL.md guidance must tell the model to write the rule, not just acknowledge.
+
+    Regression guard for #1133: a verbal-only acknowledgement is the bug we
+    are trying to prevent.
+    """
+    instructions = load_prompt("instructions")
+    assert "SOUL.md" in instructions
+    # The phrase "behavioral feedback" anchors the SOUL.md trigger condition.
+    assert "behavioral feedback" in instructions
+
+
+def test_instructions_call_out_memory_md_durable_facts() -> None:
+    """MEMORY.md guidance must require same-turn persistence of durable facts.
+
+    Regression guard for #1133.
+    """
+    instructions = load_prompt("instructions")
+    assert "MEMORY.md" in instructions
+    assert "durable fact" in instructions.lower()
