@@ -266,6 +266,13 @@ class ChatSession(Base):
     last_message_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), default=lambda: datetime.now(UTC)
     )
+    # Highest ``messages.seq`` that has been trimmed out of the LLM context.
+    # ``load_conversation_history`` filters to ``seq > last_trim_seq``, so
+    # rows below this threshold are no longer fed to the agent. Their durable
+    # facts live in MEMORY.md / USER.md / SOUL.md via the compaction path;
+    # the original rows remain in the DB for audit. ``NULL`` means nothing
+    # has been trimmed yet (default for fresh sessions and pre-feature rows).
+    last_trim_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     user: Mapped["User"] = relationship("User", back_populates="sessions")
     messages: Mapped[list["Message"]] = relationship(
@@ -638,6 +645,48 @@ class PendingApprovalRow(Base):
     )
 
 
+class ApprovalEvent(Base):
+    """Append-only audit log for tool-approval lifecycle transitions.
+
+    Companion to ``PendingApprovalRow``: that row tracks the single
+    in-flight request per user and is deleted on resolve, so it cannot
+    answer "what was the agent blocked on ten minutes ago?". Each
+    transition (``requested``, ``decided``, ``timed_out``, ``recovered``)
+    appends one row here so admins can replay the full sequence in the
+    activity feed.
+
+    ``decision`` is populated only on ``decided`` rows and carries the
+    ``ApprovalDecision`` value (``approved`` / ``denied`` /
+    ``always_allow`` / ``always_deny`` / ``interrupted``).
+
+    ``description`` echoes the tool's human-readable description that
+    was shown to the user. It can include user-pasted content (filenames,
+    URLs, message bodies), so admin surfaces must run it through PII
+    redaction before display, the same way ``Message.body`` is handled.
+
+    No retention sweep ships with this table. Volume is small (one row
+    per approval transition; an active session generates a handful per
+    day) and the data is the audit trail itself, so we let it
+    accumulate. Reconsider if a single user crosses ~10k rows.
+    """
+
+    __tablename__ = "approval_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    user_id: Mapped[str] = mapped_column(
+        String, ForeignKey("users.id", ondelete="CASCADE"), index=True, nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String, nullable=False)
+    tool_name: Mapped[str] = mapped_column(String, nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="")
+    channel: Mapped[str] = mapped_column(String, default="")
+    chat_id: Mapped[str] = mapped_column(String, default="")
+    decision: Mapped[str | None] = mapped_column(String, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC), index=True
+    )
+
+
 class CompactionEvent(Base):
     """One row per session-compaction run.
 
@@ -673,11 +722,66 @@ class CompactionEvent(Base):
     trimmed_chars: Mapped[int] = mapped_column(Integer, default=0)
     input_tokens: Mapped[int] = mapped_column(Integer, default=0)
     output_tokens: Mapped[int] = mapped_column(Integer, default=0)
+    # Range of ``messages.seq`` that this compaction event covers.
+    # ``min_message_seq`` is NULL on legacy rows (pre-feature). Going
+    # forward, both are populated when the agent loop's trim path inserts
+    # the pending row.
+    min_message_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
     max_message_seq: Mapped[int | None] = mapped_column(Integer, nullable=True)
     memory_updated: Mapped[bool] = mapped_column(Boolean, default=False)
     user_profile_updated: Mapped[bool] = mapped_column(Boolean, default=False)
     soul_updated: Mapped[bool] = mapped_column(Boolean, default=False)
     summary_len: Mapped[int] = mapped_column(Integer, default=0)
+    # Two-phase lifecycle. The agent loop synchronously inserts a
+    # ``'pending'`` row in the same transaction that advances the per-session
+    # trim watermark. The async compaction task then runs the LLM call,
+    # fills in the snapshot fields below, and flips this to ``'completed'``.
+    # If the async task crashes, the row stays ``'pending'`` so an operator
+    # can see which seq range was trimmed without facts being extracted, and
+    # re-run that compaction manually. Existing pre-feature rows are
+    # ``'completed'`` via the server-side default in migration 029.
+    status: Mapped[str] = mapped_column(String, default="completed")
+    # Before/after snapshots of the four memory files this event touched.
+    # Stored as envelope-encrypted text so an admin can inspect what the
+    # compaction LLM call actually changed. ``None`` means either the field
+    # was not changed by this event (skip-if-unchanged optimization), the
+    # row is still ``'pending'``, or the row predates the feature. When the
+    # plaintext exceeds ``settings.compaction_event_snapshot_max_bytes_per_file``,
+    # the column stores a structured truncation record (head, tail, size,
+    # sha256) instead of the full text. Same EncryptedString pattern as
+    # ``MemoryDocument.memory_text`` (migration 022).
+    memory_text_before: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="memory_text_before"),
+        nullable=True,
+    )
+    memory_text_after: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="memory_text_after"),
+        nullable=True,
+    )
+    history_text_before: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="history_text_before"),
+        nullable=True,
+    )
+    history_text_after: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="history_text_after"),
+        nullable=True,
+    )
+    user_text_before: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="user_text_before"),
+        nullable=True,
+    )
+    user_text_after: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="user_text_after"),
+        nullable=True,
+    )
+    soul_text_before: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="soul_text_before"),
+        nullable=True,
+    )
+    soul_text_after: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="soul_text_after"),
+        nullable=True,
+    )
 
 
 class UserPermissionSet(Base):
