@@ -18,6 +18,19 @@ DNS_RESOLUTION_MAX_RETRIES = 30
 DNS_RESOLUTION_RETRY_DELAY = 2.0
 
 
+def should_skip_tunnel_discovery() -> bool:
+    """Return True when cloudflared quick-tunnel discovery is dead code here.
+
+    The discovery loop polls a localhost sidecar that only exists for the
+    ``cloudflared tunnel --url http://localhost:...`` local-dev workflow.
+    Any deployment with a real public domain is served over HTTPS and
+    registers webhooks via ``register_paas_webhook(APP_BASE_URL)``, so an
+    https APP_BASE_URL is a reliable signal that the sidecar will never
+    appear and polling for it just delays startup.
+    """
+    return settings.app_base_url.lower().startswith("https://")
+
+
 async def discover_tunnel_url(
     max_retries: int = TUNNEL_DISCOVERY_MAX_RETRIES,
     delay: float = TUNNEL_DISCOVERY_RETRY_DELAY,

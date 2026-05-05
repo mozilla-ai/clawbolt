@@ -560,3 +560,26 @@ async def test_start_registers_webhook_on_success() -> None:
         await channel.start()
 
     mock_register.assert_called_once_with("https://tunnel.example.com/api/webhooks/linq")
+
+
+async def test_start_skips_cloudflared_discovery_when_app_base_url_is_https() -> None:
+    """start() must not poll cloudflared when APP_BASE_URL is https.
+
+    Mirrors the Telegram channel behavior: the cloudflared quick-tunnel
+    discovery loop is a local-dev convenience and should be skipped in
+    any deployment served over a real public https domain.
+    """
+    channel = LinqChannel()
+    with (
+        patch("backend.app.channels.linq.settings.linq_api_token", "test-token"),
+        patch("backend.app.channels.linq.settings.app_base_url", "https://prod.example.com"),
+        patch("backend.app.channels.linq.asyncio.sleep", new_callable=AsyncMock) as mock_sleep,
+        patch(
+            "backend.app.channels.linq.discover_tunnel_url",
+            new_callable=AsyncMock,
+        ) as mock_discover,
+    ):
+        await channel.start()
+
+    mock_discover.assert_not_called()
+    mock_sleep.assert_not_called()
