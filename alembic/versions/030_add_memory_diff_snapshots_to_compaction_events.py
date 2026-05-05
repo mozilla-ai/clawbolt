@@ -16,8 +16,8 @@ All new columns are nullable so existing rows remain readable. The
 NOT NULL constraint can be enforced without a backfill (existing rows
 ran the prior synchronous-write path and are effectively complete).
 
-Revision ID: 029
-Revises: 028
+Revision ID: 030
+Revises: 029
 Create Date: 2026-05-05
 """
 
@@ -27,8 +27,8 @@ import sqlalchemy as sa
 
 from alembic import op
 
-revision: str = "029"
-down_revision: str = "028"
+revision: str = "030"
+down_revision: str = "029"
 branch_labels: tuple[str, ...] | None = None
 depends_on: tuple[str, ...] | None = None
 
