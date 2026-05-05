@@ -779,7 +779,12 @@ async def classify_approval_response(text: str) -> ApprovalDecision | None:
                 ],
                 response_format=ApprovalClassification,
                 max_tokens=50,
-                temperature=0,
+                # No ``temperature``: claude-opus-4-7 (and newer Anthropic
+                # models) return 400 ``temperature is deprecated for this
+                # model``, which made every fuzzy approval response fall
+                # through to the INTERRUPTED fallback in prod. The 5-value
+                # enum via ``response_format`` already constrains the output;
+                # temperature has no meaningful effect on it.
             ),
         )
     except Exception:

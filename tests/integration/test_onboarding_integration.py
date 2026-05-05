@@ -73,7 +73,6 @@ async def test_onboarding_extracts_profile_from_intro() -> None:
         response = await agent.process_message(
             "Hey! I'm Jake, I'm a plumber based in Portland.",
             system_prompt_override=system_prompt,
-            temperature=0,
         )
 
     # Agent should have used write_file or edit_file to save user info

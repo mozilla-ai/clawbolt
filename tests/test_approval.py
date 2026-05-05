@@ -14,6 +14,7 @@ from backend.app.agent.approval import (
     ApprovalStore,
     PermissionLevel,
     _parse_approval_response,
+    classify_approval_response,
     format_approval_message,
     get_approval_gate,
     get_approval_store,
@@ -1421,3 +1422,45 @@ class TestModuleAccessors:
         s2 = get_approval_store()
         assert g1 is not g2
         assert s1 is not s2
+
+
+# ---------------------------------------------------------------------------
+# classify_approval_response: LLM call shape
+# ---------------------------------------------------------------------------
+
+
+class TestClassifyApprovalResponseCallShape:
+    """Regression for prod 400 ``temperature is deprecated for this model``.
+
+    The classifier called acompletion with ``temperature=0`` against
+    claude-opus-4-7, which rejects that parameter. Every fuzzy approval
+    response then fell through to the WARNING + INTERRUPTED fallback.
+    """
+
+    @pytest.mark.asyncio()
+    async def test_acompletion_called_without_temperature(self) -> None:
+        from pydantic import BaseModel as _BaseModel
+
+        class _Parsed(_BaseModel):
+            decision: str = "approved"
+
+        mock_msg = AsyncMock()
+        mock_msg.parsed = _Parsed()
+        mock_choice = AsyncMock()
+        mock_choice.message = mock_msg
+        mock_response = AsyncMock()
+        mock_response.choices = [mock_choice]
+
+        with patch(
+            "backend.app.agent.approval.acompletion",
+            new=AsyncMock(return_value=mock_response),
+        ) as mock_acompletion:
+            await classify_approval_response("sure thing")
+
+        kwargs = mock_acompletion.call_args.kwargs
+        assert "temperature" not in kwargs, (
+            f"temperature must not be passed (claude-opus-4-7 rejects it): {kwargs}"
+        )
+        assert "response_format" in kwargs, (
+            "response_format is what actually constrains the output to the enum"
+        )

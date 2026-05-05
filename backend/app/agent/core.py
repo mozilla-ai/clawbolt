@@ -436,7 +436,6 @@ class ClawboltAgent:
         self,
         messages: list[AgentMessage],
         tool_schemas: list[Any] | None,
-        llm_kwargs: dict[str, Any],
         max_tokens: int | None = None,
     ) -> MessageResponse:
         """Call amessages with typed exception handling and retry logic.
@@ -482,7 +481,6 @@ class ClawboltAgent:
                         tools=tool_schemas,
                         max_tokens=effective_max_tokens,
                         thinking=thinking,
-                        **llm_kwargs,
                     ),
                 )
             except RateLimitError:
@@ -524,7 +522,6 @@ class ClawboltAgent:
                         tools=tool_schemas,
                         max_tokens=effective_max_tokens,
                         thinking=thinking,
-                        **llm_kwargs,
                     ),
                 )
             except ContentFilterError:
@@ -964,7 +961,6 @@ class ClawboltAgent:
         message_context: str,
         conversation_history: list[AgentMessage] | None = None,
         system_prompt_override: str | None = None,
-        temperature: float | None = None,
         max_tokens: int | None = None,
     ) -> AgentResponse:
         """Process a message through the agent loop."""
@@ -1014,10 +1010,6 @@ class ClawboltAgent:
                 settings.context_trim_target_turns,
             )
 
-        llm_kwargs: dict[str, Any] = {}
-        if temperature is not None:
-            llm_kwargs["temperature"] = temperature
-
         actions_taken: list[str] = []
         memories_saved: list[dict[str, str]] = []
         tool_call_records: list[StoredToolInteraction] = []
@@ -1042,7 +1034,7 @@ class ClawboltAgent:
             self._log_tool_prefix_stability(_round)
             await self._emit(TurnStartEvent(round_number=_round, message_count=len(messages)))
             response = await self._call_llm_with_retry(
-                messages, tool_schemas, llm_kwargs, max_tokens=max_tokens
+                messages, tool_schemas, max_tokens=max_tokens
             )
             purpose = "agent_main" if _round == 0 else "agent_followup"
             log_llm_usage(
