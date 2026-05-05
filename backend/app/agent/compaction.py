@@ -9,6 +9,7 @@ remains searchable after the raw messages are gone.
 """
 
 import datetime
+import hashlib
 import json
 import logging
 import time
@@ -32,6 +33,45 @@ from backend.app.services.llm_usage import log_llm_usage
 logger = logging.getLogger(__name__)
 
 COMPACTION_SYSTEM_PROMPT = load_prompt("compaction")
+
+# Snapshot truncation hint sizes. The head and tail are full plaintext so an
+# admin reviewing a truncation record can still read the start and end of
+# what changed; the sha256 lets a determined operator compare two records
+# without storing the full body twice.
+_SNAPSHOT_HEAD_BYTES = 2_000
+_SNAPSHOT_TAIL_BYTES = 2_000
+
+
+def _serialize_snapshot(text: str | None, cap: int) -> str | None:
+    """Return *text* itself if under *cap* bytes, else a truncation record.
+
+    The returned string is what eventually lands in a ``compaction_events``
+    encrypted column. ``None`` in, ``None`` out (for the
+    skip-if-nothing-to-store path). When *text* exceeds *cap* bytes encoded
+    as UTF-8, returns a JSON record with ``truncated``, ``size_bytes``,
+    ``head``, ``tail`` and ``sha256`` so admins can still see the shape of
+    what was compacted without storing the full body. The cap bounds the
+    worst-case row size at roughly ``2 * (HEAD + TAIL + sha256 overhead)``
+    per file, regardless of how large MEMORY.md grows.
+    """
+    if text is None:
+        return None
+    encoded = text.encode("utf-8")
+    if len(encoded) <= cap:
+        return text
+    digest = hashlib.sha256(encoded).hexdigest()
+    head = encoded[:_SNAPSHOT_HEAD_BYTES].decode("utf-8", errors="replace")
+    tail = encoded[-_SNAPSHOT_TAIL_BYTES:].decode("utf-8", errors="replace")
+    return json.dumps(
+        {
+            "truncated": True,
+            "size_bytes": len(encoded),
+            "head": head,
+            "tail": tail,
+            "sha256": digest,
+        },
+        ensure_ascii=False,
+    )
 
 
 def _format_messages_for_compaction(messages: list[AgentMessage]) -> str:
@@ -119,6 +159,7 @@ async def compact_session(
     user_id: str,
     trimmed_messages: list[AgentMessage],
     max_message_seq: int | None = None,
+    event_id: int | None = None,
 ) -> tuple[str, int | None]:
     """Consolidate messages into an updated MEMORY.md via LLM rewrite.
 
@@ -131,6 +172,13 @@ async def compact_session(
         trimmed_messages: Messages that are about to be dropped from context.
         max_message_seq: The highest message seq among the trimmed messages,
             used to track compaction progress. Passed through to the return value.
+        event_id: When provided, the existing ``compaction_events`` row to
+            update with snapshots and flip from ``'pending'`` to
+            ``'completed'``. Set by ``trigger_compaction_for_dropped`` which
+            pre-inserts the row in the same transaction that advances the
+            trim watermark. When ``None`` (e.g. test invocations or any
+            future caller that has not pre-inserted), a new completed row
+            is inserted.
 
     Returns:
         A tuple of (memory_update, max_message_seq) where memory_update is the
@@ -159,6 +207,7 @@ async def compact_session(
     current_memory = memory_store.read_memory()
     current_user_profile = memory_store.read_user()
     current_soul = memory_store.read_soul()
+    current_history = memory_store.read_history()
     heartbeat_store = HeartbeatStore(user_id)
     current_heartbeat = heartbeat_store.read_heartbeat_md()
 
@@ -213,6 +262,11 @@ async def compact_session(
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)
 
+    # Capture exactly what got appended to HISTORY.md so we can compute the
+    # "after" snapshot deterministically below. ``None`` means no append
+    # happened this event.
+    appended_history_entry: str | None = None
+
     # Write updated MEMORY.md if the LLM produced content
     if result.memory_update:
         memory_store.write_memory(result.memory_update)
@@ -224,6 +278,9 @@ async def compact_session(
         entry = result.summary.replace("[TIMESTAMP]", f"[{timestamp}]")
         try:
             await memory_store.append_history(entry)
+            # Mirror the suffix that ``MemoryStore.append_history`` adds at
+            # the SQL level so the deterministic snapshot below matches.
+            appended_history_entry = entry + "\n"
             logger.info("Compaction appended history entry for user %s", user_id)
         except Exception:
             logger.exception("Failed to append history for user %s", user_id)
@@ -263,12 +320,44 @@ async def compact_session(
         len(result.summary or ""),
     )
 
-    # Persist the same metrics so admins can query "when did this user
-    # last compact / how big was the input / what got updated" without
-    # grepping Railway logs. Best-effort: a DB hiccup must not lose the
-    # compacted memory we just wrote upstream.
+    # Compute "after" snapshots deterministically from what was written
+    # rather than re-reading the memory store. Two compact_session tasks
+    # for the same user can run concurrently (e.g. burst traffic crosses
+    # the trigger again during a still-running LLM compaction call), and
+    # they share ``get_memory_store(user_id)``. A re-read could pick up the
+    # other task's write and record a misleading "after" in this row's
+    # audit log. The compaction prompt returns full rewrites for memory /
+    # user / soul, and ``append_history`` is a SQL-level concatenation we
+    # mirror via ``appended_history_entry`` above, so all four "after"
+    # values are computable without re-reading.
+    new_memory = result.memory_update if result.memory_update else current_memory
+    new_user = result.user_profile_update if result.user_profile_update else current_user_profile
+    new_soul = result.soul_update if result.soul_update else current_soul
+    if appended_history_entry is not None:
+        new_history = (current_history or "") + appended_history_entry
+    else:
+        new_history = current_history
+
+    cap = settings.compaction_event_snapshot_max_bytes_per_file
+    snapshots = _build_snapshot_pairs(
+        cap=cap,
+        memory_before=current_memory,
+        memory_after=new_memory,
+        history_before=current_history,
+        history_after=new_history,
+        user_before=current_user_profile,
+        user_after=new_user,
+        soul_before=current_soul,
+        soul_after=new_soul,
+    )
+
+    # Persist the metrics + snapshots. Either UPDATE the pending row that
+    # ``trigger_compaction_for_dropped`` pre-inserted (event_id provided),
+    # or INSERT a fresh completed row (legacy/test paths). A DB hiccup
+    # here must not lose the compacted memory we just wrote upstream.
     try:
         _persist_compaction_event(
+            event_id=event_id,
             user_id=user_id,
             trimmed_count=_trimmed_count,
             trimmed_chars=_input_chars,
@@ -280,6 +369,7 @@ async def compact_session(
             user_profile_updated=bool(result.user_profile_update),
             soul_updated=bool(result.soul_update),
             summary_len=len(result.summary or ""),
+            snapshots=snapshots,
         )
     except Exception:
         logger.exception("Failed to persist compaction event for user %s", user_id)
@@ -287,8 +377,51 @@ async def compact_session(
     return result.memory_update, max_message_seq
 
 
+def _build_snapshot_pairs(
+    *,
+    cap: int,
+    memory_before: str,
+    memory_after: str,
+    history_before: str,
+    history_after: str,
+    user_before: str,
+    user_after: str,
+    soul_before: str,
+    soul_after: str,
+) -> dict[str, str | None]:
+    """Apply the truncation cap and the skip-if-unchanged optimization.
+
+    Returns a dict keyed by ``CompactionEvent`` column name. A column whose
+    before and after match (file unchanged this event) maps to ``None`` so
+    the persist path leaves both columns NULL and saves the encryption
+    overhead plus the row bytes.
+    """
+    pairs: dict[str, str | None] = {
+        "memory_text_before": None,
+        "memory_text_after": None,
+        "history_text_before": None,
+        "history_text_after": None,
+        "user_text_before": None,
+        "user_text_after": None,
+        "soul_text_before": None,
+        "soul_text_after": None,
+    }
+    for prefix, before, after in (
+        ("memory_text", memory_before, memory_after),
+        ("history_text", history_before, history_after),
+        ("user_text", user_before, user_after),
+        ("soul_text", soul_before, soul_after),
+    ):
+        if before == after:
+            continue
+        pairs[f"{prefix}_before"] = _serialize_snapshot(before, cap)
+        pairs[f"{prefix}_after"] = _serialize_snapshot(after, cap)
+    return pairs
+
+
 def _persist_compaction_event(
     *,
+    event_id: int | None,
     user_id: str,
     trimmed_count: int,
     trimmed_chars: int,
@@ -300,30 +433,60 @@ def _persist_compaction_event(
     user_profile_updated: bool,
     soul_updated: bool,
     summary_len: int,
+    snapshots: dict[str, str | None],
 ) -> None:
-    """Write one ``CompactionEvent`` row.
+    """Write or update one ``CompactionEvent`` row.
 
-    Imports the model + SessionLocal lazily so the agent module does
-    not pull SQLAlchemy at import time on every test that exercises
-    pure compaction logic with mocked LLM calls.
+    When ``event_id`` is provided, UPDATE the pre-inserted ``'pending'``
+    row (the agent-loop path). Otherwise INSERT a new ``'completed'`` row
+    (test / legacy path). Imports SQLAlchemy lazily so the agent module
+    does not pull it at import time on every pure-logic test.
     """
     from backend.app.database import SessionLocal
     from backend.app.models import CompactionEvent
 
     with SessionLocal() as db:
-        db.add(
-            CompactionEvent(
-                user_id=user_id,
-                trimmed_count=trimmed_count,
-                trimmed_chars=trimmed_chars,
-                input_tokens=input_tokens,
-                output_tokens=output_tokens,
-                duration_ms=duration_ms,
-                max_message_seq=max_message_seq,
-                memory_updated=memory_updated,
-                user_profile_updated=user_profile_updated,
-                soul_updated=soul_updated,
-                summary_len=summary_len,
+        if event_id is not None:
+            event = db.query(CompactionEvent).filter_by(id=event_id).first()
+            if event is None:
+                logger.warning(
+                    "Compaction event id=%d not found for user %s; "
+                    "inserting a fresh completed row instead",
+                    event_id,
+                    user_id,
+                )
+                event_id = None
+            else:
+                event.trimmed_count = trimmed_count
+                event.trimmed_chars = trimmed_chars
+                event.input_tokens = input_tokens
+                event.output_tokens = output_tokens
+                event.duration_ms = duration_ms
+                if max_message_seq is not None:
+                    event.max_message_seq = max_message_seq
+                event.memory_updated = memory_updated
+                event.user_profile_updated = user_profile_updated
+                event.soul_updated = soul_updated
+                event.summary_len = summary_len
+                event.status = "completed"
+                for col, value in snapshots.items():
+                    setattr(event, col, value)
+        if event_id is None:
+            db.add(
+                CompactionEvent(
+                    user_id=user_id,
+                    trimmed_count=trimmed_count,
+                    trimmed_chars=trimmed_chars,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    duration_ms=duration_ms,
+                    max_message_seq=max_message_seq,
+                    memory_updated=memory_updated,
+                    user_profile_updated=user_profile_updated,
+                    soul_updated=soul_updated,
+                    summary_len=summary_len,
+                    status="completed",
+                    **snapshots,
+                )
             )
-        )
         db.commit()

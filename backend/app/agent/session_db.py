@@ -58,6 +58,7 @@ def _session_to_state(
         last_message_at=cs.last_message_at.isoformat() if cs.last_message_at else "",
         channel=cs.channel,
         initial_system_prompt=cs.initial_system_prompt,
+        last_trim_seq=cs.last_trim_seq,
     )
 
 

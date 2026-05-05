@@ -111,6 +111,8 @@ See [Storage Providers](./storage.md) for setup instructions.
 | `MAX_INPUT_TOKENS` | `120000` | Max input token budget before context trimming |
 | `CONTEXT_TRIM_TARGET_TOKENS` | `80000` | Target token count after trimming |
 | `CONTEXT_TRIM_TARGET_TURNS` | `80` | Cap on user turns kept verbatim in LLM context. Long single-conversation histories reinforce their own dominant tone, so this trims oldest turns past the cap (independent of the token budget) and rolls them through compaction into `MEMORY.md`, `USER.md`, and `SOUL.md` |
+| `CONTEXT_TRIM_TRIGGER_TURNS` | unset (defaults to `CONTEXT_TRIM_TARGET_TURNS + 16`) | Trim fires when user-turn count exceeds this threshold and drops down to `CONTEXT_TRIM_TARGET_TURNS`, leaving headroom before the next trim. Without this hysteresis (single threshold), the resting state sits exactly at the cap and every subsequent user message re-fires trim plus the downstream compaction LLM call. Set to `None` (omit the env var entirely) for the default 16-turn buffer |
+| `COMPACTION_EVENT_SNAPSHOT_MAX_BYTES_PER_FILE` | `100000` | Per-file truncation cap for memory-text snapshots persisted on `compaction_events` rows. When `MEMORY.md` / `HISTORY.md` / `USER.md` / `SOUL.md` exceeds this size, the snapshot column stores a structured truncation record (head, tail, size, sha256) so admin diff visibility is preserved while bounding worst-case row size |
 | `LLM_MAX_RETRIES` | `3` | Maximum number of retry attempts on rate limit errors |
 | `LLM_CACHE_EXTENDED_TTL` | `true` | Use Anthropic's 1-hour extended cache TTL instead of the default 5 minutes. Reduces cold-start cache misses for users with multi-hour gaps between messages. Set to `false` on non-Anthropic providers that reject the `ttl` field |
 
