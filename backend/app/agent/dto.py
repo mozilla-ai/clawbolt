@@ -79,6 +79,11 @@ class SessionState(BaseModel):
     last_message_at: str = ""
     channel: str = ""
     initial_system_prompt: str = ""
+    # Highest ``messages.seq`` that has been trimmed out of the LLM context.
+    # ``load_conversation_history`` filters to ``seq > last_trim_seq`` so
+    # rolled-up turns are not re-fed to the agent on subsequent inbounds.
+    # ``None`` means nothing has been trimmed yet (no filter applied).
+    last_trim_seq: int | None = None
 
 
 class MediaData(BaseModel):

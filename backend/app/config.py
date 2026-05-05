@@ -93,6 +93,22 @@ class Settings(BaseSettings):
     # Set ge=2 so at least one prior turn is always retained alongside the
     # current one. Tune up if compaction proves too aggressive.
     context_trim_target_turns: int = Field(default=80, ge=2)
+    # Trim trigger threshold: trim only fires when user-turn count exceeds
+    # this. Trim then drops down to ``context_trim_target_turns``, leaving
+    # ``trigger - target`` turns of headroom before the next trim fires.
+    # A single threshold (target == trigger) re-fires compaction on every
+    # message after the first overflow because the resting state sits
+    # exactly at the ceiling. When ``None``, defaults to
+    # ``context_trim_target_turns + 16`` inside ``trim_messages``.
+    context_trim_trigger_turns: int | None = Field(default=None)
+    # Per-file truncation cap for memory-text snapshots persisted on
+    # ``compaction_events`` rows. A user with a 500KB MEMORY.md would
+    # otherwise produce ~4MB rows once before/after for all four files
+    # (memory, history, user, soul) is included. When a file exceeds the
+    # cap, the snapshot column stores a structured truncation record
+    # (head, tail, size, sha256) rather than the full text. Bounds the
+    # worst-case row size while keeping admin diff visibility intact.
+    compaction_event_snapshot_max_bytes_per_file: int = Field(default=100_000, ge=1024)
     llm_max_retries: int = Field(default=3, ge=1)
     # Use Anthropic's 1-hour extended-TTL cache instead of the default
     # 5-minute ephemeral cache. Inactive users with conversation gaps

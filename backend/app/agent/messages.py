@@ -35,9 +35,17 @@ class SystemMessage:
 
 @dataclass(frozen=True)
 class UserMessage:
-    """User (user) message."""
+    """User (user) message.
+
+    ``seq`` is the persisted ``messages.seq`` for messages loaded from the
+    database. ``None`` for messages constructed in-memory (e.g. the current
+    inbound's user-context wrapper, or summary placeholders injected after
+    trimming). Used by ``trigger_compaction_for_dropped`` to advance the
+    per-session trim watermark when this message is dropped from context.
+    """
 
     content: str
+    seq: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {"role": "user", "content": self.content}
@@ -45,10 +53,18 @@ class UserMessage:
 
 @dataclass(frozen=True)
 class AssistantMessage:
-    """Assistant response, optionally containing tool calls."""
+    """Assistant response, optionally containing tool calls.
+
+    ``seq`` is the persisted ``messages.seq`` for messages loaded from the
+    database. A single DB row may expand into one ``AssistantMessage`` plus
+    several ``ToolResultMessage`` entries (the tool results share the
+    parent's seq via ``tool_interactions_json``); the seq here is therefore
+    the watermark-relevant value for the whole assistant block.
+    """
 
     content: str | None = None
     tool_calls: list[ToolCallRequest] = field(default_factory=list)
+    seq: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         blocks: list[dict[str, Any]] = []

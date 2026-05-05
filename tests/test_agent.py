@@ -1207,6 +1207,97 @@ def test_trim_messages_turn_cap_disabled_when_none() -> None:
     assert result.messages == messages
 
 
+def test_trim_messages_resting_state_does_not_re_trigger() -> None:
+    """Regression: after a trim crosses the trigger, a follow-up call on the
+    trimmed result must not drop again while user-turn count remains at or
+    below the trigger threshold.
+
+    Without hysteresis (single threshold), the resting state sits exactly at
+    the cap, so the next user message pushes the count back over and
+    re-fires trim every message. The plan's PR #1167 shipped a single
+    threshold and caused per-message compaction in production.
+    """
+    history = _build_turn_history(turn_pairs=200)
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *history,
+        UserMessage(content="Current message"),
+    ]
+
+    first = trim_messages(
+        messages,
+        target_tokens=10_000_000,
+        target_turns=20,
+        trigger_turns=36,
+        input_tokens=500,
+    )
+    assert len(first.dropped) > 0
+
+    # Simulate the next-message cycle: feed the trimmed result back in.
+    # Hysteresis means user-turn count is at most target_turns + summary
+    # placeholder = 21, well below the trigger of 36, so trim is a no-op.
+    second = trim_messages(
+        first.messages,
+        target_tokens=10_000_000,
+        target_turns=20,
+        trigger_turns=36,
+        input_tokens=500,
+    )
+    assert second.dropped == [], (
+        "Second trim must not re-fire while count stays below trigger; "
+        "otherwise compaction churns on every message."
+    )
+
+
+def test_trim_messages_trigger_defaults_to_target_plus_buffer() -> None:
+    """When trigger_turns is unset, it defaults to target_turns + 16.
+
+    A conversation just over target but under target+16 should NOT trim.
+    A conversation past target+16 SHOULD trim.
+    """
+    # 25 user turns: above target=20, below trigger=36. No trim.
+    history = _build_turn_history(turn_pairs=24)
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *history,
+        UserMessage(content="Current message"),
+    ]
+    result = trim_messages(messages, target_tokens=10_000_000, target_turns=20, input_tokens=500)
+    assert result.dropped == [], "25 turns is below default trigger of 36"
+
+    # 50 user turns: well above default trigger of 36. Trim fires.
+    history2 = _build_turn_history(turn_pairs=49)
+    messages2: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *history2,
+        UserMessage(content="Current message"),
+    ]
+    result2 = trim_messages(messages2, target_tokens=10_000_000, target_turns=20, input_tokens=500)
+    assert len(result2.dropped) > 0
+
+
+def test_trim_messages_preserves_seq_through_drop() -> None:
+    """Dropped UserMessages and AssistantMessages must carry seq through to
+    the dropped list so trigger_compaction_for_dropped can compute a
+    watermark from them.
+    """
+    history: list[AgentMessage] = []
+    for i in range(50):
+        history.append(UserMessage(content=f"User turn {i}", seq=2 * i + 1))
+        history.append(AssistantMessage(content=f"Assistant reply {i}", seq=2 * i + 2))
+    messages: list[AgentMessage] = [
+        SystemMessage(content="System prompt"),
+        *history,
+        UserMessage(content="Current message"),  # in-memory, no seq
+    ]
+    result = trim_messages(messages, target_tokens=10_000_000, target_turns=10, input_tokens=500)
+    assert len(result.dropped) > 0
+    seqs = [m.seq for m in result.dropped if isinstance(m, (UserMessage, AssistantMessage))]
+    assert all(s is not None for s in seqs)
+    # Dropped messages are the OLDEST, so their seqs should start at 1.
+    assert min(seqs) == 1
+
+
 def test_trim_messages_turn_cap_preserves_tool_call_pairs() -> None:
     """Block-aware removal must not orphan tool results when the turn cap fires."""
     # Build a long history where the oldest "turn" includes a tool call/result

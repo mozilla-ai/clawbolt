@@ -34,7 +34,7 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from backend.app.bus import OutboundMessage
 from backend.app.config import settings
 from backend.app.database import SessionLocal, db_session
-from backend.app.models import PendingApprovalRow, UserPermissionSet
+from backend.app.models import ApprovalEvent, PendingApprovalRow, UserPermissionSet
 
 logger = logging.getLogger(__name__)
 
@@ -420,6 +420,7 @@ class ApprovalGate:
         pending = PendingApproval(tool_name=tool_name, description=description)
         self._pending[user_id] = pending
         _persist_pending_row(user_id, tool_name, description, channel, chat_id)
+        _log_approval_event(user_id, "requested", tool_name, description, channel, chat_id)
 
         if prompt is None:
             prompt = format_approval_message(tool_name, description)
@@ -446,6 +447,7 @@ class ApprovalGate:
             )
             self._pending.pop(user_id, None)
             _delete_pending_row(user_id)
+            _log_approval_event(user_id, "timed_out", tool_name, description, channel, chat_id)
             return ApprovalDecision.DENIED
 
         if pending.decision is None:
@@ -478,6 +480,20 @@ class ApprovalGate:
             return False
         pending.decision = decision
         _delete_pending_row(user_id)
+        # The audit log mirrors what was sent to the user: tool_name and
+        # description come from the in-memory PendingApproval. channel /
+        # chat_id are not threaded through resolve() (callers don't know
+        # them); they're already on the matching ``requested`` row, so
+        # admins can join by user_id + ordering.
+        _log_approval_event(
+            user_id,
+            "decided",
+            pending.tool_name,
+            pending.description,
+            channel="",
+            chat_id="",
+            decision=decision,
+        )
         pending.event.set()
         return True
 
@@ -548,6 +564,49 @@ def _delete_pending_row(user_id: str) -> None:
                 db.commit()
     except Exception:
         logger.exception("Failed to delete pending approval row for user %s", user_id)
+
+
+# ---------------------------------------------------------------------------
+# Approval audit log
+# ---------------------------------------------------------------------------
+
+
+def _log_approval_event(
+    user_id: str,
+    event_type: str,
+    tool_name: str,
+    description: str,
+    channel: str,
+    chat_id: str,
+    decision: ApprovalDecision | None = None,
+) -> None:
+    """Append one ``approval_events`` row for an approval-lifecycle transition.
+
+    Failures are logged and swallowed: the audit log is observability,
+    not a correctness prerequisite. The in-memory gate still drives the
+    live wake-up flow.
+    """
+    try:
+        with db_session() as db:
+            db.add(
+                ApprovalEvent(
+                    user_id=user_id,
+                    event_type=event_type,
+                    tool_name=tool_name,
+                    description=description,
+                    channel=channel,
+                    chat_id=chat_id,
+                    decision=str(decision) if decision is not None else None,
+                )
+            )
+            db.commit()
+    except Exception:
+        logger.exception(
+            "Failed to record approval_event(%s) for user %s tool %s",
+            event_type,
+            user_id,
+            tool_name,
+        )
 
 
 _ORPHAN_MAX_AGE = timedelta(hours=1)
@@ -640,6 +699,7 @@ async def cleanup_orphaned_approvals(
                     )
                 )
                 _delete_pending_row(user_id)
+                _log_approval_event(user_id, "recovered", tool_name, "", channel, chat_id)
                 recovered += 1
                 logger.info(
                     "Recovered orphaned approval for user %s (tool=%s)",
@@ -838,11 +898,81 @@ def format_approval_message(tool_name: str, description: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# ApprovalEventStore (read-side audit-log access)
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class ApprovalEventRecord:
+    """Read-side projection of one ``approval_events`` row."""
+
+    id: int
+    user_id: str
+    event_type: str
+    tool_name: str
+    description: str
+    channel: str
+    chat_id: str
+    decision: str | None
+    created_at: datetime
+
+
+class ApprovalEventStore:
+    """Read-side accessor for ``approval_events``.
+
+    Premium admin endpoints import this rather than reaching into the
+    table directly so the underlying schema can evolve without churn in
+    the premium repo.
+    """
+
+    def list_for_user(
+        self,
+        user_id: str,
+        limit: int = 500,
+        since: datetime | None = None,
+    ) -> list[ApprovalEventRecord]:
+        """Return approval events for *user_id* in chronological order.
+
+        ``limit`` caps the query so a long-running admin dashboard
+        cannot OOM the response. ``since`` is an inclusive lower bound
+        on ``created_at``; pass it to scope to a recent window.
+        """
+        with db_session() as db:
+            stmt = select(ApprovalEvent).where(ApprovalEvent.user_id == user_id)
+            if since is not None:
+                stmt = stmt.where(ApprovalEvent.created_at >= since)
+            rows = (
+                db.execute(
+                    stmt.order_by(ApprovalEvent.created_at.asc(), ApprovalEvent.id.asc()).limit(
+                        limit
+                    )
+                )
+                .scalars()
+                .all()
+            )
+            return [
+                ApprovalEventRecord(
+                    id=r.id,
+                    user_id=r.user_id,
+                    event_type=r.event_type,
+                    tool_name=r.tool_name,
+                    description=r.description or "",
+                    channel=r.channel or "",
+                    chat_id=r.chat_id or "",
+                    decision=r.decision,
+                    created_at=r.created_at,
+                )
+                for r in rows
+            ]
+
+
+# ---------------------------------------------------------------------------
 # Module-level singleton
 # ---------------------------------------------------------------------------
 
 _approval_gate: ApprovalGate | None = None
 _approval_store: ApprovalStore | None = None
+_approval_event_store: ApprovalEventStore | None = None
 
 
 def get_approval_gate() -> ApprovalGate:
@@ -861,8 +991,17 @@ def get_approval_store() -> ApprovalStore:
     return _approval_store
 
 
+def get_approval_event_store() -> ApprovalEventStore:
+    """Get or create the global ApprovalEventStore."""
+    global _approval_event_store
+    if _approval_event_store is None:
+        _approval_event_store = ApprovalEventStore()
+    return _approval_event_store
+
+
 def reset_approval_gate() -> None:
     """Reset cached approval singletons. Used by tests."""
-    global _approval_gate, _approval_store
+    global _approval_gate, _approval_store, _approval_event_store
     _approval_gate = None
     _approval_store = None
+    _approval_event_store = None

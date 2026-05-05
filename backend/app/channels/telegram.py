@@ -23,6 +23,7 @@ from backend.app.services.rate_limiter import check_webhook_rate_limit
 from backend.app.services.webhook import (
     discover_tunnel_url,
     register_telegram_webhook,
+    should_skip_tunnel_discovery,
     wait_for_dns,
 )
 
@@ -237,6 +238,8 @@ class TelegramChannel(BaseChannel):
         Runs as a fire-and-forget task after the server is listening so that
         Telegram can reach the webhook URL during its validation check.
         """
+        if should_skip_tunnel_discovery():
+            return
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
         if self.webhook_registered:
             return
