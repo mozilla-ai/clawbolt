@@ -25,7 +25,7 @@ from sqlalchemy import select, text
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from backend.app.config import settings
-from backend.app.database import SessionLocal, db_session
+from backend.app.database import db_session, get_engine
 
 logger = logging.getLogger(__name__)
 
@@ -50,21 +50,34 @@ _LOCK_RETRY_INTERVAL_S = 0.1
 _LOCK_MAX_WAIT_S = 5.0
 
 
-async def _try_acquire_advisory_lock_async(db: Any, lock_key: str) -> bool:
+async def _try_acquire_advisory_lock_async(conn: Any, lock_key: str) -> bool:
     """Async-safe bounded acquire of a session-scoped advisory lock.
 
     Returns True on acquire, False if the wait expires. Uses
     ``await asyncio.sleep`` between polls so the event loop stays
     responsive during contention.
+
+    ``conn`` MUST be a SQLAlchemy ``Connection`` (or other handle whose
+    ``commit()`` does NOT return the underlying DBAPI connection to the
+    pool). Passing a ``Session`` would break the lock semantics: in
+    SQLAlchemy 2.0 ``Session.commit()`` releases the underlying
+    connection back to the pool, where a peer can pick it up and call
+    ``pg_try_advisory_lock`` on it (locks are reentrant per PG session),
+    causing both callers to enter the critical section. The advisory
+    lock must stay pinned to the same physical connection from acquire
+    through unlock; only ``Connection`` provides that pinning.
     """
     deadline = time.monotonic() + _LOCK_MAX_WAIT_S
     while True:
-        acquired = db.execute(
+        acquired = conn.execute(
             text("SELECT pg_try_advisory_lock(hashtext(:k))"),
             {"k": lock_key},
         ).scalar()
-        # Always commit so we don't sit idle-in-transaction between polls.
-        db.commit()
+        # Commit ends the implicit transaction so we don't sit
+        # idle-in-transaction between polls. On a Connection this does
+        # NOT return the connection to the pool, so the session-scoped
+        # advisory lock stays attached to this same connection.
+        conn.commit()
         if acquired:
             return True
         if time.monotonic() >= deadline:
@@ -72,15 +85,20 @@ async def _try_acquire_advisory_lock_async(db: Any, lock_key: str) -> bool:
         await asyncio.sleep(_LOCK_RETRY_INTERVAL_S)
 
 
-def _try_acquire_advisory_lock_sync(db: Any, lock_key: str) -> bool:
-    """Sync variant for use from sync callbacks (e.g. on_refresh)."""
+def _try_acquire_advisory_lock_sync(conn: Any, lock_key: str) -> bool:
+    """Sync variant for use from sync callbacks (e.g. on_refresh).
+
+    Same connection-pinning requirement as the async helper: ``conn``
+    must be a ``Connection``, not a ``Session``. See the async docstring
+    for the rationale.
+    """
     deadline = time.monotonic() + _LOCK_MAX_WAIT_S
     while True:
-        acquired = db.execute(
+        acquired = conn.execute(
             text("SELECT pg_try_advisory_lock(hashtext(:k))"),
             {"k": lock_key},
         ).scalar()
-        db.commit()
+        conn.commit()
         if acquired:
             return True
         if time.monotonic() >= deadline:
@@ -615,10 +633,14 @@ class OAuthService:
         """
 
         def _persist(access_token: str, refresh_token: str, expires_at: float) -> None:
-            db = SessionLocal()
+            # See ``refresh_token`` for why the lock must live on a
+            # ``Connection``, not a ``Session``: ``Session.commit()``
+            # returns the underlying connection to the pool and lets a
+            # peer enter the critical section.
+            lock_conn = get_engine().connect()
             lock_key = _refresh_lock_key(user_id, integration)
             try:
-                if not _try_acquire_advisory_lock_sync(db, lock_key):
+                if not _try_acquire_advisory_lock_sync(lock_conn, lock_key):
                     logger.warning(
                         "on_refresh callback could not acquire OAuth lock within %.1fs, "
                         "skipping persist: user=%s integration=%s",
@@ -651,11 +673,11 @@ class OAuthService:
                     )
                 finally:
                     try:
-                        db.execute(
+                        lock_conn.execute(
                             text("SELECT pg_advisory_unlock(hashtext(:k))"),
                             {"k": lock_key},
                         )
-                        db.commit()
+                        lock_conn.commit()
                     except Exception:
                         logger.exception(
                             "Failed to release OAuth refresh lock in callback: "
@@ -664,7 +686,7 @@ class OAuthService:
                             integration,
                         )
             finally:
-                db.close()
+                lock_conn.close()
 
         return _persist
 
@@ -725,10 +747,19 @@ class OAuthService:
             user_id,
             integration,
         )
-        db = SessionLocal()
+        # The advisory lock is session-scoped (lives on the underlying
+        # PG connection until released or the connection closes). We
+        # must hold it on a dedicated ``Connection`` rather than a
+        # ``Session``: ``Session.commit()`` returns the connection to
+        # the pool, where a peer coroutine can check it out and call
+        # ``pg_try_advisory_lock`` on it (locks are reentrant per PG
+        # session), letting both callers enter the critical section.
+        # The token read / write business logic still uses its own
+        # ``Session`` via ``_load_token_uncached`` and ``save_token``.
+        lock_conn = get_engine().connect()
         lock_key = _refresh_lock_key(user_id, integration)
         try:
-            if not await _try_acquire_advisory_lock_async(db, lock_key):
+            if not await _try_acquire_advisory_lock_async(lock_conn, lock_key):
                 logger.warning(
                     "OAuth refresh lock contended for >%.1fs, skipping refresh: "
                     "user=%s integration=%s",
@@ -819,11 +850,11 @@ class OAuthService:
                 return token
             finally:
                 try:
-                    db.execute(
+                    lock_conn.execute(
                         text("SELECT pg_advisory_unlock(hashtext(:k))"),
                         {"k": lock_key},
                     )
-                    db.commit()
+                    lock_conn.commit()
                 except Exception:
                     logger.exception(
                         "Failed to release OAuth refresh lock: user=%s integration=%s",
@@ -831,7 +862,7 @@ class OAuthService:
                         integration,
                     )
         finally:
-            db.close()
+            lock_conn.close()
 
     async def get_valid_token(
         self,
