@@ -137,15 +137,16 @@ def _isolate_stores(_pg_engine: Engine, tmp_path: Path) -> Generator[None]:
 # performed.
 #
 # Differences from the sync ``_isolate_stores`` analog above:
-#   * Driver: asyncpg vs psycopg2. The async engine is built from
-#     ``postgresql+asyncpg://`` and lives on a function-scoped
-#     ``_pg_async_engine`` fixture (asyncpg connections bind to the
-#     event loop they were created on, so a session-scoped engine
-#     dies when pytest-asyncio rotates loops between tests).
+#   * Driver: asyncpg vs psycopg (sync psycopg3). The async engine is
+#     built from ``postgresql+asyncpg://`` and lives on a
+#     function-scoped ``_pg_async_engine`` fixture (asyncpg connections
+#     bind to the event loop they were created on, so a session-scoped
+#     engine dies when pytest-asyncio rotates loops between tests).
 #   * Join mode: ``create_savepoint``, not ``conditional_savepoint``.
 #     The sync version's ``conditional_savepoint`` survives an
-#     ``IntegrityError`` because psycopg2 keeps the outer transaction
-#     alive when only the savepoint aborts. The asyncpg path detaches
+#     ``IntegrityError`` because the sync psycopg driver keeps the
+#     outer transaction alive when only the savepoint aborts. The
+#     asyncpg path detaches
 #     the outer transaction in the same scenario, which would surface
 #     to tests as "the row I just committed disappeared after a
 #     duplicate-insert error in a later session". Forcing every

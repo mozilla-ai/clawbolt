@@ -38,19 +38,49 @@ _POOL_RECYCLE_SECONDS = 1800
 _STATEMENT_TIMEOUT_MS = 30000
 
 
+def _sync_database_url(url: str) -> str:
+    """Translate a postgres URL to its psycopg3 sync equivalent.
+
+    SQLAlchemy 2.x still resolves the bare ``postgresql://`` scheme to
+    psycopg2 even when only psycopg3 is installed. We pin the sync
+    driver to psycopg3 explicitly so deployments can keep their
+    existing ``postgresql://...`` ``DATABASE_URL`` values without
+    needing a rewrite, and so any explicit ``postgresql+psycopg2://``
+    URLs still land on the new driver.
+
+    Async-prefixed URLs are left alone: the async engine path handles
+    them via ``_async_database_url``.
+    """
+    if url.startswith("postgresql+asyncpg://"):
+        return url
+    if url.startswith("postgresql+psycopg://"):
+        return url
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg://" + url[len("postgresql://") :]
+    if url.startswith("postgresql+psycopg2://"):
+        return "postgresql+psycopg://" + url[len("postgresql+psycopg2://") :]
+    return url
+
+
 def _async_database_url(url: str) -> str:
     """Translate a sync postgres URL to its asyncpg equivalent.
 
-    SQLAlchemy uses driver-specific URL prefixes. The sync path uses
-    ``postgresql://`` (psycopg2) and the async path uses
-    ``postgresql+asyncpg://``. Settings ship one ``database_url`` value;
-    we derive the async form here so callers don't need to know which
-    driver they are picking up.
+    SQLAlchemy uses driver-specific URL prefixes. Sync paths use
+    ``postgresql://`` or ``postgresql+psycopg://`` (psycopg3); the
+    async path uses ``postgresql+asyncpg://``. Settings ship one
+    ``database_url`` value; we derive the async form here so callers
+    don't need to know which driver they are picking up.
+
+    The legacy ``postgresql+psycopg2://`` prefix is also translated for
+    forward compatibility with environments still pinned to psycopg2 in
+    their ``DATABASE_URL``.
     """
     if url.startswith("postgresql+asyncpg://"):
         return url
     if url.startswith("postgresql://"):
         return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    if url.startswith("postgresql+psycopg://"):
+        return "postgresql+asyncpg://" + url[len("postgresql+psycopg://") :]
     if url.startswith("postgresql+psycopg2://"):
         return "postgresql+asyncpg://" + url[len("postgresql+psycopg2://") :]
     return url
@@ -63,13 +93,17 @@ def get_engine() -> Engine:
     within ~80s instead of the default ~2h retransmit window. asyncpg
     sets its own keepalives by default so the async engine does not
     need the same ``connect_args`` payload.
+
+    The URL is run through ``_sync_database_url`` so a bare
+    ``postgresql://`` (which SQLAlchemy 2.x still resolves to psycopg2
+    by default) is pinned to the psycopg3 driver we ship.
     """
     global _engine
     if _engine is None:
         with _lock:
             if _engine is None:
                 _engine = create_engine(
-                    settings.database_url,
+                    _sync_database_url(settings.database_url),
                     pool_pre_ping=True,
                     pool_recycle=_POOL_RECYCLE_SECONDS,
                     connect_args={
@@ -104,9 +138,10 @@ def get_async_engine() -> AsyncEngine:
                     pool_pre_ping=True,
                     pool_recycle=_POOL_RECYCLE_SECONDS,
                     # asyncpg uses a different connect_args shape than
-                    # psycopg2. ``server_settings`` maps to libpq's
-                    # ``options`` parameter; keepalives are on by
-                    # default in asyncpg so we don't repeat them here.
+                    # the sync psycopg driver. ``server_settings`` maps
+                    # to libpq's ``options`` parameter; keepalives are
+                    # on by default in asyncpg so we don't repeat them
+                    # here.
                     connect_args={
                         "server_settings": {
                             "statement_timeout": str(_STATEMENT_TIMEOUT_MS),
