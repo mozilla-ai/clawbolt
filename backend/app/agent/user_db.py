@@ -13,6 +13,8 @@ import logging
 from pathlib import Path
 from typing import Any
 
+from sqlalchemy import select
+
 from backend.app.agent.dto import UserData
 from backend.app.agent.prompts import load_prompt
 from backend.app.config import settings
@@ -45,7 +47,7 @@ def provision_user(user: User, db: object | None = None) -> None:
     assert isinstance(db, SASession)
     try:
         # Re-query within this session to ensure we can write
-        db_user = db.query(User).filter_by(id=user.id).first()
+        db_user = db.execute(select(User).filter_by(id=user.id)).scalar_one_or_none()
         if db_user is not None:
             if not db_user.soul_text:
                 db_user.soul_text = f"# Soul\n\n{load_prompt('default_soul')}\n"
@@ -130,13 +132,13 @@ class UserStore:
     async def get_by_id(self, user_id: str | int) -> UserData | None:
         """Look up a user by primary key (id)."""
         with db_session() as db:
-            user = db.query(User).filter_by(id=str(user_id)).first()
+            user = db.execute(select(User).filter_by(id=str(user_id))).scalar_one_or_none()
             return _user_to_dto(user) if user else None
 
     async def get_by_user_id(self, user_id: str) -> UserData | None:
         """Look up a user by user_id (e.g., 'google_12345')."""
         with db_session() as db:
-            user = db.query(User).filter_by(user_id=user_id).first()
+            user = db.execute(select(User).filter_by(user_id=user_id)).scalar_one_or_none()
             return _user_to_dto(user) if user else None
 
     async def create(self, user_id: str, **fields: Any) -> UserData:
@@ -151,7 +153,7 @@ class UserStore:
     async def update(self, user_id: str | int, **fields: Any) -> UserData | None:
         """Update a User row by primary key."""
         with db_session() as db:
-            user = db.query(User).filter_by(id=str(user_id)).first()
+            user = db.execute(select(User).filter_by(id=str(user_id))).scalar_one_or_none()
             if user is None:
                 return None
             for key, value in fields.items():
@@ -164,7 +166,7 @@ class UserStore:
     async def list_all(self) -> list[UserData]:
         """Return all users."""
         with db_session() as db:
-            users = db.query(User).order_by(User.created_at).all()
+            users = db.execute(select(User).order_by(User.created_at)).scalars().all()
             return [_user_to_dto(u) for u in users]
 
 

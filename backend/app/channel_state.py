@@ -8,6 +8,7 @@ those write paths, so the helper lives here for both to import.
 
 from __future__ import annotations
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.models import ChannelRoute, User
@@ -28,26 +29,22 @@ def realign_preferred_channel(db: Session, user: User) -> None:
     transaction would still appear enabled here.
     """
     db.flush()
-    existing = (
-        db.query(ChannelRoute)
-        .filter(
+    existing = db.execute(
+        select(ChannelRoute).where(
             ChannelRoute.user_id == user.id,
             ChannelRoute.channel == user.preferred_channel,
             ChannelRoute.enabled.is_(True),
             ChannelRoute.channel != "webchat",
         )
-        .first()
-    )
+    ).scalar_one_or_none()
     if existing is not None:
         return
-    fallback = (
-        db.query(ChannelRoute)
-        .filter(
+    fallback = db.execute(
+        select(ChannelRoute).where(
             ChannelRoute.user_id == user.id,
             ChannelRoute.enabled.is_(True),
             ChannelRoute.channel != "webchat",
         )
-        .first()
-    )
+    ).scalar_one_or_none()
     if fallback is not None:
         user.preferred_channel = fallback.channel

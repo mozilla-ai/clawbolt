@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 import httpx
 from pydantic import BaseModel, Field
+from sqlalchemy import select
 
 from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
@@ -956,7 +957,11 @@ def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str], str]
     db = SessionLocal()
     try:
         configs = (
-            db.query(CalendarConfig).filter_by(user_id=user_id, provider="google_calendar").all()
+            db.execute(
+                select(CalendarConfig).filter_by(user_id=user_id, provider="google_calendar")
+            )
+            .scalars()
+            .all()
         )
         if configs:
             result: list[tuple[str, str, list[str], str]] = []
@@ -1000,11 +1005,11 @@ def _get_primary_calendar_id(user_id: str) -> str:
     """
     db = SessionLocal()
     try:
-        row = (
-            db.query(CalendarConfig)
-            .filter_by(user_id=user_id, provider="google_calendar", is_primary=True)
-            .first()
-        )
+        row = db.execute(
+            select(CalendarConfig).filter_by(
+                user_id=user_id, provider="google_calendar", is_primary=True
+            )
+        ).scalar_one_or_none()
         return row.calendar_id if row is not None else ""
     finally:
         db.close()

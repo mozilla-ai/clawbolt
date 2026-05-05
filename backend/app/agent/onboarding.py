@@ -7,6 +7,8 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from sqlalchemy import select
+
 from backend.app.agent.events import AgentEndEvent, AgentEvent
 from backend.app.agent.prompts import load_prompt
 from backend.app.agent.tools.registry import default_registry, ensure_tool_modules_imported
@@ -297,7 +299,7 @@ def _mark_onboarding_complete(user: User) -> None:
     """Persist onboarding_complete=True for the user."""
     db = SessionLocal()
     try:
-        db_user = db.query(User).filter_by(id=user.id).first()
+        db_user = db.execute(select(User).filter_by(id=user.id)).scalar_one_or_none()
         if db_user:
             db_user.onboarding_complete = True
             db.commit()
@@ -376,7 +378,7 @@ class OnboardingSubscriber:
         if self._was_onboarding:
             db = SessionLocal()
             try:
-                fresh = db.query(User).filter_by(id=self._user.id).first()
+                fresh = db.execute(select(User).filter_by(id=self._user.id)).scalar_one_or_none()
                 if fresh:
                     self._user.user_text = fresh.user_text
                     self._user.soul_text = fresh.soul_text

@@ -16,7 +16,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import cast
 
+from sqlalchemy import CursorResult, delete, select, update
 from sqlalchemy.orm import Session
 
 from backend.app.agent.approval import (
@@ -68,7 +70,9 @@ def _check_channel_route_enabled(user_id: str, channel: str) -> bool | None:
     """
     db = SessionLocal()
     try:
-        route = db.query(ChannelRoute).filter_by(user_id=user_id, channel=channel).first()
+        route = db.execute(
+            select(ChannelRoute).filter_by(user_id=user_id, channel=channel)
+        ).scalar_one_or_none()
         if route is None:
             return None
         return route.enabled
@@ -141,9 +145,15 @@ def _stamp_route_last_inbound(db: Session, user_id: str, channel: str, sender_id
     delivers messages. Called on every inbound resolution so the stamp
     always reflects the most recent successful delivery.
     """
-    db.query(ChannelRoute).filter_by(
-        user_id=user_id, channel=channel, channel_identifier=sender_id
-    ).update({"last_inbound_at": datetime.now(UTC)})
+    db.execute(
+        update(ChannelRoute)
+        .where(
+            ChannelRoute.user_id == user_id,
+            ChannelRoute.channel == channel,
+            ChannelRoute.channel_identifier == sender_id,
+        )
+        .values(last_inbound_at=datetime.now(UTC))
+    )
 
 
 async def _get_or_create_user(channel: str, sender_id: str) -> User:
@@ -176,11 +186,11 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
     db = SessionLocal()
     try:
         # Look up by channel route
-        route = (
-            db.query(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id).first()
-        )
+        route = db.execute(
+            select(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id)
+        ).scalar_one_or_none()
         if route:
-            user = db.query(User).filter_by(id=route.user_id).first()
+            user = db.execute(select(User).filter_by(id=route.user_id)).scalar_one_or_none()
             if user is not None:
                 # Track the most recently used channel so heartbeat and other
                 # proactive messages are delivered to the right place.
@@ -192,12 +202,16 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 # different identifier (e.g. a UUID handle that was replaced
                 # by a real phone number).  This ensures the outbound
                 # dispatcher always picks up the current address.
-                deleted = (
-                    db.query(ChannelRoute)
-                    .filter_by(user_id=user.id, channel=channel)
-                    .filter(ChannelRoute.channel_identifier != sender_id)
-                    .delete()
-                )
+                deleted = cast(
+                    "CursorResult[object]",
+                    db.execute(
+                        delete(ChannelRoute).where(
+                            ChannelRoute.user_id == user.id,
+                            ChannelRoute.channel == channel,
+                            ChannelRoute.channel_identifier != sender_id,
+                        )
+                    ),
+                ).rowcount
                 if deleted:
                     user.channel_identifier = sender_id
                     logger.info(
@@ -217,16 +231,20 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         # every channel are visible in the dashboard.  Skip this in
         # multi-tenant (premium) mode to avoid linking a new sender's
         # messages to an existing user's account.
-        all_users = db.query(User).all()
+        all_users = db.execute(select(User)).scalars().all()
         if len(all_users) == 1 and not settings.premium_plugin:
             user = all_users[0]
             logger.debug("_get_or_create_user: single-tenant reuse -> user %s", user.id)
             # Remove stale routes for this user+channel before adding the new one.
             # This prevents the outbound dispatcher from picking up an old
             # identifier (e.g. a UUID handle instead of a real phone number).
-            db.query(ChannelRoute).filter_by(user_id=user.id, channel=channel).filter(
-                ChannelRoute.channel_identifier != sender_id
-            ).delete()
+            db.execute(
+                delete(ChannelRoute).where(
+                    ChannelRoute.user_id == user.id,
+                    ChannelRoute.channel == channel,
+                    ChannelRoute.channel_identifier != sender_id,
+                )
+            )
             db.add(ChannelRoute(user_id=user.id, channel=channel, channel_identifier=sender_id))
             user.channel_identifier = sender_id
             user.preferred_channel = channel
@@ -240,7 +258,7 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
         # In premium mode the webchat sends sender_id = user.id (the PK).
         # Link the existing user to this channel instead of creating a
         # duplicate account.
-        existing = db.query(User).filter_by(id=sender_id).first()
+        existing = db.execute(select(User).filter_by(id=sender_id)).scalar_one_or_none()
         if existing is not None:
             logger.debug(
                 "_get_or_create_user: sender_id matches existing PK -> user %s",
@@ -285,18 +303,18 @@ async def _get_or_create_user(channel: str, sender_id: str) -> User:
                 sender_id,
             )
             # Concurrent insert won the race; re-query
-            route = (
-                db.query(ChannelRoute)
-                .filter_by(channel=channel, channel_identifier=sender_id)
-                .first()
-            )
+            route = db.execute(
+                select(ChannelRoute).filter_by(channel=channel, channel_identifier=sender_id)
+            ).scalar_one_or_none()
             if route:
-                user = db.query(User).filter_by(id=route.user_id).first()
+                user = db.execute(select(User).filter_by(id=route.user_id)).scalar_one_or_none()
                 if user is not None:
                     db.expunge(user)
                     return user
             # Fallback: look up by user_id
-            user = db.query(User).filter_by(user_id=f"{channel}_{sender_id}").first()
+            user = db.execute(
+                select(User).filter_by(user_id=f"{channel}_{sender_id}")
+            ).scalar_one_or_none()
             if user is not None:
                 db.expunge(user)
                 return user
@@ -362,7 +380,9 @@ async def _dispatch_to_pipeline(
                     try:
                         db = SessionLocal()
                         try:
-                            fresh = db.query(User).filter_by(id=user_id).first()
+                            fresh = db.execute(
+                                select(User).filter_by(id=user_id)
+                            ).scalar_one_or_none()
                             if fresh is not None:
                                 db.expunge(fresh)
                                 user = fresh
@@ -641,22 +661,21 @@ async def _handle_report_command(
         # ``reported_conversations``.
         db = SessionLocal()
         try:
-            cs_row = (
-                db.query(ChatSession).filter(ChatSession.session_id == session.session_id).first()
-            )
+            cs_row = db.execute(
+                select(ChatSession).where(ChatSession.session_id == session.session_id)
+            ).scalar_one_or_none()
             if cs_row is None:
                 logger.error(
                     "/report: session %s not in DB; skipping persistence",
                     session.session_id,
                 )
             else:
-                latest_seq = (
-                    db.query(Message.seq)
-                    .filter(Message.session_id == cs_row.id)
+                latest_seq = db.execute(
+                    select(Message.seq)
+                    .where(Message.session_id == cs_row.id)
                     .order_by(Message.seq.desc())
                     .limit(1)
-                    .scalar()
-                )
+                ).scalar()
                 anchor_seq = int(latest_seq) if latest_seq is not None else None
                 row = ReportedConversation(
                     user_id=user.id,

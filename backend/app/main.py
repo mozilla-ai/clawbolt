@@ -9,7 +9,7 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from sqlalchemy import text
+from sqlalchemy import select, text
 
 from backend.app.agent.approval import cleanup_orphaned_approvals
 from backend.app.agent.heartbeat import heartbeat_scheduler
@@ -79,10 +79,10 @@ def _enforce_single_channel() -> None:
     """
     db = SessionLocal()
     try:
-        users = db.query(User).all()
+        users = db.execute(select(User)).scalars().all()
         fixed = 0
         for user in users:
-            routes = db.query(ChannelRoute).filter_by(user_id=user.id).all()
+            routes = db.execute(select(ChannelRoute).filter_by(user_id=user.id)).scalars().all()
             enabled_messaging = [r for r in routes if r.enabled and r.channel != "webchat"]
             if len(enabled_messaging) > 1:
                 preferred_match = next(

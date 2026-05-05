@@ -10,6 +10,7 @@ import json
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy import delete, select
 
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
@@ -79,8 +80,12 @@ async def get_calendar_config(
     db = SessionLocal()
     try:
         configs = (
-            db.query(CalendarConfig)
-            .filter_by(user_id=current_user.id, provider="google_calendar")
+            db.execute(
+                select(CalendarConfig).filter_by(
+                    user_id=current_user.id, provider="google_calendar"
+                )
+            )
+            .scalars()
             .all()
         )
     finally:
@@ -133,9 +138,12 @@ async def update_calendar_config(
 
     db = SessionLocal()
     try:
-        db.query(CalendarConfig).filter_by(
-            user_id=current_user.id, provider="google_calendar"
-        ).delete()
+        db.execute(
+            delete(CalendarConfig).where(
+                CalendarConfig.user_id == current_user.id,
+                CalendarConfig.provider == "google_calendar",
+            )
+        )
 
         new_configs: list[CalendarConfig] = []
         for entry in body.calendars:
