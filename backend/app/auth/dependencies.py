@@ -1,4 +1,5 @@
 from fastapi import Depends
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.agent.user_db import provision_user
@@ -16,7 +17,7 @@ async def get_current_user(db: Session = Depends(get_db)) -> User:
     dashboard sees the same sessions, memory, and stats. Only create a local
     fallback when the store is completely empty.
     """
-    user = db.query(User).first()
+    user = db.execute(select(User)).scalars().first()
     if user:
         return user
     user = User(user_id=LOCAL_USER_ID)

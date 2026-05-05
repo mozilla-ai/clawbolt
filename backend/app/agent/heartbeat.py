@@ -26,6 +26,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from any_llm import RateLimitError, amessages
 from any_llm.types.messages import MessageResponse
 from pydantic import BaseModel, Field, ValidationError
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from backend.app.agent.context import get_or_create_conversation
@@ -790,14 +791,13 @@ def _user_messaged_within(user_id: str, minutes: int) -> bool:
     cutoff = datetime.datetime.now(datetime.UTC) - datetime.timedelta(minutes=minutes)
     db = SessionLocal()
     try:
-        latest = (
-            db.query(Message.timestamp)
+        latest = db.execute(
+            select(Message.timestamp)
             .join(ChatSession, ChatSession.id == Message.session_id)
-            .filter(ChatSession.user_id == user_id, Message.direction == "inbound")
+            .where(ChatSession.user_id == user_id, Message.direction == "inbound")
             .order_by(Message.timestamp.desc())
             .limit(1)
-            .scalar()
-        )
+        ).scalar()
     except Exception:
         logger.exception("Failed to check recent-message gate for user %s", user_id)
         return False
@@ -1060,15 +1060,13 @@ def resolve_heartbeat_route(
     that flip ``enabled`` are responsible for keeping ``User.preferred_channel``
     in sync.
     """
-    route = (
-        db.query(ChannelRoute)
-        .filter(
+    route = db.execute(
+        select(ChannelRoute).where(
             ChannelRoute.user_id == user.id,
             ChannelRoute.enabled.is_(True),
             ChannelRoute.channel.notin_(list(_NON_PUSHABLE_CHANNELS)),
         )
-        .first()
-    )
+    ).scalar_one_or_none()
 
     if route is None:
         logger.debug(
@@ -1201,8 +1199,13 @@ class HeartbeatScheduler:
         db = SessionLocal()
         try:
             users = (
-                db.query(User)
-                .filter(User.onboarding_complete.is_(True), User.is_active.is_(True))
+                db.execute(
+                    select(User).where(
+                        User.onboarding_complete.is_(True),
+                        User.is_active.is_(True),
+                    )
+                )
+                .scalars()
                 .all()
             )
             for u in users:

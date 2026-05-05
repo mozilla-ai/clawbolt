@@ -3,6 +3,7 @@
 from typing import TypeVar
 
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 T = TypeVar("T")
@@ -20,7 +21,7 @@ def get_or_404(
 
         user = get_or_404(db, User, detail="User not found", id=user_id)
     """
-    row = db.query(model).filter_by(**filters).first()
+    row = db.execute(select(model).filter_by(**filters)).scalar_one_or_none()
     if row is None:
         raise HTTPException(status_code=404, detail=detail)
     return row

@@ -10,9 +10,9 @@ from __future__ import annotations
 import datetime
 import logging
 import uuid
-from typing import Any
+from typing import Any, cast
 
-from sqlalchemy import func, text
+from sqlalchemy import CursorResult, delete, func, select, text
 from sqlalchemy.exc import IntegrityError
 
 from backend.app.agent.dto import SessionState, StoredMessage
@@ -88,12 +88,16 @@ class SessionStore:
         """Load a session by its string session_id."""
         db = SessionLocal()
         try:
-            cs = (
-                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
-            )
+            cs = db.execute(
+                select(ChatSession).filter_by(session_id=session_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is None:
                 return None
-            messages = db.query(Message).filter_by(session_id=cs.id).order_by(Message.seq).all()
+            messages = list(
+                db.execute(select(Message).filter_by(session_id=cs.id).order_by(Message.seq))
+                .scalars()
+                .all()
+            )
             return _session_to_state(cs, messages)
         finally:
             db.close()
@@ -103,14 +107,21 @@ class SessionStore:
         db = SessionLocal()
         try:
             sessions = (
-                db.query(ChatSession)
-                .filter_by(user_id=self.user_id)
-                .order_by(ChatSession.created_at)
+                db.execute(
+                    select(ChatSession)
+                    .filter_by(user_id=self.user_id)
+                    .order_by(ChatSession.created_at)
+                )
+                .scalars()
                 .all()
             )
             result = []
             for cs in sessions:
-                messages = db.query(Message).filter_by(session_id=cs.id).order_by(Message.seq).all()
+                messages = list(
+                    db.execute(select(Message).filter_by(session_id=cs.id).order_by(Message.seq))
+                    .scalars()
+                    .all()
+                )
                 result.append(_session_to_state(cs, messages))
             return result
         finally:
@@ -135,12 +146,18 @@ class SessionStore:
                 text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
                 {"k": f"session_create:{self.user_id}"},
             )
-            cs = db.query(ChatSession).filter_by(user_id=self.user_id).first()
+            cs = db.execute(
+                select(ChatSession).filter_by(user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is not None:
                 now = datetime.datetime.now(datetime.UTC)
                 cs.last_message_at = now
                 db.commit()
-                messages = db.query(Message).filter_by(session_id=cs.id).order_by(Message.seq).all()
+                messages = list(
+                    db.execute(select(Message).filter_by(session_id=cs.id).order_by(Message.seq))
+                    .scalars()
+                    .all()
+                )
                 return _session_to_state(cs, messages), False
 
             # Create new session with unique ID. Use timestamp + short UUID suffix
@@ -165,10 +182,16 @@ class SessionStore:
                 # Either a session_id collision (extremely unlikely) or
                 # the user_id UNIQUE lost a race despite the advisory
                 # lock. Reload and return the winner's row.
-                cs = db.query(ChatSession).filter_by(user_id=self.user_id).first()
+                cs = db.execute(
+                    select(ChatSession).filter_by(user_id=self.user_id)
+                ).scalar_one_or_none()
                 if cs is not None:
-                    messages = (
-                        db.query(Message).filter_by(session_id=cs.id).order_by(Message.seq).all()
+                    messages = list(
+                        db.execute(
+                            select(Message).filter_by(session_id=cs.id).order_by(Message.seq)
+                        )
+                        .scalars()
+                        .all()
                     )
                     return _session_to_state(cs, messages), False
                 # No conflicting row found; retry with a fresh session_id.
@@ -201,11 +224,9 @@ class SessionStore:
     ) -> StoredMessage:
         """Insert a message into the database and update the in-memory session."""
         with db_session() as db:
-            cs = (
-                db.query(ChatSession)
-                .filter_by(session_id=session.session_id, user_id=self.user_id)
-                .first()
-            )
+            cs = db.execute(
+                select(ChatSession).filter_by(session_id=session.session_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is None:
                 # Auto-create the session row (supports in-memory-only SessionState
                 # objects created outside of get_or_create_session).
@@ -223,10 +244,12 @@ class SessionStore:
             # Lock the session row to serialize concurrent message inserts,
             # then calculate next seq. FOR UPDATE cannot be used with aggregates
             # in PostgreSQL, so we lock the parent row instead.
-            db.query(ChatSession).filter_by(id=cs.id).with_for_update().first()
+            db.execute(
+                select(ChatSession).filter_by(id=cs.id).with_for_update()
+            ).scalar_one_or_none()
             max_seq: int = (
-                db.query(func.max(Message.seq)).filter_by(session_id=cs.id).scalar()
-            ) or 0
+                db.execute(select(func.max(Message.seq)).filter_by(session_id=cs.id)).scalar() or 0
+            )
             seq = max_seq + 1
             now = datetime.datetime.now(datetime.UTC)
 
@@ -285,16 +308,18 @@ class SessionStore:
         e.g. persisting an approval prompt from the agent loop.
         """
         with db_session() as db:
-            cs = (
-                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
-            )
+            cs = db.execute(
+                select(ChatSession).filter_by(session_id=session_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is None:
                 raise ValueError(f"Session {session_id!r} not found for user {self.user_id!r}")
 
-            db.query(ChatSession).filter_by(id=cs.id).with_for_update().first()
+            db.execute(
+                select(ChatSession).filter_by(id=cs.id).with_for_update()
+            ).scalar_one_or_none()
             max_seq: int = (
-                db.query(func.max(Message.seq)).filter_by(session_id=cs.id).scalar()
-            ) or 0
+                db.execute(select(func.max(Message.seq)).filter_by(session_id=cs.id)).scalar() or 0
+            )
             seq = max_seq + 1
             now = datetime.datetime.now(datetime.UTC)
 
@@ -334,15 +359,15 @@ class SessionStore:
     ) -> None:
         """Update a message by seq number."""
         with db_session() as db:
-            cs = (
-                db.query(ChatSession)
-                .filter_by(session_id=session.session_id, user_id=self.user_id)
-                .first()
-            )
+            cs = db.execute(
+                select(ChatSession).filter_by(session_id=session.session_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is None:
                 return
 
-            msg = db.query(Message).filter_by(session_id=cs.id, seq=seq).first()
+            msg = db.execute(
+                select(Message).filter_by(session_id=cs.id, seq=seq)
+            ).scalar_one_or_none()
             if msg is None:
                 return
 
@@ -364,11 +389,9 @@ class SessionStore:
         if session.initial_system_prompt:
             return
         with db_session() as db:
-            cs = (
-                db.query(ChatSession)
-                .filter_by(session_id=session.session_id, user_id=self.user_id)
-                .first()
-            )
+            cs = db.execute(
+                select(ChatSession).filter_by(session_id=session.session_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is not None and not cs.initial_system_prompt:
                 cs.initial_system_prompt = system_prompt
                 db.commit()
@@ -380,16 +403,19 @@ class SessionStore:
         Returns True if a message was deleted, False if not found.
         """
         with db_session() as db:
-            cs = (
-                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
-            )
+            cs = db.execute(
+                select(ChatSession).filter_by(session_id=session_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is None:
                 return False
-            count: int = (
-                db.query(Message)
-                .filter_by(session_id=cs.id, seq=seq)
-                .delete(synchronize_session="fetch")
-            )
+            count: int = cast(
+                "CursorResult[object]",
+                db.execute(
+                    delete(Message)
+                    .where(Message.session_id == cs.id, Message.seq == seq)
+                    .execution_options(synchronize_session="fetch")
+                ),
+            ).rowcount
             db.commit()
             return count > 0
 
@@ -399,16 +425,19 @@ class SessionStore:
         Returns the number of messages actually deleted.
         """
         with db_session() as db:
-            cs = (
-                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
-            )
+            cs = db.execute(
+                select(ChatSession).filter_by(session_id=session_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is None:
                 return 0
-            count: int = (
-                db.query(Message)
-                .filter(Message.session_id == cs.id, Message.seq.in_(seqs))
-                .delete(synchronize_session="fetch")
-            )
+            count: int = cast(
+                "CursorResult[object]",
+                db.execute(
+                    delete(Message)
+                    .where(Message.session_id == cs.id, Message.seq.in_(seqs))
+                    .execution_options(synchronize_session="fetch")
+                ),
+            ).rowcount
             db.commit()
             return count
 
@@ -419,18 +448,19 @@ class SessionStore:
         preserved so the conversation can continue with an empty history.
         """
         with db_session() as db:
-            cs = (
-                db.query(ChatSession).filter_by(session_id=session_id, user_id=self.user_id).first()
-            )
+            cs = db.execute(
+                select(ChatSession).filter_by(session_id=session_id, user_id=self.user_id)
+            ).scalar_one_or_none()
             if cs is None:
                 return 0
-            count: int = (
-                db.query(Message)
-                .filter_by(session_id=cs.id)
-                .delete(
-                    synchronize_session="fetch",
-                )
-            )
+            count: int = cast(
+                "CursorResult[object]",
+                db.execute(
+                    delete(Message)
+                    .where(Message.session_id == cs.id)
+                    .execution_options(synchronize_session="fetch")
+                ),
+            ).rowcount
             cs.initial_system_prompt = ""
             db.commit()
             return count
@@ -439,12 +469,11 @@ class SessionStore:
         """Get the most recent message timestamp in the given direction."""
         db = SessionLocal()
         try:
-            result = (
-                db.query(func.max(Message.timestamp))
+            result = db.execute(
+                select(func.max(Message.timestamp))
                 .join(ChatSession, Message.session_id == ChatSession.id)
-                .filter(ChatSession.user_id == self.user_id, Message.direction == direction)
-                .scalar()
-            )
+                .where(ChatSession.user_id == self.user_id, Message.direction == direction)
+            ).scalar()
             return result
         finally:
             db.close()
@@ -466,15 +495,17 @@ class SessionStore:
         count = count if count is not None else settings.heartbeat_recent_messages_count
         db = SessionLocal()
         try:
-            query = (
-                db.query(Message)
+            stmt = (
+                select(Message)
                 .join(ChatSession, Message.session_id == ChatSession.id)
-                .filter(ChatSession.user_id == self.user_id)
+                .where(ChatSession.user_id == self.user_id)
             )
             if exclude_session_id:
-                query = query.filter(ChatSession.session_id != exclude_session_id)
+                stmt = stmt.where(ChatSession.session_id != exclude_session_id)
 
-            messages = query.order_by(Message.timestamp.desc()).limit(count).all()
+            messages = list(
+                db.execute(stmt.order_by(Message.timestamp.desc()).limit(count)).scalars().all()
+            )
             # Return in chronological order
             return [_msg_to_stored(m) for m in reversed(messages)]
         finally:
