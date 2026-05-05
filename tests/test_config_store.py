@@ -233,8 +233,10 @@ def test_db_store_int_setting_round_trips_through_text_column(
     _db_store: DbSettingsStore,
 ) -> None:
     """Integer persistable settings round-trip cleanly through the TEXT
-    value column. Save accepts the int, the column stores its string
-    form, and the boot-time hydration coerces back to int via Pydantic.
+    value column. The store contract is ``Mapping[str, str]`` (callers
+    stringify ints at the boundary, matching ``apply_to_settings``'s
+    ``str(value)`` on the load path), and the boot-time hydration
+    coerces back to int via Pydantic.
 
     Mirrors the actual boot path:
       ``settings_store.load() → apply_to_settings(loaded)``
@@ -250,7 +252,7 @@ def test_db_store_int_setting_round_trips_through_text_column(
     """
     original = settings.llm_max_tokens_agent
     try:
-        _db_store.save({"llm_max_tokens_agent": 4096})
+        _db_store.save({"llm_max_tokens_agent": "4096"})
         # Stored verbatim as TEXT, not transparently re-typed by the store.
         assert _db_store.load()["llm_max_tokens_agent"] == "4096"
 
