@@ -262,6 +262,11 @@ async def compact_session(
     raw_content = get_response_text(response)
     result = _parse_compaction_response(raw_content)
 
+    # Capture exactly what got appended to HISTORY.md so we can compute the
+    # "after" snapshot deterministically below. ``None`` means no append
+    # happened this event.
+    appended_history_entry: str | None = None
+
     # Write updated MEMORY.md if the LLM produced content
     if result.memory_update:
         memory_store.write_memory(result.memory_update)
@@ -273,6 +278,9 @@ async def compact_session(
         entry = result.summary.replace("[TIMESTAMP]", f"[{timestamp}]")
         try:
             await memory_store.append_history(entry)
+            # Mirror the suffix that ``MemoryStore.append_history`` adds at
+            # the SQL level so the deterministic snapshot below matches.
+            appended_history_entry = entry + "\n"
             logger.info("Compaction appended history entry for user %s", user_id)
         except Exception:
             logger.exception("Failed to append history for user %s", user_id)
@@ -312,14 +320,23 @@ async def compact_session(
         len(result.summary or ""),
     )
 
-    # Re-read the four memory files to capture the post-write state. These
-    # become the "after" snapshots stored on the compaction_events row so
-    # admins can diff what each event actually changed in MEMORY.md /
-    # HISTORY.md / USER.md / SOUL.md.
-    new_memory = memory_store.read_memory()
-    new_history = memory_store.read_history()
-    new_user = memory_store.read_user()
-    new_soul = memory_store.read_soul()
+    # Compute "after" snapshots deterministically from what was written
+    # rather than re-reading the memory store. Two compact_session tasks
+    # for the same user can run concurrently (e.g. burst traffic crosses
+    # the trigger again during a still-running LLM compaction call), and
+    # they share ``get_memory_store(user_id)``. A re-read could pick up the
+    # other task's write and record a misleading "after" in this row's
+    # audit log. The compaction prompt returns full rewrites for memory /
+    # user / soul, and ``append_history`` is a SQL-level concatenation we
+    # mirror via ``appended_history_entry`` above, so all four "after"
+    # values are computable without re-reading.
+    new_memory = result.memory_update if result.memory_update else current_memory
+    new_user = result.user_profile_update if result.user_profile_update else current_user_profile
+    new_soul = result.soul_update if result.soul_update else current_soul
+    if appended_history_entry is not None:
+        new_history = (current_history or "") + appended_history_entry
+    else:
+        new_history = current_history
 
     cap = settings.compaction_event_snapshot_max_bytes_per_file
     snapshots = _build_snapshot_pairs(

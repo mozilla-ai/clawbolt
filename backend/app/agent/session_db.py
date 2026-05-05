@@ -359,35 +359,6 @@ class SessionStore:
                             setattr(m, k, v)
                     break
 
-    async def advance_last_trim_seq(self, session: SessionState, new_value: int) -> None:
-        """Advance the per-session trim watermark.
-
-        Writes ``sessions.last_trim_seq = max(current, new_value)`` so a
-        racing trim with a lower seq cannot regress the watermark. Updates
-        the in-memory ``SessionState`` to match.
-
-        Called from ``trigger_compaction_for_dropped`` in the same
-        transaction that inserts the synchronous ``'pending'``
-        ``CompactionEvent`` row, so a crash between the two cannot leave
-        the watermark and the audit log out of sync.
-        """
-        with db_session() as db:
-            cs = (
-                db.query(ChatSession)
-                .filter_by(session_id=session.session_id, user_id=self.user_id)
-                .first()
-            )
-            if cs is None:
-                return
-            current = cs.last_trim_seq or 0
-            if new_value > current:
-                cs.last_trim_seq = new_value
-                db.commit()
-                session.last_trim_seq = new_value
-            else:
-                # Idempotent: nothing to do.
-                pass
-
     async def update_initial_system_prompt(self, session: SessionState, system_prompt: str) -> None:
         """Store the system prompt on the session if not already set."""
         if session.initial_system_prompt:

@@ -148,7 +148,7 @@ def trigger_compaction_for_dropped(
     triggered_at = datetime.datetime.now(datetime.UTC)
 
     # Phase 1: synchronous insert + watermark advance, in one transaction.
-    event_id: int | None = None
+    event_id: int
     try:
         with db_session() as db:
             event = CompactionEvent(
@@ -161,6 +161,7 @@ def trigger_compaction_for_dropped(
             )
             db.add(event)
             db.flush()
+            assert event.id is not None, "flush() must populate the autoincrement id"
             event_id = event.id
 
             cs = db.query(ChatSession).filter_by(user_id=user_id).first()
@@ -175,10 +176,6 @@ def trigger_compaction_for_dropped(
             "watermark not advanced and async compaction skipped",
             user_id,
         )
-        return
-
-    if event_id is None:
-        # Defensive: db.flush() failed silently. Nothing to update.
         return
 
     async def _run_trim_compaction(event_id: int) -> None:
