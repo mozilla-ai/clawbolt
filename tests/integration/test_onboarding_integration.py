@@ -80,10 +80,14 @@ async def test_onboarding_extracts_profile_from_intro() -> None:
     used_file_tool = "write_file" in tool_names or "edit_file" in tool_names
 
     # Reply may or may not be present (small models sometimes only call tools).
+    # Accept any of the three intro facts as evidence the agent processed the
+    # input. The model sometimes asks a clarifying question (for example
+    # "Portland, Oregon or Maine?") instead of restating the name or trade,
+    # which is a reasonable behavior we don't want to flag as a regression.
     acknowledged = False
     if response.reply_text:
         reply_lower = response.reply_text.lower()
-        acknowledged = "jake" in reply_lower or "plumb" in reply_lower
+        acknowledged = "jake" in reply_lower or "plumb" in reply_lower or "portland" in reply_lower
 
     # Primary check: agent used file tools. Fallback: agent at least acknowledged the info.
     assert used_file_tool or acknowledged, (

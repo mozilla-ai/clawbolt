@@ -241,6 +241,114 @@ async def test_ask_sub_tools_have_approval_policy() -> None:
 
 
 @pytest.mark.asyncio()
+async def test_create_tools_auto_attaches_approval_policy_for_subtools() -> None:
+    """Tools registered via SubToolInfo must end up with an ApprovalPolicy.
+
+    Without one, ``_get_tool_permission`` in core.py short-circuits to ALWAYS
+    and ignores the user's stored override. The registry compensates by
+    auto-attaching a default policy to any SubToolInfo-registered tool that
+    didn't bring its own. This guarantees that a user who escalates a tool
+    from the dashboard (e.g. flipping ``companycam_search_projects`` from
+    'always' to 'ask') is actually prompted at runtime.
+    """
+    ensure_tool_modules_imported()
+
+    ctx = MagicMock(spec=ToolContext)
+    ctx.user = MagicMock()
+    ctx.user.id = "test-user"
+    ctx.storage = MagicMock()
+    ctx.publish_outbound = AsyncMock()
+    ctx.channel = "test"
+    ctx.to_address = ""
+    ctx.downloaded_media = []
+    ctx.turn_text = ""
+
+    tools = await default_registry.create_tools(ctx)
+    tool_by_name = {t.name: t for t in tools}
+
+    missing: list[str] = []
+    for factory in default_registry._factories.values():
+        for st in factory.sub_tools:
+            tool = tool_by_name.get(st.name)
+            if tool is None:
+                continue  # factory may have skipped (auth-gated, missing deps)
+            if tool.approval_policy is None:
+                missing.append(st.name)
+
+    assert not missing, (
+        "Every SubToolInfo-registered tool must have an approval_policy after "
+        "create_tools so the runtime gate consults the user's stored "
+        "permission overrides:\n" + "\n".join(missing)
+    )
+
+
+@pytest.mark.asyncio()
+async def test_create_tools_uses_subtool_default_for_synthesized_policy() -> None:
+    """The auto-attached policy carries the SubToolInfo's default level.
+
+    Spot-check: ``companycam_search_projects`` ships with no explicit
+    ``approval_policy`` and a SubToolInfo default of 'always'. The synthesized
+    policy must reflect that, so users who haven't overridden the level still
+    see the same auto-execution behavior they get today.
+    """
+    from backend.app.agent.approval import PermissionLevel
+
+    ensure_tool_modules_imported()
+
+    ctx = MagicMock(spec=ToolContext)
+    ctx.user = MagicMock()
+    ctx.user.id = "test-user"
+    ctx.storage = MagicMock()
+    ctx.publish_outbound = AsyncMock()
+    ctx.channel = "test"
+    ctx.to_address = ""
+    ctx.downloaded_media = []
+    ctx.turn_text = ""
+
+    # Build a synthetic tool with no policy and register a stub factory so
+    # we don't depend on companycam being authenticated in the test env.
+    from pydantic import BaseModel
+
+    from backend.app.agent.tools.base import Tool, ToolResult
+    from backend.app.agent.tools.registry import SubToolInfo, ToolRegistry
+
+    async def _noop_fn(**_: object) -> ToolResult:
+        return ToolResult(content="")
+
+    class _Params(BaseModel):
+        pass
+
+    tool = Tool(
+        name="bare_tool",
+        description="bare",
+        function=_noop_fn,
+        params_model=_Params,
+    )
+
+    reg = ToolRegistry()
+    reg.register(
+        "bare_factory",
+        lambda _ctx: [tool],
+        sub_tools=[
+            SubToolInfo(
+                "bare_tool",
+                "Look something up without side effects",
+                default_permission="always",
+            )
+        ],
+    )
+
+    out = await reg.create_tools(ctx)
+    assert len(out) == 1
+    assert out[0].approval_policy is not None
+    assert out[0].approval_policy.default_level == PermissionLevel.ALWAYS
+    assert out[0].approval_policy.description_builder is not None
+    assert (
+        out[0].approval_policy.description_builder({}) == "Look something up without side effects"
+    )
+
+
+@pytest.mark.asyncio()
 async def test_state_mutating_tools_have_concurrency_group() -> None:
     """Tools that mutate shared state must declare a concurrency_group.
 
