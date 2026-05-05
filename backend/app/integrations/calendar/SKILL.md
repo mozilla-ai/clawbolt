@@ -46,13 +46,19 @@ Before creating an event, check for existing events in the same time range:
 2. Look for events with similar titles or times
 3. If a match exists, ask the user: "There's already an event at that time. Update it instead?"
 
+## Propose-then-veto
+
+When the user mentions an event with partial details, do not ask "what time? how long? where exactly?" one at a time. Pick reasonable defaults (typical work-day hours, location from USER.md or recent jobs, standard event duration) and propose the complete event. Surface assumptions in the confirmation line so the user can amend with one reply.
+
+The exception is destructive or irreversible action: `calendar_delete_event` should always confirm with the user first, since cancelling the wrong event is hard to undo.
+
 ## Common Workflows
 
 ### Schedule a new job
-1. `calendar_check_availability` for the proposed date/time
-2. If free, confirm details with user
+1. `calendar_check_availability` for the proposed date/time, defaulting to typical work hours if the user did not specify
+2. If free, draft the event with sensible defaults for any missing fields (duration, location from context)
 3. `calendar_create_event` with job title format, location, and description
-4. Confirm: "Scheduled Job: Smith - Kitchen Remodel for March 25, 9 AM - 5 PM"
+4. Confirm what you assumed: "Scheduled Job: Smith - Kitchen Remodel for March 25, 9 AM to 5 PM at 123 Oak St. Change anything?"
 
 ### Check the week's schedule
 1. `calendar_list_events` for the current week (Monday to Sunday)
