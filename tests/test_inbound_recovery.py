@@ -514,8 +514,8 @@ async def test_recovery_skips_when_another_worker_holds_the_lock() -> None:
 
     with (
         patch(
-            "backend.app.agent.inbound_recovery._try_acquire_lock",
-            return_value=False,
+            "backend.app.agent.inbound_recovery._try_acquire_lock_async",
+            new=AsyncMock(return_value=False),
         ),
         patch(
             "backend.app.agent.inbound_recovery._dispatch_to_pipeline",
