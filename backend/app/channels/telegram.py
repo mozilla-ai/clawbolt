@@ -237,6 +237,13 @@ class TelegramChannel(BaseChannel):
         Runs as a fire-and-forget task after the server is listening so that
         Telegram can reach the webhook URL during its validation check.
         """
+        # Cloudflared quick-tunnel discovery is a local-dev convenience for
+        # ``cloudflared tunnel --url http://localhost:...``. Deployments with
+        # a real public domain are served over HTTPS and register via
+        # ``register_paas_webhook`` instead, so an https APP_BASE_URL is a
+        # reliable signal that the localhost sidecar will never appear.
+        if settings.app_base_url.startswith("https://"):
+            return
         await asyncio.sleep(STARTUP_DELAY_SECONDS)
         if self.webhook_registered:
             return
