@@ -99,6 +99,8 @@ Both factories live in `backend/app/database.py`. Async pool tuning matches the 
 - READ-only async methods: `db = AsyncSessionLocal()` + `try / finally await db.close()`. Lighter weight, no rollback wrapper. Reference `IdempotencyStore.has_seen_async` in `backend/app/agent/stores.py:628-635`.
 - WRITE async methods: `async with db_session_async() as db: ...`. Auto-rollback on exception, auto-close. Reference `IdempotencyStore.try_mark_seen_async` in `backend/app/agent/stores.py:661-683`.
 
+Pool sizing is currently SQLAlchemy default (`pool_size=5`, `max_overflow=10`) on both engines. To re-evaluate, run `scripts/benchmark_pool.py` against a prod-like Postgres; it sweeps `pool_size`/`max_overflow` across realistic concurrency and emits a markdown report with p50/p95/p99 connection-acquisition latency. Methodology and the most recent run are in `scripts/benchmark_pool_report.md` (issue #1179).
+
 ### Common SQLAlchemy 2.0 patterns
 
 These are the patterns that survive the sync-to-async port. PR #1190 already converted all `db.query()` call sites; do not reintroduce the 1.x Query API in new code.
