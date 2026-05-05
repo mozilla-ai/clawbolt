@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 # Default matrices. The product covers the realistic range we expect under
 # the async migration: from "tighter than today" (5/0) up to "double the
@@ -85,17 +85,24 @@ class RunConfig:
 
 
 async def _worker(
-    factory: async_sessionmaker,
+    engine: AsyncEngine,
     cfg: RunConfig,
     query_sql: str,
 ) -> None:
+    # We time pool checkout directly via ``engine.connect()`` rather than
+    # wrapping ``async with factory()``. Constructing an ``AsyncSession`` is a
+    # cheap Python-object operation; SQLAlchemy lazy-checks-out a pool
+    # connection on first I/O. Timing only the ``async with factory()`` block
+    # therefore measures Session construction, not pool wait, and reports
+    # sub-microsecond numbers even when the pool is fully saturated. See PR
+    # discussion on #1226 for the original miscalibration.
     for _ in range(cfg.iters):
         t0 = time.perf_counter()
         try:
-            async with factory() as session:
+            async with engine.connect() as conn:
                 acquire_ms = (time.perf_counter() - t0) * 1000.0
                 cfg.acquire_latencies.append(acquire_ms)
-                await session.execute(text(query_sql))
+                await conn.execute(text(query_sql))
         except Exception:
             cfg.errors += 1
 
@@ -117,7 +124,6 @@ async def _run_one(
         # the benchmark indefinitely.
         pool_timeout=30,
     )
-    factory = async_sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
     cfg = RunConfig(
         pool_size=pool_size,
         max_overflow=max_overflow,
@@ -130,11 +136,11 @@ async def _run_one(
 
     # Warm up the pool with one cheap query so connection establishment
     # latency is not folded into the first worker's first iteration.
-    async with factory() as session:
-        await session.execute(text("SELECT 1"))
+    async with engine.connect() as conn:
+        await conn.execute(text("SELECT 1"))
 
     t_start = time.perf_counter()
-    await asyncio.gather(*[_worker(factory, cfg, query_sql) for _ in range(workers)])
+    await asyncio.gather(*[_worker(engine, cfg, query_sql) for _ in range(workers)])
     total = time.perf_counter() - t_start
     await engine.dispose()
 
@@ -153,6 +159,23 @@ async def _run_one(
     notes = ""
     if workers > pool_size + max_overflow:
         notes = "saturated (workers > pool+overflow)"
+
+    # Sanity check: when workers exceed the pool capacity and queries are
+    # non-trivial, queue wait must be on the order of the theoretical wait
+    # time. If acquire_p99 is implausibly small, the timer is probably not
+    # measuring pool checkout. Surface a warning so future runs catch a
+    # regression without having to eyeball the table.
+    capacity = max(pool_size + max_overflow, 1)
+    expected_min_p99_ms = (workers / capacity) * query_ms * 0.5
+    if workers > pool_size + max_overflow and query_ms >= 1 and p99 < expected_min_p99_ms / 10:
+        warning = (
+            f"WARNING: acquire_p99={p99:.3f}ms looks suspiciously low for "
+            f"pool={pool_size}/{max_overflow} workers={workers} query_ms={query_ms}. "
+            f"Expected queue wait around {expected_min_p99_ms:.1f}ms. "
+            f"Timer may not be measuring pool checkout."
+        )
+        print(warning, file=sys.stderr, flush=True)
+        notes = (notes + "; " if notes else "") + "suspiciously-low-p99"
 
     return RunResult(
         pool_size=pool_size,
@@ -206,8 +229,11 @@ def _format_report(
     lines.append("")
     lines.append(
         "We measure connection-acquisition latency (`time.perf_counter()` around "
-        "`async with factory()`), total wall-clock duration, and computed QPS. The interesting "
-        "signal is p99 acquire latency: when it spikes, the pool is the bottleneck, not the DB."
+        "`async with engine.connect()`), total wall-clock duration, and computed QPS. Timing "
+        "`engine.connect()` is deliberate: SQLAlchemy lazy-checks-out a pool connection on first "
+        "I/O, so wrapping `async with factory()` would only measure `AsyncSession` object "
+        "construction and not pool wait. The interesting signal is p99 acquire latency: when it "
+        "spikes, the pool is the bottleneck, not the DB."
     )
     lines.append("")
     lines.append("## Results")
