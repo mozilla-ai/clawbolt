@@ -176,11 +176,14 @@ export default function AppShell() {
               {label}
             </NavLink>
           ))}
-          {extraNavItems.map(({ to, label, icon: Icon }) => (
+          {extraNavItems.map(({ to, label, icon: Icon, onClick: onExtensionClick }) => (
             <NavLink
               key={to}
               to={to}
-              onClick={closeSidebar}
+              onClick={() => {
+                onExtensionClick?.();
+                closeSidebar();
+              }}
               className={({ isActive }) =>
                 `flex items-center gap-3 px-3 py-2 rounded-md text-sm transition-all duration-150 ${
                   isActive
