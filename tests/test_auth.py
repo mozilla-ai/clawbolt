@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 from fastapi import HTTPException
 from fastapi.testclient import TestClient
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
 import backend.app.database as _db_module
 from backend.app.agent.onboarding import is_onboarding_needed
@@ -13,22 +14,22 @@ from backend.app.models import User
 
 
 @pytest.mark.asyncio()
-async def test_get_current_user_creates_local_user() -> None:
+async def test_get_current_user_creates_local_user(
+    async_db: async_sessionmaker,
+) -> None:
     """OSS mode should auto-create a local user when store is empty."""
-    db = _db_module.SessionLocal()
-    try:
+    async with async_db() as db:
         user = await get_current_user(db)
         assert user.user_id == LOCAL_USER_ID
         assert user.id is not None
-    finally:
-        db.close()
 
 
 @pytest.mark.asyncio()
-async def test_local_user_needs_onboarding() -> None:
+async def test_local_user_needs_onboarding(
+    async_db: async_sessionmaker,
+) -> None:
     """New local user should trigger onboarding (regression for #521)."""
-    db = _db_module.SessionLocal()
-    try:
+    async with async_db() as db:
         user = await get_current_user(db)
         assert not user.onboarding_complete
         # Create BOOTSTRAP.md to simulate file-store setup (still needed during hybrid period)
@@ -36,47 +37,46 @@ async def test_local_user_needs_onboarding() -> None:
         user_dir.mkdir(parents=True, exist_ok=True)
         (user_dir / "BOOTSTRAP.md").write_text("onboarding prompt", encoding="utf-8")
         assert is_onboarding_needed(user)
-    finally:
-        db.close()
 
 
 @pytest.mark.asyncio()
-async def test_get_current_user_returns_same_user() -> None:
+async def test_get_current_user_returns_same_user(
+    async_db: async_sessionmaker,
+) -> None:
     """Calling twice should return the same user."""
-    db = _db_module.SessionLocal()
-    try:
+    async with async_db() as db:
         c1 = await get_current_user(db)
         c2 = await get_current_user(db)
         assert c1.id == c2.id
-    finally:
-        db.close()
 
 
 @pytest.mark.asyncio()
-async def test_get_current_user_returns_existing_telegram_user() -> None:
-    """When a Telegram-created user exists, the dashboard should use it."""
-    db = _db_module.SessionLocal()
-    try:
+async def test_get_current_user_returns_existing_telegram_user(
+    async_db: async_sessionmaker,
+) -> None:
+    """When a Telegram-created user exists, the dashboard should use it.
+
+    Setup is driven through the async API to keep both writes on the
+    same per-test connection (the sync ``_isolate_stores`` and the
+    async ``async_db`` fixtures live on independent connections, so a
+    sync write would not be visible to the async read under READ
+    COMMITTED).
+    """
+    async with async_db() as db:
         telegram_user = User(
             user_id="telegram_123456789",
             channel_identifier="123456789",
             preferred_channel="telegram",
         )
         db.add(telegram_user)
-        db.commit()
-        db.refresh(telegram_user)
-        db.expunge(telegram_user)
-    finally:
-        db.close()
+        await db.commit()
+        await db.refresh(telegram_user)
+        existing_id = telegram_user.id
 
-    # get_current_user should return the existing user, not create a new one
-    db = _db_module.SessionLocal()
-    try:
+    async with async_db() as db:
         dashboard_user = await get_current_user(db)
-        assert dashboard_user.id == telegram_user.id
+        assert dashboard_user.id == existing_id
         assert dashboard_user.user_id == "telegram_123456789"
-    finally:
-        db.close()
 
 
 def test_auth_config_returns_none_mode(client: TestClient) -> None:
