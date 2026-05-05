@@ -7,6 +7,9 @@ unknown channel rejection) and startup migration.
 
 import uuid
 
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
+
 import backend.app.database as _db_module
 from backend.app.agent.heartbeat import resolve_heartbeat_route
 from backend.app.agent.ingestion import _get_or_create_user
@@ -46,6 +49,42 @@ def _create_user_with_routes(
     finally:
         db.close()
     return uid
+
+
+async def _create_user_with_routes_async(
+    async_db: async_sessionmaker,
+    routes: list[tuple[str, str, bool]],
+    preferred_channel: str = "telegram",
+) -> str:
+    """Async peer of ``_create_user_with_routes``.
+
+    Writes through the per-test async connection so rows are visible to
+    ``_enforce_single_channel`` (which uses ``db_session_async()``) under
+    the same outer transaction. The cross-API caveat in AGENTS.md
+    prevents the sync helper above from being used for async-native
+    tests.
+    """
+    async with async_db() as db:
+        user = User(
+            id=str(uuid.uuid4()),
+            user_id=f"test-{uuid.uuid4().hex[:8]}",
+            channel_identifier=routes[0][1] if routes else "",
+            preferred_channel=preferred_channel,
+            onboarding_complete=True,
+        )
+        db.add(user)
+        await db.flush()
+        for channel, identifier, enabled in routes:
+            db.add(
+                ChannelRoute(
+                    user_id=user.id,
+                    channel=channel,
+                    channel_identifier=identifier,
+                    enabled=enabled,
+                )
+            )
+        await db.commit()
+        return str(user.id)
 
 
 class TestAutoDisableOnEnable:
@@ -412,12 +451,20 @@ class TestHeartbeatRouting:
 
 
 class TestStartupMigration:
-    """_enforce_single_channel fixes users with multiple enabled routes."""
+    """_enforce_single_channel fixes users with multiple enabled routes.
 
-    def test_disables_non_preferred_routes(self) -> None:
+    These tests opt in to the ``async_db`` fixture: setup writes go
+    through the per-test async connection so the rows are visible to
+    ``_enforce_single_channel`` (which uses ``db_session_async()``)
+    under the same outer transaction. Mixing sync setup with the async
+    helper would hit the cross-API caveat documented in AGENTS.md.
+    """
+
+    async def test_disables_non_preferred_routes(self, async_db: async_sessionmaker) -> None:
         from backend.app.main import _enforce_single_channel
 
-        uid = _create_user_with_routes(
+        uid = await _create_user_with_routes_async(
+            async_db,
             [
                 ("telegram", "mig-111", True),
                 ("linq", "+15551234567", True),
@@ -426,21 +473,19 @@ class TestStartupMigration:
             preferred_channel="telegram",
         )
 
-        _enforce_single_channel()
+        await _enforce_single_channel()
 
-        db = _db_module.SessionLocal()
-        try:
-            routes = db.query(ChannelRoute).filter_by(user_id=uid).all()
+        async with async_db() as db:
+            routes = (await db.execute(select(ChannelRoute).filter_by(user_id=uid))).scalars().all()
             enabled = [r for r in routes if r.enabled and r.channel != "webchat"]
             assert len(enabled) == 1
             assert enabled[0].channel == "telegram"
-        finally:
-            db.close()
 
-    def test_preserves_webchat_route(self) -> None:
+    async def test_preserves_webchat_route(self, async_db: async_sessionmaker) -> None:
         from backend.app.main import _enforce_single_channel
 
-        uid = _create_user_with_routes(
+        uid = await _create_user_with_routes_async(
+            async_db,
             [
                 ("telegram", "mig-222", True),
                 ("linq", "+15552222222", True),
@@ -449,8 +494,7 @@ class TestStartupMigration:
         )
 
         # Add webchat route separately
-        db = _db_module.SessionLocal()
-        try:
+        async with async_db() as db:
             db.add(
                 ChannelRoute(
                     user_id=uid,
@@ -459,41 +503,38 @@ class TestStartupMigration:
                     enabled=True,
                 )
             )
-            db.commit()
-        finally:
-            db.close()
+            await db.commit()
 
-        _enforce_single_channel()
+        await _enforce_single_channel()
 
-        db = _db_module.SessionLocal()
-        try:
-            webchat = db.query(ChannelRoute).filter_by(user_id=uid, channel="webchat").first()
+        async with async_db() as db:
+            webchat = (
+                await db.execute(select(ChannelRoute).filter_by(user_id=uid, channel="webchat"))
+            ).scalar_one_or_none()
             assert webchat is not None
             assert webchat.enabled is True
-        finally:
-            db.close()
 
-    def test_no_change_when_single_channel(self) -> None:
+    async def test_no_change_when_single_channel(self, async_db: async_sessionmaker) -> None:
         from backend.app.main import _enforce_single_channel
 
-        uid = _create_user_with_routes(
+        uid = await _create_user_with_routes_async(
+            async_db,
             [
                 ("telegram", "mig-333", True),
             ],
             preferred_channel="telegram",
         )
 
-        _enforce_single_channel()
+        await _enforce_single_channel()
 
-        db = _db_module.SessionLocal()
-        try:
-            route = db.query(ChannelRoute).filter_by(user_id=uid, channel="telegram").first()
+        async with async_db() as db:
+            route = (
+                await db.execute(select(ChannelRoute).filter_by(user_id=uid, channel="telegram"))
+            ).scalar_one_or_none()
             assert route is not None
             assert route.enabled is True
-        finally:
-            db.close()
 
-    def test_realigns_preferred_when_stale(self) -> None:
+    async def test_realigns_preferred_when_stale(self, async_db: async_sessionmaker) -> None:
         """preferred_channel is repointed to an enabled route when stale.
 
         Multi-channel users whose ``preferred_channel`` points at a channel
@@ -502,7 +543,8 @@ class TestStartupMigration:
         """
         from backend.app.main import _enforce_single_channel
 
-        uid = _create_user_with_routes(
+        uid = await _create_user_with_routes_async(
+            async_db,
             [
                 ("linq", "+15551111111", True),
                 ("bluebubbles", "+15552222222", True),
@@ -510,26 +552,27 @@ class TestStartupMigration:
             preferred_channel="telegram",
         )
 
-        _enforce_single_channel()
+        await _enforce_single_channel()
 
-        db = _db_module.SessionLocal()
-        try:
-            user = db.query(User).filter_by(id=uid).first()
+        async with async_db() as db:
+            user = (await db.execute(select(User).filter_by(id=uid))).scalar_one_or_none()
             assert user is not None
             assert user.preferred_channel in {"linq", "bluebubbles"}
             enabled = (
-                db.query(ChannelRoute)
-                .filter(
-                    ChannelRoute.user_id == uid,
-                    ChannelRoute.enabled.is_(True),
-                    ChannelRoute.channel != "webchat",
+                (
+                    await db.execute(
+                        select(ChannelRoute).where(
+                            ChannelRoute.user_id == uid,
+                            ChannelRoute.enabled.is_(True),
+                            ChannelRoute.channel != "webchat",
+                        )
+                    )
                 )
+                .scalars()
                 .all()
             )
             assert len(enabled) == 1
             assert enabled[0].channel == user.preferred_channel
-        finally:
-            db.close()
 
 
 class TestPatchDisableSyncsPreferred:

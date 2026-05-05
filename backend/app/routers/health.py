@@ -3,7 +3,7 @@ import logging
 from fastapi import APIRouter
 from sqlalchemy import text
 
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal
 from backend.app.schemas import HealthResponse
 
 logger = logging.getLogger(__name__)
@@ -15,18 +15,17 @@ async def health_check() -> HealthResponse:
     """Full health check: process is up AND can reach the database.
 
     Use for ops dashboards and richer monitoring. NOT recommended as the
-    deployment platform's healthcheck path: a sync DB call from an async
-    handler can block the event loop, and during an incident a healthcheck
-    that waits on the same DB can pile up alongside whatever already broke.
-    Use ``/health/live`` for that.
+    deployment platform's healthcheck path: during an incident a
+    healthcheck that waits on the same DB can pile up alongside whatever
+    already broke. Use ``/health/live`` for that.
     """
     db_status = "ok"
     try:
-        db = SessionLocal()
+        db = AsyncSessionLocal()
         try:
-            db.execute(text("SELECT 1"))
+            await db.execute(text("SELECT 1"))
         finally:
-            db.close()
+            await db.close()
     except Exception:
         logger.exception("Health check: database unreachable")
         db_status = "error"

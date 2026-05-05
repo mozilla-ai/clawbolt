@@ -30,7 +30,7 @@ from backend.app.config_store import (
     get_settings_store,
     import_legacy_config_json,
 )
-from backend.app.database import SessionLocal, get_engine
+from backend.app.database import db_session_async, get_engine
 from backend.app.logging_utils import mask_pii
 from backend.app.models import ChannelRoute, User
 from backend.app.routers import (
@@ -65,7 +65,7 @@ register_channel(LinqChannel())
 register_channel(BlueBubblesChannel())
 
 
-def _enforce_single_channel() -> None:
+async def _enforce_single_channel() -> None:
     """One-time: disable non-preferred routes for existing multi-channel users.
 
     After the single-channel refactor, each user should have at most one
@@ -77,12 +77,13 @@ def _enforce_single_channel() -> None:
     consumers (heartbeat, reauth notifications) consistent without needing
     read-time drift-sync.
     """
-    db = SessionLocal()
-    try:
-        users = db.execute(select(User)).scalars().all()
+    async with db_session_async() as db:
+        users = (await db.execute(select(User))).scalars().all()
         fixed = 0
         for user in users:
-            routes = db.execute(select(ChannelRoute).filter_by(user_id=user.id)).scalars().all()
+            routes = (
+                (await db.execute(select(ChannelRoute).filter_by(user_id=user.id))).scalars().all()
+            )
             enabled_messaging = [r for r in routes if r.enabled and r.channel != "webchat"]
             if len(enabled_messaging) > 1:
                 preferred_match = next(
@@ -101,13 +102,11 @@ def _enforce_single_channel() -> None:
                     user.preferred_channel = keeper.channel
                 fixed += 1
         if fixed:
-            db.commit()
+            await db.commit()
             logger.info(
                 "Single-channel enforcement: fixed %d user(s) with multiple enabled channels",
                 fixed,
             )
-    finally:
-        db.close()
 
 
 async def _verify_llm_settings() -> None:
@@ -222,7 +221,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None]:
     # env_file directive; this call covers bare-host / local-dev setups.
     load_dotenv()
 
-    _enforce_single_channel()
+    await _enforce_single_channel()
     validate_imessage_backend()
     validate_personal_storage_backend()
     log_config_warnings()
