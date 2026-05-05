@@ -245,6 +245,41 @@ async def test_user(tmp_path: Path) -> User:
     return user
 
 
+@pytest_asyncio.fixture
+async def async_test_user(async_db: async_sessionmaker) -> User:
+    """Insert a User row through the async per-test transaction.
+
+    Async peer of the sync ``test_user`` fixture above. Routes the
+    write through the async connection so the row is visible to async
+    store reads in the same test. The sync ``test_user`` fixture opens
+    its own per-test transaction on a separate connection; rows
+    committed there are invisible to the async store under READ
+    COMMITTED, which is the cross-API caveat called out in the design
+    comment block above.
+
+    The async fixture's outer transaction rollback unwinds the insert
+    at teardown, so no explicit cleanup is needed. Shared by store
+    test files exercising the dual-API (#1153, #1151, #1152, #1154,
+    #1155, #1156, #1157, #1175).
+    """
+    async with async_db() as db:
+        user = User(
+            id=str(uuid.uuid4()),
+            user_id="async-test-user",
+            phone="+15555550123",
+            channel_identifier="async-test-channel",
+            preferred_channel="telegram",
+            onboarding_complete=True,
+        )
+        db.add(user)
+        await db.commit()
+        await db.refresh(user)
+        # Detach so attribute access after the session closes does not
+        # trigger lazy IO.
+        db.expunge(user)
+    return user
+
+
 def create_test_session(
     user_id: str,
     session_id: str = "test-conv",

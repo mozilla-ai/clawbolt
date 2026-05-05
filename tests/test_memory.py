@@ -49,3 +49,42 @@ async def test_build_memory_context_empty(test_user: User) -> None:
     """build_memory_context returns empty string when no memory."""
     context = await build_memory_context(test_user.id)
     assert context == ""
+
+
+@pytest.mark.asyncio()
+async def test_append_history_multi_append_round_trips(test_user: User) -> None:
+    """Sequential ``append_history`` calls all round-trip through ``read_history``.
+
+    Regression test for the encrypted-history concat bug.
+    ``MemoryDocument.history_text`` is an ``EncryptedString`` column,
+    so the original SQL-level ``history_text + suffix`` builder
+    concatenated ciphertext envelopes and broke decryption on read
+    after the second append. The fix reads the row under
+    ``SELECT ... FOR UPDATE``, concatenates plaintext in Python, and
+    rewrites the column with a fresh envelope.
+    """
+    store = get_memory_store(test_user.id)
+    await store.append_history("first entry")
+    await store.append_history("second entry")
+    await store.append_history("third entry")
+
+    history = store.read_history()
+    # ``read_history`` strips trailing whitespace, so the final entry's
+    # newline is gone but the inter-entry newlines remain.
+    assert history == "first entry\nsecond entry\nthird entry"
+
+
+@pytest.mark.asyncio()
+async def test_append_history_after_seed_round_trips(test_user: User) -> None:
+    """Appending against a row that already exists keeps every prior entry.
+
+    Targets the second-and-later append path (``UPDATE`` branch), as
+    opposed to the create-on-first-append branch. The pre-fix builder
+    silently corrupted ``history_text`` here because SQL-side
+    concatenation glued two ciphertext envelopes together.
+    """
+    store = get_memory_store(test_user.id)
+    await store.append_history("seed")
+    await store.append_history("follow-up")
+
+    assert store.read_history() == "seed\nfollow-up"
