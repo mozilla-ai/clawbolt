@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import (
     create_async_engine,
 )
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.pool import NullPool
 
 import backend.app.database as _db_module
 from backend.app.agent.approval import reset_approval_gate
@@ -41,6 +42,83 @@ def _pg_engine() -> Generator[Engine]:
     yield engine
     Base.metadata.drop_all(engine)
     engine.dispose()
+
+
+@pytest.fixture(scope="session")
+def _pg_async_engine_session() -> Generator[AsyncEngine]:
+    """Session-scoped async engine pointed at the test DB.
+
+    Distinct from the function-scoped ``_pg_async_engine`` fixture
+    below (which the opt-in ``async_db`` fixture uses for per-test
+    rollback isolation). This one exists so the session-scoped autouse
+    rebinding in ``_isolate_async_engine`` has a stable engine handle
+    to install on ``_db_module._async_engine`` for the duration of the
+    test session.
+
+    Uses ``NullPool`` to dodge the asyncpg-vs-event-loop coupling that
+    forces ``_pg_async_engine`` to be function-scoped. Pytest-asyncio
+    runs each test on a fresh function-scoped event loop; a pooled
+    asyncpg connection opened on test N's loop is unusable on test
+    N+1's loop, and disposing the pool from test N+1's loop hits
+    "Task ... attached to a different loop". With ``NullPool`` each
+    ``AsyncSessionLocal()`` opens a fresh asyncpg connection on the
+    current loop and closes it when the session closes, so there is
+    nothing to carry over.
+
+    The trade-off: tests that exercise the async path pay one TCP +
+    auth round-trip per session (a few ms against localhost). Tests
+    that never touch async pay nothing. The opt-in ``async_db`` fixture
+    keeps its own connection-bound factory (per-test SAVEPOINT
+    rollback), so this engine is only used for tests that don't
+    request ``async_db``; in practice that's tests that go through a
+    sync ``TestClient`` and only hit async via ``get_current_user``,
+    which is one short-lived async call per request.
+    """
+    engine = create_async_engine(
+        _ASYNC_TEST_DB_URL,
+        poolclass=NullPool,
+    )
+    yield engine
+    # Engine.dispose() with NullPool is a no-op on the pool itself
+    # (no checked-in connections to close); we don't need to await it.
+
+
+@pytest.fixture(autouse=True, scope="session")
+def _isolate_async_engine(
+    _pg_async_engine_session: AsyncEngine,
+) -> Generator[None]:
+    """Rebind the OSS async engine + session factory to the test DB.
+
+    Engine-level (session-scoped) analog to the sync ``_isolate_stores``
+    autouse fixture. After PR #1177 converted ``get_current_user`` to
+    ``Depends(get_async_db)``, every authenticated test path indirectly
+    goes through the async engine. The opt-in per-test ``async_db``
+    fixture only rebinds the engine for tests that request it; tests
+    that use a sync ``TestClient`` plus the auth dependency would
+    otherwise fall through to ``settings.database_url`` (which on CI
+    points at the production DB name) and fail with
+    ``InvalidCatalogNameError``.
+
+    The opt-in ``async_db`` fixture still provides per-test rollback
+    isolation: it saves and restores ``_async_engine`` /
+    ``_async_session_factory`` around its body, so its rebinding takes
+    precedence within the function scope and our session-scoped values
+    are restored at the end of each opt-in test.
+    """
+    old_async_engine = _db_module._async_engine
+    old_async_factory = _db_module._async_session_factory
+
+    _db_module._async_engine = _pg_async_engine_session
+    _db_module._async_session_factory = async_sessionmaker(
+        bind=_pg_async_engine_session,
+        autoflush=False,
+        expire_on_commit=False,
+    )
+
+    yield
+
+    _db_module._async_engine = old_async_engine
+    _db_module._async_session_factory = old_async_factory
 
 
 @pytest_asyncio.fixture
