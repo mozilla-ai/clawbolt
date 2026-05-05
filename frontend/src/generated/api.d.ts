@@ -16,10 +16,9 @@ export interface paths {
          * @description Full health check: process is up AND can reach the database.
          *
          *     Use for ops dashboards and richer monitoring. NOT recommended as the
-         *     deployment platform's healthcheck path: a sync DB call from an async
-         *     handler can block the event loop, and during an incident a healthcheck
-         *     that waits on the same DB can pile up alongside whatever already broke.
-         *     Use ``/health/live`` for that.
+         *     deployment platform's healthcheck path: during an incident a
+         *     healthcheck that waits on the same DB can pile up alongside whatever
+         *     already broke. Use ``/health/live`` for that.
          */
         get: operations["health_check_api_health_get"];
         put?: never;

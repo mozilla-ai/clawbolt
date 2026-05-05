@@ -8,7 +8,7 @@
     "/api/health": {
       "get": {
         "summary": "Health Check",
-        "description": "Full health check: process is up AND can reach the database.\n\nUse for ops dashboards and richer monitoring. NOT recommended as the\ndeployment platform's healthcheck path: a sync DB call from an async\nhandler can block the event loop, and during an incident a healthcheck\nthat waits on the same DB can pile up alongside whatever already broke.\nUse ``/health/live`` for that.",
+        "description": "Full health check: process is up AND can reach the database.\n\nUse for ops dashboards and richer monitoring. NOT recommended as the\ndeployment platform's healthcheck path: during an incident a\nhealthcheck that waits on the same DB can pile up alongside whatever\nalready broke. Use ``/health/live`` for that.",
         "operationId": "health_check_api_health_get",
         "responses": {
           "200": {
