@@ -105,12 +105,46 @@ def test_engine_uses_pool_recycle_and_tcp_keepalives() -> None:
         _db_module._engine = saved_engine
 
 
+def test_sync_database_url_pins_psycopg3_driver() -> None:
+    """``_sync_database_url`` routes bare and legacy URLs to psycopg3.
+
+    SQLAlchemy 2.x still resolves ``postgresql://`` to psycopg2 even
+    when only psycopg3 is installed, so we translate explicitly.
+    """
+    # Bare scheme is pinned to psycopg3.
+    assert (
+        _db_module._sync_database_url("postgresql://u:p@h:5432/db")
+        == "postgresql+psycopg://u:p@h:5432/db"
+    )
+    # Legacy psycopg2 prefix is rewritten to psycopg3 for forward compat.
+    assert (
+        _db_module._sync_database_url("postgresql+psycopg2://u:p@h:5432/db")
+        == "postgresql+psycopg://u:p@h:5432/db"
+    )
+    # Already-psycopg3 URLs pass through unchanged.
+    assert (
+        _db_module._sync_database_url("postgresql+psycopg://u:p@h:5432/db")
+        == "postgresql+psycopg://u:p@h:5432/db"
+    )
+    # Async URLs are left alone (the async path handles them).
+    assert (
+        _db_module._sync_database_url("postgresql+asyncpg://u:p@h:5432/db")
+        == "postgresql+asyncpg://u:p@h:5432/db"
+    )
+
+
 def test_async_database_url_translates_postgresql_prefix() -> None:
     """``_async_database_url`` swaps the sync prefix for the asyncpg one."""
     assert (
         _db_module._async_database_url("postgresql://u:p@h:5432/db")
         == "postgresql+asyncpg://u:p@h:5432/db"
     )
+    # psycopg3 (the new default sync driver) uses the ``+psycopg`` prefix.
+    assert (
+        _db_module._async_database_url("postgresql+psycopg://u:p@h:5432/db")
+        == "postgresql+asyncpg://u:p@h:5432/db"
+    )
+    # Legacy psycopg2 prefix is still translated for forward compatibility.
     assert (
         _db_module._async_database_url("postgresql+psycopg2://u:p@h:5432/db")
         == "postgresql+asyncpg://u:p@h:5432/db"
