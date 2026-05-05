@@ -17,7 +17,7 @@ from backend.app.agent.approval import ApprovalPolicy, PermissionLevel
 from backend.app.agent.tools.base import Tool, ToolErrorKind, ToolReceipt, ToolResult
 from backend.app.agent.tools.names import ToolName
 from backend.app.config import settings
-from backend.app.database import SessionLocal
+from backend.app.database import AsyncSessionLocal
 from backend.app.integrations.calendar.provider import (
     CalendarEventCreate,
     CalendarEventUpdate,
@@ -947,18 +947,20 @@ def _calendar_auth_check(ctx: ToolContext) -> str | None:
     )
 
 
-def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str], str]]:
+async def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str], str]]:
     """Load the user's enabled calendars from CalendarConfig.
 
     Returns a list of ``(calendar_id, display_name, disabled_tools, access_role)``
     tuples.  Write tools are automatically added to *disabled_tools* for
     calendars whose *access_role* is ``reader`` or ``freeBusyReader``.
     """
-    db = SessionLocal()
+    db = AsyncSessionLocal()
     try:
         configs = (
-            db.execute(
-                select(CalendarConfig).filter_by(user_id=user_id, provider="google_calendar")
+            (
+                await db.execute(
+                    select(CalendarConfig).filter_by(user_id=user_id, provider="google_calendar")
+                )
             )
             .scalars()
             .all()
@@ -990,12 +992,12 @@ def _get_enabled_calendars(user_id: str) -> list[tuple[str, str, list[str], str]
             )
             return result
     finally:
-        db.close()
+        await db.close()
     logger.debug("No calendar config for user %s, defaulting to primary", user_id)
     return [("primary", "Primary", [], "owner")]
 
 
-def _get_primary_calendar_id(user_id: str) -> str:
+async def _get_primary_calendar_id(user_id: str) -> str:
     """Return the calendar_id of the row marked is_primary, or empty string.
 
     Mirrors ``_get_enabled_calendars`` but pulls only the
@@ -1003,16 +1005,18 @@ def _get_primary_calendar_id(user_id: str) -> str:
     config at all (the literal ``"primary"`` magic alias is the implicit
     default in that case) or when no row is flagged primary.
     """
-    db = SessionLocal()
+    db = AsyncSessionLocal()
     try:
-        row = db.execute(
-            select(CalendarConfig).filter_by(
-                user_id=user_id, provider="google_calendar", is_primary=True
+        row = (
+            await db.execute(
+                select(CalendarConfig).filter_by(
+                    user_id=user_id, provider="google_calendar", is_primary=True
+                )
             )
         ).scalar_one_or_none()
         return row.calendar_id if row is not None else ""
     finally:
-        db.close()
+        await db.close()
 
 
 async def _calendar_factory(ctx: ToolContext) -> list[Tool]:
@@ -1030,8 +1034,8 @@ async def _calendar_factory(ctx: ToolContext) -> list[Tool]:
         token_expires_at=token.expires_at or 0.0,
         on_token_refresh=oauth_service.build_on_refresh_callback(ctx.user.id, "google_calendar"),
     )
-    enabled_calendars = _get_enabled_calendars(ctx.user.id)
-    primary_calendar_id = _get_primary_calendar_id(ctx.user.id)
+    enabled_calendars = await _get_enabled_calendars(ctx.user.id)
+    primary_calendar_id = await _get_primary_calendar_id(ctx.user.id)
     return create_calendar_tools(
         service,
         user_timezone=ctx.user.timezone,
