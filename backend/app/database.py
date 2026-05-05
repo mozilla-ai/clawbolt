@@ -1,30 +1,68 @@
 import contextlib
 import threading
-from collections.abc import Generator
+from collections.abc import AsyncGenerator, Generator
 
 from sqlalchemy import Engine, create_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 from .config import settings
 
 _engine: Engine | None = None
 _SessionLocal: sessionmaker[Session] | None = None
+_async_engine: AsyncEngine | None = None
+_async_session_factory: async_sessionmaker[AsyncSession] | None = None
 _lock = threading.RLock()
 
 
-def get_engine() -> Engine:
-    """Return the singleton engine, creating it on first call.
+# Pool tuning constants shared by sync and async engines.
+#
+# Pool tuning is defensive against silent connection drops in cloud
+# environments. Hosted Postgres setups (Railway, RDS proxies, NAT
+# gateways) routinely close idle TCP sockets without sending a FIN,
+# leaving the client end half-open. A sync DB call from an async route
+# that hits such a socket can block the event loop for the kernel's
+# default ~2h TCP retransmit window: zero CPU, no logs, no crash, and
+# the platform's liveness probe still passes because /health/live
+# never touches the DB. ``pool_recycle`` rotates connections before
+# any reasonable NAT timeout.
+_POOL_RECYCLE_SECONDS = 1800
+# 30s is well above the tail of legitimate queries observed in prod
+# (<1s) but bounded enough that an orphaned advisory-lock wait or
+# runaway query can't silently freeze a worker for hours.
+_STATEMENT_TIMEOUT_MS = 30000
 
-    Pool tuning is defensive against silent connection drops in cloud
-    environments. Hosted Postgres setups (Railway, RDS proxies, NAT
-    gateways) routinely close idle TCP sockets without sending a FIN,
-    leaving the client end half-open. A sync DB call from an async route
-    that hits such a socket can block the event loop for the kernel's
-    default ~2h TCP retransmit window: zero CPU, no logs, no crash, and
-    the platform's liveness probe still passes because /health/live
-    never touches the DB. ``pool_recycle`` rotates connections before
-    any reasonable NAT timeout, and the TCP keepalive options let the
-    kernel detect a dead socket within ~80s instead.
+
+def _async_database_url(url: str) -> str:
+    """Translate a sync postgres URL to its asyncpg equivalent.
+
+    SQLAlchemy uses driver-specific URL prefixes. The sync path uses
+    ``postgresql://`` (psycopg2) and the async path uses
+    ``postgresql+asyncpg://``. Settings ship one ``database_url`` value;
+    we derive the async form here so callers don't need to know which
+    driver they are picking up.
+    """
+    if url.startswith("postgresql+asyncpg://"):
+        return url
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    if url.startswith("postgresql+psycopg2://"):
+        return "postgresql+asyncpg://" + url[len("postgresql+psycopg2://") :]
+    return url
+
+
+def get_engine() -> Engine:
+    """Return the singleton sync engine, creating it on first call.
+
+    The TCP keepalive options let the kernel detect a dead socket
+    within ~80s instead of the default ~2h retransmit window. asyncpg
+    sets its own keepalives by default so the async engine does not
+    need the same ``connect_args`` payload.
     """
     global _engine
     if _engine is None:
@@ -33,23 +71,49 @@ def get_engine() -> Engine:
                 _engine = create_engine(
                     settings.database_url,
                     pool_pre_ping=True,
-                    pool_recycle=1800,
+                    pool_recycle=_POOL_RECYCLE_SECONDS,
                     connect_args={
                         "keepalives": 1,
                         "keepalives_idle": 30,
                         "keepalives_interval": 10,
                         "keepalives_count": 5,
-                        # Backstop against any single statement wedging the
-                        # connection (and any sync DB call inside an async
-                        # route, the event loop). 30s is well above the
-                        # tail of legitimate queries observed in prod
-                        # (<1s) but bounded enough that an orphaned
-                        # advisory-lock wait or runaway query can't
-                        # silently freeze a worker for hours.
-                        "options": "-c statement_timeout=30000",
+                        # Backstop against any single statement wedging
+                        # the connection (and any sync DB call inside
+                        # an async route, the event loop).
+                        "options": f"-c statement_timeout={_STATEMENT_TIMEOUT_MS}",
                     },
                 )
     return _engine
+
+
+def get_async_engine() -> AsyncEngine:
+    """Return the singleton async engine, creating it on first call.
+
+    Mirrors ``get_engine()`` but uses asyncpg as the driver. The async
+    engine coexists with the sync engine: both pull from the same
+    ``settings.database_url`` value and target the same database, but
+    each maintains its own connection pool. This is the foundation for
+    the dual-API (sync + async) store rollout in #1150-1157.
+    """
+    global _async_engine
+    if _async_engine is None:
+        with _lock:
+            if _async_engine is None:
+                _async_engine = create_async_engine(
+                    _async_database_url(settings.database_url),
+                    pool_pre_ping=True,
+                    pool_recycle=_POOL_RECYCLE_SECONDS,
+                    # asyncpg uses a different connect_args shape than
+                    # psycopg2. ``server_settings`` maps to libpq's
+                    # ``options`` parameter; keepalives are on by
+                    # default in asyncpg so we don't repeat them here.
+                    connect_args={
+                        "server_settings": {
+                            "statement_timeout": str(_STATEMENT_TIMEOUT_MS),
+                        },
+                    },
+                )
+    return _async_engine
 
 
 def get_session_factory() -> sessionmaker[Session]:
@@ -62,10 +126,29 @@ def get_session_factory() -> sessionmaker[Session]:
     return _SessionLocal
 
 
+def get_async_session_factory() -> async_sessionmaker[AsyncSession]:
+    """Return the singleton async session factory, creating it on first call."""
+    global _async_session_factory
+    if _async_session_factory is None:
+        with _lock:
+            if _async_session_factory is None:
+                _async_session_factory = async_sessionmaker(
+                    bind=get_async_engine(),
+                    autoflush=False,
+                    expire_on_commit=False,
+                )
+    return _async_session_factory
+
+
 # Convenience alias for direct use outside of FastAPI dependency injection
 def SessionLocal() -> Session:
     """Create a new session from the singleton factory."""
     return get_session_factory()()
+
+
+def AsyncSessionLocal() -> AsyncSession:
+    """Create a new async session from the singleton factory."""
+    return get_async_session_factory()()
 
 
 class Base(DeclarativeBase):
@@ -92,9 +175,49 @@ def db_session() -> Generator[Session]:
         db.close()
 
 
+@contextlib.asynccontextmanager
+async def db_session_async() -> AsyncGenerator[AsyncSession]:
+    """Async context manager mirroring ``db_session()``.
+
+    Usage::
+
+        async with db_session_async() as db:
+            db.add(obj)
+            await db.commit()
+
+    Same lifecycle semantics as the sync version: rollback on
+    exception, always close. The session factory's
+    ``expire_on_commit=False`` matches the SQLAlchemy async-default
+    recommendation (avoids implicit IO on attribute access after
+    commit, which would surface as ``MissingGreenlet`` errors).
+    """
+    db = AsyncSessionLocal()
+    try:
+        yield db
+    except Exception:
+        await db.rollback()
+        raise
+    finally:
+        await db.close()
+
+
 def get_db() -> Generator[Session]:
     db = get_session_factory()()
     try:
         yield db
     finally:
         db.close()
+
+
+async def get_async_db() -> AsyncGenerator[AsyncSession]:
+    """FastAPI dependency that yields an ``AsyncSession``.
+
+    Symmetric with ``get_db()``. Routes converted to async DB access
+    can ``Depends(get_async_db)`` while routes still on sync continue
+    to ``Depends(get_db)``.
+    """
+    db = get_async_session_factory()()
+    try:
+        yield db
+    finally:
+        await db.close()
