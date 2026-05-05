@@ -198,6 +198,61 @@ async def test_send_typing_indicator_failure_does_not_raise(
 
 
 # ---------------------------------------------------------------------------
+# start() lifecycle: cloudflared discovery gating
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio()
+async def test_start_skips_cloudflared_discovery_when_app_base_url_is_https() -> None:
+    """start() must not poll cloudflared when APP_BASE_URL is https.
+
+    The cloudflared quick-tunnel discovery loop is a local-dev convenience
+    for ``cloudflared tunnel --url http://localhost:...``. Any deployment
+    served over https has a real public domain and registers webhooks via
+    ``register_paas_webhook(APP_BASE_URL)``, so polling the localhost
+    sidecar would just waste ~20s of startup.
+    """
+    channel = TelegramChannel.__new__(TelegramChannel)
+    with (
+        patch("backend.app.channels.telegram.settings.app_base_url", "https://prod.example.com"),
+        patch(
+            "backend.app.channels.telegram.discover_tunnel_url",
+            new_callable=AsyncMock,
+        ) as mock_discover,
+        patch(
+            "backend.app.channels.telegram.asyncio.sleep",
+            new_callable=AsyncMock,
+        ) as mock_sleep,
+    ):
+        await channel.start()
+
+    mock_discover.assert_not_called()
+    mock_sleep.assert_not_called()
+
+
+@pytest.mark.asyncio()
+async def test_start_runs_cloudflared_discovery_when_app_base_url_is_http() -> None:
+    """start() polls cloudflared when APP_BASE_URL is http (local dev).
+
+    Covers any local-dev port, not just the 8000 default, so a developer
+    running on ``http://localhost:9000`` still gets tunnel discovery.
+    """
+    channel = TelegramChannel.__new__(TelegramChannel)
+    with (
+        patch("backend.app.channels.telegram.settings.app_base_url", "http://localhost:9000"),
+        patch("backend.app.channels.telegram.asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "backend.app.channels.telegram.discover_tunnel_url",
+            new_callable=AsyncMock,
+            return_value=None,
+        ) as mock_discover,
+    ):
+        await channel.start()
+
+    mock_discover.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
 # markdown_to_telegram_mdv2
 # ---------------------------------------------------------------------------
 
