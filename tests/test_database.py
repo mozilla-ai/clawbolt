@@ -3,8 +3,14 @@
 from unittest.mock import patch
 
 import pytest
-from sqlalchemy import Engine, text
+from sqlalchemy import Engine, select, text
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 import backend.app.database as _db_module
 from backend.app.models import ChannelRoute, User
@@ -97,6 +103,95 @@ def test_engine_uses_pool_recycle_and_tcp_keepalives() -> None:
         }
     finally:
         _db_module._engine = saved_engine
+
+
+def test_async_database_url_translates_postgresql_prefix() -> None:
+    """``_async_database_url`` swaps the sync prefix for the asyncpg one."""
+    assert (
+        _db_module._async_database_url("postgresql://u:p@h:5432/db")
+        == "postgresql+asyncpg://u:p@h:5432/db"
+    )
+    assert (
+        _db_module._async_database_url("postgresql+psycopg2://u:p@h:5432/db")
+        == "postgresql+asyncpg://u:p@h:5432/db"
+    )
+    # Already async-prefixed URLs pass through unchanged.
+    assert (
+        _db_module._async_database_url("postgresql+asyncpg://u:p@h:5432/db")
+        == "postgresql+asyncpg://u:p@h:5432/db"
+    )
+
+
+def test_async_engine_singleton_and_pool_settings() -> None:
+    """``get_async_engine`` returns a singleton with async-specific pool args."""
+    saved_engine = _db_module._async_engine
+    _db_module._async_engine = None
+    try:
+        with patch.object(_db_module, "create_async_engine") as mock_create:
+            _db_module.get_async_engine()
+            _db_module.get_async_engine()  # second call must reuse the singleton
+
+        mock_create.assert_called_once()
+        kwargs = mock_create.call_args.kwargs
+        assert kwargs["pool_pre_ping"] is True
+        assert kwargs["pool_recycle"] == 1800
+        # asyncpg surfaces libpq's ``options`` parameter via
+        # ``server_settings``; statement_timeout should still be set.
+        assert kwargs["connect_args"] == {
+            "server_settings": {"statement_timeout": "30000"},
+        }
+    finally:
+        _db_module._async_engine = saved_engine
+
+
+async def test_async_session_can_execute_trivial_select() -> None:
+    """End-to-end smoke: an ``AsyncSession`` can run ``select(1)``.
+
+    Builds its own engine so the test does not depend on the conftest
+    sync-rollback fixture (which manipulates ``_engine`` /
+    ``_SessionLocal`` only). This is the foundation-level proof that
+    asyncpg + async_sessionmaker + ``AsyncSession`` are wired
+    correctly. Per-store dual-API conversions live in #1150-1157.
+    """
+    url = _db_module._async_database_url(
+        "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+    )
+    engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
+    factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        bind=engine, autoflush=False, expire_on_commit=False
+    )
+    try:
+        async with factory() as session:
+            result = await session.execute(select(1))
+            assert result.scalar_one() == 1
+    finally:
+        await engine.dispose()
+
+
+async def test_db_session_async_rollback_on_exception() -> None:
+    """``db_session_async`` rolls back when the body raises.
+
+    Mirrors the sync ``db_session`` lifecycle contract: exceptions
+    trigger rollback before the session closes.
+    """
+    url = _db_module._async_database_url(
+        "postgresql://clawbolt:clawbolt@localhost:5432/clawbolt_test"
+    )
+    engine: AsyncEngine = create_async_engine(url, pool_pre_ping=True)
+    factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
+        bind=engine, autoflush=False, expire_on_commit=False
+    )
+    saved_factory = _db_module._async_session_factory
+    _db_module._async_session_factory = factory
+    try:
+        with pytest.raises(RuntimeError, match="boom"):
+            async with _db_module.db_session_async() as session:
+                # Touch the connection so rollback is observable.
+                await session.execute(select(1))
+                raise RuntimeError("boom")
+    finally:
+        _db_module._async_session_factory = saved_factory
+        await engine.dispose()
 
 
 def test_user_defaults() -> None:
