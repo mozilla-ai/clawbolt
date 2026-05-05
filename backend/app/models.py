@@ -782,6 +782,31 @@ class CompactionEvent(Base):
         EncryptedString(table="compaction_events", column="soul_text_after"),
         nullable=True,
     )
+    # Capture of the actual compaction LLM call. Lets admins answer
+    # "why did the LLM only update MEMORY.md and not USER.md / SOUL.md?"
+    # which the ``*_updated`` boolean flags above cannot. ``prompt_text``
+    # is the trimmed conversation passed as the ``<conversation>`` block
+    # (the four memory inputs to the prompt are already covered by the
+    # ``*_text_before`` snapshots above). ``raw_response_text`` is the
+    # unparsed model output, useful when ``_parse_compaction_response``
+    # falls back to the empty result. ``parsed_response_json`` is a
+    # JSON-serialized ``CompactionResult`` so the four field strings
+    # are inspectable without re-parsing the raw response. All three
+    # share the migration-031 nullable / envelope-encrypted shape and
+    # are subject to the same per-file truncation cap as the 030
+    # snapshots.
+    prompt_text: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="prompt_text"),
+        nullable=True,
+    )
+    raw_response_text: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="raw_response_text"),
+        nullable=True,
+    )
+    parsed_response_json: Mapped[str | None] = mapped_column(
+        EncryptedString(table="compaction_events", column="parsed_response_json"),
+        nullable=True,
+    )
 
 
 class UserPermissionSet(Base):
