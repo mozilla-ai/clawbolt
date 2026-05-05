@@ -14,12 +14,25 @@ You now have access to QuickBooks Online tools. Here is how to use them effectiv
 ## Query Guide (qb_query)
 
 ### Queryable entities and useful fields
-- Invoice: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, Balance, DueDate, TxnDate, EmailStatus
-- Estimate: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, TxnDate, ExpirationDate, TxnStatus
-- Customer: Id, SyncToken, DisplayName, PrimaryEmailAddr, PrimaryPhone, Balance
-- Item: Id, Name, Description, UnitPrice, Type
-- Payment: Id, CustomerRef, TotalAmt, TxnDate
-- Bill: Id, VendorRef, TotalAmt, DueDate, Balance
+
+If a field is listed here, the entity has it. Do not tell the user the data is unavailable without first querying for the field. Many fields are only populated when the user has filled them in, so an empty value means "not set on this record," not "QuickBooks does not store this."
+
+- Invoice: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, Balance, DueDate, TxnDate, EmailStatus, BillEmail, BillEmailCc, BillEmailBcc, Line, CustomerMemo, PrivateNote, BillAddr, ShipAddr, LinkedTxn, PrintStatus, EInvoiceStatus
+- Estimate: Id, SyncToken, DocNumber, CustomerRef, TotalAmt, TxnDate, ExpirationDate, TxnStatus, BillEmail, Line, CustomerMemo, PrivateNote, AcceptedDate, AcceptedBy, LinkedTxn
+- Customer: Id, SyncToken, DisplayName, CompanyName, PrimaryEmailAddr, PrimaryPhone, BillAddr, Balance, BalanceWithJobs, Active, Notes, ParentRef, Job
+- Item: Id, Name, FullyQualifiedName, Sku, Description, UnitPrice, Type, Active, IncomeAccountRef, ParentRef, QtyOnHand
+- Payment: Id, CustomerRef, TotalAmt, TxnDate, PaymentMethodRef, PaymentRefNum, UnappliedAmt, Line
+- Bill: Id, VendorRef, DocNumber, TotalAmt, Balance, DueDate, TxnDate, Line, PrivateNote
+
+Field shapes worth noting:
+- `BillEmail`, `BillEmailCc`, `BillEmailBcc`: `{"Address": "..."}` (the recipient email on a sent or unsent invoice/estimate)
+- `PrimaryEmailAddr`: `{"Address": "..."}` on Customer
+- `PrimaryPhone`: `{"FreeFormNumber": "..."}` on Customer
+- `BillAddr` / `ShipAddr`: `{"Line1": "...", "City": "...", "CountrySubDivisionCode": "...", "PostalCode": "..."}`
+- `Line`: array of line items (description, amount, qty, etc.); on Payment, the linked invoices
+- `LinkedTxn`: array of `{"TxnId": "...", "TxnType": "Estimate" | "Invoice" | ...}` showing which transactions are tied together
+- `CustomerMemo`: `{"value": "..."}` (visible to the customer on the document)
+- `PrivateNote`: string, internal-only
 
 SyncToken is returned in query results; you need it when updating an entity with `qb_update`.
 
@@ -138,7 +151,7 @@ The SyncToken is required for optimistic concurrency. If the entity was modified
 ## Sending Invoices and Estimates (qb_send)
 
 - Pass `entity_type` (Invoice or Estimate), the entity ID (numeric), and the recipient email address.
-- Confirm the email address with the user before sending.
+- Recover the recipient email before asking the user. If `Customer.PrimaryEmailAddr.Address` is set, use it. Otherwise, query the most recent few invoices for the same `CustomerRef` and check `BillEmail.Address`. Only ask the user when both are empty. See "Recovering a customer email" below.
 
 ## Common Workflows
 
@@ -160,6 +173,13 @@ This is the primary workflow for users who dictate job details from the field:
 3. User approves the estimate
 4. Convert estimate to invoice (see below)
 5. `qb_send` the invoice
+
+### Recovering a customer email
+Use this whenever you need to know a customer's email and you don't already have it from the current conversation. Do not tell the user QuickBooks does not store the recipient email; query for it first.
+1. `qb_query`: `SELECT * FROM Customer WHERE Id = '<customer_id>'` and check `PrimaryEmailAddr.Address`. If it's set, use it.
+2. If empty, `qb_query`: `SELECT * FROM Invoice WHERE CustomerRef = '<customer_id>' ORDERBY TxnDate DESC MAXRESULTS 5` and check `BillEmail.Address` on the returned rows. Use the most recent non-empty value.
+3. If still empty, repeat the same query against `Estimate`.
+4. Only ask the user when none of the above produced an address.
 
 ### Quick invoice
 1. `qb_query` Customer to get the customer Id
