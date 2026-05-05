@@ -39,6 +39,14 @@ def get_engine() -> Engine:
                         "keepalives_idle": 30,
                         "keepalives_interval": 10,
                         "keepalives_count": 5,
+                        # Backstop against any single statement wedging the
+                        # connection (and any sync DB call inside an async
+                        # route, the event loop). 30s is well above the
+                        # tail of legitimate queries observed in prod
+                        # (<1s) but bounded enough that an orphaned
+                        # advisory-lock wait or runaway query can't
+                        # silently freeze a worker for hours.
+                        "options": "-c statement_timeout=30000",
                     },
                 )
     return _engine
