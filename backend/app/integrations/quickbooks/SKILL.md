@@ -140,12 +140,6 @@ The SyncToken is required for optimistic concurrency. If the entity was modified
 - Pass `entity_type` (Invoice or Estimate), the entity ID (numeric), and the recipient email address.
 - If you do not already have an email, follow "Recovering a customer email" below before asking the user.
 
-## Propose-then-veto
-
-When the user dictates a job with partial details, do not enumerate the missing fields. Fill in reasonable defaults from context (USER.md pricing, similar past jobs in MEMORY.md, common-case assumptions) and create the draft. The user can edit one thing faster than they can answer a list of questions.
-
-Hard requirements where you must confirm before acting: the recipient email on `qb_send`, and any destructive update that would overwrite line items the user has not seen. Everything else (line item rates, quantities, expiration dates, customer memo wording) should be drafted with a sensible default and surfaced in one short summary line.
-
 ## Common Workflows
 
 ### Voice-to-estimate (dictation workflow)

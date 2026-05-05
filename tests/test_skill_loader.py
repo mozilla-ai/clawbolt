@@ -112,25 +112,3 @@ async def test_list_capabilities_unknown_category() -> None:
     result: ToolResult = await tool.function(category="nonexistent")
     assert result.is_error is True
     assert "Unknown category" in result.content
-
-
-# ---------------------------------------------------------------------------
-# Propose-then-veto guidance (issue #1132)
-# ---------------------------------------------------------------------------
-#
-# Each integration that drafts multi-field artifacts (estimates, calendar
-# events, photo uploads) needs explicit propose-then-veto guidance so the
-# agent stops interviewing the user one field at a time. The guidance has
-# to live inside SKILL.md (not just the global instructions) because
-# specialist tools only see the global prompt plus their own SKILL.md
-# after activation.
-
-
-@pytest.mark.parametrize("skill_name", ["quickbooks", "calendar", "companycam"])
-def test_skill_md_includes_propose_then_veto_guidance(skill_name: str) -> None:
-    load_all_skills()
-    content = get_skill_instructions(skill_name)
-    assert content is not None, f"{skill_name} SKILL.md not loaded"
-    lowered = content.lower()
-    assert "propose" in lowered, f"{skill_name} SKILL.md missing propose-then-veto guidance"
-    assert "default" in lowered, f"{skill_name} SKILL.md missing 'default' framing"
