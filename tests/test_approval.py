@@ -1,15 +1,11 @@
 """Tests for the progressive approval system."""
 
 import asyncio
-import threading
 import time
-from collections.abc import Coroutine
-from typing import Any, TypeVar
 from unittest.mock import AsyncMock, patch
 
 import pytest
 from pydantic import BaseModel
-from sqlalchemy import Engine, text
 
 from backend.app.agent.approval import (
     ApprovalDecision,
@@ -70,100 +66,70 @@ def _describe_fetch(args: dict[str, object]) -> str:
     return f"fetch content from {args.get('url', 'unknown URL')}"
 
 
-_T = TypeVar("_T")
-
-
-def _run(coro: Coroutine[Any, Any, _T]) -> _T:
-    return asyncio.run(coro)
-
-
-def _lock_user_permissions_sync(connection: Any, user_id: str) -> None:
-    connection.execute(
-        text("SELECT pg_advisory_xact_lock(hashtext(:k))"),
-        {"k": f"user_permissions:{user_id}"},
-    )
-
-
 # ---------------------------------------------------------------------------
 # ApprovalStore
 # ---------------------------------------------------------------------------
 
 
 class TestApprovalStore:
-    def test_default_permission(self, tmp_path: object) -> None:
+    async def test_default_permission(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        level = _run(store.check_permission_async("1", "web_search", default=PermissionLevel.ASK))
+        level = await store.check_permission_async("1", "web_search", default=PermissionLevel.ASK)
         assert level == PermissionLevel.ASK
 
-    def test_tool_level_override(self, tmp_path: object) -> None:
+    async def test_tool_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        _run(store.set_permission_async("1", "web_search", PermissionLevel.ALWAYS))
-        level = _run(store.check_permission_async("1", "web_search", default=PermissionLevel.ASK))
+        await store.set_permission_async("1", "web_search", PermissionLevel.ALWAYS)
+        level = await store.check_permission_async("1", "web_search", default=PermissionLevel.ASK)
         assert level == PermissionLevel.ALWAYS
 
-    def test_resource_level_override(self, tmp_path: object) -> None:
+    async def test_resource_level_override(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        _run(
-            store.set_permission_async(
-                "1",
-                "web_fetch",
-                PermissionLevel.ALWAYS,
-                resource="homedepot.com",
-            )
+        await store.set_permission_async(
+            "1",
+            "web_fetch",
+            PermissionLevel.ALWAYS,
+            resource="homedepot.com",
         )
-        level = _run(
-            store.check_permission_async(
-                "1", "web_fetch", resource="homedepot.com", default=PermissionLevel.ASK
-            )
+        level = await store.check_permission_async(
+            "1", "web_fetch", resource="homedepot.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.ALWAYS
 
-    def test_glob_matching(self, tmp_path: object) -> None:
+    async def test_glob_matching(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        _run(store.set_permission_async("1", "web_fetch", PermissionLevel.ALWAYS, resource="*.gov"))
-        level = _run(
-            store.check_permission_async(
-                "1", "web_fetch", resource="permits.gov", default=PermissionLevel.ASK
-            )
+        await store.set_permission_async("1", "web_fetch", PermissionLevel.ALWAYS, resource="*.gov")
+        level = await store.check_permission_async(
+            "1", "web_fetch", resource="permits.gov", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.ALWAYS
 
-    def test_resource_priority_over_tool(self, tmp_path: object) -> None:
+    async def test_resource_priority_over_tool(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        _run(store.set_permission_async("1", "web_fetch", PermissionLevel.DENY))
-        _run(
-            store.set_permission_async(
-                "1", "web_fetch", PermissionLevel.ALWAYS, resource="safe.com"
-            )
-        )
-        level = _run(
-            store.check_permission_async(
-                "1", "web_fetch", resource="safe.com", default=PermissionLevel.ASK
-            )
+        await store.set_permission_async("1", "web_fetch", PermissionLevel.DENY)
+        await store.set_permission_async("1", "web_fetch", PermissionLevel.ALWAYS, resource="safe.com")
+        level = await store.check_permission_async(
+            "1", "web_fetch", resource="safe.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.ALWAYS
 
-    def test_falls_through_to_tool_when_no_resource_match(self, tmp_path: object) -> None:
+    async def test_falls_through_to_tool_when_no_resource_match(self, tmp_path: object) -> None:
         store = ApprovalStore()
-        _run(store.set_permission_async("1", "web_fetch", PermissionLevel.DENY))
-        level = _run(
-            store.check_permission_async(
-                "1", "web_fetch", resource="unknown.com", default=PermissionLevel.ASK
-            )
+        await store.set_permission_async("1", "web_fetch", PermissionLevel.DENY)
+        level = await store.check_permission_async(
+            "1", "web_fetch", resource="unknown.com", default=PermissionLevel.ASK
         )
         assert level == PermissionLevel.DENY
 
-    def test_persistence_round_trip(self, tmp_path: object) -> None:
+    async def test_persistence_round_trip(self, tmp_path: object) -> None:
         store1 = ApprovalStore()
-        _run(store1.set_permission_async("1", "web_search", PermissionLevel.ALWAYS))
-        _run(
-            store1.set_permission_async("1", "web_fetch", PermissionLevel.DENY, resource="evil.com")
-        )
+        await store1.set_permission_async("1", "web_search", PermissionLevel.ALWAYS)
+        await store1.set_permission_async("1", "web_fetch", PermissionLevel.DENY, resource="evil.com")
 
         store2 = ApprovalStore()
-        assert _run(store2.check_permission_async("1", "web_search")) == PermissionLevel.ALWAYS
+        assert await store2.check_permission_async("1", "web_search") == PermissionLevel.ALWAYS
         assert (
-            _run(store2.check_permission_async("1", "web_fetch", resource="evil.com"))
+            await store2.check_permission_async("1", "web_fetch", resource="evil.com")
             == PermissionLevel.DENY
         )
 
@@ -192,233 +158,68 @@ class TestApprovalStoreComplete:
             for st in default_registry.get_factory_sub_tools(factory_name):
                 assert st.name in defaults["tools"]
 
-    def test_ensure_complete_backfills_missing(self, tmp_path: object) -> None:
+    async def test_ensure_complete_backfills_missing(self, tmp_path: object) -> None:
         """ensure_complete adds new tools to an existing file."""
         store = ApprovalStore()
         # Start with a partial file
-        _run(
-            store._save(
-                "backfill-user",
-                {"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}},
-            )
+        await store._save(
+            "backfill-user",
+            {"version": 1, "tools": {"send_media_reply": "deny"}, "resources": {}},
         )
-        data = _run(store.ensure_complete_async("backfill-user"))
+        data = await store.ensure_complete_async("backfill-user")
         # send_media_reply should keep its override
         assert data["tools"]["send_media_reply"] == "deny"
         # Other tools should have been backfilled
         assert len(data["tools"]) > 1
 
-    def test_ensure_complete_preserves_overrides(self, tmp_path: object) -> None:
+    async def test_ensure_complete_preserves_overrides(self, tmp_path: object) -> None:
         """ensure_complete does not overwrite user customizations."""
         store = ApprovalStore()
-        _run(
-            store._save(
-                "preserve-user",
-                {
-                    "version": 1,
-                    "tools": {"send_media_reply": "deny", "read_file": "ask"},
-                    "resources": {"web_fetch": {"evil.com": "deny"}},
-                },
-            )
+        await store._save(
+            "preserve-user",
+            {
+                "version": 1,
+                "tools": {"send_media_reply": "deny", "read_file": "ask"},
+                "resources": {"web_fetch": {"evil.com": "deny"}},
+            },
         )
-        data = _run(store.ensure_complete_async("preserve-user"))
+        data = await store.ensure_complete_async("preserve-user")
         assert data["tools"]["send_media_reply"] == "deny"
         assert data["tools"]["read_file"] == "ask"
         assert data["resources"]["web_fetch"]["evil.com"] == "deny"
 
-    def test_reset_permissions_writes_defaults(self, tmp_path: object) -> None:
+    async def test_reset_permissions_writes_defaults(self, tmp_path: object) -> None:
         """reset_permissions replaces everything with defaults."""
         store = ApprovalStore()
-        _run(store.set_permission_async("reset-user", "send_media_reply", PermissionLevel.DENY))
-        _run(store.reset_permissions_async("reset-user"))
-        data = _run(store._load("reset-user"))
+        await store.set_permission_async("reset-user", "send_media_reply", PermissionLevel.DENY)
+        await store.reset_permissions_async("reset-user")
+        data = await store._load("reset-user")
         # send_media_reply should be back to its default, not deny
         defaults = store.generate_defaults("reset-user")
         assert data["tools"]["send_media_reply"] == defaults["tools"]["send_media_reply"]
 
-    def test_set_permission_preserves_complete_file(self, tmp_path: object) -> None:
+    async def test_set_permission_preserves_complete_file(self, tmp_path: object) -> None:
         """set_permission does not lose other entries."""
         store = ApprovalStore()
-        _run(store.ensure_complete_async("set-perm-user"))
+        await store.ensure_complete_async("set-perm-user")
         defaults = store.generate_defaults("set-perm-user")
         original_count = len(defaults["tools"])
 
-        _run(store.set_permission_async("set-perm-user", "send_media_reply", PermissionLevel.DENY))
-        data = _run(store._load("set-perm-user"))
+        await store.set_permission_async("set-perm-user", "send_media_reply", PermissionLevel.DENY)
+        data = await store._load("set-perm-user")
         # All tools should still be present
         assert len(data["tools"]) >= original_count
         assert data["tools"]["send_media_reply"] == "deny"
 
 
-# ---------------------------------------------------------------------------
-# ApprovalStore: pg_advisory_xact_lock concurrency regression
-# ---------------------------------------------------------------------------
-
-
-class TestApprovalLockSerialization:
-    """Regression tests for the ``pg_advisory_xact_lock`` in
-    ``_lock_user_permissions``.
-
-    Concurrent permission writes for the same user must serialize so that
-    a read-modify-write sequence cannot lose updates. Writes for different
-    users must not block each other, otherwise the dashboard becomes a
-    single-writer queue under load.
-
-    Concurrency primitive: ``threading.Thread`` with ``threading.Event``
-    coordination. The approval-gate code path is currently sync, so threads
-    plus real Postgres connections are the right shape. When the path
-    converts to async (issue #1158), this same matrix can be ported to
-    ``asyncio.gather`` against ``AsyncSession`` with the same assertions.
-
-    Database setup: each thread opens its own connection from the
-    session-scoped ``_pg_engine`` rather than reusing ``SessionLocal`` from
-    the per-test transaction fixture. ``pg_advisory_xact_lock`` is a real
-    Postgres feature scoped to the holding transaction; sharing a single
-    connection across threads would serialize on the connection itself
-    rather than on the database lock, so the threads need independent
-    connections to actually exercise the primitive. The threads only call
-    the lock helper (no INSERT / UPDATE), so nothing leaks past the test.
-    """
-
-    # How long the holder of the same-user lock keeps it before releasing.
-    # Long enough that a contender thread reliably observes the block,
-    # short enough that the test stays fast.
-    _HOLD_S = 0.4
-
-    # Upper bound for how long a contender should ever take to acquire a
-    # free or just-released lock. Tuned generously so a slow CI runner
-    # does not flake.
-    _ACQUIRE_TIMEOUT_S = 5.0
-
-    def _acquire_in_thread(
-        self,
-        engine: Engine,
-        user_id: str,
-        ready: threading.Event,
-        release: threading.Event,
-        result: dict[str, float],
-        label: str,
-    ) -> None:
-        """Run inside a worker thread.
-
-        Opens a fresh connection, BEGINs, acquires
-        ``_lock_user_permissions`` for ``user_id``, signals ``ready``,
-        waits for ``release``, then commits. ``result`` records when the
-        lock was acquired and when the transaction committed so the test
-        can assert ordering.
-        """
-        connection = engine.connect()
-        try:
-            transaction = connection.begin()
-            _lock_user_permissions_sync(connection, user_id)
-            result[f"{label}_acquired"] = time.monotonic()
-            ready.set()
-            # Hold the lock until the test signals it is safe to release.
-            release.wait(timeout=self._ACQUIRE_TIMEOUT_S)
-            transaction.commit()
-            result[f"{label}_committed"] = time.monotonic()
-        finally:
-            connection.close()
-
-    def test_same_user_lock_serializes_concurrent_writers(self, _pg_engine: Engine) -> None:
-        """Two threads acquiring the lock for the same user must run
-        strictly one at a time. The second thread must not acquire until
-        the first commits."""
-        user_id = "lock-serial-user"
-        a_ready = threading.Event()
-        a_release = threading.Event()
-        b_ready = threading.Event()
-        b_release = threading.Event()
-        results: dict[str, float] = {}
-
-        thread_a = threading.Thread(
-            target=self._acquire_in_thread,
-            args=(_pg_engine, user_id, a_ready, a_release, results, "a"),
-        )
-        thread_b = threading.Thread(
-            target=self._acquire_in_thread,
-            args=(_pg_engine, user_id, b_ready, b_release, results, "b"),
-        )
-
-        thread_a.start()
-        # Wait for A to actually hold the lock before starting B, so the
-        # ordering is deterministic regardless of OS scheduling.
-        assert a_ready.wait(timeout=self._ACQUIRE_TIMEOUT_S), (
-            "thread A failed to acquire the advisory lock"
-        )
-
-        thread_b.start()
-        # While A still holds the lock, B must NOT have acquired it.
-        # A short wait here would falsely succeed by racing the scheduler;
-        # use a bounded sleep that is much longer than any reasonable
-        # acquisition path through Postgres.
-        assert not b_ready.wait(timeout=self._HOLD_S), (
-            "thread B acquired the lock before thread A released it; "
-            "pg_advisory_xact_lock did not serialize same-user writers"
-        )
-
-        # Release A; B should now proceed.
-        a_release.set()
-        thread_a.join(timeout=self._ACQUIRE_TIMEOUT_S)
-        assert not thread_a.is_alive(), "thread A did not commit and release"
-
-        assert b_ready.wait(timeout=self._ACQUIRE_TIMEOUT_S), (
-            "thread B never acquired the lock after thread A committed"
-        )
-
-        b_release.set()
-        thread_b.join(timeout=self._ACQUIRE_TIMEOUT_S)
-        assert not thread_b.is_alive(), "thread B did not commit and release"
-
-    def test_different_users_do_not_contend(self, _pg_engine: Engine) -> None:
-        """A third thread holding the lock for a DIFFERENT user must run
-        in parallel with the same-user pair above. Different lock keys do
-        not contend."""
-        user_a = "lock-parallel-user-a"
-        user_c = "lock-parallel-user-c"
-
-        a_ready = threading.Event()
-        a_release = threading.Event()
-        c_ready = threading.Event()
-        c_release = threading.Event()
-        results: dict[str, float] = {}
-
-        thread_a = threading.Thread(
-            target=self._acquire_in_thread,
-            args=(_pg_engine, user_a, a_ready, a_release, results, "a"),
-        )
-        thread_c = threading.Thread(
-            target=self._acquire_in_thread,
-            args=(_pg_engine, user_c, c_ready, c_release, results, "c"),
-        )
-
-        thread_a.start()
-        assert a_ready.wait(timeout=self._ACQUIRE_TIMEOUT_S), (
-            "thread A failed to acquire the advisory lock"
-        )
-
-        # Start C while A is still holding its lock for user_a. Because
-        # user_c hashes to a different advisory-lock key, C must acquire
-        # immediately rather than waiting on A.
-        thread_c.start()
-        assert c_ready.wait(timeout=self._ACQUIRE_TIMEOUT_S), (
-            "thread C blocked on a different user's lock; advisory locks "
-            "are not isolated by user_id"
-        )
-
-        # C acquired while A was still in its critical section.
-        assert "a_committed" not in results, (
-            "thread A committed before C acquired; the parallelism check "
-            "did not actually exercise overlapping critical sections"
-        )
-
-        # Tear down in either order.
-        c_release.set()
-        thread_c.join(timeout=self._ACQUIRE_TIMEOUT_S)
-        a_release.set()
-        thread_a.join(timeout=self._ACQUIRE_TIMEOUT_S)
-        assert not thread_a.is_alive()
-        assert not thread_c.is_alive()
+# Note: the threaded ``TestApprovalLockSerialization`` class was removed
+# alongside the sync ``_lock_user_permissions`` helper (issue #1234).
+# The async port lives in ``tests/test_approval_async.py::
+# TestApprovalLockSerializationAsync`` and exercises the same matrix
+# (same-user serializes, different-user runs in parallel) against the
+# now-async ``_lock_user_permissions_async`` helper.
+class _TestApprovalLockSerializationRemoved:
+    """Placeholder so this section's docstring stays in repo history."""
 
 
 # ---------------------------------------------------------------------------
@@ -613,9 +414,9 @@ class TestApprovalGate:
         assert decision == ApprovalDecision.DENIED
         assert not gate.has_pending("1")
 
-    def test_resolve_returns_false_when_nothing_pending(self) -> None:
+    async def test_resolve_returns_false_when_nothing_pending(self) -> None:
         gate = ApprovalGate()
-        assert _run(gate.resolve("999", ApprovalDecision.APPROVED)) is False
+        assert await gate.resolve("999", ApprovalDecision.APPROVED) is False
 
     @pytest.mark.asyncio()
     async def test_request_approval_persists_row_and_cleans_up_on_resolve(

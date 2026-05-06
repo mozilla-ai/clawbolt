@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import asyncio
 import time
-from collections.abc import Awaitable, Callable, Coroutine, Generator
-from typing import TypeVar, cast
+from collections.abc import Generator
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -16,6 +14,7 @@ from pydantic import SecretStr
 import backend.app.services.oauth as _oauth_module
 from backend.app.auth.dependencies import get_current_user
 from backend.app.config import settings
+from backend.app.database import db_session_async
 from backend.app.main import app
 from backend.app.models import User
 from backend.app.services.oauth import (
@@ -33,57 +32,20 @@ from backend.app.services.oauth import (
     oauth_service,
     warm_intuit_discovery,
 )
-from tests.db_test_utils import open_test_db_session, test_db_session
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
-_T = TypeVar("_T")
-
-
-def _run(coro: Coroutine[object, object, _T]) -> _T:
-    return asyncio.run(coro)
-
-
-def _save_token(
-    service: OAuthService, user_id: str, integration: str, token: OAuthTokenData
-) -> None:
-    _run(service.save_token(user_id, integration, token))
-
-
-def _load_token(service: OAuthService, user_id: str, integration: str) -> OAuthTokenData | None:
-    return _run(service.load_token(user_id, integration))
-
-
-def _delete_token(service: OAuthService, user_id: str, integration: str) -> bool:
-    return _run(service.delete_token(user_id, integration))
-
-
-def _is_connected(service: OAuthService, user_id: str, integration: str) -> bool:
-    return _run(service.is_connected(user_id, integration))
-
-
-def _invoke_refresh_callback(
-    callback: Callable[[str, str, float], Awaitable[None]],
-    access_token: str,
-    refresh_token: str,
-    expires_at: float,
-) -> None:
-    _run(cast(Coroutine[object, object, None], callback(access_token, refresh_token, expires_at)))
-
 
 @pytest.fixture()
-def test_user() -> User:
-    db = open_test_db_session()
-    try:
+async def test_user() -> User:
+    async with db_session_async() as db:
         user = User(user_id="oauth-test-user", onboarding_complete=True)
         db.add(user)
-        db.commit()
-        db.refresh(user)
+        await db.commit()
+        await db.refresh(user)
         db.expunge(user)
-    finally:
-        db.close()
     return user
 
 
@@ -193,7 +155,7 @@ def test_token_no_expiry_not_expired() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_save_and_load_token(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_save_and_load_token(oauth_svc: OAuthService, test_user: User) -> None:
     """Saved tokens should be loadable from the database."""
     token = OAuthTokenData(
         access_token="at-123",
@@ -201,15 +163,15 @@ def test_save_and_load_token(oauth_svc: OAuthService, test_user: User) -> None:
         realm_id="realm-1",
         expires_at=time.time() + 3600,
     )
-    _save_token(oauth_svc, test_user.id, "quickbooks", token)
-    loaded = _load_token(oauth_svc, test_user.id, "quickbooks")
+    await oauth_svc.save_token(test_user.id, "quickbooks", token)
+    loaded = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert loaded is not None
     assert loaded.access_token == "at-123"
     assert loaded.refresh_token == "rt-456"
     assert loaded.realm_id == "realm-1"
 
 
-def test_build_on_refresh_callback_persists_rotated_refresh_token(
+async def test_build_on_refresh_callback_persists_rotated_refresh_token(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """The callback wired into provider services must persist refreshed tokens.
@@ -225,13 +187,13 @@ def test_build_on_refresh_callback_persists_rotated_refresh_token(
         scopes=["scope.a", "scope.b"],
         expires_at=time.time() + 3600,
     )
-    _save_token(oauth_svc, test_user.id, "quickbooks", original)
+    await oauth_svc.save_token(test_user.id, "quickbooks", original)
 
     callback = oauth_svc.build_on_refresh_callback(test_user.id, "quickbooks")
     new_expires = time.time() + 7200
-    _invoke_refresh_callback(callback, "at-new", "rt-new", new_expires)
+    await callback("at-new", "rt-new", new_expires)
 
-    reloaded = _load_token(oauth_svc, test_user.id, "quickbooks")
+    reloaded = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert reloaded is not None
     assert reloaded.access_token == "at-new"
     assert reloaded.refresh_token == "rt-new"
@@ -298,8 +260,8 @@ async def test_refresh_token_bypasses_cache_for_post_lock_reload(
 
     from backend.app.models import OAuthToken
 
-    with test_db_session() as db:
-        db.execute(
+    async with db_session_async() as db:
+        await db.execute(
             update(OAuthToken)
             .where(
                 OAuthToken.user_id == test_user.id,
@@ -307,7 +269,7 @@ async def test_refresh_token_bypasses_cache_for_post_lock_reload(
             )
             .values(access_token="at-peer-fresh", expires_at=fresh_expires)
         )
-        db.commit()
+        await db.commit()
 
     with patch.object(oauth_svc, "_get_http") as mock_http_fn:
         mock_client = AsyncMock()
@@ -319,7 +281,7 @@ async def test_refresh_token_bypasses_cache_for_post_lock_reload(
     mock_client.post.assert_not_called()
 
 
-def test_build_on_refresh_callback_preserves_refresh_token_when_empty(
+async def test_build_on_refresh_callback_preserves_refresh_token_when_empty(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """When a provider refresh returns no new refresh_token, the callback
@@ -329,18 +291,18 @@ def test_build_on_refresh_callback_preserves_refresh_token_when_empty(
         refresh_token="rt-original",
         expires_at=time.time() + 3600,
     )
-    _save_token(oauth_svc, test_user.id, "quickbooks", original)
+    await oauth_svc.save_token(test_user.id, "quickbooks", original)
 
     callback = oauth_svc.build_on_refresh_callback(test_user.id, "quickbooks")
-    _invoke_refresh_callback(callback, "at-new", "", time.time() + 7200)
+    await callback("at-new", "", time.time() + 7200)
 
-    reloaded = _load_token(oauth_svc, test_user.id, "quickbooks")
+    reloaded = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert reloaded is not None
     assert reloaded.access_token == "at-new"
     assert reloaded.refresh_token == "rt-original"
 
 
-def test_build_on_refresh_callback_bypasses_cache_for_post_lock_reload(
+async def test_build_on_refresh_callback_bypasses_cache_for_post_lock_reload(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """The on_refresh callback must observe a peer worker's just-persisted
@@ -361,9 +323,9 @@ def test_build_on_refresh_callback_bypasses_cache_for_post_lock_reload(
         scopes=["scope.stale"],
         expires_at=time.time() - 100,
     )
-    _save_token(oauth_svc, test_user.id, "quickbooks", original)
+    await oauth_svc.save_token(test_user.id, "quickbooks", original)
     # Prime the cache via load_token.
-    primed = _load_token(oauth_svc, test_user.id, "quickbooks")
+    primed = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert primed is not None and primed.realm_id == "realm-stale"
 
     # Simulate a peer worker writing fresh realm_id and scopes_json to
@@ -372,8 +334,8 @@ def test_build_on_refresh_callback_bypasses_cache_for_post_lock_reload(
 
     from backend.app.models import OAuthToken
 
-    with test_db_session() as db:
-        db.execute(
+    async with db_session_async() as db:
+        await db.execute(
             update(OAuthToken)
             .where(
                 OAuthToken.user_id == test_user.id,
@@ -381,15 +343,15 @@ def test_build_on_refresh_callback_bypasses_cache_for_post_lock_reload(
             )
             .values(realm_id="realm-peer-fresh", scopes_json='["scope.peer"]')
         )
-        db.commit()
+        await db.commit()
 
     # Run the callback as the provider client would.
     callback = oauth_svc.build_on_refresh_callback(test_user.id, "quickbooks")
-    _invoke_refresh_callback(callback, "at-new", "rt-new", time.time() + 7200)
+    await callback("at-new", "rt-new", time.time() + 7200)
 
     # The merged write must have started from the peer's fresh values,
     # not the cached stale ones.
-    reloaded = _load_token(oauth_svc, test_user.id, "quickbooks")
+    reloaded = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert reloaded is not None
     assert reloaded.access_token == "at-new"
     assert reloaded.refresh_token == "rt-new"
@@ -397,83 +359,89 @@ def test_build_on_refresh_callback_bypasses_cache_for_post_lock_reload(
     assert reloaded.scopes == ["scope.peer"]
 
 
-def test_save_token_upsert(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_save_token_upsert(oauth_svc: OAuthService, test_user: User) -> None:
     """Saving a token twice should update the existing row, not create a duplicate."""
     token1 = OAuthTokenData(access_token="first")
-    _save_token(oauth_svc, test_user.id, "quickbooks", token1)
+    await oauth_svc.save_token(test_user.id, "quickbooks", token1)
 
     token2 = OAuthTokenData(access_token="second")
-    _save_token(oauth_svc, test_user.id, "quickbooks", token2)
+    await oauth_svc.save_token(test_user.id, "quickbooks", token2)
 
-    loaded = _load_token(oauth_svc, test_user.id, "quickbooks")
+    loaded = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert loaded is not None
     assert loaded.access_token == "second"
 
 
-def test_save_token_upsert_updates_timestamp(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_save_token_upsert_updates_timestamp(
+    oauth_svc: OAuthService, test_user: User
+) -> None:
     """Upserting a token should refresh the updated_at timestamp via sa.func.now()."""
     from sqlalchemy import select, text
 
     from backend.app.models import OAuthToken
 
     token1 = OAuthTokenData(access_token="first")
-    _save_token(oauth_svc, test_user.id, "quickbooks", token1)
+    await oauth_svc.save_token(test_user.id, "quickbooks", token1)
 
     # Backdate updated_at so the upsert's now() is guaranteed to be later.
-    with test_db_session() as db:
-        db.execute(
+    async with db_session_async() as db:
+        await db.execute(
             text(
                 "UPDATE oauth_tokens SET updated_at = updated_at - interval '1 hour'"
                 " WHERE user_id = :uid AND integration = :integ"
             ),
             {"uid": test_user.id, "integ": "quickbooks"},
         )
-        db.commit()
+        await db.commit()
 
-    with test_db_session() as db:
-        row = db.execute(
-            select(OAuthToken).where(
-                OAuthToken.user_id == test_user.id,
-                OAuthToken.integration == "quickbooks",
+    async with db_session_async() as db:
+        row = (
+            await db.execute(
+                select(OAuthToken).where(
+                    OAuthToken.user_id == test_user.id,
+                    OAuthToken.integration == "quickbooks",
+                )
             )
         ).scalar_one()
         backdated = row.updated_at
 
     token2 = OAuthTokenData(access_token="second")
-    _save_token(oauth_svc, test_user.id, "quickbooks", token2)
+    await oauth_svc.save_token(test_user.id, "quickbooks", token2)
 
-    with test_db_session() as db:
-        row = db.execute(
-            select(OAuthToken).where(
-                OAuthToken.user_id == test_user.id,
-                OAuthToken.integration == "quickbooks",
+    async with db_session_async() as db:
+        row = (
+            await db.execute(
+                select(OAuthToken).where(
+                    OAuthToken.user_id == test_user.id,
+                    OAuthToken.integration == "quickbooks",
+                )
             )
         ).scalar_one()
         assert row.updated_at > backdated
 
 
-def test_load_nonexistent_token(oauth_svc: OAuthService) -> None:
+async def test_load_nonexistent_token(oauth_svc: OAuthService) -> None:
     """Loading a non-existent token should return None."""
-    assert _load_token(oauth_svc, "999", "quickbooks") is None
+    assert await oauth_svc.load_token("999", "quickbooks") is None
 
 
-def test_delete_token(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_delete_token(oauth_svc: OAuthService, test_user: User) -> None:
     """Deleting a token should remove the row."""
     token = OAuthTokenData(access_token="at")
-    _save_token(oauth_svc, test_user.id, "quickbooks", token)
-    assert _is_connected(oauth_svc, test_user.id, "quickbooks") is True
+    await oauth_svc.save_token(test_user.id, "quickbooks", token)
+    assert await oauth_svc.is_connected(test_user.id, "quickbooks") is True
 
-    deleted = _delete_token(oauth_svc, test_user.id, "quickbooks")
+    deleted = await oauth_svc.delete_token(test_user.id, "quickbooks")
     assert deleted is True
-    assert _is_connected(oauth_svc, test_user.id, "quickbooks") is False
+    assert await oauth_svc.is_connected(test_user.id, "quickbooks") is False
 
 
-def test_delete_nonexistent_token(oauth_svc: OAuthService) -> None:
+async def test_delete_nonexistent_token(oauth_svc: OAuthService) -> None:
     """Deleting a non-existent token should return False."""
-    assert _delete_token(oauth_svc, "999", "quickbooks") is False
+    assert await oauth_svc.delete_token("999", "quickbooks") is False
 
 
-def test_load_token_cached_within_ttl(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_load_token_cached_within_ttl(oauth_svc: OAuthService, test_user: User) -> None:
     """A second load_token within the TTL window should not hit the database.
 
     Regression for #1085. A single agent turn loads OAuth credentials
@@ -482,10 +450,10 @@ def test_load_token_cached_within_ttl(oauth_svc: OAuthService, test_user: User) 
     in production logs.
     """
     token = OAuthTokenData(access_token="at-cached", expires_at=time.time() + 3600)
-    _save_token(oauth_svc, test_user.id, "quickbooks", token)
+    await oauth_svc.save_token(test_user.id, "quickbooks", token)
 
     # Prime the cache.
-    first = _load_token(oauth_svc, test_user.id, "quickbooks")
+    first = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert first is not None and first.access_token == "at-cached"
 
     # Out-of-band delete the row so a fresh DB read would return None.
@@ -495,47 +463,47 @@ def test_load_token_cached_within_ttl(oauth_svc: OAuthService, test_user: User) 
 
     from backend.app.models import OAuthToken
 
-    with test_db_session() as db:
-        db.execute(
+    async with db_session_async() as db:
+        await db.execute(
             delete(OAuthToken).where(
                 OAuthToken.user_id == test_user.id,
                 OAuthToken.integration == "quickbooks",
             )
         )
-        db.commit()
+        await db.commit()
 
-    second = _load_token(oauth_svc, test_user.id, "quickbooks")
+    second = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert second is not None
     assert second.access_token == "at-cached"
 
 
-def test_save_token_invalidates_cache(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_save_token_invalidates_cache(oauth_svc: OAuthService, test_user: User) -> None:
     """save_token must drop the cache entry so the next load sees the new value."""
     initial = OAuthTokenData(access_token="at-initial", expires_at=time.time() + 3600)
-    _save_token(oauth_svc, test_user.id, "quickbooks", initial)
-    primed = _load_token(oauth_svc, test_user.id, "quickbooks")
+    await oauth_svc.save_token(test_user.id, "quickbooks", initial)
+    primed = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert primed is not None and primed.access_token == "at-initial"
 
     rotated = OAuthTokenData(access_token="at-rotated", expires_at=time.time() + 3600)
-    _save_token(oauth_svc, test_user.id, "quickbooks", rotated)
+    await oauth_svc.save_token(test_user.id, "quickbooks", rotated)
 
-    reloaded = _load_token(oauth_svc, test_user.id, "quickbooks")
+    reloaded = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert reloaded is not None
     assert reloaded.access_token == "at-rotated"
 
 
-def test_delete_token_invalidates_cache(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_delete_token_invalidates_cache(oauth_svc: OAuthService, test_user: User) -> None:
     """delete_token must drop the cache entry so the next load returns None."""
     token = OAuthTokenData(access_token="at", expires_at=time.time() + 3600)
-    _save_token(oauth_svc, test_user.id, "quickbooks", token)
-    primed = _load_token(oauth_svc, test_user.id, "quickbooks")
+    await oauth_svc.save_token(test_user.id, "quickbooks", token)
+    primed = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert primed is not None
 
-    _delete_token(oauth_svc, test_user.id, "quickbooks")
-    assert _load_token(oauth_svc, test_user.id, "quickbooks") is None
+    await oauth_svc.delete_token(test_user.id, "quickbooks")
+    assert await oauth_svc.load_token(test_user.id, "quickbooks") is None
 
 
-def test_load_token_caches_negative_lookup(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_load_token_caches_negative_lookup(oauth_svc: OAuthService, test_user: User) -> None:
     """A None result is also cached so repeated 'not connected' checks
     do not flood the DB.
 
@@ -545,7 +513,7 @@ def test_load_token_caches_negative_lookup(oauth_svc: OAuthService, test_user: U
     positive and negative results.
     """
     # First load: row does not exist, returns None.
-    assert _load_token(oauth_svc, test_user.id, "quickbooks") is None
+    assert await oauth_svc.load_token(test_user.id, "quickbooks") is None
 
     # Out-of-band insert a row.
     token = OAuthTokenData(access_token="at-now-exists", expires_at=time.time() + 3600)
@@ -553,8 +521,8 @@ def test_load_token_caches_negative_lookup(oauth_svc: OAuthService, test_user: U
 
     from backend.app.models import OAuthToken
 
-    with test_db_session() as db:
-        db.execute(
+    async with db_session_async() as db:
+        await db.execute(
             pg_insert(OAuthToken).values(
                 user_id=test_user.id,
                 integration="quickbooks",
@@ -567,43 +535,43 @@ def test_load_token_caches_negative_lookup(oauth_svc: OAuthService, test_user: U
                 extra_json="{}",
             )
         )
-        db.commit()
+        await db.commit()
 
     # Within the TTL the cached None should still be returned.
-    assert _load_token(oauth_svc, test_user.id, "quickbooks") is None
+    assert await oauth_svc.load_token(test_user.id, "quickbooks") is None
 
 
-def test_is_connected(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_is_connected(oauth_svc: OAuthService, test_user: User) -> None:
     """is_connected should reflect whether a token row exists."""
-    assert _is_connected(oauth_svc, test_user.id, "quickbooks") is False
+    assert await oauth_svc.is_connected(test_user.id, "quickbooks") is False
     token = OAuthTokenData(access_token="at")
-    _save_token(oauth_svc, test_user.id, "quickbooks", token)
-    assert _is_connected(oauth_svc, test_user.id, "quickbooks") is True
+    await oauth_svc.save_token(test_user.id, "quickbooks", token)
+    assert await oauth_svc.is_connected(test_user.id, "quickbooks") is True
 
 
-def test_scopes_and_extra_round_trip(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_scopes_and_extra_round_trip(oauth_svc: OAuthService, test_user: User) -> None:
     """Scopes and extra dict should survive save/load via JSON serialization."""
     token = OAuthTokenData(
         access_token="at",
         scopes=["scope1", "scope2"],
         extra={"key": "value"},
     )
-    _save_token(oauth_svc, test_user.id, "quickbooks", token)
-    loaded = _load_token(oauth_svc, test_user.id, "quickbooks")
+    await oauth_svc.save_token(test_user.id, "quickbooks", token)
+    loaded = await oauth_svc.load_token(test_user.id, "quickbooks")
     assert loaded is not None
     assert loaded.scopes == ["scope1", "scope2"]
     assert loaded.extra == {"key": "value"}
 
 
-def test_multiple_integrations_per_user(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_multiple_integrations_per_user(oauth_svc: OAuthService, test_user: User) -> None:
     """Different integrations for the same user should be independent."""
-    _save_token(oauth_svc, test_user.id, "quickbooks", OAuthTokenData(access_token="qb-token"))
-    _save_token(
-        oauth_svc, test_user.id, "google_calendar", OAuthTokenData(access_token="gcal-token")
+    await oauth_svc.save_token(test_user.id, "quickbooks", OAuthTokenData(access_token="qb-token"))
+    await oauth_svc.save_token(
+        test_user.id, "google_calendar", OAuthTokenData(access_token="gcal-token")
     )
 
-    qb = _load_token(oauth_svc, test_user.id, "quickbooks")
-    gcal = _load_token(oauth_svc, test_user.id, "google_calendar")
+    qb = await oauth_svc.load_token(test_user.id, "quickbooks")
+    gcal = await oauth_svc.load_token(test_user.id, "google_calendar")
     assert qb is not None and qb.access_token == "qb-token"
     assert gcal is not None and gcal.access_token == "gcal-token"
 
@@ -613,15 +581,15 @@ def test_multiple_integrations_per_user(oauth_svc: OAuthService, test_user: User
 # ---------------------------------------------------------------------------
 
 
-def test_encrypted_token_round_trip(oauth_svc: OAuthService, test_user: User) -> None:
+async def test_encrypted_token_round_trip(oauth_svc: OAuthService, test_user: User) -> None:
     """Tokens should survive save/load with encryption enabled."""
     with patch.object(settings, "encryption_key", SecretStr("test-key-at-least-16-chars!!")):
         token = OAuthTokenData(
             access_token="secret-access",
             refresh_token="secret-refresh",
         )
-        _save_token(oauth_svc, test_user.id, "quickbooks", token)
-        loaded = _load_token(oauth_svc, test_user.id, "quickbooks")
+        await oauth_svc.save_token(test_user.id, "quickbooks", token)
+        loaded = await oauth_svc.load_token(test_user.id, "quickbooks")
 
     assert loaded is not None
     assert loaded.access_token == "secret-access"
@@ -998,11 +966,11 @@ def test_oauth_disconnect_not_found(client: TestClient) -> None:
     assert resp.status_code == 404
 
 
-def test_oauth_disconnect_success(client: TestClient, test_user: User) -> None:
+async def test_oauth_disconnect_success(client: TestClient, test_user: User) -> None:
     """Disconnecting a connected integration should succeed."""
     # Store a token first
     token = OAuthTokenData(access_token="at")
-    _save_token(oauth_service, test_user.id, "quickbooks", token)
+    await oauth_service.save_token(test_user.id, "quickbooks", token)
 
     resp = client.delete("/api/oauth/quickbooks")
     assert resp.status_code == 200
@@ -1262,7 +1230,7 @@ def test_quickbooks_config_uses_discovery_endpoints(_reset_discovery_cache: None
 # ---------------------------------------------------------------------------
 
 
-def _mark_user_active(user_id: str, days_ago: int = 0) -> None:
+async def _mark_user_active(user_id: str, days_ago: int = 0) -> None:
     """Insert a channel_route row with last_inbound_at = now - days_ago.
 
     The sweep gates on recent activity so dormant users do not get their
@@ -1275,7 +1243,7 @@ def _mark_user_active(user_id: str, days_ago: int = 0) -> None:
     from backend.app.models import ChannelRoute
 
     last = _dt.datetime.now(_dt.UTC) - _dt.timedelta(days=days_ago)
-    with test_db_session() as db:
+    async with db_session_async() as db:
         db.add(
             ChannelRoute(
                 user_id=user_id,
@@ -1285,14 +1253,14 @@ def _mark_user_active(user_id: str, days_ago: int = 0) -> None:
                 last_inbound_at=last,
             )
         )
-        db.commit()
+        await db.commit()
 
 
 async def test_refresh_sweep_refreshes_tokens_within_lookahead(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """A token expiring within the lookahead window must be refreshed."""
-    _mark_user_active(test_user.id)
+    await _mark_user_active(test_user.id)
     # 4 minutes from now: well inside the 6 minute lookahead.
     near_expiry = OAuthTokenData(
         access_token="at-near",
@@ -1324,7 +1292,7 @@ async def test_refresh_sweep_skips_inactive_users(oauth_svc: OAuthService, test_
     re-consent is required on return. Background refresh would silently
     keep them alive forever; we gate it on recent activity.
     """
-    _mark_user_active(test_user.id, days_ago=30)  # past the 14 day window
+    await _mark_user_active(test_user.id, days_ago=30)  # past the 14 day window
     near_expiry = OAuthTokenData(
         access_token="at",
         refresh_token="rt",
@@ -1365,7 +1333,7 @@ async def test_refresh_sweep_skips_tokens_outside_lookahead(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """A token with plenty of time left must not be refreshed."""
-    _mark_user_active(test_user.id)
+    await _mark_user_active(test_user.id)
     # 30 minutes out: outside the 6 minute lookahead.
     far_expiry = OAuthTokenData(
         access_token="at",
@@ -1390,7 +1358,7 @@ async def test_refresh_sweep_skips_tokens_without_refresh_token(
     Without this guard the sweep would call refresh_token, which then
     immediately returns None after a wasted DB read and log line.
     """
-    _mark_user_active(test_user.id)
+    await _mark_user_active(test_user.id)
     no_refresh = OAuthTokenData(
         access_token="at",
         refresh_token="",
@@ -1410,7 +1378,7 @@ async def test_refresh_sweep_skips_non_expiring_tokens(
     oauth_svc: OAuthService, test_user: User
 ) -> None:
     """Tokens with expires_at <= 0 never expire and need no refresh."""
-    _mark_user_active(test_user.id)
+    await _mark_user_active(test_user.id)
     non_expiring = OAuthTokenData(
         access_token="at",
         refresh_token="rt",
@@ -1452,7 +1420,7 @@ async def test_refresh_sweep_continues_after_individual_failure(
     Otherwise a single user with a revoked grant would block all other
     users' background refreshes.
     """
-    _mark_user_active(test_user.id)
+    await _mark_user_active(test_user.id)
     # Two due tokens, one for each integration.
     for integration in ("quickbooks", "google_calendar"):
         await oauth_svc.save_token(
